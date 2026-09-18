@@ -38,15 +38,17 @@ locals {
 
 module "identity" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/identity"
-  version = "2.24.0"
+  version = "2.25.1"
 
   name_prefix        = local.prefix
   issuer             = local.identity_issuer
   audience           = local.identity_audience
   registrable_domain = local.identity_registrable_domain
 
-  identity_role_name = module.lambda_domain["workspaces"].role_id
-  identity_role_arn  = module.lambda_domain["workspaces"].role_arn
+  identity_role_name = local.domain_functions_enabled ? module.lambda_domain["workspaces"].role_id : null
+  identity_role_arn  = local.domain_functions_enabled ? module.lambda_domain["workspaces"].role_arn : null
+
+  attach_role_policies = local.domain_functions_enabled
 
   enable_mfa_encryption_key = false
 

@@ -32,7 +32,7 @@ locals {
   staging_gate_enabled = var.environment == "staging" && var.staging_access_gate && local.custom_domains_enabled
   staging_gate_count   = local.staging_gate_enabled ? 1 : 0
 
-  staging_gate_authorizer_attached = local.staging_gate_enabled && var.staging_gate_attach_api_authorizer
+  staging_gate_authorizer_attached = local.staging_gate_enabled
 
   identity_jwt_gate_enforced   = var.identity_jwt_mode == "gate" && local.staging_gate_enabled
   identity_jwt_native_enforced = var.identity_jwt_mode == "native"

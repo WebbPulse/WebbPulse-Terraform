@@ -46,19 +46,45 @@ of its own, so the frontend takes `terraform.webbpulse.com` (staging
 `staging.terraform.webbpulse.com`) and the API takes `api.` in front of it,
 matching the Portfolio split.
 
-## Two stage bootstrap
+## Bootstrap sequence
 
-Two values are false on a greenfield environment and true afterwards:
+Lambda resolves an image tag during `CreateFunction`, so the two domain
+functions cannot be created before their ECR repositories hold an image.
+`var.bootstrap_image_tag` gates them: the empty string resolves the domain map
+to empty, and everything downstream of the functions resolves to nothing with
+it.
 
-- `staging_gate_attach_api_authorizer`. The gate module decides whether to
-  create the origin-verify authorizer with `count` on `http_api_id`, and the
-  API id is unknown until the API exists, so a first plan with it on fails with
-  an invalid count argument.
-- `variables_master_key_keep`. The app secret's generated key cannot be read
-  back before the secret has a version.
+| Run | `bootstrap_image_tag` | What happens |
+| --- | --- | --- |
+| 1 | `""` (the default) | Everything but the two domain functions: the API with no integrations and no routes, the tables, buckets, VPC, cluster, state machine, gate and roles |
+| between | n/a | Merge the backend to `staging`. `deploy-backend` builds and pushes `sha-<head sha>` for both domains and skips the Lambda deploy, because neither function exists yet |
+| 2 | `sha-<head sha>` | The two functions, their integrations, routes and permissions, the runs SQS event source and the identity role policies |
+| after | unchanged | `deploy-backend` owns the image. Each push deploys by digest through `UpdateFunctionCode` |
+
+Set `bootstrap_image_tag` by hand as a workspace variable on the HCP workspace,
+not through the factory. It must be `sha-` followed by a full 40 character
+commit sha, which is the tag the image build pushes.
+
+The tag is read only when a function is created. It can expire out of ECR,
+which keeps three tagged images, without affecting a running function, so
+refresh it to a tag that still exists before any apply that recreates one.
 
 ## Staging profile
 
 `var.staging_profile` is `none`, `reduced` or `full`. With `none` the staging
 workspace refuses to plan. `reduced` skips the custom domains and the gate;
 `full` adds both.
+
+## Variables set on the workspace
+
+Everything else takes its default.
+
+| Variable | Value |
+| --- | --- |
+| `environment` | `staging` or `production` |
+| `staging_profile` | `none`, `reduced` or `full` |
+| `bootstrap_image_tag` | `""` on run 1, then `sha-<head sha>`; see the bootstrap sequence |
+| `runner_image_tag` | The runner image tag the task definitions point at. Unlike a Lambda image it is not ignored, so a revision follows it |
+| `route53_zone_id`, `route53_write_role_arn` | The parent zone and the role that writes into it, both required when `staging_profile` is `full` |
+| `staging_access_gate`, `staging_access_users` | Staging only: put the site and API behind the email gate, and who may sign in |
+| `identity_jwt_mode` | `off`, `gate` or `native`. Staging uses `gate`, production `native` |

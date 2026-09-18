@@ -1,5 +1,5 @@
 locals {
-  lambda_domains = {
+  lambda_domains_declared = {
     workspaces = {
       memory            = 512
       tables            = ["workspaces", "variables", "config-versions"]
@@ -19,6 +19,10 @@ locals {
       }
     }
   }
+
+  domain_functions_enabled = var.bootstrap_image_tag != ""
+
+  lambda_domains = local.domain_functions_enabled ? local.lambda_domains_declared : {}
 
   dynamodb_write_actions = [
     "dynamodb:GetItem",
@@ -75,7 +79,7 @@ module "lambda_domain" {
   for_each = local.lambda_domains
 
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/lambda-function"
-  version = "2.24.0"
+  version = "2.25.1"
 
   function_name = "${local.prefix}-${each.key}"
   role_name     = "${local.prefix}-${each.key}-lambda"

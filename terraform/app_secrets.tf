@@ -1,9 +1,3 @@
-variable "variables_master_key_keep" {
-  description = "Whether the app secret's variables_master_key is read back and written through unchanged. It must stay false until the secret has its first version, because the read fails on a secret with no version, and must be turned on before any later bump of the secret's version, because rotating that key makes every stored sensitive workspace variable unreadable."
-  type        = bool
-  default     = false
-}
-
 resource "random_password" "secret_key" {
   length           = 64
   special          = true
@@ -16,9 +10,11 @@ resource "random_password" "secret_key" {
 
 module "app_secrets" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/app-secrets"
-  version = "2.24.0"
+  version = "2.25.1"
 
   name_prefix = local.prefix
+
+  json_generate_carry_enabled = local.domain_functions_enabled
 
   secrets = {
     "app" = {
@@ -30,7 +26,7 @@ module "app_secrets" {
       json_generate = {
         variables_master_key = {
           format = "bytes32-base64"
-          keep   = var.variables_master_key_keep
+          keep   = true
         }
       }
     }

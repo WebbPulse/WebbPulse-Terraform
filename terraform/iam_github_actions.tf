@@ -25,7 +25,7 @@ locals {
   shared_base_image_repository_arn = "arn:aws:ecr:${var.aws_region}:${local.artifacts_account_id}:repository/webbpulse/python-lambda-base"
 
   lambda_domain_function_arns = [
-    for name in sort(keys(local.lambda_domains)) :
+    for name in sort(keys(local.lambda_domains_declared)) :
     "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${local.prefix}-${name}"
   ]
 
@@ -104,7 +104,7 @@ locals {
 
 module "github_actions_role" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "2.24.0"
+  version = "2.25.1"
 
   role_name = "${local.prefix}-github-actions-deploy"
 
@@ -185,7 +185,7 @@ module "github_actions_role" {
 
 module "github_actions_ci_role" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "2.24.0"
+  version = "2.25.1"
 
   role_name        = "${local.prefix}-github-actions-ci"
   role_description = "Read-only CodeArtifact access for pull request CI in WebbPulse/WebbPulse-Terraform. Deploy permissions live on the separate github-actions-deploy role."
