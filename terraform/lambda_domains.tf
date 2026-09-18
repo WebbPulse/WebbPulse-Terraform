@@ -1,14 +1,22 @@
 locals {
   lambda_domains = {
     workspaces = {
-      memory      = 512
-      tables      = ["workspaces", "variables", "config-versions"]
-      read_tables = ["runs"]
+      memory            = 512
+      tables            = ["workspaces", "variables", "config-versions"]
+      read_tables       = ["runs"]
+      sqs_event_sources = {}
     }
     runs = {
       memory      = 512
       tables      = ["runs"]
       read_tables = ["workspaces", "variables", "config-versions"]
+      sqs_event_sources = {
+        run_confirmations = {
+          queue_arn                       = module.run_confirmations.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
+      }
     }
   }
 
@@ -77,7 +85,9 @@ module "lambda_domain" {
   architectures = ["arm64"]
   memory_size   = each.value.memory
 
-  timeout = 30
+  timeout = local.lambda_domain_timeout
+
+  sqs_event_sources = each.value.sqs_event_sources
 
   code = {
     image_uri = "${module.registry.repository_urls[each.key]}:${var.bootstrap_image_tag}"
