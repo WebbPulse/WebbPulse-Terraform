@@ -19,6 +19,7 @@ jobs:
     name: Runner
     permissions:
       contents: read
+      id-token: write
     uses: WebbPulse/.github/.github/workflows/python-ci.yml@v3
     with:
       python-version: "3.13"
