@@ -1,0 +1,24 @@
+{
+  "include": ["app", "tests"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/venv",
+    "**/.venv"
+  ],
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": "none",
+  "reportMissingModuleSource": "none",
+  "reportUnusedImport": "error",
+  "reportUnusedVariable": "error",
+  "reportUnusedFunction": "information",
+  "reportUnusedClass": "information",
+  "reportUndefinedVariable": "error",
+  "reportPrivateUsage": "warning",
+  "reportUnknownMemberType": "none",
+  "reportTypedDictNotRequiredAccess": "none",
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "strict"
+}

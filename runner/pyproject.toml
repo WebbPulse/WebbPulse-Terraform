@@ -1,0 +1,43 @@
+[project]
+name = "webbpulse-terraform-runner"
+version = "0"
+requires-python = ">=3.13"
+dependencies = [
+  "boto3>=1.43.90",
+  "httpx>=0.28.1",
+  "pydantic>=2.13.5",
+]
+
+[dependency-groups]
+dev = [
+  "boto3-stubs[iam,logs,s3,stepfunctions,sts]>=1.43.90",
+  "moto[logs,stepfunctions,sts]>=5.2.3",
+  "pyright>=1.1.408",
+  "pytest>=9.1.1",
+  "pytest-cov>=7.1.0",
+  "pytest-xdist>=3.8.0",
+  "ruff>=0.16.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+extend-exclude = ["build", "dist", "htmlcov", ".venv", "venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E203"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short --disable-warnings"
+
+[tool.webbpulse.ci]
+test-root = "tests"
