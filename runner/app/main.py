@@ -46,10 +46,11 @@ class Clients:
     @classmethod
     def build(cls, region: str) -> Clients:
         """Real clients for the task's own execution role."""
+        session = boto3.session.Session(region_name=region)
         return cls(
-            logs=boto3.client("logs", region_name=region),
-            sts=boto3.client("sts", region_name=region),
-            sfn=boto3.client("stepfunctions", region_name=region),
+            logs=session.client("logs"),
+            sts=session.client("sts"),
+            sfn=session.client("stepfunctions"),
             http=build_client(),
         )
 

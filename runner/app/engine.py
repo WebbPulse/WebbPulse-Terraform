@@ -6,7 +6,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, cast
 
 from app.logs import LogSink
 from app.models import Changes, Engine
@@ -145,24 +145,25 @@ def build_environment(
 def parse_changes(plan_json: str) -> tuple[Changes, bool]:
     """Count adds, changes and destroys from the plan JSON's resource_changes."""
     try:
-        document = json.loads(plan_json)
+        document: object = json.loads(plan_json)
     except json.JSONDecodeError:
         return Changes(), False
     if not isinstance(document, dict):
         return Changes(), False
-    add = change = destroy = 0
-    resource_changes = document.get("resource_changes")
-    if not isinstance(resource_changes, list):
+    entries: object = cast(dict[str, object], document).get("resource_changes")
+    if not isinstance(entries, list):
         return Changes(), False
-    for entry in resource_changes:
-        if not isinstance(entry, dict):
+    add = change = destroy = 0
+    for raw_entry in cast(list[object], entries):
+        if not isinstance(raw_entry, dict):
             continue
-        change_block = entry.get("change")
+        change_block: object = cast(dict[str, object], raw_entry).get("change")
         if not isinstance(change_block, dict):
             continue
-        actions = change_block.get("actions")
-        if not isinstance(actions, list):
+        raw_actions: object = cast(dict[str, object], change_block).get("actions")
+        if not isinstance(raw_actions, list):
             continue
+        actions = cast(list[object], raw_actions)
         if actions in (["no-op"], ["read"]):
             continue
         if actions == ["create"]:

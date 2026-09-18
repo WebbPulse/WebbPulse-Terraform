@@ -18,6 +18,7 @@ domain, runs Terraform or OpenTofu, and reports back through the task token.
 | `app/logs.py` | redaction and the CloudWatch Logs sink |
 | `app/callback.py` | `SendTaskSuccess` and `SendTaskFailure` |
 | `app/main.py` | the `python -m app.main` entrypoint |
+| `pyrightconfig.json` | pyright settings, strict mode |
 | `tests/` | pytest with moto for STS and Logs, an httpx mock transport and a fake engine on PATH |
 
 ## Commands
@@ -26,11 +27,20 @@ domain, runs Terraform or OpenTofu, and reports back through the task token.
 uv sync                              # install, including the dev group
 uv run ruff check app tests          # lint
 uv run ruff format app tests         # format
-uv run mypy app tests                # type check, strict
+uv run pyright                       # type check, strict
 uv run pytest                        # tests
 
 docker buildx build --platform linux/arm64 -t webbpulse-terraform-runner:local .
 ```
+
+`pyrightconfig.json` runs strict, including `tests`. Two rules are off, both
+because of how `boto3-stubs` shapes third party types rather than anything in
+this code: `reportUnknownMemberType`, because `boto3.client` is one large
+overload set whose unstubbed services return `Unknown`, so pyright calls the
+whole symbol partially unknown whichever branch is selected, and
+`reportTypedDictNotRequiredAccess`, because botocore's response TypedDicts mark
+keys `NotRequired` and the tests index them directly. Everything else strict
+checks, so an unannotated parameter or a wrong return type still fails.
 
 ## Protocol
 

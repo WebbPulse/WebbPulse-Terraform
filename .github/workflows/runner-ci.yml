@@ -28,7 +28,7 @@ jobs:
         uv lock --check &&
         uv sync --locked
       ruff-target: "app tests"
-      typecheck-command: mypy app tests
+      typecheck-command: uv run pyright
       coverage-source: app
       pytest-args: ""
 
