@@ -1,0 +1,133 @@
+name: Deploy Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      fresh-dependencies:
+        description: >-
+          Resolve the runner's dependencies fresh rather than from the lock
+          file. The image is pushed under its own tag, so this rebuilds even on
+          a commit that is already deployed.
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches: [main, staging]
+    paths:
+      - "runner/**"
+      - "!runner/tests/**"
+      - "!runner/README.md"
+      - ".github/workflows/deploy-runner.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: runner-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-env:
+    name: Resolve deploy environment
+    if: >-
+      (github.ref_name == 'main' || vars.STAGING_DEPLOY_ENABLED == 'true')
+      && vars.RUNNER_IMAGE_BUILD_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      name: ${{ steps.values.outputs.name }}
+      role-arn: ${{ steps.values.outputs.role-arn }}
+      dependency-stamp: ${{ steps.stamp.outputs.dependency-stamp }}
+    steps:
+      - name: Resolve the environment values
+        id: values
+        env:
+          ENVIRONMENT: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
+          ROLE_TO_ASSUME: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ROLE_TO_ASSUME" ]; then
+            echo "vars.AWS_DEPLOY_ROLE_ARN is not set on the ${ENVIRONMENT} environment."
+            exit 1
+          fi
+          echo "Environment: ${ENVIRONMENT}"
+          echo "name=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "role-arn=${ROLE_TO_ASSUME}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the dependency resolution stamp
+        id: stamp
+        env:
+          FRESH_DEPENDENCIES: ${{ inputs.fresh-dependencies }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$FRESH_DEPENDENCIES" = "true" ]; then
+            STAMP="$RUN_ID"
+            echo "fresh-dependencies was requested, so the lock file is upgraded in the image."
+          else
+            STAMP="local"
+            echo "The image resolves from runner/uv.lock."
+          fi
+          echo "dependency-stamp=${STAMP}" >> "$GITHUB_OUTPUT"
+
+  build-image:
+    name: Build and push the runner image
+    needs: resolve-env
+    permissions:
+      contents: read
+      id-token: write
+    uses: WebbPulse/.github/.github/workflows/container-image.yml@v3
+    with:
+      environment: ${{ needs.resolve-env.outputs.name }}
+      ecr-repository: webbpulse-terraform/runner
+      aws-region: us-west-2
+      context: runner
+      dockerfile: runner/Dockerfile
+      platform: linux/arm64
+      build-args: |
+        DEPENDENCY_RESOLUTION=${{ needs.resolve-env.outputs.dependency-stamp }}
+      image-tag-suffix: ${{ inputs.fresh-dependencies == true && format('deps-{0}', github.run_id) || '' }}
+      upload-manifest-artifact: true
+    secrets:
+      role-to-assume: ${{ needs.resolve-env.outputs.role-arn }}
+
+  report:
+    name: Report the pushed image
+    needs: [resolve-env, build-image]
+    if: needs.build-image.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download the image manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: manifests
+          pattern: image-*
+          merge-multiple: true
+
+      - name: Write the image to the summary
+        env:
+          ENVIRONMENT: ${{ needs.resolve-env.outputs.name }}
+        run: |
+          set -euo pipefail
+          IMAGE=$(python3 -c '
+          import json, pathlib
+
+          paths = sorted(pathlib.Path("manifests").glob("*.json"))
+          print(json.loads(paths[0].read_text())["image_uri"] if paths else "none")
+          ')
+          {
+            echo "## Runner image"
+            echo
+            echo "Environment: \`${ENVIRONMENT}\`."
+            echo
+            echo "Image: \`${IMAGE}\`"
+            echo
+            echo "The task definitions read \`var.runner_image_tag\`, so point it at this"
+            echo "tag and apply to roll the runner forward."
+          } >> "$GITHUB_STEP_SUMMARY"
