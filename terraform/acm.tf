@@ -10,6 +10,8 @@ module "site_certificate" {
   enabled     = local.custom_domains_enabled
   domain_name = local.host
   zone_id     = local.records_zone_id
+
+  depends_on = [module.staging_dns]
 }
 
 module "api_certificate" {
@@ -24,4 +26,6 @@ module "api_certificate" {
   enabled     = local.custom_domains_enabled
   domain_name = local.api_host
   zone_id     = local.records_zone_id
+
+  depends_on = [module.staging_dns]
 }
