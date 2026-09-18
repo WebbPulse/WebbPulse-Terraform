@@ -32,7 +32,7 @@ variable "staging_profile" {
 }
 
 variable "route53_zone_id" {
-  description = "Route53 hosted zone ID of the parent zone (webbpulse.com), owned by the management account. Both environments write their hostname into it through route53_write_role_arn."
+  description = "Route53 hosted zone ID of the parent zone (webbpulse.com), owned by the management account. Production writes its hostname records into it through route53_write_role_arn; staging writes only the NS delegation of its child zone."
   type        = string
   default     = null
 
@@ -43,7 +43,7 @@ variable "route53_zone_id" {
 }
 
 variable "route53_write_role_arn" {
-  description = "IAM role ARN in the management account assumed to write this environment's records into the parent zone. Empty means write with the run role directly."
+  description = "IAM role ARN in the management account assumed to write into the parent zone: the hostname records in production, the child zone NS delegation in staging. Empty means write with the run role directly."
   type        = string
   default     = ""
 
