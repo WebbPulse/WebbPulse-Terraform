@@ -199,12 +199,13 @@ describe('TerraformApi runs', () => {
     expect(transport.requests[1]?.path).toBe('/api/v1/runs/run-1/cancel');
   });
 
-  it('discards through cancel with a discard intent', async () => {
+  it('discards on its own route', async () => {
     const { api, transport } = apiOver({
-      'POST /api/v1/runs/run-1/cancel': { body: aRun('discarded') },
+      'POST /api/v1/runs/run-1/discard': { body: aRun('discarded') },
     });
     expect((await api.discardRun('run-1')).state).toBe('discarded');
-    expect(transport.requests[0]?.body).toEqual({ discard: true });
+    expect(transport.requests[0]?.path).toBe('/api/v1/runs/run-1/discard');
+    expect(transport.requests[0]?.body).toEqual({});
   });
 
   it('sends the phase and the cursor on the logs route', async () => {

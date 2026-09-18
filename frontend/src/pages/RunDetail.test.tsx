@@ -75,6 +75,19 @@ describe('RunDetail', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('offers discard but not cancel on a planned run', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('planned'));
+
+    renderRun();
+
+    expect(
+      await screen.findByRole('button', { name: 'Discard' })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Cancel run' })
+    ).not.toBeInTheDocument();
+  });
+
   it('offers only cancel while a run is planning', async () => {
     apiMock.getRun.mockResolvedValue(aRun('planning'));
 

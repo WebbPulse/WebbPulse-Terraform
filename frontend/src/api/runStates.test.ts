@@ -27,34 +27,35 @@ describe('run state gating', () => {
     }
   });
 
-  it('discards a run waiting on a person, plan only included', () => {
-    expect(canDiscard(aRun('awaiting_confirmation'))).toBe(true);
-    expect(canDiscard(aRun('awaiting_confirmation', { plan_only: true }))).toBe(
-      true
-    );
-    expect(canDiscard(aRun('planning'))).toBe(false);
-    expect(canDiscard(aRun('applied'))).toBe(false);
+  it('discards a run holding a finished plan, plan only included', () => {
+    const discardable: RunState[] = ['planned', 'awaiting_confirmation'];
+    for (const state of discardable) {
+      expect(canDiscard(aRun(state))).toBe(true);
+      expect(canDiscard(aRun(state, { plan_only: true }))).toBe(true);
+    }
+    for (const state of RUN_STATES.filter(
+      (candidate) => !discardable.includes(candidate)
+    )) {
+      expect(canDiscard(aRun(state))).toBe(false);
+    }
   });
 
-  it('cancels every non terminal state except the one awaiting a person', () => {
-    const cancellable: RunState[] = [
-      'pending',
-      'planning',
-      'planned',
-      'applying',
-    ];
+  it('cancels only a phase that is running or queued', () => {
+    const cancellable: RunState[] = ['pending', 'planning', 'applying'];
     for (const state of cancellable) {
       expect(canCancel(aRun(state))).toBe(true);
     }
-    expect(canCancel(aRun('awaiting_confirmation'))).toBe(false);
-    for (const state of [
-      'applied',
-      'planned_and_finished',
-      'errored',
-      'cancelled',
-      'discarded',
-    ] as RunState[]) {
+    for (const state of RUN_STATES.filter(
+      (candidate) => !cancellable.includes(candidate)
+    )) {
       expect(canCancel(aRun(state))).toBe(false);
+    }
+  });
+
+  it('never offers cancel and discard on the same state', () => {
+    for (const state of RUN_STATES) {
+      const run = aRun(state);
+      expect(canCancel(run) && canDiscard(run)).toBe(false);
     }
   });
 

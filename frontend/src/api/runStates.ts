@@ -40,25 +40,38 @@ export function canConfirm(run: Run): boolean {
   return run.state === 'awaiting_confirmation' && !run.plan_only;
 }
 
+/** The states that hold a finished plan a person can throw away. */
+const DISCARDABLE_STATES: readonly RunState[] = [
+  'planned',
+  'awaiting_confirmation',
+];
+
 /**
  * Whether discarding is allowed.
  *
- * Discard throws away a plan nobody will apply, so it needs the same waiting
- * run confirm does, including a `plan_only` one whose plan is still held.
+ * Discard throws away a plan nobody will apply, so it covers a run holding a
+ * finished plan, whether or not the state machine has stored its confirmation
+ * task token yet.
  */
 export function canDiscard(run: Run): boolean {
-  return run.state === 'awaiting_confirmation';
+  return DISCARDABLE_STATES.includes(run.state);
 }
+
+/** The states with a phase running or queued that cancel can stop. */
+const CANCELLABLE_STATES: readonly RunState[] = [
+  'pending',
+  'planning',
+  'applying',
+];
 
 /**
  * Whether cancelling is allowed.
  *
- * Cancel stops work in flight or a run not yet started, so it covers every
- * non-terminal state except the one waiting on a person, which is discarded
- * rather than cancelled.
+ * Cancel only stops a phase that is running or queued. A run holding a
+ * finished plan is discarded instead.
  */
 export function canCancel(run: Run): boolean {
-  return !isTerminal(run.state) && run.state !== 'awaiting_confirmation';
+  return CANCELLABLE_STATES.includes(run.state);
 }
 
 /** How a state badge is coloured. */

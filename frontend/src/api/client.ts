@@ -317,20 +317,15 @@ export class TerraformApi {
     return response.data;
   }
 
-  /**
-   * Discards a plan nobody will apply.
-   *
-   * The contract lists no discard route, so this posts to `cancel` with a
-   * discard intent, which is what the backend slice is being asked to accept.
-   */
+  /** Discards a plan nobody will apply. */
   async discardRun(
     runId: string,
     body: { comment?: string } = {},
     options: RequestOptions = {}
   ): Promise<Run> {
     const response = await this.client.post<Run>(
-      `/runs/${encodeURIComponent(runId)}/cancel`,
-      { ...body, discard: true },
+      `/runs/${encodeURIComponent(runId)}/discard`,
+      body,
       options
     );
     return response.data;
