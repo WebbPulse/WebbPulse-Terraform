@@ -1,0 +1,224 @@
+"""The two routes the runner owns, and the token that gates them.
+
+The bundle carries decrypted sensitive variables and, on an apply, an
+unrestricted session policy, so the gate is the security boundary of this domain
+and is tested from every angle a caller could come at it.
+"""
+
+from fastapi.testclient import TestClient
+
+from app.domains.runs import service as runs_service
+from tests.conftest import mint_key
+
+BASE = "/api/v1/runs"
+
+
+def test_the_bundle_needs_a_token(client, created_run):
+    """No credential at all is a 401, not an anonymous bundle."""
+    assert client.get(f"{BASE}/{created_run['run_id']}/bundle").status_code == 401
+
+
+def test_a_human_scope_cannot_open_the_bundle(auth_client, created_run):
+    """A person's key, however scoped, is not a run token.
+
+    The bundle decrypts sensitive variables, so no human scope opens it. Only the
+    run's own minted token does.
+    """
+    response = auth_client.get(f"{BASE}/{created_run['run_id']}/bundle")
+    assert response.status_code == 401
+
+
+def test_another_runs_token_cannot_open_this_bundle(
+    app, auth_client, workspace, uploaded_config_version, state_machine, created_run
+):
+    """A run token is bound to its own run and no other.
+
+    Without the binding check any runner token would be a master key to every
+    run's variables, since all of them carry the same `runner` scope.
+    """
+    other = auth_client.post(
+        BASE,
+        json={
+            "workspace_id": workspace["workspace_id"],
+            "config_version_id": uploaded_config_version["config_version_id"],
+            "plan_only": False,
+        },
+    ).json()
+    runs_service.finish_run(created_run["run_id"], "applied")
+    assert runs_service.get_run(other["run_id"])["status"] == "planning"
+    token = runs_service.start_run(other["run_id"])["run_token"]
+
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as runner:
+        response = runner.get(f"{BASE}/{created_run['run_id']}/bundle")
+    assert response.status_code == 401
+
+
+def test_a_key_without_the_runner_scope_is_refused(app, created_run):
+    """A `wpk_` key minted with other scopes cannot stand in for a run token."""
+    token = mint_key("runs:read", "runs:write", "runs:apply")
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as caller:
+        response = caller.get(f"{BASE}/{created_run['run_id']}/bundle")
+    assert response.status_code == 401
+
+
+def test_a_garbage_token_is_refused(app, created_run):
+    """An unparseable bearer is a 401."""
+    with TestClient(app, headers={"Authorization": "Bearer wpk_not-a-real-key"}) as caller:
+        response = caller.get(f"{BASE}/{created_run['run_id']}/bundle")
+    assert response.status_code == 401
+
+
+def test_the_bundle_carries_the_engine_and_the_config(runner_client, created_run, workspace):
+    """The runner gets what it needs to fetch and run the configuration."""
+    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
+    assert body["run_id"] == created_run["run_id"]
+    assert body["engine"] == workspace["engine"]
+    assert body["engine_version"] == workspace["engine_version"]
+    assert body["config_url"].startswith("https://")
+    assert body["run_role_arn"] == workspace["run_role_arn"]
+
+
+def test_the_bundle_backend_config_enables_native_locking(runner_client, created_run, workspace):
+    """The backend points at this workspace's state key with lockfile locking.
+
+    `use_lockfile` is what makes S3 native locking hold, which is the only thing
+    stopping two runs from writing the same state.
+    """
+    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
+    backend = body["backend_config"]
+    assert backend["key"] == f"workspaces/{workspace['workspace_id']}/terraform.tfstate"
+    assert backend["use_lockfile"] is True
+    assert backend["bucket"]
+
+
+def test_the_bundle_carries_decrypted_variables(auth_client, runner_client, created_run, workspace):
+    """A sensitive value reaches the runner in the clear, split by category.
+
+    This is the one place a sealed value is opened, and the reason the route is
+    gated by a run token rather than a human scope.
+    """
+    workspace_id = workspace["workspace_id"]
+    auth_client.put(
+        f"/api/v1/workspaces/{workspace_id}/variables/secret_token",
+        json={"value": "super-secret", "category": "env", "sensitive": True},
+    )
+    auth_client.put(
+        f"/api/v1/workspaces/{workspace_id}/variables/region",
+        json={"value": "us-west-2", "category": "terraform", "sensitive": False},
+    )
+    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
+    assert body["env_variables"]["secret_token"] == "super-secret"
+    assert body["terraform_variables"]["region"] == "us-west-2"
+
+
+def test_the_bundle_carries_the_plan_artifact_urls(runner_client, created_run):
+    """The runner is handed both directions for its plan artifacts."""
+    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
+    artifacts = body["plan_artifacts"]
+    assert artifacts["plan_put_url"].startswith("https://")
+    assert artifacts["plan_json_put_url"].startswith("https://")
+    assert artifacts["plan_get_url"].startswith("https://")
+
+
+def test_the_plan_phase_gets_a_read_only_session_policy(runner_client, created_run):
+    """A planning run's policy grants no write outside its own artifacts.
+
+    A plan that could write is the whole risk being designed out here: the
+    read-only policy is what makes an unreviewed plan safe to run.
+    """
+    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
+    assert body["phase"] == "plan"
+    statements = body["session_policy"]["Statement"]
+    assert not any(statement.get("Action") == "*" for statement in statements)
+    assert any("ReadEverything" == statement.get("Sid") for statement in statements)
+
+
+def test_the_apply_phase_gets_an_unrestricted_session_policy(auth_client, runner_client, awaiting_confirmation):
+    """An applying run needs to make the changes its plan described."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    body = runner_client.get(f"{BASE}/{run_id}/bundle").json()
+    assert body["phase"] == "apply"
+    assert body["session_policy"]["Statement"][0]["Action"] == "*"
+
+
+def test_the_phase_comes_from_the_status_not_the_caller(runner_client, created_run):
+    """A plan-phase runner cannot request the apply policy by asking for it.
+
+    Deriving the phase from the stored status closes the escalation where a
+    compromised plan runner asks for the unrestricted policy.
+    """
+    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle", params={"phase": "apply"}).json()
+    assert body["phase"] == "plan"
+    assert body["session_policy"]["Statement"][0].get("Action") != "*"
+
+
+def test_a_token_cannot_open_a_bundle_for_another_id(runner_client):
+    """A token refuses an id that is not its own run, present or not.
+
+    The binding check runs before the lookup, so an absent run is a 401 rather
+    than a 404: the gate does not confirm which run ids exist.
+    """
+    assert runner_client.get(f"{BASE}/run-01JBQ0000000000000000000AA/bundle").status_code == 401
+
+
+def test_the_phase_result_needs_a_token(client, created_run):
+    """Reporting a phase without a run token is a 401."""
+    response = client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "plan", "exit_code": 0, "changes": {"add": 0, "change": 0, "destroy": 0}, "error": ""},
+    )
+    assert response.status_code == 401
+
+
+def test_a_human_scope_cannot_report_a_phase(auth_client, created_run):
+    """A person cannot report a plan result and skip the runner.
+
+    Otherwise a caller with `runs:write` could report a no-change plan and walk
+    the run to a terminal status without anything having run.
+    """
+    response = auth_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "plan", "exit_code": 0, "changes": {"add": 0, "change": 0, "destroy": 0}, "error": ""},
+    )
+    assert response.status_code == 401
+
+
+def test_the_runner_reports_a_plan_result(runner_client, created_run):
+    """The runner's own token advances the run."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "plan", "exit_code": 0, "changes": {"add": 1, "change": 0, "destroy": 0}, "error": ""},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["run_id"] == created_run["run_id"]
+    assert body["status"] == "awaiting_confirmation"
+
+
+def test_the_runner_reports_a_failure(runner_client, created_run):
+    """A reported failure errors the run."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "plan", "exit_code": 1, "changes": {}, "error": "boom"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "errored"
+
+
+def test_a_phase_result_for_the_wrong_phase_is_409(runner_client, created_run):
+    """An apply result on a planning run is refused at the route."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "apply", "exit_code": 0, "changes": {}, "error": ""},
+    )
+    assert response.status_code == 409
+
+
+def test_an_unknown_phase_is_422(runner_client, created_run):
+    """Only the two contract phases are accepted."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "destroy", "exit_code": 0, "changes": {}, "error": ""},
+    )
+    assert response.status_code == 422
