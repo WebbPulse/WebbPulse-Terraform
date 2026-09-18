@@ -154,8 +154,8 @@ module "api" {
     max_age           = 86400
   }
 
-  disable_execute_api_endpoint = local.staging_gate_enabled
-  authorizer_id                = local.staging_gate_enabled ? one(module.staging_access_gate[*].http_api_authorizer_id) : null
+  disable_execute_api_endpoint = local.staging_gate_authorizer_attached
+  authorizer_id                = local.staging_gate_authorizer_attached ? one(module.staging_access_gate[*].http_api_authorizer_id) : null
 
   identity_jwt = local.identity_jwt_native_enforced ? {
     issuer   = local.identity_issuer

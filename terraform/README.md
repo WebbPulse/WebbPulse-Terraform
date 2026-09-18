@@ -45,6 +45,17 @@ of its own, so the frontend takes `terraform.webbpulse.com` (staging
 `staging.terraform.webbpulse.com`) and the API takes `api.` in front of it,
 matching the Portfolio split.
 
+## Two stage bootstrap
+
+Two values are false on a greenfield environment and true afterwards:
+
+- `staging_gate_attach_api_authorizer`. The gate module decides whether to
+  create the origin-verify authorizer with `count` on `http_api_id`, and the
+  API id is unknown until the API exists, so a first plan with it on fails with
+  an invalid count argument.
+- `variables_master_key_keep`. The app secret's generated key cannot be read
+  back before the secret has a version.
+
 ## Staging profile
 
 `var.staging_profile` is `none`, `reduced` or `full`. With `none` the staging

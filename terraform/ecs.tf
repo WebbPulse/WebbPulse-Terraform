@@ -51,11 +51,21 @@ module "runner" {
         RUNNER_LOG_GROUP = aws_cloudwatch_log_group.runner.name
       }
 
-      task_policy_statements = local.runner_task_statements
-
       log_retention_days = 30
     }
   }
 
   tags = { Component = "runner" }
+}
+
+resource "aws_iam_role_policy" "runner_task" {
+  for_each = module.runner.task_role_ids
+
+  name = "task"
+  role = each.value
+
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.runner_task_statements
+  })
 }
