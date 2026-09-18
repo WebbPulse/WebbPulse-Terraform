@@ -1,0 +1,72 @@
+name: Deploy Frontend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, staging]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-env:
+    name: Resolve deploy environment
+    runs-on: ubuntu-latest
+    if: github.ref_name == 'main' || vars.STAGING_DEPLOY_ENABLED == 'true'
+    environment: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
+    outputs:
+      environment: ${{ steps.pick.outputs.environment }}
+      s3-bucket: ${{ vars.FRONTEND_S3_BUCKET }}
+      cloudfront-distribution-id: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+      role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      build-env-json: ${{ steps.pick.outputs.build-env-json }}
+    steps:
+      - name: Republish environment values as job outputs
+        id: pick
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=staging" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "$API_BASE_URL" ]; then
+            BUILD_ENV=$(API_BASE_URL="$API_BASE_URL" python3 -c \
+              'import json, os; print(json.dumps({"VITE_API_BASE_URL": os.environ["API_BASE_URL"] + "/api/v1"}))')
+          else
+            BUILD_ENV='{}'
+          fi
+          echo "build-env-json=$BUILD_ENV" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Build and publish the SPA
+    needs: resolve-env
+    uses: WebbPulse/.github/.github/workflows/spa-deploy.yml@v3
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ needs.resolve-env.outputs.environment }}
+      node-version: "22"
+      working-directory: frontend
+      install-command: >-
+        npm ci && npm update $(node -p "const p=require('./package.json');Object.keys({...p.dependencies,...p.devDependencies}).filter(n=>n.startsWith('@webbpulse/')).join(' ')") && { npm ls --depth=0 2>/dev/null | grep @webbpulse || true; }
+      cache-dependency-path: frontend/package-lock.json
+      build-env-json: ${{ needs.resolve-env.outputs.build-env-json }}
+      s3-bucket: ${{ needs.resolve-env.outputs.s3-bucket }}
+      cloudfront-distribution-id: ${{ needs.resolve-env.outputs.cloudfront-distribution-id }}
+      invalidate-cloudfront: false
+      aws-region: us-west-2
+      codeartifact-domain: webbpulse
+      codeartifact-repository: npm
+      codeartifact-namespace: "@webbpulse"
+      concurrency-group: frontend-deploy-${{ github.ref_name }}
+    secrets:
+      role-to-assume: ${{ needs.resolve-env.outputs.role-to-assume }}
+      codeartifact-domain-owner: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
