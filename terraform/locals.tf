@@ -21,8 +21,8 @@ locals {
   host     = var.environment == "production" ? "terraform.${local.parent_domain}" : "staging.terraform.${local.parent_domain}"
   api_host = "api.${local.host}"
 
-  workload_dns_role_arn = var.route53_write_role_arn
-  records_zone_id       = var.route53_zone_id
+  workload_dns_role_arn = var.environment == "production" ? var.route53_write_role_arn : ""
+  records_zone_id       = var.environment == "production" ? var.route53_zone_id : module.staging_dns.zone_id
 
   frontend_url = module.frontend.frontend_url
   api_url      = module.api.api_url

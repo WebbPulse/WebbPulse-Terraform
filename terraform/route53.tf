@@ -1,3 +1,17 @@
+module "staging_dns" {
+  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/staging-dns"
+  version = "2.24.0"
+
+  providers = {
+    aws        = aws
+    aws.parent = aws.parent_dns
+  }
+
+  enabled        = var.environment != "production" && local.custom_domains_enabled
+  zone_name      = local.host
+  parent_zone_id = var.route53_zone_id
+}
+
 resource "aws_route53_record" "site" {
   count    = local.custom_domain_count
   provider = aws.dns
