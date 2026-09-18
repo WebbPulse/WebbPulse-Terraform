@@ -112,7 +112,7 @@ locals {
 
 module "api" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/http-api"
-  version = "2.24.0"
+  version = "2.25.1"
 
   name = "${local.prefix}-api"
 
@@ -125,12 +125,12 @@ module "api" {
 
   default_integration = null
 
-  routes = merge(
+  routes = local.domain_functions_enabled ? merge(
     { "GET /health" = { integration = "workspaces" } },
     local.workspaces_routes,
     local.runs_routes,
     local.auth_routes,
-  )
+  ) : {}
 
   throttling_burst_limit = 100
   throttling_rate_limit  = 50
@@ -162,7 +162,7 @@ module "api" {
     audience = local.identity_audience
   } : null
 
-  identity_jwt_depends_on = local.identity_jwt_native_enforced ? [module.lambda_domain["workspaces"]] : []
+  identity_jwt_depends_on = local.identity_jwt_native_enforced && local.domain_functions_enabled ? [module.lambda_domain["workspaces"]] : []
 
   domain_name     = local.custom_domains_enabled ? local.api_host : null
   certificate_arn = module.api_certificate.certificate_arn

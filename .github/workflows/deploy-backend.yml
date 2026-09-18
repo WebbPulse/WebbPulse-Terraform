@@ -341,14 +341,107 @@ jobs:
           retention-days: 7
           overwrite: true
 
-  deploy-images:
-    name: Point each function at its new image
+  existing-functions:
+    name: Drop the functions that do not exist yet
     needs: [resolve-env, image-map]
     if: >-
-      needs.image-map.result == 'success'
+      always()
+      && needs.image-map.result == 'success'
       && vars.BACKEND_IMAGE_DEPLOY_ENABLED == 'true'
       && needs.image-map.outputs.function-image-map != ''
       && needs.image-map.outputs.function-image-map != '{}'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.name }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      function-image-map: ${{ steps.filter.outputs.function-image-map }}
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ needs.resolve-env.outputs.role-arn }}
+          aws-region: us-west-2
+
+      - name: Drop the functions that do not exist yet
+        id: filter
+        env:
+          FUNCTION_IMAGE_MAP: ${{ needs.image-map.outputs.function-image-map }}
+        run: |
+          set -euo pipefail
+
+          FUNCTIONS=$(printf '%s' "$FUNCTION_IMAGE_MAP" \
+            | python3 -c 'import json,sys; print("\n".join(sorted(json.load(sys.stdin))))')
+
+          PRESENT=""
+          MISSING=""
+          while IFS= read -r FUNCTION; do
+            [ -n "$FUNCTION" ] || continue
+            set +e
+            ERR=$(aws lambda get-function-configuration \
+              --function-name "$FUNCTION" \
+              --query 'FunctionName' --output text 2>&1 >/dev/null)
+            STATUS=$?
+            set -e
+
+            if [ "$STATUS" -eq 0 ]; then
+              PRESENT="${PRESENT}${FUNCTION}\n"
+              continue
+            fi
+
+            case "$ERR" in
+              *ResourceNotFoundException*|*"Function not found"*)
+                MISSING="${MISSING}${FUNCTION}\n"
+                ;;
+              *)
+                echo "$ERR"
+                echo "get-function-configuration failed for ${FUNCTION} for a reason other than the function not existing."
+                exit 1
+                ;;
+            esac
+          done <<< "$FUNCTIONS"
+
+          printf '%s' "$FUNCTION_IMAGE_MAP" \
+            | PRESENT="$(printf "%b" "$PRESENT")" python3 -c '
+          import json, os, sys
+
+          full = json.load(sys.stdin)
+          present = {n for n in os.environ["PRESENT"].split("\n") if n}
+          json.dump({k: v for k, v in full.items() if k in present}, open("deploy-map.json", "w"), indent=2)
+          '
+
+          MAP=$(python3 -c 'import json; print(json.dumps(json.load(open("deploy-map.json"))))')
+          echo "function-image-map=${MAP}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Deploy targets"
+            echo
+            if [ -n "$PRESENT" ]; then
+              echo "Deploying:"
+              echo
+              printf "%b" "$PRESENT" | sed 's/^/- `/; s/$/`/'
+            else
+              echo "No domain function exists yet, so nothing is deployed. The images"
+              echo "are built and pushed; the first apply with a non-empty"
+              echo "bootstrap_image_tag creates the functions and the next run"
+              echo "deploys them."
+            fi
+            if [ -n "$MISSING" ]; then
+              echo
+              echo "Not created yet, skipped:"
+              echo
+              printf "%b" "$MISSING" | sed 's/^/- `/; s/$/`/'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-images:
+    name: Point each function at its new image
+    needs: [resolve-env, existing-functions]
+    if: >-
+      needs.existing-functions.result == 'success'
+      && needs.existing-functions.outputs.function-image-map != ''
+      && needs.existing-functions.outputs.function-image-map != '{}'
     permissions:
       contents: read
       id-token: write
@@ -356,7 +449,7 @@ jobs:
     with:
       environment: ${{ needs.resolve-env.outputs.name }}
       aws-region: us-west-2
-      function-image-map: ${{ needs.image-map.outputs.function-image-map }}
+      function-image-map: ${{ needs.existing-functions.outputs.function-image-map }}
       publish-version: true
       concurrency-group: backend-image-deploy-${{ needs.resolve-env.outputs.name }}
     secrets:
@@ -364,7 +457,7 @@ jobs:
 
   smoke-domains:
     name: Smoke test each domain function
-    needs: [resolve-env, image-map, deploy-images]
+    needs: [resolve-env, existing-functions, deploy-images]
     if: needs.deploy-images.result == 'success'
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.name }}
@@ -380,7 +473,7 @@ jobs:
 
       - name: Probe each domain function
         env:
-          FUNCTION_IMAGE_MAP: ${{ needs.image-map.outputs.function-image-map }}
+          FUNCTION_IMAGE_MAP: ${{ needs.existing-functions.outputs.function-image-map }}
         run: |
           set -euo pipefail
 

@@ -24,11 +24,13 @@ variable "run_concurrency_cap" {
 
 module "run_state_machine" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/step-functions"
-  version = "2.24.0"
+  version = "2.25.1"
 
   name = "${local.prefix}-run"
 
-  definition = templatefile("${path.module}/state_machines/run.asl.json", {
+  definition = file("${path.module}/state_machines/run.asl.json")
+
+  definition_substitutions = {
     RunsTable    = module.dynamodb.table_names["runs"]
     SemaphoreCap = tostring(var.run_concurrency_cap)
     ClusterArn   = module.runner.cluster_arn
@@ -47,7 +49,7 @@ module "run_state_machine" {
     PlanTimeoutSeconds         = tostring(var.plan_timeout_seconds)
     ApplyTimeoutSeconds        = tostring(var.apply_timeout_seconds)
     ConfirmationTimeoutSeconds = tostring(var.confirmation_timeout_seconds)
-  })
+  }
 
   policy_statements = [
     {

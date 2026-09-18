@@ -66,9 +66,14 @@ variable "staging_access_users" {
 }
 
 variable "bootstrap_image_tag" {
-  description = "Image tag seeding every per-domain function at create time. It must already exist in the workspaces and runs ECR repositories; image_uri is ignored thereafter, so deploys own it."
+  description = "Image tag every per-domain function is seeded from at create time. Lambda resolves the tag during CreateFunction, so it must already exist in the workspaces and runs ECR repositories before the apply. The empty string resolves the domain map to empty, which is how a fresh account applies once with no images in ECR. image_uri is ignored after create, so deploys own it."
   type        = string
-  default     = "bootstrap"
+  default     = ""
+
+  validation {
+    condition     = var.bootstrap_image_tag == "" || can(regex("^sha-[0-9a-f]{40}$", var.bootstrap_image_tag))
+    error_message = "bootstrap_image_tag must be sha- followed by a full 40 character commit sha, which is the tag the container image build pushes, or the empty string to bootstrap an account whose ECR repositories hold no images yet."
+  }
 }
 
 variable "runner_image_tag" {

@@ -1,6 +1,6 @@
 module "site_certificate" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/acm-certificate"
-  version = "2.24.0"
+  version = "2.25.1"
 
   providers = {
     aws         = aws.us_east_1
@@ -16,7 +16,7 @@ module "site_certificate" {
 
 module "api_certificate" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/acm-certificate"
-  version = "2.24.0"
+  version = "2.25.1"
 
   providers = {
     aws         = aws
