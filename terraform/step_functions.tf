@@ -34,6 +34,8 @@ module "run_state_machine" {
     ClusterArn   = module.runner.cluster_arn
     ApiBaseUrl   = local.api_url
 
+    ConfirmationsQueueUrl = module.run_confirmations.queue_url
+
     PlanTaskDefinitionArn  = module.runner.task_definition_family_arns["plan"]
     ApplyTaskDefinitionArn = module.runner.task_definition_family_arns["apply"]
     PlanContainerName      = module.runner.container_names["plan"]
@@ -76,6 +78,11 @@ module "run_state_machine" {
       sid       = "MarkRunsAndHoldTheSemaphore"
       actions   = ["dynamodb:UpdateItem", "dynamodb:GetItem"]
       resources = [module.dynamodb.table_arns["runs"]]
+    },
+    {
+      sid       = "AskForAConfirmation"
+      actions   = ["sqs:SendMessage"]
+      resources = [module.run_confirmations.queue_arn]
     },
   ]
 

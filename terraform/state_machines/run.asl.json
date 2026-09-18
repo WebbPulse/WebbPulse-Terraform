@@ -107,15 +107,13 @@
 
     "AwaitConfirmation": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::dynamodb:updateItem.waitForTaskToken",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
       "Parameters": {
-        "TableName": "${RunsTable}",
-        "Key": { "run_id.$": "$.run_id" },
-        "UpdateExpression": "SET #status = :status, confirm_task_token = :token",
-        "ExpressionAttributeNames": { "#status": "status" },
-        "ExpressionAttributeValues": {
-          ":status": { "S": "awaiting_confirmation" },
-          ":token": { "S.$": "$$.Task.Token" }
+        "QueueUrl": "${ConfirmationsQueueUrl}",
+        "MessageBody": {
+          "kind": "run_confirmation_requested",
+          "run_id.$": "$.run_id",
+          "task_token.$": "$$.Task.Token"
         }
       },
       "TimeoutSeconds": ${ConfirmationTimeoutSeconds},

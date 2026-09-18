@@ -137,3 +137,8 @@ output "e2e_gate_cookie_domain" {
   description = "Domain the gate's signed cookies are scoped to, set as the E2E_GATE_COOKIE_DOMAIN environment variable. Null when the gate is off"
   value       = one(module.staging_access_gate[*].cookie_domain)
 }
+
+output "run_confirmations_queue_url" {
+  description = "URL of the queue the state machine sends a confirmation request to, carrying the task token the runs domain resumes the execution with"
+  value       = module.run_confirmations.queue_url
+}

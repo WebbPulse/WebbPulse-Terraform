@@ -32,6 +32,7 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `identity.tf`, `app_secrets.tf` | The identity platform module and the single JSON `app` secret |
 | `vpc.tf`, `ecs.tf`, `runner_logs.tf` | The public-only VPC, the Fargate cluster and the two phase task definitions, the runner log group |
 | `step_functions.tf`, `state_machines/run.asl.json` | The per-run state machine |
+| `sqs.tf` | The run confirmations queue the state machine's task token is sent through |
 | `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, the certificates and the alias records |
 | `staging_access_gate.tf` | Staging only, the email gate in front of the site and the API |
 | `iam_github_actions.tf` | The deploy and CI OIDC roles |

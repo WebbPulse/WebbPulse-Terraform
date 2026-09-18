@@ -1,6 +1,8 @@
 locals {
   project = "webbpulse-terraform"
 
+  lambda_domain_timeout = 30
+
   env_slug = var.environment == "production" ? "prod" : "staging"
 
   prefix = "${local.project}-${local.env_slug}"
