@@ -1,0 +1,115 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/backend-ci.yml'
+
+  affected:
+    name: Resolve the affected domains
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      domains: ${{ steps.affected.outputs.domains }}
+      shared: ${{ steps.affected.outputs.shared }}
+      reason: ${{ steps.affected.outputs.reason }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # An all-zero sha is what a push event reports for a branch's first push, and
+      # it resolves to nothing, so it is passed through as an empty base, which the
+      # action reports as unknown and answers with every domain.
+      - name: Resolve the base commit
+        id: base
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          BASE="${PR_BASE_SHA:-$PUSH_BEFORE_SHA}"
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE=""
+          fi
+          if [ -n "$BASE" ] && ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$BASE" || true
+          fi
+          echo "Base: ${BASE:-none, so every domain}"
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
+
+      # backend-ci.yml is deliberately not in extra-full-paths: a change to the CI
+      # workflow cannot change which tests cover which domain, and the changes job
+      # already gates the backend job on it, so a workflow-only PR runs lint, type
+      # check and security over the whole tree and no test shard.
+      - name: Work out the affected domains
+        id: affected
+        uses: WebbPulse/.github/actions/affected-domains@v3
+        with:
+          working-directory: backend
+          base: ${{ steps.base.outputs.base }}
+          head: ${{ github.sha }}
+          mode: ci
+
+  backend:
+    name: Backend
+    needs: [changes, affected]
+    if: needs.changes.outputs.backend == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: WebbPulse/.github/.github/workflows/python-ci.yml@v3
+    with:
+      python-version: "3.13"
+      working-directory: backend
+      install-command: >-
+        uv lock --check &&
+        uv lock --upgrade-package webbpulse &&
+        uv sync --locked &&
+        uv run --no-sync python -c "import importlib.metadata as m; print('webbpulse', m.version('webbpulse'))"
+      ruff-target: "app tests"
+      typecheck-command: pyright
+      security-commands: |
+        bandit -r app -ll
+        uv export --frozen --no-dev --no-emit-project --no-hashes --no-emit-package webbpulse -o /tmp/requirements-audit.txt && pip-audit --no-deps -r /tmp/requirements-audit.txt
+      coverage-source: app
+      pytest-args: ""
+      domains-filter: ${{ needs.affected.outputs.domains }}
+      run-shared: ${{ needs.affected.outputs.shared == 'true' }}
+      codeartifact-domain: webbpulse
+      aws-region: us-west-2
+    secrets:
+      role-to-assume: ${{ vars.CI_AWS_ROLE_ARN }}
+      codeartifact-domain-owner: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
