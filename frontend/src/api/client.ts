@@ -33,7 +33,7 @@ import type {
 const config = loadAppConfig(import.meta.env, {
   defaultApiBaseUrl:
     import.meta.env.MODE === 'production'
-      ? 'https://terraform.webbpulse.com/api/v1'
+      ? 'https://api.terraform.webbpulse.com/api/v1'
       : 'http://localhost:8000/api/v1',
   defaultAppName: 'WebbPulse Terraform',
 });

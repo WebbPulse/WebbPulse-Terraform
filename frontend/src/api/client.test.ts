@@ -9,7 +9,7 @@ import {
 import { mockFetch } from '../test-helpers/mockFetch';
 import { TerraformApi, describeError, uploadConfigTarball } from './client';
 
-const BASE = 'https://staging.terraform.webbpulse.com/api/v1';
+const BASE = 'https://api.staging.terraform.webbpulse.com/api/v1';
 
 /** An API over a route table, with the recorded requests beside it. */
 function apiOver(routes: Parameters<typeof mockFetch>[0]): {

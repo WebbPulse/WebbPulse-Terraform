@@ -45,16 +45,16 @@ which `codeartifact login` requires. CI obtains its token over OIDC.
 
 ## Scripts
 
-| Command                          | What it does                                                 |
-| -------------------------------- | ------------------------------------------------------------ |
-| `npm run dev:local`              | Dev server on :5173, proxying `/api` to localhost:8000       |
-| `npm run dev:remote-api`         | Dev server against `https://staging.terraform.webbpulse.com` |
-| `npm run build`                  | `tsc -b` then a Vite production build                        |
-| `npm run lint`, `lint:fix`       | ESLint                                                       |
-| `npm run format`, `format:check` | Prettier                                                     |
-| `npm run test`                   | Vitest in watch mode                                         |
-| `npm run test:run`               | Vitest once. CI appends `-- --coverage`                      |
-| `npm run preview`                | Serve the built bundle                                       |
+| Command                          | What it does                                                     |
+| -------------------------------- | ---------------------------------------------------------------- |
+| `npm run dev:local`              | Dev server on :5173, proxying `/api` to localhost:8000           |
+| `npm run dev:remote-api`         | Dev server against `https://api.staging.terraform.webbpulse.com` |
+| `npm run build`                  | `tsc -b` then a Vite production build                            |
+| `npm run lint`, `lint:fix`       | ESLint                                                           |
+| `npm run format`, `format:check` | Prettier                                                         |
+| `npm run test`                   | Vitest in watch mode                                             |
+| `npm run test:run`               | Vitest once. CI appends `-- --coverage`                          |
+| `npm run preview`                | Serve the built bundle                                           |
 
 There is no `npm run dev`. Use `dev:local`.
 
@@ -63,9 +63,9 @@ There is no `npm run dev`. Use `dev:local`.
 The bundle's configuration comes from the deploy workflow's build step only.
 There is no `.env` file.
 
-| Variable            | Meaning                                                                                                                           |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `VITE_API_BASE_URL` | API base. Defaults to `https://terraform.webbpulse.com/api/v1` in a production build and `http://localhost:8000/api/v1` otherwise |
+| Variable            | Meaning                                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_API_BASE_URL` | API base. Defaults to `https://api.terraform.webbpulse.com/api/v1` in a production build and `http://localhost:8000/api/v1` otherwise |
 
 In local dev Vite proxies `/api/*` to `http://localhost:8000`, so neither needs
 setting.
