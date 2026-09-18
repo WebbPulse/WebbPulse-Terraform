@@ -62,6 +62,9 @@ def build_app(settings: Settings | None = None) -> "FastAPI":
                 prefix=domain.router_prefix,
                 tags=list(domain.router_tags),
             )
+        if domain.load_unprefixed_routers is not None:
+            for router in domain.load_unprefixed_routers(resolved):
+                app.include_router(router)
 
     if resolved.ENVIRONMENT.strip().lower() == LOCAL_ENVIRONMENT and resolved.IDENTITY_ISSUER:
         app.add_middleware(

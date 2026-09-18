@@ -18,7 +18,6 @@ from webbpulse.dynamodb import ConditionFailed, new_ulid, now_iso
 from ...common.composition.settings import Settings, get_settings
 from ...common.core import variable_cipher
 from ...common.db import repositories
-from ...common.db.conditions import condition_failed
 from ...common.db.tables import (
     CONFIG_VERSIONS_BY_WORKSPACE_INDEX,
     WORKSPACES_BY_NAME_INDEX,
@@ -78,8 +77,7 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "created_at": now_iso(),
     }
     try:
-        with condition_failed(repository.table_name, key={"workspace_id": item["workspace_id"]}):
-            repository.put(item, condition=Attr("workspace_id").not_exists())
+        repository.put(item, condition=Attr("workspace_id").not_exists())
     except ConditionFailed as error:
         raise WorkspaceNameTaken(name) from error
     return item
@@ -134,15 +132,14 @@ def update_workspace(
     expression = "SET " + ", ".join(f"#{key} = :{key}" for key in applied)
     repository = repositories.workspaces(resolved)
     try:
-        with condition_failed(repository.table_name, key={"workspace_id": workspace_id}):
-            updated = repository.update(
-                {"workspace_id": workspace_id},
-                update_expression=expression,
-                expression_names=names,
-                expression_values=values,
-                condition=Attr("workspace_id").exists(),
-                return_values="ALL_NEW",
-            )
+        updated = repository.update(
+            {"workspace_id": workspace_id},
+            update_expression=expression,
+            expression_names=names,
+            expression_values=values,
+            condition=Attr("workspace_id").exists(),
+            return_values="ALL_NEW",
+        )
     except ConditionFailed as error:
         raise WorkspaceNotFound(workspace_id) from error
     if updated is None:

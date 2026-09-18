@@ -11,10 +11,11 @@ app/
   common/
     composition/   settings, the domain map and both composition roots
     core/          auth, middleware, logging, the variable cipher
-    db/            table names, repositories, condition helpers
+    db/            table names and repositories
   domains/
     workspaces/    workspaces, variables, config versions
     runs/          runs, the runner's bundle and phase results
+      consumers/   the confirmations queue route
 tests/
   common/          the auth chain and every route's scope guard
   domains/<name>/  one directory per domain, which is how CI shards
@@ -27,6 +28,16 @@ for local work and the suite. `app/domains/<name>/entrypoint.py` is what that
 domain's Lambda runs, and carries only its own routes.
 
 ## Commands
+
+`webbpulse` is served from CodeArtifact, so point uv at it before the first
+`uv sync` or `uv lock`. The token lasts twelve hours.
+
+```bash
+export UV_INDEX_CODEARTIFACT_USERNAME=aws
+export UV_INDEX_CODEARTIFACT_PASSWORD="$(aws codeartifact get-authorization-token \
+  --domain webbpulse --domain-owner 432410731887 --region us-west-2 \
+  --query authorizationToken --output text)"
+```
 
 ```bash
 uv sync                      # install, including dev dependencies
@@ -83,3 +94,20 @@ S3 state lock.
 A run's phase comes from its stored status, never from the caller, because the
 plan phase gets a read-only IAM session policy and the apply phase an
 unrestricted one.
+
+## The confirmations queue
+
+A Step Functions DynamoDB integration cannot carry a task token, so the state
+machine sends `{"kind": "run_confirmation_requested", "run_id", "task_token"}`
+to `webbpulse-terraform-<env>-run-confirmations` instead. The runs function
+consumes it through an event source mapping with a batch size of one and
+`ReportBatchItemFailures`, which makes the Lambda Web Adapter post the batch to
+`AWS_LWA_PASS_THROUGH_PATH`. `app/domains/runs/consumers/confirmations.py` mounts
+that route with `webbpulse.events` and stores the token, conditionally on the run
+still awaiting a confirmation.
+
+The route mounts at the root rather than under `/api/v1`, and the HTTP API never
+lists it, so the only way to reach it is the adapter's pass-through. A record
+that cannot be stored is returned as a batch item failure, which retries the
+message and eventually parks it rather than losing a token an execution is
+blocked on.

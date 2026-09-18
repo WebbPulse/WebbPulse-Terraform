@@ -270,17 +270,17 @@ def runner_client(app, created_run):
 
 
 @pytest.fixture
-def awaiting_confirmation(created_run):
-    """A run that planned with changes and is waiting on a human.
+def planned_with_changes(created_run):
+    """A run whose plan found changes, before its task token has arrived.
 
-    Driven through the real phase-result transition rather than written into the
-    table, so the state under test is one the state machine can actually produce.
+    The state the confirmations queue message is sent against: the phase result has
+    moved the run to `awaiting_confirmation` and the state machine has reached
+    `AwaitConfirmation`, but nothing has consumed the message yet.
     """
     from app.domains.runs import service as runs_service
 
-    run_id = created_run["run_id"]
     runs_service.record_phase_result(
-        run_id,
+        created_run["run_id"],
         {
             "phase": "plan",
             "exit_code": 0,
@@ -288,5 +288,23 @@ def awaiting_confirmation(created_run):
             "error": "",
         },
     )
-    runs_service.store_confirm_task_token(run_id, "task-token-for-confirmation")
+    return runs_service.get_run(created_run["run_id"])
+
+
+@pytest.fixture
+def awaiting_confirmation(planned_with_changes):
+    """A run that planned with changes and is holding its confirmation task token.
+
+    Driven through the real phase-result transition rather than written into the
+    table, so the state under test is one the state machine can actually produce.
+    The token is stored the way the consumer stores it.
+    """
+    from app.domains.runs import service as runs_service
+
+    run_id = planned_with_changes["run_id"]
+    runs_service.store_confirm_task_token(
+        run_id,
+        "task-token-for-confirmation",
+        expected_statuses=frozenset(runs_service.CONFIRMABLE_STATUSES),
+    )
     return runs_service.get_run(run_id)

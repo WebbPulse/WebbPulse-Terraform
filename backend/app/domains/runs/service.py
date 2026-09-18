@@ -23,10 +23,8 @@ from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, Repository, new_ulid, now_iso
 
 from ...common.composition.settings import Settings, get_settings
-from ...common.core import artifacts
 from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store
 from ...common.db import repositories
-from ...common.db.conditions import condition_failed
 from ...common.db.tables import RUNS_BY_WORKSPACE_INDEX
 from ..workspaces import service as workspaces_service
 from . import session_policy
@@ -207,9 +205,7 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
     if blocking is not None:
         item["queued_behind"] = str(blocking["run_id"])
 
-    runs_repository = _runs(resolved)
-    with condition_failed(runs_repository.table_name, key={"run_id": run_id}):
-        runs_repository.put(item, condition=Attr("run_id").not_exists())
+    _runs(resolved).put(item, condition=Attr("run_id").not_exists())
 
     if blocking is not None:
         return item
@@ -318,17 +314,15 @@ def _update_run(
             allowed = allowed | Attr("status").eq(status)
         condition = condition & allowed
 
-    repository = _runs(settings)
     try:
-        with condition_failed(repository.table_name, key={"run_id": run_id}):
-            result = repository.update(
-                {"run_id": run_id},
-                update_expression=expression,
-                expression_values=values,
-                expression_names=names,
-                condition=condition,
-                return_values="ALL_NEW",
-            )
+        result = _runs(settings).update(
+            {"run_id": run_id},
+            update_expression=expression,
+            expression_values=values,
+            expression_names=names,
+            condition=condition,
+            return_values="ALL_NEW",
+        )
     except ConditionFailed as error:
         raise RunNotFound(run_id) from error
     return dict(result or {})
@@ -573,15 +567,31 @@ def store_confirm_task_token(
     run_id: str,
     task_token: str,
     *,
+    expected_statuses: frozenset[str] | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Store the confirmation task token the state machine is waiting on.
 
-    Called by the state machine's wait step, not by a person, which is why the run
-    is already `awaiting_confirmation` by the time the token lands.
+    Reached through the confirmations queue rather than by a person: the state
+    machine sends the token to SQS and the consumer lands it here.
+
+    Args:
+        run_id: The run the token belongs to.
+        task_token: The Step Functions task token a confirm resumes.
+        expected_statuses: Statuses the write is conditional on, so a token cannot
+            land on a run that already finished. `None` writes unconditionally.
+        settings: Settings override, for the suite.
+
+    Raises:
+        RunNotFound: No such run, or it is not in `expected_statuses`.
     """
     resolved = settings or get_settings()
-    return _update_run(run_id, {"confirm_task_token": task_token}, settings=resolved)
+    return _update_run(
+        run_id,
+        {"confirm_task_token": task_token},
+        settings=resolved,
+        expected_statuses=expected_statuses,
+    )
 
 
 def run_logs(
@@ -652,6 +662,8 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         WorkspaceNotFound: The workspace was deleted under the run.
         ConfigVersionNotFound: The config version was deleted under the run.
     """
+    from webbpulse.storage import presigned_get
+
     resolved = settings or get_settings()
     run = get_run(run_id, settings=resolved)
     workspace_id = str(run["workspace_id"])
@@ -674,13 +686,13 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "engine": str(workspace.get("engine", "terraform")),
         "engine_version": str(workspace.get("engine_version", "")),
         "working_directory": str(workspace.get("working_directory", "")),
-        "config_url": artifacts.presigned_get(
+        "config_url": presigned_get(
             resolved.ARTIFACTS_BUCKET,
             str(config_version["key"]),
             ARTIFACT_URL_TTL,
             region_name=region,
             endpoint_url=endpoint,
-        ),
+        ).url,
         "backend_config": {
             "bucket": resolved.STATE_BUCKET,
             "key": workspace_state_key,
@@ -704,7 +716,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
 
 def _plan_artifacts(run_id: str, *, settings: Settings) -> dict[str, str]:
     """Presigned URLs for one run's plan artifacts, both directions."""
-    from webbpulse.storage import presigned_put
+    from webbpulse.storage import presigned_get, presigned_put
 
     region = settings.AWS_REGION_NAME
     endpoint = settings.s3_endpoint_url
@@ -728,13 +740,13 @@ def _plan_artifacts(run_id: str, *, settings: Settings) -> dict[str, str]:
             region_name=region,
             endpoint_url=endpoint,
         ).url,
-        "plan_get_url": artifacts.presigned_get(
+        "plan_get_url": presigned_get(
             bucket,
             plan_key(run_id),
             ARTIFACT_URL_TTL,
             region_name=region,
             endpoint_url=endpoint,
-        ),
+        ).url,
     }
 
 

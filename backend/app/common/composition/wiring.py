@@ -38,6 +38,12 @@ class Domain:
     title: str
     load_routers: Callable[[], "list[APIRouter]"]
     """Called lazily, so importing this module imports no domain package."""
+    load_unprefixed_routers: Callable[[Settings], "list[APIRouter]"] | None = None
+    """Routers that mount at the root rather than under `API_PREFIX`.
+
+    The consumer routes: the Lambda Web Adapter posts a queue invocation to its own
+    pass-through path, which is outside `/api/v1`, and the HTTP API never routes it.
+    Called lazily with the resolved settings, for the same reason `load_routers` is."""
     router_prefix: str = API_PREFIX
     """Where this domain's routers mount, so both roots supply the same prefix."""
     router_tags: tuple[str, ...] = ()
@@ -65,6 +71,17 @@ def _runs_routers() -> "list[APIRouter]":
     return [router]
 
 
+def _runs_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
+    """The confirmations consumer's route, at the adapter's pass-through path.
+
+    Unprefixed because a prefix would leave the event source mapping posting to a
+    path the application does not serve, which every confirmation would then fail on.
+    """
+    from app.domains.runs.consumers.confirmations import build_router
+
+    return [build_router(settings)]
+
+
 DOMAINS: Final[dict[str, Domain]] = {
     "workspaces": Domain(
         name="workspaces",
@@ -76,6 +93,7 @@ DOMAINS: Final[dict[str, Domain]] = {
         name="runs",
         title="WebbPulse Terraform runs",
         load_routers=_runs_routers,
+        load_unprefixed_routers=_runs_unprefixed_routers,
         router_tags=("runs",),
     ),
 }
@@ -111,6 +129,10 @@ def build_domain_app(domain: Domain | str, *, settings: Settings | None = None) 
             prefix=resolved_domain.router_prefix,
             tags=list(resolved_domain.router_tags),
         )
+
+    if resolved_domain.load_unprefixed_routers is not None:
+        for router in resolved_domain.load_unprefixed_routers(resolved):
+            app.include_router(router)
 
     app.add_middleware(TrailingSlashMiddleware, router=app.router)
     app.add_middleware(DomainHeaderMiddleware, domain=resolved_domain.name)
