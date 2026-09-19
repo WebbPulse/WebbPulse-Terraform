@@ -16,10 +16,13 @@ locals {
         Resource = ["${aws_cloudwatch_log_group.runner.arn}:*"]
       },
       {
-        Sid      = "AssumeAnyWorkspaceRunRole"
-        Effect   = "Allow"
-        Action   = ["sts:AssumeRole", "sts:TagSession"]
-        Resource = ["arn:aws:iam::*:role/${local.prefix}-workspace-*"]
+        Sid    = "AssumeAnyWorkspaceRunRole"
+        Effect = "Allow"
+        Action = ["sts:AssumeRole", "sts:TagSession"]
+        Resource = [
+          "arn:aws:iam::*:role/${local.prefix}-workspace-*",
+          "arn:aws:iam::*:role/${local.example_run_role_name}",
+        ]
       },
     ],
     local.bucket_statements["State"],

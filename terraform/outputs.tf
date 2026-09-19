@@ -142,3 +142,8 @@ output "run_confirmations_queue_url" {
   description = "URL of the queue the state machine sends a confirmation request to, carrying the task token the runs domain resumes the execution with"
   value       = module.run_confirmations.queue_url
 }
+
+output "example_run_role_arn" {
+  description = "ARN of the example run role, set as run_role_arn on the example workspace. Null when example_workspace_id is empty"
+  value       = one(aws_iam_role.example_run_role[*].arn)
+}
