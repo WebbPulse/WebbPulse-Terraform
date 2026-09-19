@@ -267,6 +267,6 @@ so the `Terraform Cloud/...` check stays pending forever and the PR never
 satisfies the branch protection in the UI. Once `all-checks-passed` is green,
 merge through the GitHub API with admin rather than waiting on that check.
 
-The per-slice CI workflows are being consolidated into a single `ci.yml`, so
-refer to the required check by name, `all-checks-passed`, rather than to a
-workflow file.
+Pull request CI is the single `.github/workflows/ci.yml`: one changed-paths job
+fans out to the backend, frontend, runner and terraform slices and the terminal
+`all-checks-passed` job is the required check.
