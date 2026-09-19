@@ -38,7 +38,7 @@ export function OverviewTab({
   const [workingDirectory, setWorkingDirectory] = useState(
     workspace.working_directory ?? ''
   );
-  const [runRoleArn, setRunRoleArn] = useState(workspace.run_role_arn);
+  const [runRoleArn, setRunRoleArn] = useState(workspace.run_role_arn ?? '');
   const [invalidArn, setInvalidArn] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -47,7 +47,7 @@ export function OverviewTab({
     setEngine(engineOf(workspace));
     setEngineVersion(workspace.engine_version);
     setWorkingDirectory(workspace.working_directory ?? '');
-    setRunRoleArn(workspace.run_role_arn);
+    setRunRoleArn(workspace.run_role_arn ?? '');
     setInvalidArn(false);
   }, [workspace]);
 
@@ -58,14 +58,14 @@ export function OverviewTab({
         engine,
         engine_version: engineVersion,
         working_directory: workingDirectory,
-        run_role_arn: runRoleArn.trim(),
+        run_role_arn: runRoleArn.trim() || null,
       }),
     queryKey
   );
 
   const submit = async (): Promise<void> => {
     setSaved(false);
-    if (!isRunRoleArn(runRoleArn)) {
+    if (runRoleArn.trim() !== '' && !isRunRoleArn(runRoleArn)) {
       setInvalidArn(true);
       return;
     }
@@ -144,7 +144,6 @@ export function OverviewTab({
       <label className="block text-sm">
         <span className="text-surface-300">Run role ARN</span>
         <input
-          required
           value={runRoleArn}
           aria-invalid={invalidArn}
           aria-describedby={invalidArn ? 'overview-run-role-error' : undefined}
