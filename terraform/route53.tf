@@ -1,6 +1,6 @@
 module "staging_dns" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/staging-dns"
-  version = "2.25.1"
+  version = "2.26.0"
 
   providers = {
     aws        = aws

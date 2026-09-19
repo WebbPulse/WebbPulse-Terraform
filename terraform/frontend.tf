@@ -1,6 +1,6 @@
 module "frontend" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/spa-frontend"
-  version = "2.25.1"
+  version = "2.26.0"
 
   name = "${local.prefix}-frontend"
 
