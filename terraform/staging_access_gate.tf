@@ -2,7 +2,7 @@ module "staging_access_gate" {
   count = local.staging_gate_count
 
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/staging-access-gate"
-  version = "2.26.0"
+  version = "2.26.1"
 
   name          = "${local.project}-stg"
   cookie_domain = local.host

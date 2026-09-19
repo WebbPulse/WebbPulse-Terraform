@@ -1,6 +1,6 @@
 module "app_baseline" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/app-baseline"
-  version = "2.26.0"
+  version = "2.26.1"
 
   name                = local.prefix
   notification_emails = ["tyler@webbpulse.com", "tylert2610@gmail.com"]
