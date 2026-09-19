@@ -1,6 +1,6 @@
 module "vpc" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/vpc-public"
-  version = "2.25.1"
+  version = "2.26.0"
 
   name         = "${local.prefix}-runner"
   cidr_block   = var.vpc_cidr_block

@@ -36,6 +36,7 @@ locals {
 
   identity_jwt_gate_enforced   = var.identity_jwt_mode == "gate" && local.staging_gate_enabled
   identity_jwt_native_enforced = var.identity_jwt_mode == "native"
+  api_key_prefix               = "wpk_"
 
   production_alarms = var.environment == "production"
 }

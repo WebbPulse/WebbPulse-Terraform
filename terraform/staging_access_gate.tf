@@ -2,7 +2,7 @@ module "staging_access_gate" {
   count = local.staging_gate_count
 
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/staging-access-gate"
-  version = "2.25.1"
+  version = "2.26.0"
 
   name          = "${local.project}-stg"
   cookie_domain = local.host
@@ -15,8 +15,9 @@ module "staging_access_gate" {
   invite_login_url  = "https://${local.host}/"
 
   identity_jwt = local.identity_jwt_gate_enforced ? {
-    issuer   = local.identity_issuer
-    audience = local.identity_audience
+    issuer           = local.identity_issuer
+    audience         = local.identity_audience
+    api_key_prefixes = [local.api_key_prefix]
   } : null
 
   identity_jwt_route_keys = local.identity_jwt_gate_enforced ? module.api.identity_jwt_route_keys : []

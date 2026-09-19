@@ -152,8 +152,11 @@ that Root A is exactly the union of the Root B applications.
 ### Auth
 
 A person arrives with a JWT the API Gateway authorizer has already verified, an
-agent with a `wpk_` API key. Both render as the same claims object, so a route
-guarded by `require_scopes` cannot tell them apart. The scopes are
+agent with a `wpk_` API key that the gate authorizer passes through by prefix and
+`claims_or_api_key` verifies in process. Both render as the same claims object,
+so a route guarded by `require_scopes` cannot tell them apart. Every product
+route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
+runner routes and the anonymous identity documents do not. The scopes are
 `workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}` and
 `runs:{read,write,apply}`.
 

@@ -29,7 +29,7 @@ locals {
 
 module "runner" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/ecs-fargate"
-  version = "2.25.1"
+  version = "2.26.0"
 
   cluster_name = "${local.prefix}-runner"
 

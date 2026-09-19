@@ -37,6 +37,14 @@ locals {
     "POST /api/v1/runs/{run_id}/phase-result" = { integration = "runs", authorization_type = "NONE" }
   }
 
+  product_routes = merge(
+    { for key, route in local.workspaces_routes : key => merge(route, { require_identity_jwt = true }) },
+    {
+      for key, route in local.runs_routes :
+      key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
+    },
+  )
+
   auth_anonymous_routes = {
     "GET /api/auth/.well-known/jwks.json" = {
       integration        = "workspaces"
@@ -113,7 +121,7 @@ locals {
 
 module "api" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/http-api"
-  version = "2.25.1"
+  version = "2.26.0"
 
   name = "${local.prefix}-api"
 
@@ -128,8 +136,7 @@ module "api" {
 
   routes = local.domain_functions_enabled ? merge(
     { "GET /health" = { integration = "workspaces" } },
-    local.workspaces_routes,
-    local.runs_routes,
+    local.product_routes,
     local.auth_routes,
   ) : {}
 

@@ -80,11 +80,16 @@ reads `runs`; the `runs` domain owns `runs` and reads the other three.
 
 ## Backend
 
-Every route is mounted under `/api/v1` and reached through the HTTP API. A person
-arrives with a JWT the gateway authorizer verified, an agent with a `wpk_` API
-key, and both render as the same claims, so a scope guard cannot tell them apart.
-The two runner routes carry no gateway authorizer and are gated in the
-application on a run token bound to the run in the path.
+Every route is mounted under `/api/v1` and reached through the HTTP API. Every
+product route is marked `require_identity_jwt`. A person arrives with a JWT the
+gateway authorizer verified. An agent arrives with a `wpk_` API key, which the
+gate authorizer passes through by prefix (`identity_jwt.api_key_prefixes`) and
+`claims_or_api_key` verifies in process. Both render as the same claims, so a
+scope guard cannot tell them apart. The two runner routes carry no gateway
+authorizer and are gated in the application on a run token bound to the run in
+the path. API Gateway's native JWT authorizer refuses any non-JWT bearer, so
+`native` mode cannot admit agent keys on product routes; production needs the
+gate's Lambda authorizer or an equivalent before agents can use it.
 
 | Route | Scope |
 | --- | --- |
