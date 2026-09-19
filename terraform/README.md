@@ -37,6 +37,7 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `staging_access_gate.tf` | Staging only, the email gate in front of the site and the API |
 | `iam_github_actions.tf` | The deploy and CI OIDC roles |
 | `monitoring.tf`, `management.tf` | The three aggregate alarms in production, budgets |
+| `example_run_role.tf` | The run role for the first end to end run, gated on `var.example_workspace_id` |
 | `outputs.tf` | Everything the workflows and the GitHub environment variables read |
 
 ## Hostnames
@@ -88,3 +89,4 @@ Everything else takes its default.
 | `route53_zone_id`, `route53_write_role_arn` | The parent zone and the role that writes into it, both required when `staging_profile` is `full` |
 | `staging_access_gate`, `staging_access_users` | Staging only: put the site and API behind the email gate, and who may sign in |
 | `identity_jwt_mode` | `off`, `gate` or `native`. Staging uses `gate`, production `native` |
+| `example_workspace_id` | The `ws-` id of the example workspace. Non-empty creates the example run role for the first end to end run; empty, the default, creates nothing. See `examples/first-run/README.md` |

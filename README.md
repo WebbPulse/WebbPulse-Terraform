@@ -38,6 +38,7 @@ and HTTP API endpoints, and the CORS origin follows.
 | `backend/` | The FastAPI domains, one Lambda container image each |
 | `frontend/` | The Vite React SPA on CloudFront and S3 |
 | `runner/` | The Fargate task that executes one phase of one run |
+| `examples/` | Configurations for driving the control plane by hand, starting with `first-run` |
 
 Each slice carries its own README with its layout and commands.
 
@@ -253,6 +254,17 @@ the guard checks the key verifies, carries the `runner` scope, and is bound to
 the run in the path, so a token minted for one run cannot read another run's
 bundle. Only the key hash is stored on the run row, and neither it nor the stored
 confirmation task token is ever rendered to a caller.
+
+## First run
+
+`examples/first-run` is the configuration the first end to end staging run uses:
+a `random_pet` and an output, no AWS resources, no backend block. Its run role is
+`terraform/example_run_role.tf`, created only when `var.example_workspace_id`
+holds the workspace's `ws-` id, trusted by both runner task roles with the
+workspace id as the external id, and allowed nothing but that workspace's state
+object, its lock, the state bucket listing and the state KMS key. The steps, from
+creating the workspace to confirming the apply, are in
+`examples/first-run/README.md`.
 
 ## Pins
 

@@ -121,3 +121,14 @@ variable "identity_jwt_mode" {
     error_message = "identity_jwt_mode must not be native in staging. Every route there carries the staging access gate's REQUEST authorizer and a route takes exactly one authorizer, so a native JWT authorizer has no slot to occupy. Use gate, which moves the same check into the gate's own Lambda."
   }
 }
+
+variable "example_workspace_id" {
+  description = "Workspace id of the example workspace used for the first end to end run. Non-empty creates the example run role, whose trust condition and state object key are both derived from this id. Empty, the default, creates nothing."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.example_workspace_id == "" || can(regex("^ws-[0-9A-HJKMNP-TV-Z]{26}$", var.example_workspace_id))
+    error_message = "example_workspace_id must be a workspace id: ws- followed by a 26 character ULID, or the empty string."
+  }
+}
