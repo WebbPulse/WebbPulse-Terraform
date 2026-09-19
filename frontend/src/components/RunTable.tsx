@@ -3,14 +3,19 @@
 import { Link } from 'react-router-dom';
 
 import type { Run } from '../api';
+import { EmptyState } from './EmptyState';
+import { formatDateTime, formatRelative, shortRunId } from './format';
 import { StateBadge } from './StateBadge';
+import { Table, Td, Th, Tr } from './Table';
 
 /** Props for {@link RunTable}. */
 export interface RunTableProps {
   runs: Run[];
+  /** Workspace names by id, when the table spans workspaces. */
+  workspaceNames?: ReadonlyMap<string, string>;
 }
 
-/** The plan counts as a single line, or an em dash free placeholder. */
+/** The plan counts as a single line, or a hyphen when the plan has not reported. */
 function changeSummary(run: Run): string {
   if (run.changes === null || run.changes === undefined) {
     return '-';
@@ -20,41 +25,75 @@ function changeSummary(run: Run): string {
 }
 
 /** A table of runs, or a sentence when there are none. */
-export function RunTable({ runs }: RunTableProps): React.ReactElement {
+export function RunTable({
+  runs,
+  workspaceNames,
+}: RunTableProps): React.ReactElement {
   if (runs.length === 0) {
-    return <p className="text-surface-300">No runs yet.</p>;
+    return (
+      <EmptyState
+        title="No runs yet."
+        hint="Start one from a configuration version on a workspace."
+      />
+    );
   }
   return (
-    <table className="w-full text-left text-sm">
-      <thead className="text-surface-400">
+    <Table label="Runs">
+      <thead>
         <tr>
-          <th className="py-2">Run</th>
-          <th className="py-2">State</th>
-          <th className="py-2">Changes</th>
-          <th className="py-2">Started</th>
+          <Th>Run</Th>
+          {workspaceNames === undefined ? null : <Th>Workspace</Th>}
+          <Th>State</Th>
+          <Th>Changes</Th>
+          <Th>Mode</Th>
+          <Th>Started</Th>
         </tr>
       </thead>
       <tbody>
         {runs.map((run) => (
-          <tr key={run.run_id} className="border-t border-surface-700">
-            <td className="py-2">
+          <Tr key={run.run_id}>
+            <Td>
               <Link
                 to={`/runs/${run.run_id}`}
-                className="font-mono text-brand-300 hover:text-brand-200"
+                title={run.run_id}
+                className="font-mono text-xs text-text-strong hover:text-brand-300"
               >
-                {run.run_id}
+                {shortRunId(run.run_id)}
               </Link>
-            </td>
-            <td className="py-2">
+              {run.message === undefined || run.message === '' ? null : (
+                <p className="max-w-xs truncate text-xs text-text-faint">
+                  {run.message}
+                </p>
+              )}
+            </Td>
+            {workspaceNames === undefined ? null : (
+              <Td>
+                <Link
+                  to={`/workspaces/${run.workspace_id}`}
+                  className="text-text hover:text-brand-300"
+                >
+                  {workspaceNames.get(run.workspace_id) ?? run.workspace_id}
+                </Link>
+              </Td>
+            )}
+            <Td>
               <StateBadge state={run.status} />
-            </td>
-            <td className="py-2 font-mono text-surface-300">
+            </Td>
+            <Td className="font-mono text-xs text-text-muted">
               {changeSummary(run)}
-            </td>
-            <td className="py-2 text-surface-300">{run.created_at}</td>
-          </tr>
+            </Td>
+            <Td className="text-xs text-text-muted">
+              {run.plan_only ? 'Plan only' : 'Plan and apply'}
+            </Td>
+            <Td
+              className="text-xs whitespace-nowrap text-text-faint"
+              title={formatDateTime(run.created_at)}
+            >
+              {formatRelative(run.created_at)}
+            </Td>
+          </Tr>
         ))}
       </tbody>
-    </table>
+    </Table>
   );
 }

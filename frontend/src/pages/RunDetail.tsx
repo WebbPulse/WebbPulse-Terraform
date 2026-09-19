@@ -16,8 +16,18 @@ import {
   type Run,
   type RunPhase,
 } from '../api';
-import { ErrorNotice, Spinner, StateBadge } from '../components';
-import { RunLogViewer } from '../components/RunLogViewer';
+import {
+  Button,
+  ErrorNotice,
+  PageHeader,
+  RunLogViewer,
+  Spinner,
+  StateBadge,
+  Tabs,
+  formatDateTime,
+  formatRelative,
+  shortRunId,
+} from '../components';
 
 /** The run detail page. */
 export function RunDetail(): React.ReactElement {
@@ -42,7 +52,12 @@ export function RunDetail(): React.ReactElement {
   }, [run, phase]);
 
   if (query.isLoading) {
-    return <Spinner label="Loading the run" />;
+    return (
+      <div className="flex items-center gap-2 text-sm text-text-faint">
+        <Spinner label="Loading the run" className="size-4" />
+        Loading the run
+      </div>
+    );
   }
   if (run === null) {
     return <ErrorNotice error={query.error ?? new Error('Run not found.')} />;
@@ -51,58 +66,62 @@ export function RunDetail(): React.ReactElement {
   const shownPhase = phase ?? defaultPhase(run.status);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-mono text-lg text-surface-50">{run.run_id}</h1>
-          <p className="text-sm text-surface-400">
-            <Link
-              to={`/workspaces/${run.workspace_id}`}
-              className="text-brand-300 hover:text-brand-200"
-            >
-              {run.workspace_id}
-            </Link>
-          </p>
-        </div>
-        <StateBadge state={run.status} />
-      </div>
-
-      <ErrorNotice error={query.error} />
-      <PlanSummary run={run} />
-      <RunActions
-        run={run}
-        onDone={() => {
-          void query.refetch();
-        }}
+    <div className="space-y-5">
+      <PageHeader
+        crumbs={[
+          { label: 'Runs', to: '/runs' },
+          { label: run.workspace_id, to: `/workspaces/${run.workspace_id}` },
+        ]}
+        title={`Run ${shortRunId(run.run_id)}`}
+        meta={<StateBadge state={run.status} />}
+        description={
+          run.message === undefined || run.message === ''
+            ? `${run.plan_only ? 'Plan only' : 'Plan and apply'}, created ${formatRelative(run.created_at)}.`
+            : run.message
+        }
+        actions={
+          <RunActions
+            run={run}
+            onDone={() => {
+              void query.refetch();
+            }}
+          />
+        }
       />
 
-      <div className="space-y-2">
-        <div role="tablist" className="flex gap-1">
-          {(['plan', 'apply'] as const).map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              role="tab"
-              aria-selected={shownPhase === candidate}
-              disabled={candidate === 'apply' && !hasApplyPhase(run.status)}
-              onClick={() => {
-                setPhase(candidate);
-              }}
-              className={`rounded-md px-3 py-1.5 text-sm disabled:opacity-40 ${
-                shownPhase === candidate
-                  ? 'bg-surface-800 text-surface-50'
-                  : 'text-surface-300'
-              }`}
-            >
-              {candidate === 'plan' ? 'Plan log' : 'Apply log'}
-            </button>
-          ))}
+      <ErrorNotice error={query.error} />
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
+        <div className="min-w-0 space-y-4">
+          <PlanSummary run={run} />
+          {run.error === undefined ||
+          run.error === null ||
+          run.error === '' ? null : (
+            <ErrorNotice error={new Error(run.error)} />
+          )}
+          <RunLogViewer
+            runId={run.run_id}
+            phase={shownPhase}
+            live={isActive(run.status)}
+            controls={
+              <Tabs
+                label="Run phase"
+                className="border-b-0"
+                tabs={[
+                  { id: 'plan', label: 'Plan log' },
+                  {
+                    id: 'apply',
+                    label: 'Apply log',
+                    disabled: !hasApplyPhase(run.status),
+                  },
+                ]}
+                value={shownPhase}
+                onChange={setPhase}
+              />
+            }
+          />
         </div>
-        <RunLogViewer
-          runId={run.run_id}
-          phase={shownPhase}
-          live={isActive(run.status)}
-        />
+        <PropertiesRail run={run} />
       </div>
     </div>
   );
@@ -111,28 +130,113 @@ export function RunDetail(): React.ReactElement {
 /** The plan's resource counts, or a sentence when the plan has not reported. */
 function PlanSummary({ run }: { run: Run }): React.ReactElement {
   if (run.changes === null || run.changes === undefined) {
-    return <p className="text-sm text-surface-400">No plan summary yet.</p>;
+    return (
+      <p className="rounded-lg border border-dashed border-line px-4 py-3 text-sm text-text-faint">
+        No plan summary yet.
+      </p>
+    );
   }
   const { add, change, destroy } = run.changes;
+  const counts = [
+    { label: 'To add', value: add, className: 'text-emerald-300' },
+    { label: 'To change', value: change, className: 'text-amber-300' },
+    { label: 'To destroy', value: destroy, className: 'text-rose-300' },
+  ];
   return (
     <dl
       data-testid="plan-summary"
       aria-label="Plan summary"
-      className="flex gap-6 rounded-lg border border-surface-700 bg-surface-800 p-4 text-sm"
+      className="grid grid-cols-3 divide-x divide-line rounded-lg border border-line bg-panel"
     >
-      <div>
-        <dt className="text-surface-400">To add</dt>
-        <dd className="font-mono text-emerald-300">{add}</dd>
-      </div>
-      <div>
-        <dt className="text-surface-400">To change</dt>
-        <dd className="font-mono text-amber-300">{change}</dd>
-      </div>
-      <div>
-        <dt className="text-surface-400">To destroy</dt>
-        <dd className="font-mono text-rose-300">{destroy}</dd>
-      </div>
+      {counts.map((count) => (
+        <div key={count.label} className="px-4 py-3">
+          <dt className="text-xs text-text-faint">{count.label}</dt>
+          <dd
+            className={`mt-0.5 font-mono text-xl tabular-nums ${count.className}`}
+          >
+            {count.value}
+          </dd>
+        </div>
+      ))}
     </dl>
+  );
+}
+
+/** One row of the properties rail. */
+function Property({
+  label,
+  children,
+  mono = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  mono?: boolean;
+}): React.ReactElement {
+  return (
+    <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-2 py-1.5 text-xs">
+      <dt className="text-text-faint">{label}</dt>
+      <dd className={`min-w-0 break-all text-text ${mono ? 'font-mono' : ''}`}>
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+/** A timestamp property, relative with the exact time on hover. */
+function When({
+  label,
+  iso,
+}: {
+  label: string;
+  iso: string | null | undefined;
+}): React.ReactElement {
+  return (
+    <Property label={label}>
+      {iso === null || iso === undefined ? (
+        <span className="text-text-faint">-</span>
+      ) : (
+        <span title={formatDateTime(iso)}>{formatRelative(iso)}</span>
+      )}
+    </Property>
+  );
+}
+
+/** The run's identifiers and timestamps, in a rail beside the log. */
+function PropertiesRail({ run }: { run: Run }): React.ReactElement {
+  return (
+    <aside className="lg:sticky lg:top-6 lg:self-start">
+      <h2 className="text-xs font-medium tracking-wide text-text-faint uppercase">
+        Properties
+      </h2>
+      <dl className="mt-2 divide-y divide-line border-y border-line">
+        <Property label="Workspace" mono>
+          <Link
+            to={`/workspaces/${run.workspace_id}`}
+            className="text-brand-300 hover:text-brand-200"
+          >
+            {run.workspace_id}
+          </Link>
+        </Property>
+        <Property label="Run id" mono>
+          {run.run_id}
+        </Property>
+        <Property label="Configuration" mono>
+          {run.config_version_id}
+        </Property>
+        <Property label="Mode">
+          {run.plan_only ? 'Plan only' : 'Plan and apply'}
+        </Property>
+        {run.queued_behind === undefined ||
+        run.queued_behind === null ? null : (
+          <Property label="Queued behind" mono>
+            {run.queued_behind}
+          </Property>
+        )}
+        <When label="Created" iso={run.created_at} />
+        <When label="Started" iso={run.started_at} />
+        <When label="Finished" iso={run.finished_at} />
+      </dl>
+    </aside>
   );
 }
 
@@ -151,7 +255,9 @@ function RunActions({
   run: Run;
   onDone: () => void;
 }): React.ReactElement | null {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'confirm' | 'cancel' | 'discard' | null>(
+    null
+  );
   const [error, setError] = useState<unknown>(null);
 
   const allowConfirm = canConfirm(run);
@@ -165,7 +271,7 @@ function RunActions({
   const act = async (
     action: 'confirm' | 'cancel' | 'discard'
   ): Promise<void> => {
-    setBusy(true);
+    setBusy(action);
     setError(null);
     try {
       if (action === 'confirm') {
@@ -179,49 +285,50 @@ function RunActions({
     } catch (thrown) {
       setError(thrown);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-3">
-        {busy ? <Spinner label="Working" /> : null}
-        {allowConfirm ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              void act('confirm');
-            }}
-            className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-          >
-            Confirm and apply
-          </button>
-        ) : null}
-        {allowDiscard ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              void act('discard');
-            }}
-            className="rounded-md border border-surface-600 px-3 py-2 text-sm text-surface-200 disabled:opacity-60"
-          >
-            Discard
-          </button>
-        ) : null}
+    <div className="flex flex-col items-end gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {allowCancel ? (
-          <button
-            type="button"
-            disabled={busy}
+          <Button
+            variant="danger"
+            disabled={busy !== null}
+            busy={busy === 'cancel'}
+            busyLabel="Working"
             onClick={() => {
               void act('cancel');
             }}
-            className="rounded-md border border-rose-600 px-3 py-2 text-sm text-rose-300 disabled:opacity-60"
           >
             Cancel run
-          </button>
+          </Button>
+        ) : null}
+        {allowDiscard ? (
+          <Button
+            disabled={busy !== null}
+            busy={busy === 'discard'}
+            busyLabel="Working"
+            onClick={() => {
+              void act('discard');
+            }}
+          >
+            Discard
+          </Button>
+        ) : null}
+        {allowConfirm ? (
+          <Button
+            variant="primary"
+            disabled={busy !== null}
+            busy={busy === 'confirm'}
+            busyLabel="Working"
+            onClick={() => {
+              void act('confirm');
+            }}
+          >
+            Confirm and apply
+          </Button>
         ) : null}
       </div>
       <ErrorNotice error={error} />

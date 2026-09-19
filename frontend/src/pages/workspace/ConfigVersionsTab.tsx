@@ -14,10 +14,16 @@ import {
 } from '../../api';
 import {
   Button,
+  EmptyState,
   ErrorNotice,
   Spinner,
+  Table,
+  Td,
+  Th,
+  Tr,
   formatBytes,
   formatDateTime,
+  formatRelative,
 } from '../../components';
 import { UploadConfigForm } from './UploadConfigForm';
 
@@ -43,7 +49,7 @@ export function ConfigVersionsTab({
   return (
     <div className="space-y-5">
       <ErrorNotice error={error} />
-      <div className="rounded-lg border border-surface-700 bg-surface-800 p-4">
+      <div className="rounded-lg border border-line bg-panel p-4">
         <UploadConfigForm
           workspaceId={workspace.workspace_id}
           queryKey={keys.versions}
@@ -52,13 +58,19 @@ export function ConfigVersionsTab({
         />
       </div>
       {connected ? null : (
-        <p role="note" className="text-sm text-amber-300">
+        <p
+          role="note"
+          className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+        >
           {RUN_ROLE_MISSING_MESSAGE} Runs stay disabled until the connection
           check passes on the Overview tab.
         </p>
       )}
       {isLoading ? (
-        <Spinner label="Loading configuration versions" />
+        <div className="flex items-center gap-2 text-sm text-text-faint">
+          <Spinner label="Loading configuration versions" className="size-4" />
+          Loading configuration versions
+        </div>
       ) : (
         <ConfigVersionTable
           workspaceId={workspace.workspace_id}
@@ -85,52 +97,81 @@ function ConfigVersionTable({
 }): React.ReactElement {
   if (versions.length === 0) {
     return (
-      <p className="text-sm text-surface-300">No configuration versions yet.</p>
+      <EmptyState
+        title="No configuration versions yet."
+        hint="Upload a tar.gz of your root module to start a run from it."
+      />
     );
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-700">
-      <table className="w-full text-left text-sm">
-        <thead className="bg-surface-800 text-xs text-surface-400">
-          <tr>
-            <th className="px-3 py-2 font-medium">Version</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Size</th>
-            <th className="px-3 py-2 font-medium">Uploaded</th>
-            <th className="px-3 py-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {versions.map((version) => (
-            <tr
-              key={version.config_version_id}
-              className="border-t border-surface-700"
+    <Table label="Configuration versions">
+      <thead>
+        <tr>
+          <Th>Version</Th>
+          <Th>Status</Th>
+          <Th>Size</Th>
+          <Th>Uploaded</Th>
+          <Th className="text-right">Start a run</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {versions.map((version) => (
+          <Tr key={version.config_version_id}>
+            <Td className="font-mono text-xs text-text-strong">
+              {version.config_version_id}
+            </Td>
+            <Td>
+              <VersionStatus status={version.status} />
+            </Td>
+            <Td className="font-mono text-xs text-text-muted">
+              {formatBytes(version.size_bytes)}
+            </Td>
+            <Td
+              className="text-xs whitespace-nowrap text-text-faint"
+              title={formatDateTime(version.created_at)}
             >
-              <td className="px-3 py-2 font-mono text-xs text-surface-100">
-                {version.config_version_id}
-              </td>
-              <td className="px-3 py-2 text-surface-300">{version.status}</td>
-              <td className="px-3 py-2 font-mono text-xs text-surface-300">
-                {formatBytes(version.size_bytes)}
-              </td>
-              <td className="px-3 py-2 text-surface-400">
-                {formatDateTime(version.created_at)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {version.status === 'uploaded' ? (
-                  <StartRunButtons
-                    workspaceId={workspaceId}
-                    configVersionId={version.config_version_id}
-                    connected={connected}
-                    runsKey={runsKey}
-                  />
-                ) : null}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+              {formatRelative(version.created_at)}
+            </Td>
+            <Td className="text-right">
+              {version.status === 'uploaded' ? (
+                <StartRunButtons
+                  workspaceId={workspaceId}
+                  configVersionId={version.config_version_id}
+                  connected={connected}
+                  runsKey={runsKey}
+                />
+              ) : (
+                <span className="text-xs text-text-faint">Not uploaded</span>
+              )}
+            </Td>
+          </Tr>
+        ))}
+      </tbody>
+    </Table>
+  );
+}
+
+/** The version's status as a small pill. */
+function VersionStatus({
+  status,
+}: {
+  status: ConfigVersion['status'];
+}): React.ReactElement {
+  const uploaded = status === 'uploaded';
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+        uploaded
+          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+          : 'border-surface-600 bg-surface-800 text-surface-200'
+      }`}
+    >
+      <span
+        aria-hidden="true"
+        className={`size-1.5 rounded-full ${uploaded ? 'bg-emerald-400' : 'bg-surface-400'}`}
+      />
+      {status}
+    </span>
   );
 }
 

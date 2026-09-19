@@ -19,8 +19,17 @@ import {
 import {
   Button,
   Dialog,
+  EmptyState,
   ErrorNotice,
+  Field,
+  INPUT_CLASS,
+  PageHeader,
   Spinner,
+  Table,
+  Td,
+  Th,
+  Tr,
+  formatDateTime,
   formatRelative,
 } from '../components';
 
@@ -45,25 +54,31 @@ export function Workspaces(): React.ReactElement {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-surface-50">Workspaces</h1>
-          {query.isFetching && !query.isLoading ? (
+      <PageHeader
+        title="Workspaces"
+        description="Each workspace holds one root module, its variables and its runs."
+        meta={
+          query.isFetching && !query.isLoading ? (
             <Spinner label="Refreshing workspaces" className="size-3.5" />
-          ) : null}
-        </div>
-        <Button
-          variant="primary"
-          onClick={() => {
-            setCreating(true);
-          }}
-        >
-          New workspace
-        </Button>
-      </div>
+          ) : null
+        }
+        actions={
+          <Button
+            variant="primary"
+            onClick={() => {
+              setCreating(true);
+            }}
+          >
+            New workspace
+          </Button>
+        }
+      />
       <ErrorNotice error={query.error} />
       {query.isLoading ? (
-        <Spinner label="Loading workspaces" />
+        <div className="flex items-center gap-2 text-sm text-text-faint">
+          <Spinner label="Loading workspaces" className="size-4" />
+          Loading workspaces
+        </div>
       ) : (
         <WorkspaceTable
           workspaces={query.data?.items ?? []}
@@ -104,61 +119,62 @@ function WorkspaceTable({
 }): React.ReactElement {
   if (workspaces.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-surface-700 px-4 py-10 text-center">
-        <p className="text-sm text-surface-200">No workspaces yet.</p>
-        <p className="mt-1 text-xs text-surface-400">
-          A workspace holds one root module, its variables and its runs.
-        </p>
-        <Button variant="primary" className="mt-4" onClick={onCreate}>
-          Create the first workspace
-        </Button>
-      </div>
+      <EmptyState
+        title="No workspaces yet."
+        hint="A workspace holds one root module, its variables and its runs."
+        action={
+          <Button variant="primary" onClick={onCreate}>
+            Create the first workspace
+          </Button>
+        }
+      />
     );
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-700">
-      <table className="w-full text-left text-sm">
-        <thead className="bg-surface-800 text-xs text-surface-400">
-          <tr>
-            <th className="px-3 py-2 font-medium">Name</th>
-            <th className="px-3 py-2 font-medium">Engine</th>
-            <th className="px-3 py-2 font-medium">AWS account</th>
-            <th className="px-3 py-2 font-medium">Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {workspaces.map((workspace) => (
-            <tr
-              key={workspace.workspace_id}
-              className="border-t border-surface-700 hover:bg-surface-800/60"
+    <Table label="Workspaces">
+      <thead>
+        <tr>
+          <Th>Name</Th>
+          <Th>Engine</Th>
+          <Th>AWS account</Th>
+          <Th>Created</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {workspaces.map((workspace) => (
+          <Tr key={workspace.workspace_id}>
+            <Td>
+              <Link
+                to={`/workspaces/${workspace.workspace_id}`}
+                className="font-medium text-text-strong hover:text-brand-300"
+              >
+                {workspace.name}
+              </Link>
+              {(workspace.description ?? '') === '' ? null : (
+                <p className="max-w-md truncate text-xs text-text-faint">
+                  {workspace.description}
+                </p>
+              )}
+            </Td>
+            <Td className="text-text-muted">
+              {workspace.engine ?? 'terraform'}{' '}
+              <span className="font-mono text-xs">
+                {workspace.engine_version}
+              </span>
+            </Td>
+            <Td>
+              <ConnectionCell workspace={workspace} />
+            </Td>
+            <Td
+              className="text-xs whitespace-nowrap text-text-faint"
+              title={formatDateTime(workspace.created_at)}
             >
-              <td className="px-3 py-2">
-                <Link
-                  to={`/workspaces/${workspace.workspace_id}`}
-                  className="font-medium text-surface-50 hover:text-brand-300"
-                >
-                  {workspace.name}
-                </Link>
-                {(workspace.description ?? '') === '' ? null : (
-                  <p className="truncate text-xs text-surface-400">
-                    {workspace.description}
-                  </p>
-                )}
-              </td>
-              <td className="px-3 py-2 text-surface-300">
-                {workspace.engine ?? 'terraform'} {workspace.engine_version}
-              </td>
-              <td className="px-3 py-2">
-                <ConnectionCell workspace={workspace} />
-              </td>
-              <td className="px-3 py-2 text-surface-400">
-                {formatRelative(workspace.created_at)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+              {formatRelative(workspace.created_at)}
+            </Td>
+          </Tr>
+        ))}
+      </tbody>
+    </Table>
   );
 }
 
@@ -170,7 +186,7 @@ function ConnectionCell({
 }): React.ReactElement {
   if (isConnected(workspace)) {
     return (
-      <span className="inline-flex items-center gap-2 font-mono text-xs text-surface-200">
+      <span className="inline-flex items-center gap-2 font-mono text-xs text-text">
         <span
           aria-hidden="true"
           className="inline-block size-2 rounded-full bg-emerald-400"
@@ -180,7 +196,7 @@ function ConnectionCell({
     );
   }
   return (
-    <span className="inline-flex items-center gap-2 text-xs text-surface-400">
+    <span className="inline-flex items-center gap-2 text-xs text-text-faint">
       <span
         aria-hidden="true"
         className="inline-block size-2 rounded-full bg-surface-600"
@@ -232,58 +248,69 @@ function CreateWorkspaceForm({
         void submit();
       }}
     >
-      <label className="block text-sm">
-        <span className="text-surface-300">Name</span>
-        <input
-          required
-          autoFocus
-          value={name}
-          pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"
-          title="Letters, digits, dots, underscores and hyphens, starting with a letter or digit."
-          onChange={(event) => {
-            setName(event.target.value);
-          }}
-          className={INPUT}
-        />
-      </label>
-      <label className="block text-sm">
-        <span className="text-surface-300">Description</span>
-        <input
-          value={description}
-          onChange={(event) => {
-            setDescription(event.target.value);
-          }}
-          className={INPUT}
-        />
-      </label>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block text-sm">
-          <span className="text-surface-300">Engine</span>
-          <select
-            value={engine}
-            onChange={(event) => {
-              setEngine(event.target.value as Engine);
-            }}
-            className={INPUT}
-          >
-            {ENGINES.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-sm">
-          <span className="text-surface-300">Engine version</span>
+      <Field
+        label="Name"
+        hint="Letters, digits, dots, underscores and hyphens."
+      >
+        {(control) => (
           <input
+            {...control}
             required
-            value={engineVersion}
+            autoFocus
+            value={name}
+            pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"
+            title="Letters, digits, dots, underscores and hyphens, starting with a letter or digit."
             onChange={(event) => {
-              setEngineVersion(event.target.value);
+              setName(event.target.value);
             }}
-            className={`${INPUT} font-mono`}
+            className={INPUT_CLASS}
           />
-        </label>
+        )}
+      </Field>
+      <Field label="Description">
+        {(control) => (
+          <input
+            {...control}
+            value={description}
+            onChange={(event) => {
+              setDescription(event.target.value);
+            }}
+            className={INPUT_CLASS}
+          />
+        )}
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Engine">
+          {(control) => (
+            <select
+              {...control}
+              value={engine}
+              onChange={(event) => {
+                setEngine(event.target.value as Engine);
+              }}
+              className={INPUT_CLASS}
+            >
+              {ENGINES.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+        <Field label="Engine version">
+          {(control) => (
+            <input
+              {...control}
+              required
+              value={engineVersion}
+              onChange={(event) => {
+                setEngineVersion(event.target.value);
+              }}
+              className={`${INPUT_CLASS} font-mono`}
+            />
+          )}
+        </Field>
       </div>
       <ErrorNotice error={error} />
       <div className="flex justify-end gap-2 pt-1">
@@ -302,7 +329,3 @@ function CreateWorkspaceForm({
     </form>
   );
 }
-
-/** The input styling the dialog's fields share. */
-const INPUT =
-  'mt-1 h-8 w-full rounded-md border border-surface-600 bg-surface-900 px-2.5 text-sm text-surface-100 focus-visible:border-brand-400 focus-visible:ring-1 focus-visible:ring-brand-400 focus-visible:outline-none';

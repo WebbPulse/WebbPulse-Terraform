@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useMutationWithRefetch } from '@webbpulse/api-client/react';
 
 import { api, type Engine, type Workspace } from '../../api';
-import { Button, ErrorNotice } from '../../components';
+import { Button, ErrorNotice, Field, INPUT_CLASS } from '../../components';
 import { ConnectAccountPanel } from './ConnectAccountPanel';
 
 /** Props for {@link OverviewTab}. */
@@ -35,7 +35,7 @@ export function OverviewTab({
       <section aria-labelledby="overview-settings" className="space-y-3">
         <h2
           id="overview-settings"
-          className="text-sm font-semibold text-surface-50"
+          className="text-sm font-semibold text-text-strong"
         >
           Settings
         </h2>
@@ -44,7 +44,7 @@ export function OverviewTab({
       <section aria-labelledby="overview-account" className="space-y-3">
         <h2
           id="overview-account"
-          className="text-sm font-semibold text-surface-50"
+          className="text-sm font-semibold text-text-strong"
         >
           AWS account
         </h2>
@@ -55,7 +55,7 @@ export function OverviewTab({
             collapsible
           />
         ) : (
-          <p className="text-sm text-surface-300">
+          <p className="rounded-lg border border-dashed border-line px-4 py-3 text-sm text-text-muted">
             The setup checklist above walks through connecting an account. The
             connection settings move here once the first plan has run.
           </p>
@@ -112,69 +112,78 @@ function SettingsForm({
   return (
     <form
       aria-label="Workspace settings"
-      className="space-y-3"
+      className="space-y-3 rounded-lg border border-line bg-panel p-4"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
-      <p className="text-sm">
-        <span className="text-surface-300">Name</span>
-        <span className="mt-1 block font-mono text-surface-100">
-          {workspace.name}
-        </span>
-      </p>
-      <label className="block text-sm">
-        <span className="text-surface-300">Description</span>
-        <textarea
-          rows={2}
-          value={description}
-          onChange={(event) => {
-            setDescription(event.target.value);
-          }}
-          className={`${INPUT} h-auto py-1.5`}
-        />
-      </label>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block text-sm">
-          <span className="text-surface-300">Engine</span>
-          <select
-            value={engine}
-            onChange={(event) => {
-              setEngine(event.target.value as Engine);
-            }}
-            className={INPUT}
-          >
-            {ENGINES.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-sm">
-          <span className="text-surface-300">Engine version</span>
-          <input
-            required
-            value={engineVersion}
-            onChange={(event) => {
-              setEngineVersion(event.target.value);
-            }}
-            className={`${INPUT} font-mono`}
-          />
-        </label>
+      <div className="text-sm">
+        <span className="text-text-muted">Name</span>
+        <span className="mt-1 block font-mono text-text">{workspace.name}</span>
       </div>
-      <label className="block text-sm">
-        <span className="text-surface-300">Working directory</span>
-        <input
-          value={workingDirectory}
-          placeholder="."
-          onChange={(event) => {
-            setWorkingDirectory(event.target.value);
-          }}
-          className={`${INPUT} font-mono`}
-        />
-      </label>
+      <Field label="Description">
+        {(control) => (
+          <textarea
+            {...control}
+            rows={2}
+            value={description}
+            onChange={(event) => {
+              setDescription(event.target.value);
+            }}
+            className={`${INPUT_CLASS} h-auto py-1.5`}
+          />
+        )}
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Engine">
+          {(control) => (
+            <select
+              {...control}
+              value={engine}
+              onChange={(event) => {
+                setEngine(event.target.value as Engine);
+              }}
+              className={INPUT_CLASS}
+            >
+              {ENGINES.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+        <Field label="Engine version">
+          {(control) => (
+            <input
+              {...control}
+              required
+              value={engineVersion}
+              onChange={(event) => {
+                setEngineVersion(event.target.value);
+              }}
+              className={`${INPUT_CLASS} font-mono`}
+            />
+          )}
+        </Field>
+      </div>
+      <Field
+        label="Working directory"
+        hint="Relative to the root of the uploaded archive."
+      >
+        {(control) => (
+          <input
+            {...control}
+            value={workingDirectory}
+            placeholder="."
+            onChange={(event) => {
+              setWorkingDirectory(event.target.value);
+            }}
+            className={`${INPUT_CLASS} font-mono`}
+          />
+        )}
+      </Field>
       <ErrorNotice error={error} />
       <div className="flex items-center gap-3">
         <Button
@@ -194,7 +203,3 @@ function SettingsForm({
     </form>
   );
 }
-
-/** The input styling the settings fields share. */
-const INPUT =
-  'mt-1 h-8 w-full rounded-md border border-surface-600 bg-surface-900 px-2.5 text-sm text-surface-100 focus-visible:border-brand-400 focus-visible:ring-1 focus-visible:ring-brand-400 focus-visible:outline-none';

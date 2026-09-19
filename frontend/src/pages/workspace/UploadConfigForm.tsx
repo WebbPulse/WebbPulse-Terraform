@@ -12,7 +12,7 @@ import { useRef, useState } from 'react';
 import { invalidateQueries } from '@webbpulse/api-client/react';
 
 import { api, uploadConfigTarball } from '../../api';
-import { Button, ErrorNotice } from '../../components';
+import { Button, ErrorNotice, Field } from '../../components';
 
 /** Props for {@link UploadConfigForm}. */
 export interface UploadConfigFormProps {
@@ -78,16 +78,18 @@ export function UploadConfigForm({
       }}
     >
       <div className="flex flex-wrap items-end gap-3">
-        <label className="text-sm">
-          <span className="block text-surface-300">{fileLabel}</span>
-          <input
-            ref={input}
-            type="file"
-            required
-            accept=".tar.gz,application/gzip"
-            className="mt-1 block text-sm text-surface-200 file:mr-3 file:rounded-md file:border file:border-surface-600 file:bg-surface-800 file:px-2.5 file:py-1 file:text-xs file:font-medium file:text-surface-100"
-          />
-        </label>
+        <Field label={fileLabel} hint={hint} className="min-w-0 flex-1">
+          {(control) => (
+            <input
+              {...control}
+              ref={input}
+              type="file"
+              required
+              accept=".tar.gz,application/gzip"
+              className="mt-1 block w-full text-sm text-text file:mr-3 file:h-7 file:rounded-md file:border file:border-line-strong file:bg-panel file:px-2.5 file:text-xs file:font-medium file:text-text hover:file:bg-raised"
+            />
+          )}
+        </Field>
         <Button
           type="submit"
           variant="primary"
@@ -97,9 +99,6 @@ export function UploadConfigForm({
           Upload
         </Button>
       </div>
-      {hint === undefined ? null : (
-        <p className="text-xs text-surface-400">{hint}</p>
-      )}
       {done ? (
         <p role="status" className="text-sm text-emerald-300">
           Uploaded.
