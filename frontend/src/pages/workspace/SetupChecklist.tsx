@@ -61,25 +61,25 @@ export function SetupChecklist({
     <section
       data-testid="setup-checklist"
       aria-labelledby="setup-checklist-title"
-      className="rounded-lg border border-surface-700 bg-surface-800"
+      className="rounded-lg border border-line bg-panel"
     >
-      <div className="flex items-baseline justify-between gap-4 border-b border-surface-700 px-4 py-3">
+      <div className="flex items-baseline justify-between gap-4 border-b border-line px-4 py-3">
         <div>
           <h2
             id="setup-checklist-title"
-            className="text-sm font-semibold text-surface-50"
+            className="text-sm font-semibold text-text-strong"
           >
             Set up this workspace
           </h2>
-          <p className="text-xs text-surface-400">
+          <p className="text-xs text-text-faint">
             Three steps before the first run.
           </p>
         </div>
-        <span className="text-xs text-surface-400">
+        <span className="font-mono text-xs text-text-faint">
           {doneCount} of {steps.length} done
         </span>
       </div>
-      <ol className="divide-y divide-surface-700">
+      <ol className="divide-y divide-line">
         {steps.map((step, index) => (
           <li
             key={step.id}
@@ -93,13 +93,13 @@ export function SetupChecklist({
                 <p
                   className={`text-sm font-medium ${
                     step.status === 'blocked'
-                      ? 'text-surface-400'
-                      : 'text-surface-50'
+                      ? 'text-text-faint'
+                      : 'text-text-strong'
                   }`}
                 >
                   {STEP_COPY[step.id].title}
                 </p>
-                <p className="text-xs text-surface-400">
+                <p className="text-xs text-text-faint">
                   {step.status === 'done' ? 'Done' : STEP_COPY[step.id].summary}
                 </p>
                 {step.status === 'current' ? (
@@ -133,7 +133,7 @@ function StepMarker({
   const classes = {
     done: 'border-emerald-500 bg-emerald-500/15 text-emerald-300',
     current: 'border-brand-400 bg-brand-600/20 text-brand-300',
-    blocked: 'border-surface-600 text-surface-500',
+    blocked: 'border-line-strong text-surface-500',
   }[status];
   return (
     <span
@@ -216,7 +216,7 @@ function FirstPlan({
 
   if (running !== null) {
     return (
-      <p className="text-sm text-surface-300">
+      <p className="text-sm text-text-muted">
         A run is in progress.{' '}
         <Link
           to={`/runs/${running.run_id}`}
@@ -254,12 +254,12 @@ function FirstPlan({
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-surface-300">
+      <p className="text-sm text-text-muted">
         Plans the latest configuration
         {version === null ? null : (
           <>
             {' '}
-            <code className="font-mono text-xs text-surface-200">
+            <code className="font-mono text-xs text-text">
               {version.config_version_id}
             </code>
           </>

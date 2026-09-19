@@ -50,3 +50,8 @@ export function formatBytes(bytes: number): string {
   }
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit] ?? 'GB'}`;
 }
+
+/** The tail of a run id, enough to tell runs apart at a glance. */
+export function shortRunId(runId: string): string {
+  return runId.length > 12 ? runId.slice(-8) : runId;
+}
