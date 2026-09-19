@@ -121,7 +121,7 @@ locals {
 
 module "api" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/http-api"
-  version = "2.26.0"
+  version = "2.26.1"
 
   name = "${local.prefix}-api"
 

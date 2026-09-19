@@ -132,3 +132,9 @@ variable "example_workspace_id" {
     error_message = "example_workspace_id must be a workspace id: ws- followed by a 26 character ULID, or the empty string."
   }
 }
+
+variable "adopt_spans_log_group" {
+  description = "Adopt the reserved aws/spans log group into state and hold it at 7 day retention. X-Ray creates that group itself the first time it writes a span to the CloudWatchLogs destination, and it cannot be created ahead of time because CreateLogGroup rejects names beginning with aws/. An import block whose target does not exist is a plan time error, so a new account applies once with this false, generates one span, then sets the workspace variable true and applies again. Neither account has written a span yet, so the default is false."
+  type        = bool
+  default     = false
+}

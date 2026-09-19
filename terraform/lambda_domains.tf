@@ -79,7 +79,7 @@ module "lambda_domain" {
   for_each = local.lambda_domains
 
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/lambda-function"
-  version = "2.26.0"
+  version = "2.26.1"
 
   function_name = "${local.prefix}-${each.key}"
   role_name     = "${local.prefix}-${each.key}-lambda"
