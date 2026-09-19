@@ -37,7 +37,7 @@ describe('TerraformApi workspaces', () => {
     expect(result.items[0]?.name).toBe('platform');
   });
 
-  it('creates a workspace, posting the body', async () => {
+  it('creates a workspace without a run role, posting the body', async () => {
     const { api, transport } = apiOver({
       'POST /api/v1/workspaces': { status: 201, body: aWorkspace() },
     });
@@ -45,7 +45,6 @@ describe('TerraformApi workspaces', () => {
       name: 'platform',
       engine: 'tofu',
       engine_version: '1.11.0',
-      run_role_arn: 'arn:aws:iam::123456789012:role/terraform-run',
     });
     const request = transport.requests[0];
     expect(request?.method).toBe('POST');
@@ -53,8 +52,26 @@ describe('TerraformApi workspaces', () => {
       name: 'platform',
       engine: 'tofu',
       engine_version: '1.11.0',
-      run_role_arn: 'arn:aws:iam::123456789012:role/terraform-run',
     });
+  });
+
+  it('checks the run role on its own route with an empty POST', async () => {
+    const { api, transport } = apiOver({
+      'POST /api/v1/workspaces/ws-1/run-role/check': {
+        body: { connected: true, account_id: '123456789012', error: null },
+      },
+    });
+    const result = await api.checkRunRole('ws-1');
+    expect(result).toEqual({
+      connected: true,
+      account_id: '123456789012',
+      error: null,
+    });
+    expect(transport.requests[0]?.method).toBe('POST');
+    expect(transport.requests[0]?.path).toBe(
+      '/api/v1/workspaces/ws-1/run-role/check'
+    );
+    expect(transport.requests[0]?.body).toBeUndefined();
   });
 
   it('patches a workspace on its own path', async () => {

@@ -1,7 +1,7 @@
 /** Every run across every workspace, newest first. */
 
 import { usePolledQuery } from '@webbpulse/api-client/react';
-import { useAuthClient } from '@webbpulse/auth/react';
+import { useQueryAuth } from '@webbpulse/auth/react';
 
 import { api, type Run, type RunList } from '../api';
 import { ErrorNotice, Spinner } from '../components';
@@ -37,7 +37,7 @@ async function listEveryRun(signal: AbortSignal): Promise<RunList> {
 
 /** The runs page. */
 export function Runs(): React.ReactElement {
-  const auth = useAuthClient();
+  const auth = useQueryAuth();
   const query = usePolledQuery<RunList>(({ signal }) => listEveryRun(signal), {
     intervalMs: 10_000,
     queryKey: 'runs',

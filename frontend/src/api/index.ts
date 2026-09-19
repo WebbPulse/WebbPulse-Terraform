@@ -1,6 +1,7 @@
 export * from './types';
 export * from './runStates';
-export * from './runRole';
+export * from './runRoleSetup';
+export type { Workspace, WorkspaceCreate, WorkspaceList } from './runRoleSetup';
 export {
   API_BASE_URL,
   TerraformApi,
