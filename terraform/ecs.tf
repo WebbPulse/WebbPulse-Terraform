@@ -4,29 +4,31 @@ locals {
   runner_task_statements = concat(
     [
       {
-        Sid      = "ReportPhaseOutcome"
-        Effect   = "Allow"
-        Action   = ["states:SendTaskSuccess", "states:SendTaskFailure", "states:SendTaskHeartbeat"]
-        Resource = ["*"]
+        sid       = "ReportPhaseOutcome"
+        actions   = ["states:SendTaskSuccess", "states:SendTaskFailure", "states:SendTaskHeartbeat"]
+        resources = ["*"]
       },
       {
-        Sid      = "WriteRunnerLogs"
-        Effect   = "Allow"
-        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = ["${aws_cloudwatch_log_group.runner.arn}:*"]
+        sid       = "WriteRunnerLogs"
+        actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        resources = ["${aws_cloudwatch_log_group.runner.arn}:*"]
       },
       {
-        Sid    = "AssumeAnyWorkspaceRunRole"
-        Effect = "Allow"
-        Action = ["sts:AssumeRole", "sts:TagSession"]
-        Resource = [
+        sid     = "AssumeAnyWorkspaceRunRole"
+        actions = ["sts:AssumeRole", "sts:TagSession"]
+        resources = [
           "arn:aws:iam::*:role/${local.prefix}-workspace-*",
           "arn:aws:iam::*:role/${local.example_run_role_name}",
         ]
       },
     ],
-    local.bucket_statements["State"],
-    local.bucket_statements["Artifacts"],
+    [
+      for statement in concat(local.bucket_statements["State"], local.bucket_statements["Artifacts"]) : {
+        sid       = statement.Sid
+        actions   = statement.Action
+        resources = statement.Resource
+      }
+    ],
   )
 }
 
@@ -55,20 +57,10 @@ module "runner" {
       }
 
       log_retention_days = 30
+
+      task_policy_statements = local.runner_task_statements
     }
   }
 
   tags = { Component = "runner" }
-}
-
-resource "aws_iam_role_policy" "runner_task" {
-  for_each = module.runner.task_role_ids
-
-  name = "task"
-  role = each.value
-
-  policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = local.runner_task_statements
-  })
 }

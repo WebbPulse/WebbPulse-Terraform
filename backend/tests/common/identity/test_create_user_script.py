@@ -92,7 +92,9 @@ def test_it_writes_a_password_credential(script: Any, staging_environment: None)
 
     The store is rebuilt here from the package constants and the glue's own prefix,
     rather than read off the script, so the assertion is that the credential landed
-    where the identity routes will look for it.
+    where the identity routes will look for it. The secret is checked through the
+    package's own verifier at the package's current cost, which is what makes the
+    script's hashing and the sign-in route's hashing the same hashing.
     """
     del staging_environment
     assert script.main(["--environment", "staging", EMAIL]) == 0
@@ -100,6 +102,7 @@ def test_it_writes_a_password_credential(script: Any, staging_environment: None)
     from webbpulse.dynamodb import Repository
     from webbpulse.identity import CREDENTIALS_TABLE, DynamoCredentialStore
     from webbpulse.identity.flows import PASSWORD_CREDENTIAL_TYPE
+    from webbpulse.security import needs_rehash, verify_password
 
     from app.common.db.identity_tables import identity_table_prefix
 
@@ -117,7 +120,8 @@ def test_it_writes_a_password_credential(script: Any, staging_environment: None)
     )
     record = store.get(stored.id, PASSWORD_CREDENTIAL_TYPE)
     assert record is not None
-    assert record.secret.startswith("$2b$")
+    assert verify_password(PASSWORD, record.secret) is True
+    assert needs_rehash(record.secret) is False
 
 
 def test_it_is_re_runnable(script: Any, staging_environment: None) -> None:

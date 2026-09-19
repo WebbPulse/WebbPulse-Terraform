@@ -70,15 +70,14 @@ def create_user(email: str, password: str, settings: Any) -> str:
     and `is_admin` because the account this script exists to create is the first one,
     which has to be able to administer the control plane.
 
-    The secret is bcrypt hashed here rather than by the package, because the package
-    hashes only inside its register flow and that flow is the one this script stands in
-    for. `check_password` first, so a password the sign-in route would later reject is
+    The secret goes through `check_password` then `hash_password`, the same pair the
+    package's register flow uses, so a password the sign-in route would later reject is
     refused now rather than written and discovered at the first login.
     """
-    import bcrypt
     from webbpulse.identity.flows import PASSWORD_CREDENTIAL_TYPE
-    from webbpulse.identity.passwords import check_password, normalise_password
+    from webbpulse.identity.passwords import check_password
     from webbpulse.identity.storage import CredentialRecord, now_iso
+    from webbpulse.security import hash_password
 
     from app.common.db.users import User, UserRepository
 
@@ -89,7 +88,7 @@ def create_user(email: str, password: str, settings: Any) -> str:
     else:
         user = users.update(existing.id, email_verified=True, is_admin=True, disabled=False)
 
-    secret = bcrypt.hashpw(normalise_password(check_password(password)).encode("utf-8"), bcrypt.gensalt()).decode()
+    secret = hash_password(check_password(password))
     stamp = now_iso()
     _credential_store(settings).put(
         CredentialRecord(
