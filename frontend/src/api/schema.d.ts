@@ -434,6 +434,9 @@ export interface paths {
          *     A run queued behind the workspace's active one comes back `pending` with
          *     `queued_behind` set and no token, which is the caller's signal that nothing is
          *     executing yet.
+         *
+         *     A workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the
+         *     runner would have nothing to assume.
          */
         post: operations["create_run_api_v1_runs_post"];
         delete?: never;
@@ -594,13 +597,18 @@ export interface paths {
         };
         /**
          * List Workspaces
-         * @description Every workspace in this environment.
+         * @description Every workspace in this environment, each with its run role setup.
          */
         get: operations["list_workspaces_api_v1_workspaces_get"];
         put?: never;
         /**
          * Create Workspace
          * @description Create a workspace. The name has to be free.
+         *
+         *     The run role is optional here on purpose: its trust policy names the workspace
+         *     id as the external id, so the role cannot exist until the workspace does. The
+         *     response's `run_role_setup` carries everything needed to build it, and
+         *     `PATCH /workspaces/{id}` attaches it afterwards.
          */
         post: operations["create_workspace_api_v1_workspaces_post"];
         delete?: never;
@@ -618,7 +626,7 @@ export interface paths {
         };
         /**
          * Get Workspace
-         * @description One workspace by id.
+         * @description One workspace by id, with its run role setup.
          */
         get: operations["get_workspace_api_v1_workspaces__workspace_id__get"];
         put?: never;
@@ -633,6 +641,9 @@ export interface paths {
         /**
          * Update Workspace
          * @description Edit one workspace. The name and the id are not editable.
+         *
+         *     Changing `run_role_arn` drops the recorded check outcome, so the new role reads
+         *     as unchecked until `run-role/check` says otherwise.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -675,6 +686,31 @@ export interface paths {
         get: operations["get_config_version_api_v1_workspaces__workspace_id__config_versions__config_version_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/run-role/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Run Role
+         * @description Assume the workspace's run role and report whether it answered.
+         *
+         *     Always 200 when a role is configured, whether or not it answered: a trust
+         *     policy that is not there yet is an expected state of the setup rather than a
+         *     request error. A workspace with no role at all is a 400 carrying
+         *     `RUN_ROLE_MISSING`.
+         */
+        post: operations["check_run_role_api_v1_workspaces__workspace_id__run_role_check_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1142,6 +1178,43 @@ export interface components {
             };
         };
         /**
+         * RunRoleCheck
+         * @description The outcome of one AssumeRole against a workspace's run role.
+         *
+         *     `error` is a sentence for a person rather than the STS code, and no part of
+         *     the temporary credentials reaches it.
+         */
+        RunRoleCheck: {
+            /** Account Id */
+            account_id?: string | null;
+            /** Connected */
+            connected: boolean;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * RunRoleSetup
+         * @description What a person needs to build the run role for one workspace.
+         *
+         *     The role cannot exist before the workspace does: its trust policy names the
+         *     workspace id as the external id, so the id has to be handed out first. Every
+         *     workspace response carries these three values so the setup can be followed
+         *     without reading the stack's outputs.
+         */
+        RunRoleSetup: {
+            /** External Id */
+            external_id: string;
+            /** Principal Arn */
+            principal_arn: string;
+            /**
+             * Principal Arns
+             * @default []
+             */
+            principal_arns?: string[];
+            /** Role Name */
+            role_name: string;
+        };
+        /**
          * ValidationErrorDetail
          * @description One offending field in a 422, carrying its location and reason but never its input.
          */
@@ -1228,7 +1301,7 @@ export interface components {
         };
         /**
          * Workspace
-         * @description A stored workspace.
+         * @description A stored workspace, with everything the run role setup needs.
          */
         Workspace: {
             /** Created At */
@@ -1248,8 +1321,13 @@ export interface components {
             engine_version: string;
             /** Name */
             name: string;
+            /** Run Role Account Id */
+            run_role_account_id?: string | null;
             /** Run Role Arn */
-            run_role_arn: string;
+            run_role_arn?: string | null;
+            /** Run Role Checked At */
+            run_role_checked_at?: string | null;
+            run_role_setup: components["schemas"]["RunRoleSetup"];
             /** Updated At */
             updated_at?: string | null;
             /**
@@ -1281,7 +1359,7 @@ export interface components {
             /** Name */
             name: string;
             /** Run Role Arn */
-            run_role_arn: string;
+            run_role_arn?: string | null;
             /**
              * Working Directory
              * @default
@@ -2862,6 +2940,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigVersion"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    check_run_role_api_v1_workspaces__workspace_id__run_role_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRoleCheck"];
                 };
             };
             /** @description Request validation failed. */

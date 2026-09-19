@@ -14,21 +14,31 @@ Leave the workspace's working directory empty; this config is the tarball root.
 1. Sign in at `https://staging.terraform.webbpulse.com/`.
 
 2. Create a workspace. Engine `terraform`, engine version `1.16.3`, which is the
-   version in `runner/versions.env`. Note its `ws-` id.
+   version in `runner/versions.env`. Leave the run role empty: it cannot exist
+   yet, because its trust policy names this workspace's id as the external id.
+   Note the `ws-` id the response returns.
 
 3. Set `example_workspace_id` to that id on the staging HCP workspace
    (`ws-xVqd4ioXLARZhGd4`), by hand, then apply. The apply creates
    `webbpulse-terraform-staging-example-run-role` and returns its ARN as the
    `example_run_role_arn` output.
 
-4. Set that ARN as `run_role_arn` on the workspace. The field is required at
-   create and editable afterwards through `PATCH /api/v1/workspaces/{id}`:
+4. Set that ARN as `run_role_arn` on the workspace, through the UI or
+   `PATCH /api/v1/workspaces/{id}`:
 
    ```bash
    curl -X PATCH "$API/api/v1/workspaces/$WS" \
      -H "Authorization: Bearer $TOKEN" \
      -H 'Content-Type: application/json' \
      -d '{"run_role_arn":"'"$ROLE_ARN"'"}'
+   ```
+
+   Then confirm the trust policy took, which answers
+   `{"connected": true, "account_id": "...", "error": null}`:
+
+   ```bash
+   curl -X POST "$API/api/v1/workspaces/$WS/run-role/check" \
+     -H "Authorization: Bearer $TOKEN"
    ```
 
 5. Build the tarball from this directory. The upload is signed for

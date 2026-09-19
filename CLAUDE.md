@@ -166,6 +166,16 @@ to that run and expiring after four hours, and only that token opens
 decrypted sensitive variables, so no human scope reaches it, and every terminal
 transition revokes the token.
 
+### The run role
+
+A workspace's run role is optional at create, since its trust policy names the
+workspace id as the external id and so the id has to exist first. Every workspace
+response carries `run_role_setup` (the runner task roles to trust, the external id
+and the derived role name), and `POST /workspaces/{id}/run-role/check` assumes the
+role and reports `{connected, account_id, error}`, stamping
+`run_role_checked_at` and `run_role_account_id`. A run created against a workspace
+with no run role is a 409 carrying `RUN_ROLE_MISSING`.
+
 ### Runs
 
 Runs are serial per workspace. A run created while another is active is stored

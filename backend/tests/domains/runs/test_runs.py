@@ -6,6 +6,7 @@ import boto3
 
 from app.common.db.tables import RUNS, local_table_name
 from app.domains.runs import service as runs_service
+from app.domains.workspaces import service as workspaces_service
 from tests.conftest import ENVIRONMENT, REGION, WORKSPACE_PAYLOAD
 
 BASE = "/api/v1/runs"
@@ -292,3 +293,29 @@ def test_list_is_empty_for_a_workspace_with_no_runs(auth_client, workspace):
     response = auth_client.get(BASE, params={"workspace_id": workspace["workspace_id"]})
     assert response.status_code == 200, response.text
     assert response.json()["items"] == []
+
+
+def test_create_is_409_when_the_workspace_has_no_run_role(auth_client, uploaded_config_version, state_machine):
+    """A run against a workspace with nothing to assume is refused before it starts."""
+    workspace_id = uploaded_config_version["workspace_id"]
+    workspaces_service.update_workspace(workspace_id, {"run_role_arn": ""})
+
+    response = auth_client.post(
+        BASE,
+        json=create_body(workspace_id, uploaded_config_version["config_version_id"]),
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error_code"] == "RUN_ROLE_MISSING"
+
+
+def test_the_missing_run_role_conflict_leaves_no_run_behind(auth_client, uploaded_config_version, state_machine):
+    """The workspace is checked before anything is written, so nothing is."""
+    workspace_id = uploaded_config_version["workspace_id"]
+    workspaces_service.update_workspace(workspace_id, {"run_role_arn": ""})
+
+    auth_client.post(
+        BASE,
+        json=create_body(workspace_id, uploaded_config_version["config_version_id"]),
+    )
+    listed = auth_client.get(BASE, params={"workspace_id": workspace_id})
+    assert listed.json()["items"] == []

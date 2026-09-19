@@ -135,6 +135,24 @@ envelope pattern as TOTP. The encryption context binds the ciphertext to one
 workspace and key, so a row copied to another key will not decrypt. The API never
 returns a sensitive value; the run bundle is the only reader.
 
+## The run role
+
+A workspace's run role is optional at create and attached afterwards, because the
+role cannot exist first: its trust policy names the workspace id as the external
+id, so the id has to be handed out before the role can be written. Every workspace
+response carries `run_role_setup` with the runner task roles to trust
+(`principal_arn`, and `principal_arns` for every phase), the external id and the
+role name, which is `<prefix>-workspace-<ulid>` and has to stay inside the runner's
+AssumeRole grant.
+
+`POST /workspaces/{id}/run-role/check` assumes the role with the workspace id as
+the external id and a fifteen minute session, then calls GetCallerIdentity on the
+temporary credentials. It answers `{connected, account_id, error}` and stamps
+`run_role_checked_at` and `run_role_account_id` on a success, clearing both on a
+failure and on any PATCH that changes the ARN. A workspace with no ARN is a 400
+carrying `RUN_ROLE_MISSING`; creating a run against one is a 409 with the same
+code. The credentials never reach a response or a log.
+
 ## Runs
 
 Runs are serial per workspace: a run created while another is active is stored

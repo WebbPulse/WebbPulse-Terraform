@@ -32,6 +32,20 @@ CONFIG_CONTENT_TYPE: Final = "application/gzip"
 CONFIG_UPLOAD_EXPIRES_IN: Final = 900
 """Fifteen minutes for the client to start its upload, the package's own default."""
 
+RUN_ROLE_CHECK_DURATION_SECONDS: Final = 900
+"""The shortest session STS will mint. The check only calls GetCallerIdentity, so
+nothing needs the hour a run takes."""
+
+RUN_ROLE_CHECK_SESSION_NAME: Final = "webbpulse-run-role-check"
+"""The session name the check assumes under, so a CloudTrail reader can tell a
+connection check from a run."""
+
+IAM_ROLE_NAME_MAX_LENGTH: Final = 64
+"""The IAM ceiling on a role name. The derived name has to fit inside it."""
+
+RUN_ROLE_ACCESS_DENIED_MESSAGE: Final = "The role does not trust the runner or the external id does not match"
+"""What an AccessDenied means in practice, since STS will not say which half failed."""
+
 
 class WorkspaceNotFound(Exception):
     """No workspace with this id."""
@@ -47,6 +61,142 @@ class ConfigVersionNotFound(Exception):
 
 class VariableNotFound(Exception):
     """No variable with this key on this workspace."""
+
+
+class RunRoleMissing(Exception):
+    """The workspace carries no run role, so there is nothing to assume."""
+
+
+def run_role_name(workspace_id: str, *, settings: Settings | None = None) -> str:
+    """The role name for one workspace, inside the runner's AssumeRole grant.
+
+    The `ws-` prefix is dropped so the ULID alone follows the stack prefix, which
+    keeps the name inside the IAM ceiling of sixty four characters.
+    """
+    resolved = settings or get_settings()
+    return f"{resolved.RUN_ROLE_NAME_PREFIX}{workspace_id.removeprefix(WORKSPACE_ID_PREFIX)}"
+
+
+def run_role_setup(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """The three values a person needs to build one workspace's run role."""
+    resolved = settings or get_settings()
+    principals = resolved.runner_task_role_arns
+    return {
+        "principal_arn": principals[0] if principals else "",
+        "principal_arns": principals,
+        "external_id": workspace_id,
+        "role_name": run_role_name(workspace_id, settings=resolved),
+    }
+
+
+def render_workspace(item: dict[str, Any], *, settings: Settings | None = None) -> dict[str, Any]:
+    """One stored workspace row as the API returns it, with its run role setup."""
+    resolved = settings or get_settings()
+    workspace_id = str(item["workspace_id"])
+    return dict(item) | {"run_role_setup": run_role_setup(workspace_id, settings=resolved)}
+
+
+def _sts(settings: Settings) -> Any:
+    """An STS client. Imported late so nothing connects at import."""
+    import boto3
+
+    return boto3.client("sts", region_name=settings.AWS_REGION_NAME or None)
+
+
+def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """Assume the workspace's run role and report whether it answered.
+
+    Assumes with the workspace id as the external id, the way the runner does, then
+    calls GetCallerIdentity on the temporary credentials so the answer names the
+    account the role actually lives in rather than the one its ARN claims. The
+    outcome is stamped on the row: the timestamp and the account on a success, both
+    cleared on a failure, so a stale success cannot outlive a broken trust policy.
+
+    Neither the credentials nor the STS message reach the return value or the log.
+
+    Raises:
+        WorkspaceNotFound: No such workspace.
+        RunRoleMissing: The workspace carries no run role ARN.
+    """
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    resolved = settings or get_settings()
+    workspace = get_workspace(workspace_id, settings=resolved)
+    role_arn = str(workspace.get("run_role_arn", "") or "")
+    if not role_arn:
+        raise RunRoleMissing(workspace_id)
+
+    try:
+        assumed = _sts(resolved).assume_role(
+            RoleArn=role_arn,
+            RoleSessionName=RUN_ROLE_CHECK_SESSION_NAME,
+            ExternalId=workspace_id,
+            DurationSeconds=RUN_ROLE_CHECK_DURATION_SECONDS,
+        )
+        credentials = assumed["Credentials"]
+        import boto3
+
+        identity = boto3.client(
+            "sts",
+            region_name=resolved.AWS_REGION_NAME or None,
+            aws_access_key_id=credentials["AccessKeyId"],
+            aws_secret_access_key=credentials["SecretAccessKey"],
+            aws_session_token=credentials["SessionToken"],
+        ).get_caller_identity()
+    except ClientError as error:
+        _record_run_role_check(workspace_id, None, settings=resolved)
+        return {"connected": False, "account_id": None, "error": _run_role_error(error)}
+    except BotoCoreError:
+        _record_run_role_check(workspace_id, None, settings=resolved)
+        return {
+            "connected": False,
+            "account_id": None,
+            "error": "The role could not be reached.",
+        }
+
+    account_id = str(identity.get("Account", "") or "")
+    _record_run_role_check(workspace_id, account_id, settings=resolved)
+    return {"connected": True, "account_id": account_id, "error": None}
+
+
+def _run_role_error(error: Any) -> str:
+    """One sentence for a person, from the STS error code alone.
+
+    The code is read rather than the message, because a message can echo the ARN
+    and the session name back at a caller who supplied neither.
+    """
+    code = str(error.response.get("Error", {}).get("Code", "") or "")
+    if code in {"AccessDenied", "AccessDeniedException"}:
+        return RUN_ROLE_ACCESS_DENIED_MESSAGE
+    if code in {"NoSuchEntity", "ValidationError", "InvalidParameterValue"}:
+        return "No role with that ARN exists."
+    if code == "ExpiredToken":
+        return "The control plane's own credentials expired."
+    return "The role could not be assumed."
+
+
+def _record_run_role_check(
+    workspace_id: str,
+    account_id: str | None,
+    *,
+    settings: Settings | None = None,
+) -> None:
+    """Stamp or clear the run role check fields on one workspace row."""
+    resolved = settings or get_settings()
+    repository = repositories.workspaces(resolved)
+    if account_id:
+        repository.update(
+            {"workspace_id": workspace_id},
+            update_expression=("SET run_role_checked_at = :checked, run_role_account_id = :account"),
+            expression_values={":checked": now_iso(), ":account": account_id},
+            condition=Attr("workspace_id").exists(),
+        )
+        return
+    repository.update(
+        {"workspace_id": workspace_id},
+        update_expression="REMOVE run_role_checked_at, run_role_account_id",
+        condition=Attr("workspace_id").exists(),
+    )
 
 
 def config_key(workspace_id: str, config_version_id: str) -> str:
@@ -71,7 +221,7 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "name": name,
         "engine": payload.get("engine", "terraform"),
         "engine_version": payload["engine_version"],
-        "run_role_arn": payload["run_role_arn"],
+        "run_role_arn": payload.get("run_role_arn") or None,
         "working_directory": payload.get("working_directory", "") or "",
         "description": payload.get("description", "") or "",
         "created_at": now_iso(),
@@ -120,16 +270,26 @@ def update_workspace(
     *,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """Apply a partial edit to one workspace, or `WorkspaceNotFound`."""
+    """Apply a partial edit to one workspace, or `WorkspaceNotFound`.
+
+    A change to `run_role_arn` drops the recorded check outcome in the same write:
+    the previous success belonged to the previous role, and leaving it behind would
+    show a new, unchecked role as connected.
+    """
     resolved = settings or get_settings()
     applied = {key: value for key, value in changes.items() if value is not None}
     if not applied:
         return get_workspace(workspace_id, settings=resolved)
 
+    existing = get_workspace(workspace_id, settings=resolved)
+    role_changed = "run_role_arn" in applied and applied["run_role_arn"] != existing.get("run_role_arn")
+
     applied["updated_at"] = now_iso()
     names = {f"#{key}": key for key in applied}
     values = {f":{key}": value for key, value in applied.items()}
     expression = "SET " + ", ".join(f"#{key} = :{key}" for key in applied)
+    if role_changed:
+        expression += " REMOVE run_role_checked_at, run_role_account_id"
     repository = repositories.workspaces(resolved)
     try:
         updated = repository.update(
