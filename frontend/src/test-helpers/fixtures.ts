@@ -18,12 +18,22 @@ export function aWorkspace(overrides: Partial<Workspace> = {}): Workspace {
       external_id: 'ws-01J000000000000000000000',
       role_name: 'control-plane-workspace-ws-01J000000000000000000000',
     },
-    run_role_checked_at: null,
-    run_role_account_id: null,
+    run_role_checked_at: '2026-09-17T00:05:00Z',
+    run_role_account_id: '123456789012',
     created_at: '2026-09-17T00:00:00Z',
     updated_at: null,
     ...overrides,
   };
+}
+
+/** A workspace nobody has connected an account to yet. */
+export function aFreshWorkspace(overrides: Partial<Workspace> = {}): Workspace {
+  return aWorkspace({
+    run_role_arn: null,
+    run_role_checked_at: null,
+    run_role_account_id: null,
+    ...overrides,
+  });
 }
 
 /** A variable, overridable field by field. */

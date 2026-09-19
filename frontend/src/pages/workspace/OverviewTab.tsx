@@ -1,22 +1,19 @@
-/** The overview tab: the workspace's settings, editable in place. */
+/** The overview tab: the AWS connection and the settings, editable in place. */
 
 import { useEffect, useState } from 'react';
 import { useMutationWithRefetch } from '@webbpulse/api-client/react';
 
-import {
-  RUN_ROLE_ARN_MESSAGE,
-  api,
-  isRunRoleArn,
-  type Engine,
-  type Workspace,
-} from '../../api';
-import { ErrorNotice, Spinner } from '../../components';
+import { api, type Engine, type Workspace } from '../../api';
+import { Button, ErrorNotice } from '../../components';
+import { ConnectAccountPanel } from './ConnectAccountPanel';
 
 /** Props for {@link OverviewTab}. */
 export interface OverviewTabProps {
   workspace: Workspace;
   /** The refetch key the workspace read is registered under. */
   queryKey: string;
+  /** Whether the checklist above the tabs is gone, so this tab owns the connection. */
+  setupComplete: boolean;
 }
 
 /** The engines a workspace can run. */
@@ -27,19 +24,61 @@ function engineOf(workspace: Workspace): Engine {
   return workspace.engine ?? 'terraform';
 }
 
-/** The workspace settings form. */
+/** The connection section and the settings form. */
 export function OverviewTab({
   workspace,
   queryKey,
+  setupComplete,
 }: OverviewTabProps): React.ReactElement {
+  return (
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <section aria-labelledby="overview-settings" className="space-y-3">
+        <h2
+          id="overview-settings"
+          className="text-sm font-semibold text-surface-50"
+        >
+          Settings
+        </h2>
+        <SettingsForm workspace={workspace} queryKey={queryKey} />
+      </section>
+      <section aria-labelledby="overview-account" className="space-y-3">
+        <h2
+          id="overview-account"
+          className="text-sm font-semibold text-surface-50"
+        >
+          AWS account
+        </h2>
+        {setupComplete ? (
+          <ConnectAccountPanel
+            workspace={workspace}
+            queryKey={queryKey}
+            collapsible
+          />
+        ) : (
+          <p className="text-sm text-surface-300">
+            The setup checklist above walks through connecting an account. The
+            connection settings move here once the first plan has run.
+          </p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/** The workspace settings form. The run role lives with the connection. */
+function SettingsForm({
+  workspace,
+  queryKey,
+}: {
+  workspace: Workspace;
+  queryKey: string;
+}): React.ReactElement {
   const [description, setDescription] = useState(workspace.description ?? '');
   const [engine, setEngine] = useState<Engine>(engineOf(workspace));
   const [engineVersion, setEngineVersion] = useState(workspace.engine_version);
   const [workingDirectory, setWorkingDirectory] = useState(
     workspace.working_directory ?? ''
   );
-  const [runRoleArn, setRunRoleArn] = useState(workspace.run_role_arn ?? '');
-  const [invalidArn, setInvalidArn] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -47,8 +86,6 @@ export function OverviewTab({
     setEngine(engineOf(workspace));
     setEngineVersion(workspace.engine_version);
     setWorkingDirectory(workspace.working_directory ?? '');
-    setRunRoleArn(workspace.run_role_arn ?? '');
-    setInvalidArn(false);
   }, [workspace]);
 
   const { mutate, isMutating, error } = useMutationWithRefetch(
@@ -58,18 +95,12 @@ export function OverviewTab({
         engine,
         engine_version: engineVersion,
         working_directory: workingDirectory,
-        run_role_arn: runRoleArn.trim() || null,
       }),
     queryKey
   );
 
   const submit = async (): Promise<void> => {
     setSaved(false);
-    if (runRoleArn.trim() !== '' && !isRunRoleArn(runRoleArn)) {
-      setInvalidArn(true);
-      return;
-    }
-    setInvalidArn(false);
     try {
       await mutate();
       setSaved(true);
@@ -81,7 +112,7 @@ export function OverviewTab({
   return (
     <form
       aria-label="Workspace settings"
-      className="max-w-lg space-y-3"
+      className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
@@ -101,83 +132,69 @@ export function OverviewTab({
           onChange={(event) => {
             setDescription(event.target.value);
           }}
-          className="mt-1 w-full rounded-md border border-surface-600 bg-surface-800 px-3 py-2"
+          className={`${INPUT} h-auto py-1.5`}
         />
       </label>
-      <label className="block text-sm">
-        <span className="text-surface-300">Engine</span>
-        <select
-          value={engine}
-          onChange={(event) => {
-            setEngine(event.target.value as Engine);
-          }}
-          className="mt-1 w-full rounded-md border border-surface-600 bg-surface-800 px-3 py-2"
-        >
-          {ENGINES.map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="block text-sm">
-        <span className="text-surface-300">Engine version</span>
-        <input
-          required
-          value={engineVersion}
-          onChange={(event) => {
-            setEngineVersion(event.target.value);
-          }}
-          className="mt-1 w-full rounded-md border border-surface-600 bg-surface-800 px-3 py-2"
-        />
-      </label>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block text-sm">
+          <span className="text-surface-300">Engine</span>
+          <select
+            value={engine}
+            onChange={(event) => {
+              setEngine(event.target.value as Engine);
+            }}
+            className={INPUT}
+          >
+            {ENGINES.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-sm">
+          <span className="text-surface-300">Engine version</span>
+          <input
+            required
+            value={engineVersion}
+            onChange={(event) => {
+              setEngineVersion(event.target.value);
+            }}
+            className={`${INPUT} font-mono`}
+          />
+        </label>
+      </div>
       <label className="block text-sm">
         <span className="text-surface-300">Working directory</span>
         <input
           value={workingDirectory}
+          placeholder="."
           onChange={(event) => {
             setWorkingDirectory(event.target.value);
           }}
-          className="mt-1 w-full rounded-md border border-surface-600 bg-surface-800 px-3 py-2 font-mono"
+          className={`${INPUT} font-mono`}
         />
       </label>
-      <label className="block text-sm">
-        <span className="text-surface-300">Run role ARN</span>
-        <input
-          value={runRoleArn}
-          aria-invalid={invalidArn}
-          aria-describedby={invalidArn ? 'overview-run-role-error' : undefined}
-          placeholder="arn:aws:iam::123456789012:role/terraform-run"
-          onChange={(event) => {
-            setRunRoleArn(event.target.value);
-            setInvalidArn(false);
-          }}
-          className="mt-1 w-full rounded-md border border-surface-600 bg-surface-800 px-3 py-2 font-mono"
-        />
-      </label>
-      {invalidArn ? (
-        <p
-          id="overview-run-role-error"
-          role="alert"
-          className="text-sm text-rose-300"
-        >
-          {RUN_ROLE_ARN_MESSAGE}
-        </p>
-      ) : null}
       <ErrorNotice error={error} />
-      {saved ? (
-        <p role="status" className="text-sm text-emerald-300">
-          Saved.
-        </p>
-      ) : null}
-      <button
-        type="submit"
-        disabled={isMutating}
-        className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-      >
-        {isMutating ? <Spinner label="Saving the workspace" /> : null}
-        Save changes
-      </button>
+      <div className="flex items-center gap-3">
+        <Button
+          type="submit"
+          variant="primary"
+          busy={isMutating}
+          busyLabel="Saving the workspace"
+        >
+          Save changes
+        </Button>
+        {saved ? (
+          <span role="status" className="text-sm text-emerald-300">
+            Saved.
+          </span>
+        ) : null}
+      </div>
     </form>
   );
 }
+
+/** The input styling the settings fields share. */
+const INPUT =
+  'mt-1 h-8 w-full rounded-md border border-surface-600 bg-surface-900 px-2.5 text-sm text-surface-100 focus-visible:border-brand-400 focus-visible:ring-1 focus-visible:ring-brand-400 focus-visible:outline-none';

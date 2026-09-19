@@ -1,8 +1,9 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Route, Routes } from 'react-router-dom';
 
-import { aWorkspace } from '../test-helpers/fixtures';
+import { aFreshWorkspace, aWorkspace } from '../test-helpers/fixtures';
 import {
   renderWithAuth,
   signedInAuthClient,
@@ -17,6 +18,24 @@ vi.mock('../api/client', () => apiClientModuleMock());
 
 const { Workspaces } = await import('./Workspaces');
 
+/** Mounts the list with a detail route beside it, so navigation can be seen. */
+function renderList(): void {
+  renderWithAuth(
+    <Routes>
+      <Route path="/workspaces" element={<Workspaces />} />
+      <Route path="/workspaces/:workspaceId" element={<p>Detail page</p>} />
+    </Routes>,
+    signedInAuthClient(),
+    ['/workspaces']
+  );
+}
+
+/** Opens the create dialog and returns its form. */
+async function openCreateForm(): Promise<HTMLElement> {
+  await userEvent.click(screen.getByRole('button', { name: 'New workspace' }));
+  return screen.getByRole('form', { name: 'Create a workspace' });
+}
+
 describe('Workspaces', () => {
   beforeEach(() => {
     resetApiMock();
@@ -26,11 +45,11 @@ describe('Workspaces', () => {
     apiMock.listWorkspaces.mockResolvedValue({
       items: [
         aWorkspace(),
-        aWorkspace({ workspace_id: 'ws-2', name: 'organization' }),
+        aFreshWorkspace({ workspace_id: 'ws-2', name: 'organization' }),
       ],
     });
 
-    renderWithAuth(<Workspaces />, signedInAuthClient());
+    renderList();
 
     expect(
       await screen.findByRole('link', { name: 'platform' })
@@ -39,73 +58,106 @@ describe('Workspaces', () => {
       'href',
       '/workspaces/ws-2'
     );
-    expect(
-      screen.getByRole('form', { name: 'Create a workspace' })
-    ).toBeInTheDocument();
+    expect(screen.getByText('123456789012')).toBeInTheDocument();
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
   });
 
   it('says so when there are no workspaces', async () => {
     apiMock.listWorkspaces.mockResolvedValue({ items: [] });
 
-    renderWithAuth(<Workspaces />, signedInAuthClient());
+    renderList();
 
     expect(await screen.findByText('No workspaces yet.')).toBeInTheDocument();
   });
 
-  it('posts the run role ARN with the rest of the create body', async () => {
+  it('keeps the create form behind the New workspace button', async () => {
     apiMock.listWorkspaces.mockResolvedValue({ items: [] });
-    apiMock.createWorkspace.mockResolvedValue(aWorkspace());
 
-    renderWithAuth(<Workspaces />, signedInAuthClient());
+    renderList();
 
-    await screen.findByRole('form', { name: 'Create a workspace' });
-    await userEvent.type(screen.getByLabelText('Name'), 'platform');
-    await userEvent.type(
-      screen.getByLabelText('Run role ARN'),
-      'arn:aws:iam::123456789012:role/terraform-run'
-    );
+    await screen.findByText('No workspaces yet.');
+    expect(
+      screen.queryByRole('form', { name: 'Create a workspace' })
+    ).not.toBeInTheDocument();
+
+    const form = await openCreateForm();
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(within(form).getByLabelText('Name')).toHaveFocus();
+    expect(within(form).queryByLabelText(/role/i)).not.toBeInTheDocument();
+  });
+
+  it('creates a workspace from its name alone and opens it', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
+    apiMock.createWorkspace.mockResolvedValue(aFreshWorkspace());
+
+    renderList();
+
+    await screen.findByText('No workspaces yet.');
+    const form = await openCreateForm();
+    await userEvent.type(within(form).getByLabelText('Name'), 'platform');
     await userEvent.click(
-      screen.getByRole('button', { name: 'Create workspace' })
+      within(form).getByRole('button', { name: 'Create workspace' })
     );
 
     expect(apiMock.createWorkspace).toHaveBeenCalledWith({
       name: 'platform',
       engine: 'terraform',
       engine_version: '1.11.0',
-      run_role_arn: 'arn:aws:iam::123456789012:role/terraform-run',
+    });
+    expect(await screen.findByText('Detail page')).toBeInTheDocument();
+  });
+
+  it('sends a description when one is given', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
+    apiMock.createWorkspace.mockResolvedValue(aFreshWorkspace());
+
+    renderList();
+
+    await screen.findByText('No workspaces yet.');
+    const form = await openCreateForm();
+    await userEvent.type(within(form).getByLabelText('Name'), 'platform');
+    await userEvent.type(
+      within(form).getByLabelText('Description'),
+      'The platform workspace.'
+    );
+    await userEvent.click(
+      within(form).getByRole('button', { name: 'Create workspace' })
+    );
+
+    expect(apiMock.createWorkspace).toHaveBeenCalledWith({
+      name: 'platform',
+      engine: 'terraform',
+      engine_version: '1.11.0',
+      description: 'The platform workspace.',
     });
   });
 
-  it('refuses to post a run role ARN that is not one', async () => {
+  it('closes the dialog on Escape without creating anything', async () => {
     apiMock.listWorkspaces.mockResolvedValue({ items: [] });
 
-    renderWithAuth(<Workspaces />, signedInAuthClient());
+    renderList();
 
-    await screen.findByRole('form', { name: 'Create a workspace' });
-    await userEvent.type(screen.getByLabelText('Name'), 'platform');
-    await userEvent.type(screen.getByLabelText('Run role ARN'), 'not-an-arn');
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Create workspace' })
-    );
+    await screen.findByText('No workspaces yet.');
+    await openCreateForm();
+    await userEvent.keyboard('{Escape}');
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Enter a role ARN like arn:aws:iam::123456789012:role/terraform-run.'
-    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(apiMock.createWorkspace).not.toHaveBeenCalled();
   });
 
-  it('surfaces a failed read without losing the create form', async () => {
+  it('surfaces a failed read without losing the create action', async () => {
     apiMock.listWorkspaces.mockRejectedValue(
       new Error('Missing the read scope.')
     );
 
-    renderWithAuth(<Workspaces />, signedInAuthClient());
+    renderList();
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Missing the read scope.'
     );
     expect(
-      screen.getByRole('form', { name: 'Create a workspace' })
+      screen.getByRole('button', { name: 'New workspace' })
     ).toBeInTheDocument();
   });
 });
