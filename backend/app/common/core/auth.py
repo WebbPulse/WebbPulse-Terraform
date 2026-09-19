@@ -24,6 +24,7 @@ from webbpulse.identity.claims import AuthorizerClaims
 from webbpulse.identity.scopes import bearer_credential, claims_or_api_key, require_scopes
 
 from ..composition.settings import Settings, get_settings
+from ..db.identity_tables import identity_table_prefix
 
 WORKSPACES_READ: Final = "workspaces:read"
 WORKSPACES_WRITE: Final = "workspaces:write"
@@ -62,12 +63,16 @@ def api_key_store(settings: Settings | None = None) -> ApiKeyStore:
 
     The table is the identity module's, named by the package's own constant, so a
     rename there is a failing import here rather than a silent miss.
+
+    The prefix comes from `identity_table_prefix`, which reads the one Terraform
+    sets. Deriving it from `ENVIRONMENT` would name the wrong table in production,
+    where the stack slugs the environment to `prod`.
     """
     from webbpulse.dynamodb import Repository
     from webbpulse.identity.api_keys import API_KEYS_TABLE
 
     resolved = settings or get_settings()
-    prefix = f"webbpulse-terraform-{resolved.ENVIRONMENT}"
+    prefix = identity_table_prefix(resolved)
     return DynamoApiKeyStore(
         Repository(
             API_KEYS_TABLE,

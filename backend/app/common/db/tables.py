@@ -13,6 +13,7 @@ WORKSPACES: Final = "workspaces"
 RUNS: Final = "runs"
 VARIABLES: Final = "variables"
 CONFIG_VERSIONS: Final = "config-versions"
+USERS: Final = "users"
 
 WORKSPACES_BY_NAME_INDEX: Final = "by_name"
 """The GSI enforcing one workspace per name, and resolving a name to a workspace."""
@@ -22,6 +23,9 @@ RUNS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 
 CONFIG_VERSIONS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 """The GSI listing one workspace's config versions, newest last by `created_at`."""
+
+USERS_BY_EMAIL_INDEX: Final = "email_lower-index"
+"""The GSI resolving a lowercased address to its user, which is how sign-in looks one up."""
 
 SEMAPHORE_RUN_ID: Final = "run-semaphore"
 """The runs table row holding the environment-wide concurrency count.
@@ -95,9 +99,24 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
             }
         ],
     },
+    USERS: {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "id", "AttributeType": "S"},
+            {"AttributeName": "email_lower", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": USERS_BY_EMAIL_INDEX,
+                "KeySchema": [{"AttributeName": "email_lower", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+            }
+        ],
+    },
 }
 
-ALL_TABLES: Final = (WORKSPACES, RUNS, VARIABLES, CONFIG_VERSIONS)
+ALL_TABLES: Final = (WORKSPACES, RUNS, VARIABLES, CONFIG_VERSIONS, USERS)
 """Every logical table, in creation order. The suite and the local script walk it."""
 
 

@@ -1,8 +1,9 @@
 """Create every DynamoDB table against a local DynamoDB.
 
-None of the four tables carries a TTL attribute: a workspace, a variable, a
-config version and a run are all deleted deliberately or kept, so there is
-nothing to expire.
+No table here carries a TTL attribute: a workspace, a variable, a config version,
+a run and a user are all deleted deliberately or kept, so there is nothing to
+expire. The identity module's own tables, several of which do expire, are not in
+this registry and are created by Terraform.
 """
 
 import argparse
