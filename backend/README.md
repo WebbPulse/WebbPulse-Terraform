@@ -93,6 +93,13 @@ slugs production to `prod` while `ENVIRONMENT` is the word `production`.
 message for both, so a caller cannot use the refusal to tell which addresses
 exist, and maps `is_admin` onto an `admin` entry in the token's `roles` claim.
 
+It also stamps the token's `scope` claim, space joined, which is what
+`require_scopes` reads once `coerce_claims` splits it. An admin holds every scope
+in `ALL_SCOPES`; anyone else holds the read scopes only, so a signed-in non-admin
+can see the control plane without changing it. `runner` is in neither, because it
+is not in `ALL_SCOPES`. The refresh flow re-derives claims through the same hook,
+so a rotated token carries the scopes a fresh sign-in does.
+
 ### Creating the first account
 
 `IDENTITY_REGISTRATION_ENABLED` is `false` in every deployed environment, so

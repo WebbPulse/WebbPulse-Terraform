@@ -9,9 +9,16 @@ from __future__ import annotations
 
 import pytest
 from webbpulse.identity import AuthenticationRefused
+from webbpulse.identity.claims import coerce_claims
+from webbpulse.identity.scopes import SCOPES_KEY
 
+from app.common.core.auth import ALL_SCOPES, RUNNER_SCOPE
 from app.common.db.users import User, UserRepository
-from app.domains.identity.identity_hooks import ADMIN_ROLE, ControlPlaneIdentityHooks
+from app.domains.identity.identity_hooks import (
+    ADMIN_ROLE,
+    READ_SCOPES,
+    ControlPlaneIdentityHooks,
+)
 
 EMAIL = "Someone@Example.COM"
 
@@ -102,3 +109,44 @@ def test_marking_an_unknown_user_verified_is_an_error(hooks: ControlPlaneIdentit
     """A spent verification link naming no row has to fail visibly."""
     with pytest.raises(ValueError):
         hooks.mark_email_verified("user-missing")
+
+
+def test_an_admin_token_carries_every_scope(hooks: ControlPlaneIdentityHooks) -> None:
+    """An admin holds the whole contract, so no guarded route refuses them."""
+    _store(hooks, is_admin=True)
+    user = hooks.load_user_by_id("user-1")
+    assert user is not None
+    assert hooks.claims_for(user)["scope"].split() == list(ALL_SCOPES)
+
+
+def test_a_non_admin_token_carries_the_read_scopes_only(hooks: ControlPlaneIdentityHooks) -> None:
+    """A plain account sees the control plane and changes nothing in it."""
+    _store(hooks)
+    user = hooks.load_user_by_id("user-1")
+    assert user is not None
+    granted = hooks.claims_for(user)["scope"].split()
+    assert granted == [scope for scope in ALL_SCOPES if scope.endswith(":read")]
+    assert not [scope for scope in granted if not scope.endswith(":read")]
+
+
+def test_the_runner_scope_reaches_no_person(hooks: ControlPlaneIdentityHooks) -> None:
+    """The run token's scope is never granted to a human, admin or not."""
+    _store(hooks, is_admin=True)
+    user = hooks.load_user_by_id("user-1")
+    assert user is not None
+    assert RUNNER_SCOPE not in hooks.claims_for(user)["scope"].split()
+
+
+def test_the_claims_round_trip_into_the_scopes_list(hooks: ControlPlaneIdentityHooks) -> None:
+    """`coerce_claims` splits the claim into the `scopes` list `require_scopes` reads."""
+    _store(hooks, is_admin=True)
+    admin = hooks.load_user_by_id("user-1")
+    assert admin is not None
+    assert coerce_claims(hooks.claims_for(admin))[SCOPES_KEY] == list(ALL_SCOPES)
+
+    repository = hooks.user_repository()
+    assert isinstance(repository, UserRepository)
+    repository.create(User(id="user-2", email="plain@example.com", email_verified=True))
+    plain = hooks.load_user_by_id("user-2")
+    assert plain is not None
+    assert coerce_claims(hooks.claims_for(plain))[SCOPES_KEY] == list(READ_SCOPES)
