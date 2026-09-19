@@ -16,6 +16,7 @@ app/
     workspaces/    workspaces, variables, config versions
     runs/          runs, the runner's bundle and phase results
       consumers/   the confirmations queue route
+e2e/               the deployed-stage suite, extending webbpulse.e2e
 tests/
   common/          the auth chain and every route's scope guard
   domains/<name>/  one directory per domain, which is how CI shards
@@ -61,6 +62,28 @@ Each domain also runs as its own container, the way it is deployed:
 ```bash
 docker compose --profile domains up --build
 ```
+
+## End-to-end
+
+`e2e/` extends the shared `webbpulse.e2e` plugin rather than forking it:
+`test_shared.py` collects the seven shared groups, `conftest.py` supplies the
+product hooks, and `test_product_flows.py` carries the run lifecycle.
+
+```bash
+uv sync --group e2e
+uv run pytest e2e --no-cov -n auto --dist loadgroup
+```
+
+The suite reads the `E2E_*` variables, which the reusable workflows set from the
+`staging` Environment. `e2e.yml` runs the full suite after every deploy;
+`e2e-local.yml` runs it on a stack built from source on each pull request.
+
+Two product facts the shared plugin cannot know:
+
+- Write scopes come from `is_admin`, so the `ephemeral_user` fixture is
+  overridden to create its user with that attribute.
+- The SPA carries no `data-testid` attributes, so the login form hook supplies
+  CSS locators.
 
 ## Auth
 
