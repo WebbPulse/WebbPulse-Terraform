@@ -54,6 +54,10 @@ locals {
       integration        = "workspaces"
       authorization_type = "NONE"
     }
+    "GET /api/auth/oauth/providers" = {
+      integration        = "workspaces"
+      authorization_type = "NONE"
+    }
   }
 
   auth_routes = merge(
@@ -61,6 +65,7 @@ locals {
     {
       "GET /api/auth/health"      = { integration = "workspaces" }
       "POST /api/auth/login"      = { integration = "workspaces" }
+      "POST /api/auth/register"   = { integration = "workspaces" }
       "POST /api/auth/login/totp" = { integration = "workspaces" }
       "POST /api/auth/refresh"    = { integration = "workspaces" }
       "POST /api/auth/logout"     = { integration = "workspaces" }
@@ -112,6 +117,20 @@ locals {
         require_identity_jwt = true
       }
       "DELETE /api/auth/passkeys/{credential_id}" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
+      "PATCH /api/auth/passkeys/{credential_id}" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
+    } : {},
+    local.ephemeral_users_enabled ? {
+      "POST /api/auth/e2e/users" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
+      "DELETE /api/auth/e2e/users/{user_id}" = {
         integration          = "workspaces"
         require_identity_jwt = true
       }
