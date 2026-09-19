@@ -22,26 +22,31 @@ export interface OverviewTabProps {
 /** The engines a workspace can run. */
 const ENGINES: readonly Engine[] = ['terraform', 'tofu'];
 
+/** The engine to edit, defaulted the way the backend defaults an absent one. */
+function engineOf(workspace: Workspace): Engine {
+  return workspace.engine ?? 'terraform';
+}
+
 /** The workspace settings form. */
 export function OverviewTab({
   workspace,
   queryKey,
 }: OverviewTabProps): React.ReactElement {
-  const [description, setDescription] = useState(workspace.description);
-  const [engine, setEngine] = useState<Engine>(workspace.engine);
+  const [description, setDescription] = useState(workspace.description ?? '');
+  const [engine, setEngine] = useState<Engine>(engineOf(workspace));
   const [engineVersion, setEngineVersion] = useState(workspace.engine_version);
   const [workingDirectory, setWorkingDirectory] = useState(
-    workspace.working_directory
+    workspace.working_directory ?? ''
   );
   const [runRoleArn, setRunRoleArn] = useState(workspace.run_role_arn);
   const [invalidArn, setInvalidArn] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    setDescription(workspace.description);
-    setEngine(workspace.engine);
+    setDescription(workspace.description ?? '');
+    setEngine(engineOf(workspace));
     setEngineVersion(workspace.engine_version);
-    setWorkingDirectory(workspace.working_directory);
+    setWorkingDirectory(workspace.working_directory ?? '');
     setRunRoleArn(workspace.run_role_arn);
     setInvalidArn(false);
   }, [workspace]);

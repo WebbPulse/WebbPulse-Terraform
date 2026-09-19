@@ -1,48 +1,45 @@
-/** Contract types for the WebbPulse Terraform control plane API. */
+/**
+ * Contract types for the WebbPulse Terraform control plane API.
+ *
+ * Every type here is an alias into `schema.d.ts`, which `npm run api:generate`
+ * derives from the backend's own OpenAPI document. Nothing in this file is
+ * hand-written, so a backend schema change lands here as a type error rather
+ * than as a runtime surprise. See frontend/README.md to regenerate.
+ */
 
-/** The engine a workspace plans and applies with. */
-export type Engine = 'terraform' | 'tofu';
+import type { components, paths } from './schema';
+
+type Schemas = components['schemas'];
+
+/**
+ * The engine a workspace plans and applies with.
+ *
+ * `NonNullable` because the property is optional on the wire, carrying a
+ * default the backend fills in, while this names the value itself. A form's
+ * engine state is always one of the two.
+ */
+export type Engine = NonNullable<Schemas['Workspace']['engine']>;
 
 /** A workspace as the API returns it. */
-export interface Workspace {
-  workspace_id: string;
-  name: string;
-  description: string;
-  engine: Engine;
-  engine_version: string;
-  working_directory: string;
-  run_role_arn: string;
-  created_at: string;
-  updated_at?: string | null;
-}
+export type Workspace = Schemas['Workspace'];
 
 /** The body that creates a workspace. */
-export interface WorkspaceCreate {
-  name: string;
-  engine?: Engine;
-  engine_version: string;
-  run_role_arn: string;
-  working_directory?: string;
-  description?: string;
-}
+export type WorkspaceCreate = Schemas['WorkspaceCreate'];
 
 /**
  * The body that edits a workspace. Every field is optional.
  *
- * The name is absent on purpose: a rename would break both the state key, which
- * is derived from the workspace id, and the uniqueness claim on the name, so
- * the backend refuses it by omitting it from its update model.
+ * The name is absent because the backend's update model omits it: a rename
+ * would break both the state key, which is derived from the workspace id, and
+ * the uniqueness claim on the name.
  */
-export interface WorkspaceUpdate {
-  engine?: Engine;
-  engine_version?: string;
-  run_role_arn?: string;
-  working_directory?: string;
-  description?: string;
-}
+export type WorkspaceUpdate = Schemas['WorkspaceUpdate'];
+
+/** Every workspace, newest last by id. */
+export type WorkspaceList = Schemas['WorkspaceList'];
 
 /** Whether a variable is passed to Terraform or to the process environment. */
-export type VariableCategory = 'terraform' | 'env';
+export type VariableCategory = Schemas['Variable']['category'];
 
 /**
  * A workspace variable as the API returns it.
@@ -50,44 +47,22 @@ export type VariableCategory = 'terraform' | 'env';
  * A sensitive variable never carries `value`: the backend seals it app-side and
  * the read routes omit it, so the form treats it as write-only.
  */
-export interface Variable {
-  workspace_id: string;
-  key: string;
-  value?: string | null;
-  category: VariableCategory;
-  sensitive: boolean;
-  description: string;
-  created_at: string;
-  updated_at?: string | null;
-}
+export type Variable = Schemas['Variable'];
 
 /** The body that creates or replaces a variable. */
-export interface VariableWrite {
-  value: string;
-  category: VariableCategory;
-  sensitive: boolean;
-  description?: string;
-}
+export type VariableWrite = Schemas['VariableWrite'];
+
+/** Every variable on a workspace, by key. */
+export type VariableList = Schemas['VariableList'];
 
 /** Where a configuration version is in its upload lifecycle. */
-export type ConfigVersionStatus = 'pending' | 'uploaded';
+export type ConfigVersionStatus = Schemas['ConfigVersion']['status'];
 
 /** A configuration version as the API returns it. */
-export interface ConfigVersion {
-  config_version_id: string;
-  workspace_id: string;
-  key: string;
-  status: ConfigVersionStatus;
-  size_bytes: number;
-  created_at: string;
-  updated_at?: string | null;
-}
+export type ConfigVersion = Schemas['ConfigVersion'];
 
 /** The body that creates a configuration version. */
-export interface ConfigVersionCreate {
-  /** The ceiling the presigned PUT signs as `Content-Length`. */
-  size_bytes?: number;
-}
+export type ConfigVersionCreate = Schemas['ConfigVersionCreate'];
 
 /**
  * A new configuration version plus the presigned PUT to upload its tarball to.
@@ -96,15 +71,22 @@ export interface ConfigVersionCreate {
  * Every header in `headers` is inside the signature, so a PUT that omits or
  * changes one is rejected by S3.
  */
-export interface ConfigVersionUpload {
-  config_version: ConfigVersion;
-  upload_url: string;
-  headers: Record<string, string>;
-  expires_in: number;
-}
+export type ConfigVersionUpload = Schemas['ConfigVersionUpload'];
 
-/** Every state a run can be in, in the contract's order. */
-export const RUN_STATES = [
+/** One workspace's configuration versions, newest last. */
+export type ConfigVersionList = Schemas['ConfigVersionList'];
+
+/** The state of a run. */
+export type RunState = Schemas['Run']['status'];
+
+/**
+ * Every state a run can be in, in the contract's order.
+ *
+ * A runtime array because the tests iterate it. The annotation ties it to the
+ * generated union, so a state added or removed backend-side fails to compile
+ * here until this list is brought back into line.
+ */
+export const RUN_STATES: readonly RunState[] = [
   'pending',
   'planning',
   'planned',
@@ -115,36 +97,13 @@ export const RUN_STATES = [
   'errored',
   'cancelled',
   'discarded',
-] as const;
-
-/** The state of a run. */
-export type RunState = (typeof RUN_STATES)[number];
+];
 
 /** The resource counts a plan reported. */
-export interface RunChanges {
-  add: number;
-  change: number;
-  destroy: number;
-}
+export type RunChanges = Schemas['RunChanges'];
 
 /** A run as the API returns it. */
-export interface Run {
-  run_id: string;
-  workspace_id: string;
-  config_version_id: string;
-  status: RunState;
-  plan_only: boolean;
-  message: string;
-  created_at: string;
-  updated_at?: string | null;
-  started_at?: string | null;
-  finished_at?: string | null;
-  /** The run this one waits on, when it was queued rather than started. */
-  queued_behind?: string | null;
-  changes?: RunChanges | null;
-  error?: string | null;
-  execution_arn?: string | null;
-}
+export type Run = Schemas['Run'];
 
 /**
  * A newly created run.
@@ -152,26 +111,19 @@ export interface Run {
  * `run_token` is present only when the run started: a queued run has no
  * execution and so no token until the run ahead of it finishes.
  */
-export interface RunCreated extends Run {
-  run_token?: string | null;
-}
+export type RunCreated = Schemas['RunCreated'];
 
 /** The body that starts a run. */
-export interface RunCreate {
-  workspace_id: string;
-  config_version_id: string;
-  plan_only: boolean;
-  message?: string;
-}
+export type RunCreate = Schemas['RunCreate'];
+
+/** One workspace's runs, newest first. */
+export type RunList = Schemas['RunList'];
 
 /** Which phase's log stream to read. */
-export type RunPhase = 'plan' | 'apply';
+export type RunPhase = Schemas['LogPage']['phase'];
 
 /** One log line as the logs route returns it. */
-export interface RunLogLine {
-  timestamp: number;
-  message: string;
-}
+export type RunLogLine = Schemas['LogEvent'];
 
 /**
  * A page of log lines.
@@ -180,29 +132,17 @@ export interface RunLogLine {
  * stream rather than re-reading it. It is null when the stream does not exist
  * yet, which is not the same as an empty page.
  */
-export interface RunLogPage {
-  run_id: string;
-  phase: RunPhase;
-  events: RunLogLine[];
-  next_after?: string | null;
-}
+export type RunLogPage = Schemas['LogPage'];
 
-/** Every workspace, newest last by id. */
-export interface WorkspaceList {
-  items: Workspace[];
-}
+/** The error envelope every failing route renders. */
+export type ErrorResponse = Schemas['ErrorResponse'];
 
-/** One workspace's runs, newest first. */
-export interface RunList {
-  items: Run[];
-}
+/** The query the runs list accepts, so a caller cannot invent a filter. */
+export type RunListQuery = NonNullable<
+  paths['/api/v1/runs']['get']['parameters']['query']
+>;
 
-/** One workspace's configuration versions, newest last. */
-export interface ConfigVersionList {
-  items: ConfigVersion[];
-}
-
-/** Every variable on a workspace, by key. */
-export interface VariableList {
-  items: Variable[];
-}
+/** The query a logs page takes: which phase, and where to resume from. */
+export type RunLogsQuery = NonNullable<
+  paths['/api/v1/runs/{run_id}/logs']['get']['parameters']['query']
+>;

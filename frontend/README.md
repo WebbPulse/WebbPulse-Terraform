@@ -50,6 +50,7 @@ which `codeartifact login` requires. CI obtains its token over OIDC.
 | `npm run dev:local`              | Dev server on :5173, proxying `/api` to localhost:8000           |
 | `npm run dev:remote-api`         | Dev server against `https://api.staging.terraform.webbpulse.com` |
 | `npm run build`                  | `tsc -b` then a Vite production build                            |
+| `npm run api:generate`           | Regenerate `src/api/openapi.json` and `src/api/schema.d.ts`      |
 | `npm run lint`, `lint:fix`       | ESLint                                                           |
 | `npm run format`, `format:check` | Prettier                                                         |
 | `npm run test`                   | Vitest in watch mode                                             |
@@ -88,7 +89,9 @@ challenge is not lost with it.
 
 | File           | What it holds                                                   |
 | -------------- | --------------------------------------------------------------- |
-| `types.ts`     | The contract types: workspace, variable, config version, run    |
+| `openapi.json` | The backend's OpenAPI document, generated. Do not edit          |
+| `schema.d.ts`  | Types generated from that document. Do not edit                 |
+| `types.ts`     | The contract types, each an alias into `schema.d.ts`            |
 | `runStates.ts` | Which actions each run state allows, and how it is badged       |
 | `client.ts`    | `TerraformApi`, one method per route, plus the presigned upload |
 
@@ -100,6 +103,33 @@ its cookies.
 
 Sensitive variable values are write-only. The API never returns them, so editing
 one starts with an empty box and a save re-enters the value.
+
+### Regenerating the types
+
+`openapi.json` and `schema.d.ts` are generated, never hand-edited. `types.ts`
+holds only aliases into them, so a backend schema change becomes a type error
+here rather than a runtime surprise.
+
+```bash
+npm run api:generate
+```
+
+That builds every domain through the backend's own composition, writes the
+merged document to `src/api/openapi.json` with each path under the gateway
+prefix the frontend calls, then runs `openapi-typescript` over it to produce
+`src/api/schema.d.ts`. It needs the backend's `uv` environment, so run
+`uv sync` in `backend/` first if you have not already. Nothing reaches AWS: the
+export uses the same fake table names and in-process identity signer the test
+suite does.
+
+Commit both files with the change that moved them. The `api-contract` CI job
+regenerates and fails on any diff, so a backend schema change that skips this
+step is caught on the pull request rather than in the browser.
+
+`--default-non-nullable=false` is deliberate. Without it every field carrying a
+Pydantic default is emitted as required, which would make an omitted
+`description` a type error while still letting a genuinely required field like
+`run_role_arn` slip through as satisfied.
 
 ## Structure
 

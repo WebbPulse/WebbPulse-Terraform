@@ -7,4 +7,8 @@ coverage
 *.log
 package-lock.json
 yarn.lock
-pnpm-lock.yaml 
+pnpm-lock.yaml
+
+# Generated from the backend OpenAPI document by npm run api:generate.
+src/api/openapi.json
+src/api/schema.d.ts

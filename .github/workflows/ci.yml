@@ -24,6 +24,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       runner: ${{ steps.filter.outputs.runner }}
       terraform: ${{ steps.filter.outputs.terraform }}
+      api-contract: ${{ steps.filter.outputs.api-contract }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7
@@ -46,6 +47,12 @@ jobs:
               - '.github/workflows/ci.yml'
             terraform:
               - 'terraform/**'
+              - '.github/workflows/ci.yml'
+            api-contract:
+              - 'backend/app/**'
+              - 'backend/scripts/export_openapi.py'
+              - 'frontend/src/api/**'
+              - 'frontend/package.json'
               - '.github/workflows/ci.yml'
 
   affected:
@@ -148,6 +155,87 @@ jobs:
     secrets:
       role-to-assume: ${{ vars.CI_AWS_ROLE_ARN }}
       codeartifact-domain-owner: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+
+  api-contract:
+    name: API contract
+    needs: changes
+    if: needs.changes.outputs.api-contract == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.10"
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Configure AWS credentials for CodeArtifact
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.CI_AWS_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Authenticate the CodeArtifact index for uv
+        env:
+          CODEARTIFACT_DOMAIN_OWNER: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(aws codeartifact get-authorization-token \
+            --domain webbpulse \
+            --domain-owner "$CODEARTIFACT_DOMAIN_OWNER" \
+            --query authorizationToken \
+            --output text)
+          echo "::add-mask::$TOKEN"
+          echo "UV_INDEX_CODEARTIFACT_USERNAME=aws" >> "$GITHUB_ENV"
+          echo "UV_INDEX_CODEARTIFACT_PASSWORD=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Log in to CodeArtifact for npm
+        env:
+          CODEARTIFACT_DOMAIN_OWNER: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+        run: |
+          set -euo pipefail
+          aws codeartifact login \
+            --tool npm \
+            --domain webbpulse \
+            --domain-owner "$CODEARTIFACT_DOMAIN_OWNER" \
+            --repository npm \
+            --namespace @webbpulse
+
+      - name: Install the backend
+        working-directory: backend
+        run: uv sync --locked
+
+      - name: Install the frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Regenerate the API types
+        working-directory: frontend
+        run: npm run api:generate
+
+      - name: Fail when the generated types are out of date
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code -- frontend/src/api/openapi.json frontend/src/api/schema.d.ts; then
+            echo "::error::The generated API types are out of date. Run 'npm run api:generate' in frontend/ and commit the result."
+            exit 1
+          fi
 
   runner:
     name: Runner
@@ -272,6 +360,7 @@ jobs:
       - affected
       - backend
       - frontend
+      - api-contract
       - runner
       - runner-image
       - terraform-fmt
