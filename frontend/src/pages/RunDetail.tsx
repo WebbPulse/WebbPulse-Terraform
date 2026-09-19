@@ -37,7 +37,7 @@ export function RunDetail(): React.ReactElement {
 
   useEffect(() => {
     if (run !== null && phase === null) {
-      setPhase(defaultPhase(run.state));
+      setPhase(defaultPhase(run.status));
     }
   }, [run, phase]);
 
@@ -48,7 +48,7 @@ export function RunDetail(): React.ReactElement {
     return <ErrorNotice error={query.error ?? new Error('Run not found.')} />;
   }
 
-  const shownPhase = phase ?? defaultPhase(run.state);
+  const shownPhase = phase ?? defaultPhase(run.status);
 
   return (
     <div className="space-y-6">
@@ -64,7 +64,7 @@ export function RunDetail(): React.ReactElement {
             </Link>
           </p>
         </div>
-        <StateBadge state={run.state} />
+        <StateBadge state={run.status} />
       </div>
 
       <ErrorNotice error={query.error} />
@@ -84,7 +84,7 @@ export function RunDetail(): React.ReactElement {
               type="button"
               role="tab"
               aria-selected={shownPhase === candidate}
-              disabled={candidate === 'apply' && !hasApplyPhase(run.state)}
+              disabled={candidate === 'apply' && !hasApplyPhase(run.status)}
               onClick={() => {
                 setPhase(candidate);
               }}
@@ -101,7 +101,7 @@ export function RunDetail(): React.ReactElement {
         <RunLogViewer
           runId={run.run_id}
           phase={shownPhase}
-          live={isActive(run.state)}
+          live={isActive(run.status)}
         />
       </div>
     </div>

@@ -46,7 +46,7 @@ export function RunTable({ runs }: RunTableProps): React.ReactElement {
               </Link>
             </td>
             <td className="py-2">
-              <StateBadge state={run.state} />
+              <StateBadge state={run.status} />
             </td>
             <td className="py-2 font-mono text-surface-300">
               {changeSummary(run)}

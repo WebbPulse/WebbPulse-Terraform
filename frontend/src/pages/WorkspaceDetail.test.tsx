@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
@@ -39,15 +39,15 @@ describe('WorkspaceDetail', () => {
     resetApiMock();
     apiMock.getWorkspace.mockResolvedValue(aWorkspace());
     apiMock.listVariables.mockResolvedValue({
-      variables: [
+      items: [
         aVariable(),
         aVariable({ key: 'token', sensitive: true, value: null }),
       ],
     });
     apiMock.listConfigVersions.mockResolvedValue({
-      config_versions: [aConfigVersion()],
+      items: [aConfigVersion()],
     });
-    apiMock.listRuns.mockResolvedValue({ runs: [aRun('planned')] });
+    apiMock.listRuns.mockResolvedValue({ items: [aRun('planned')] });
   });
 
   it('opens on the overview tab with the workspace settings', async () => {
@@ -79,6 +79,44 @@ describe('WorkspaceDetail', () => {
     }
   });
 
+  it('patches the editable fields, with the run role and without the name', async () => {
+    apiMock.updateWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail();
+
+    await screen.findByRole('form', { name: 'Workspace settings' });
+    const arn = screen.getByLabelText('Run role ARN');
+    await userEvent.clear(arn);
+    await userEvent.type(arn, 'arn:aws:iam::123456789012:role/other-run');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      {
+        description: 'The platform workspace.',
+        engine: 'terraform',
+        engine_version: '1.11.0',
+        working_directory: 'terraform',
+        run_role_arn: 'arn:aws:iam::123456789012:role/other-run',
+      }
+    );
+  });
+
+  it('refuses to patch a run role ARN that is not one', async () => {
+    renderDetail();
+
+    await screen.findByRole('form', { name: 'Workspace settings' });
+    const arn = screen.getByLabelText('Run role ARN');
+    await userEvent.clear(arn);
+    await userEvent.type(arn, 'arn:aws:iam::12:role/short');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Enter a role ARN like arn:aws:iam::123456789012:role/terraform-run.'
+    );
+    expect(apiMock.updateWorkspace).not.toHaveBeenCalled();
+  });
+
   it('shows a sensitive variable as write only rather than its value', async () => {
     renderDetail();
 
@@ -105,6 +143,53 @@ describe('WorkspaceDetail', () => {
     expect(
       screen.getByRole('button', { name: 'Plan and apply' })
     ).toBeInTheDocument();
+  });
+
+  it('declares the file size and PUTs with every signed header', async () => {
+    const put = vi.fn<typeof globalThis.fetch>(() =>
+      Promise.resolve(new Response(null, { status: 200 }))
+    );
+    vi.stubGlobal('fetch', put);
+    const headers = {
+      'Content-Type': 'application/gzip',
+      'Content-Length': '7',
+    };
+    apiMock.createConfigVersion.mockResolvedValue({
+      config_version: aConfigVersion({ status: 'pending' }),
+      upload_url: 'https://bucket.s3.test/x',
+      headers,
+      expires_in: 900,
+    });
+
+    renderDetail();
+
+    await screen.findByRole('heading', { name: 'platform' });
+    await userEvent.click(
+      screen.getByRole('tab', { name: 'Configuration versions' })
+    );
+    await screen.findByRole('form', {
+      name: 'Upload a configuration version',
+    });
+    const file = new File(['tarball'], 'config.tar.gz', {
+      type: 'application/gzip',
+    });
+
+    await userEvent.upload(
+      screen.getByLabelText('Configuration tarball'),
+      file
+    );
+    fireEvent.submit(
+      screen.getByRole('form', { name: 'Upload a configuration version' })
+    );
+
+    await screen.findByText('Uploaded.');
+
+    expect(apiMock.createConfigVersion).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      { size_bytes: file.size }
+    );
+    expect(put.mock.calls[0]?.[1]?.headers).toEqual(headers);
+    vi.unstubAllGlobals();
   });
 
   it('lists the workspace runs on the runs tab', async () => {

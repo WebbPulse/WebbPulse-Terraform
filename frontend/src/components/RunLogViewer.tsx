@@ -33,13 +33,11 @@ export function RunLogViewer({
   const [lines, setLines] = useState<RunLogLine[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
-  const [complete, setComplete] = useState(false);
   const after = useRef<string | null>(null);
   const inFlight = useRef(false);
 
   useEffect(() => {
     setLines([]);
-    setComplete(false);
     setLoading(true);
     after.current = null;
   }, [runId, phase]);
@@ -55,10 +53,9 @@ export function RunLogViewer({
         after: after.current,
       });
       after.current = page.next_after ?? after.current;
-      if (page.lines.length > 0) {
-        setLines((previous) => [...previous, ...page.lines]);
+      if (page.events.length > 0) {
+        setLines((previous) => [...previous, ...page.events]);
       }
-      setComplete(page.complete);
       setError(null);
     } catch (thrown) {
       setError(thrown);
@@ -101,9 +98,6 @@ export function RunLogViewer({
         {lines.map((line) => line.message).join('\n')}
       </pre>
       {loading ? <Spinner label="Loading the logs" /> : null}
-      {complete ? (
-        <p className="text-xs text-surface-400">End of the {phase} log.</p>
-      ) : null}
     </div>
   );
 }

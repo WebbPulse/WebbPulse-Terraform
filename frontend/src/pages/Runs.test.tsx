@@ -23,7 +23,7 @@ describe('Runs', () => {
 
   it('lists every run with its state and plan counts', async () => {
     apiMock.listRuns.mockResolvedValue({
-      runs: [
+      items: [
         aRun('applied'),
         aRun('errored', { run_id: 'run-2', changes: null }),
       ],
@@ -38,7 +38,7 @@ describe('Runs', () => {
   });
 
   it('says so when there are no runs', async () => {
-    apiMock.listRuns.mockResolvedValue({ runs: [] });
+    apiMock.listRuns.mockResolvedValue({ items: [] });
 
     renderWithAuth(<Runs />, signedInAuthClient());
 
