@@ -1,5 +1,7 @@
 """Creating, reading and listing runs, and the per workspace serialisation."""
 
+import json
+
 import boto3
 
 from app.common.db.tables import RUNS, local_table_name
@@ -45,6 +47,21 @@ def test_the_run_token_is_stored_only_as_a_hash(created_run):
     item = stored_run(created_run["run_id"])
     assert item["run_token_hash"]
     assert created_run["run_token"] not in str(item)
+
+
+def test_the_execution_input_carries_the_run_token(created_run):
+    """The token travels on the execution input, which is how the runner gets it.
+
+    The state machine reads `$.run_token` into both container overrides, so a
+    start that omits it produces a task that exits before it fetches a bundle.
+    """
+    client = boto3.client("stepfunctions", region_name=REGION)
+    described = client.describe_execution(executionArn=created_run["execution_arn"])
+    execution_input = json.loads(described["input"])
+    assert execution_input["run_token"] == created_run["run_token"]
+    assert execution_input["run_id"] == created_run["run_id"]
+    assert execution_input["workspace_id"]
+    assert execution_input["plan_only"] is False
 
 
 def test_create_is_404_for_an_absent_workspace(auth_client, uploaded_config_version):

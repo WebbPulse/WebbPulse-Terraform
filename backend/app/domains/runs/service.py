@@ -28,7 +28,7 @@ from ...common.db import repositories
 from ...common.db.tables import RUNS_BY_WORKSPACE_INDEX
 from ..workspaces import service as workspaces_service
 from . import session_policy
-from .schemas.run import Phase
+from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
 
 RUN_ID_PREFIX: Final = "run-"
 
@@ -62,6 +62,11 @@ apply phase re-fetches its bundle rather than reusing the plan phase's."""
 PLAN_CONTENT_TYPE: Final = "application/octet-stream"
 PLAN_JSON_CONTENT_TYPE: Final = "application/json"
 MAX_PLAN_BYTES: Final = 500_000_000
+
+LOG_CONTENT_TYPE: Final = "text/plain"
+MAX_LOG_BYTES: Final = 50_000_000
+"""A phase transcript is text, so fifty megabytes is far past any real run and
+still small enough that a signed URL cannot be used to park a large object."""
 
 
 class RunNotFound(Exception):
@@ -101,6 +106,11 @@ def plan_key(run_id: str) -> str:
 def plan_json_key(run_id: str) -> str:
     """The JSON plan key for one run."""
     return f"runs/{run_id}/plan.json"
+
+
+def log_key(run_id: str, phase: Phase) -> str:
+    """The uploaded transcript key for one phase of one run."""
+    return f"runs/{run_id}/{phase}.log"
 
 
 def log_stream_name(run_id: str, phase: Phase) -> str:
@@ -215,12 +225,18 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
 def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     """Mint this run's token, start its execution and move it to `planning`.
 
-    The token is minted before the execution starts because the execution's first
-    task needs it, and the row is stamped before the start call so a crash between
-    the two leaves a run that can be reconciled rather than a token with no run.
+    The token is minted before the execution starts because it travels on the
+    execution input: the state machine reads `$.run_token` into the plan and the
+    apply container overrides, which is the only way the runner gets a
+    `RUN_TOKEN`. The row is stamped before the start call so a crash between the
+    two leaves a run that can be reconciled rather than a token with no run.
+
+    The execution input is the one place the plaintext is written down, and the
+    state machine runs with `include_execution_data` off so it never reaches the
+    execution log. Only the hash is stored on the row.
 
     Returns the run with `run_token` set, which is the only time the plaintext
-    exists anywhere.
+    reaches a caller.
     """
     from webbpulse.identity.api_keys import mint
 
@@ -246,6 +262,7 @@ def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any
                     "run_id": run_id,
                     "workspace_id": str(run["workspace_id"]),
                     "plan_only": bool(run.get("plan_only", False)),
+                    "run_token": minted.plaintext,
                 }
             ),
         )
@@ -693,29 +710,36 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
             region_name=region,
             endpoint_url=endpoint,
         ).url,
-        "backend_config": {
+        "backend": {
             "bucket": resolved.STATE_BUCKET,
             "key": workspace_state_key,
             "region": region,
-            "kms_key_arn": resolved.STATE_KMS_KEY_ARN,
-            "use_lockfile": True,
+            "kms_key_id": resolved.STATE_KMS_KEY_ARN,
         },
-        "run_role_arn": str(workspace.get("run_role_arn", "")),
-        "session_policy": session_policy.for_phase(
-            phase,
-            state_bucket=resolved.STATE_BUCKET,
-            state_key=workspace_state_key,
-            artifacts_bucket=resolved.ARTIFACTS_BUCKET,
-            run_id=run_id,
-        ),
+        "run_role": {
+            "role_arn": str(workspace.get("run_role_arn", "")),
+            "external_id": workspace_id,
+            "session_policy": session_policy.for_phase(
+                phase,
+                state_bucket=resolved.STATE_BUCKET,
+                state_key=workspace_state_key,
+                artifacts_bucket=resolved.ARTIFACTS_BUCKET,
+                run_id=run_id,
+            ),
+            "duration_seconds": RUN_ROLE_DURATION_SECONDS,
+        },
         "terraform_variables": variables["terraform"],
-        "env_variables": variables["env"],
-        "plan_artifacts": _plan_artifacts(run_id, settings=resolved),
+        "environment_variables": variables["env"],
+        "artifacts": _artifacts(run_id, phase, settings=resolved),
     }
 
 
-def _plan_artifacts(run_id: str, *, settings: Settings) -> dict[str, str]:
-    """Presigned URLs for one run's plan artifacts, both directions."""
+def _artifacts(run_id: str, phase: Phase, *, settings: Settings) -> dict[str, str]:
+    """Presigned URLs for one run's artifacts, both directions.
+
+    The log URL is per phase because a plan and an apply each upload their own
+    redacted transcript and neither should overwrite the other.
+    """
     from webbpulse.storage import presigned_get, presigned_put
 
     region = settings.AWS_REGION_NAME
@@ -743,6 +767,15 @@ def _plan_artifacts(run_id: str, *, settings: Settings) -> dict[str, str]:
         "plan_get_url": presigned_get(
             bucket,
             plan_key(run_id),
+            ARTIFACT_URL_TTL,
+            region_name=region,
+            endpoint_url=endpoint,
+        ).url,
+        "log_put_url": presigned_put(
+            bucket,
+            log_key(run_id, phase),
+            LOG_CONTENT_TYPE,
+            MAX_LOG_BYTES,
             ARTIFACT_URL_TTL,
             region_name=region,
             endpoint_url=endpoint,
@@ -782,6 +815,7 @@ __all__ = [
     "finish_run",
     "get_run",
     "list_runs",
+    "log_key",
     "log_stream_name",
     "plan_json_key",
     "plan_key",

@@ -7,6 +7,7 @@ and is tested from every angle a caller could come at it.
 
 from fastapi.testclient import TestClient
 
+from app.common.core.auth import RUNNER_SCOPE
 from app.domains.runs import service as runs_service
 from tests.conftest import mint_key
 
@@ -46,7 +47,7 @@ def test_another_runs_token_cannot_open_this_bundle(
     ).json()
     runs_service.finish_run(created_run["run_id"], "applied")
     assert runs_service.get_run(other["run_id"])["status"] == "planning"
-    token = runs_service.start_run(other["run_id"])["run_token"]
+    token = mint_key(RUNNER_SCOPE, user_id=other["run_id"])
 
     with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as runner:
         response = runner.get(f"{BASE}/{created_run['run_id']}/bundle")
@@ -75,20 +76,22 @@ def test_the_bundle_carries_the_engine_and_the_config(runner_client, created_run
     assert body["engine"] == workspace["engine"]
     assert body["engine_version"] == workspace["engine_version"]
     assert body["config_url"].startswith("https://")
-    assert body["run_role_arn"] == workspace["run_role_arn"]
+    assert body["run_role"]["role_arn"] == workspace["run_role_arn"]
 
 
-def test_the_bundle_backend_config_enables_native_locking(runner_client, created_run, workspace):
-    """The backend points at this workspace's state key with lockfile locking.
+def test_the_bundle_backend_points_at_the_workspace_state(runner_client, created_run, workspace):
+    """The backend points at this workspace's state key under the KMS key.
 
-    `use_lockfile` is what makes S3 native locking hold, which is the only thing
-    stopping two runs from writing the same state.
+    The runner writes these four values straight into the S3 backend override
+    and always adds `use_lockfile = true`, which is the only thing stopping two
+    runs from writing the same state.
     """
     body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
-    backend = body["backend_config"]
+    backend = body["backend"]
     assert backend["key"] == f"workspaces/{workspace['workspace_id']}/terraform.tfstate"
-    assert backend["use_lockfile"] is True
     assert backend["bucket"]
+    assert backend["region"]
+    assert "kms_key_id" in backend
 
 
 def test_the_bundle_carries_decrypted_variables(auth_client, runner_client, created_run, workspace):
@@ -107,17 +110,44 @@ def test_the_bundle_carries_decrypted_variables(auth_client, runner_client, crea
         json={"value": "us-west-2", "category": "terraform", "sensitive": False},
     )
     body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
-    assert body["env_variables"]["secret_token"] == "super-secret"
+    assert body["environment_variables"]["secret_token"] == "super-secret"
     assert body["terraform_variables"]["region"] == "us-west-2"
 
 
-def test_the_bundle_carries_the_plan_artifact_urls(runner_client, created_run):
-    """The runner is handed both directions for its plan artifacts."""
+def test_the_bundle_carries_the_artifact_urls(runner_client, created_run):
+    """The runner is handed every artifact URL it uses, in both directions."""
     body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
-    artifacts = body["plan_artifacts"]
+    artifacts = body["artifacts"]
     assert artifacts["plan_put_url"].startswith("https://")
     assert artifacts["plan_json_put_url"].startswith("https://")
     assert artifacts["plan_get_url"].startswith("https://")
+    assert artifacts["log_put_url"].startswith("https://")
+
+
+def test_the_log_put_url_is_per_phase(auth_client, runner_client, created_run, awaiting_confirmation):
+    """A plan and an apply upload to different keys, so neither overwrites the other.
+
+    Both transcripts have to survive, because the plan's output is the evidence
+    the apply was confirmed against.
+    """
+    plan_url = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()["artifacts"]["log_put_url"]
+    assert f"runs/{created_run['run_id']}/plan.log" in plan_url
+
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    apply_url = runner_client.get(f"{BASE}/{run_id}/bundle").json()["artifacts"]["log_put_url"]
+    assert f"runs/{run_id}/apply.log" in apply_url
+
+
+def test_the_bundle_run_role_binds_the_external_id_to_the_workspace(runner_client, created_run, workspace):
+    """The external id is the workspace id, so one workspace's role is not another's.
+
+    A run role trusted with that condition cannot be assumed by a run against a
+    different workspace even if its arn leaks.
+    """
+    role = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()["run_role"]
+    assert role["external_id"] == workspace["workspace_id"]
+    assert role["duration_seconds"] == 3600
 
 
 def test_the_plan_phase_gets_a_read_only_session_policy(runner_client, created_run):
@@ -128,7 +158,7 @@ def test_the_plan_phase_gets_a_read_only_session_policy(runner_client, created_r
     """
     body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
     assert body["phase"] == "plan"
-    statements = body["session_policy"]["Statement"]
+    statements = body["run_role"]["session_policy"]["Statement"]
     assert not any(statement.get("Action") == "*" for statement in statements)
     assert any("ReadEverything" == statement.get("Sid") for statement in statements)
 
@@ -139,7 +169,7 @@ def test_the_apply_phase_gets_an_unrestricted_session_policy(auth_client, runner
     auth_client.post(f"{BASE}/{run_id}/confirm")
     body = runner_client.get(f"{BASE}/{run_id}/bundle").json()
     assert body["phase"] == "apply"
-    assert body["session_policy"]["Statement"][0]["Action"] == "*"
+    assert body["run_role"]["session_policy"]["Statement"][0]["Action"] == "*"
 
 
 def test_the_phase_comes_from_the_status_not_the_caller(runner_client, created_run):
@@ -150,7 +180,7 @@ def test_the_phase_comes_from_the_status_not_the_caller(runner_client, created_r
     """
     body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle", params={"phase": "apply"}).json()
     assert body["phase"] == "plan"
-    assert body["session_policy"]["Statement"][0].get("Action") != "*"
+    assert body["run_role"]["session_policy"]["Statement"][0].get("Action") != "*"
 
 
 def test_a_token_cannot_open_a_bundle_for_another_id(runner_client):

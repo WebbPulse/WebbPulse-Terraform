@@ -44,11 +44,18 @@ checks, so an unannotated parameter or a wrong return type still fails.
 
 ## Protocol
 
-The task definition overrides supply `RUN_ID`, `PHASE` (`plan` or `apply`),
-`TASK_TOKEN`, `API_BASE_URL`, `RUN_TOKEN` and `RUNNER_LOG_GROUP`. The runner
-then:
+The task definition supplies `RUNNER_LOG_GROUP` and the state machine's
+container overrides supply `RUN_ID`, `WORKSPACE_ID`, `PHASE` (`plan` or
+`apply`), `TASK_TOKEN`, `RUN_TOKEN` and `API_BASE_URL`. `RUN_TOKEN` comes from
+`$.run_token` on the execution input, which the runs domain sets when it mints
+the token. The runner then:
 
-1. `GET {API_BASE_URL}/api/v1/runs/{RUN_ID}/bundle` with the run token as bearer.
+1. `GET {API_BASE_URL}/api/v1/runs/{RUN_ID}/bundle` with the run token as
+   bearer, validating the response as `Bundle`: `run_id`, `workspace_id`,
+   `engine`, `engine_version`, `config_url`, the nested `backend`, `run_role`
+   and `artifacts`, and the two variable maps. The backend also sends `phase`,
+   `plan_only` and `working_directory`, which the model ignores: the phase comes
+   from `PHASE` and the configuration is run from the unpack directory.
 2. Downloads and unpacks the config tarball, refusing members that escape the
    working directory.
 3. Writes the S3 backend override with `use_lockfile = true` and the terraform
@@ -60,9 +67,11 @@ then:
    for the apply phase.
 6. Streams the engine's combined output line by line to the `<run_id>/<phase>`
    stream in `RUNNER_LOG_GROUP` and to stdout.
-7. Uploads `plan.tfplan`, `plan.json` and the log to the bundle's presigned PUT
-   URLs, posts `POST /runs/{RUN_ID}/phase-result`, then sends task success with
-   `{exit_code, changes: {add, change, destroy}}` or task failure.
+7. Uploads `plan.tfplan` and `plan.json` on a plan phase and the redacted log on
+   both, to `artifacts.plan_put_url`, `artifacts.plan_json_put_url` and
+   `artifacts.log_put_url`, then posts `POST /runs/{RUN_ID}/phase-result` and
+   sends task success with `{exit_code, changes: {add, change, destroy}}` or
+   task failure.
 
 The engine comes from the bundle's `engine` field, `terraform` or `tofu`.
 

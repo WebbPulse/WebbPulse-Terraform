@@ -147,6 +147,21 @@ def test_bundle_sensitive_values_cover_variables_and_external_id(run_role_arn: s
     assert WORKSPACE_ID in values
 
 
+def test_bundle_ignores_the_api_only_top_level_fields(run_role_arn: str) -> None:
+    """The runs domain states the phase it served; the runner takes it from PHASE.
+
+    The backend puts `phase`, `plan_only`, `working_directory` and
+    `engine_version` on the bundle. Only `engine_version` is modelled here, so
+    the other three have to pass through validation rather than reject it.
+    """
+    payload = bundle_payload(run_role_arn)
+    payload |= {"phase": "plan", "plan_only": False, "working_directory": "infra"}
+    bundle = Bundle.model_validate(payload)
+    assert bundle.engine_version == "1.16.3"
+    assert bundle.run_role.duration_seconds == 3600
+    assert bundle.artifacts.log_put_url
+
+
 def test_log_sink_creates_the_stream_and_redacts(aws: None, capsys: pytest.CaptureFixture[str]) -> None:
     """The sink creates `<run_id>/<phase>`, masks secrets and mirrors to stdout."""
     redactor = Redactor(["secret-value-here"])
