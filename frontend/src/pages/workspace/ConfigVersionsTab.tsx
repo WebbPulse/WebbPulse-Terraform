@@ -38,7 +38,7 @@ export function ConfigVersionsTab({
       ) : (
         <ConfigVersionTable
           workspaceId={workspaceId}
-          versions={query.data?.config_versions ?? []}
+          versions={query.data?.items ?? []}
         />
       )}
     </div>
@@ -62,7 +62,7 @@ function ConfigVersionTable({
         <tr>
           <th className="py-2">Id</th>
           <th className="py-2">Status</th>
-          <th className="py-2">Message</th>
+          <th className="py-2">Size in bytes</th>
           <th className="py-2" />
         </tr>
       </thead>
@@ -74,7 +74,9 @@ function ConfigVersionTable({
           >
             <td className="py-2 font-mono">{version.config_version_id}</td>
             <td className="py-2 text-surface-300">{version.status}</td>
-            <td className="py-2 text-surface-300">{version.message ?? ''}</td>
+            <td className="py-2 font-mono text-surface-300">
+              {version.size_bytes}
+            </td>
             <td className="py-2 text-right">
               {version.status === 'uploaded' ? (
                 <StartRunButtons
@@ -153,6 +155,9 @@ function StartRunButtons({
  *
  * Two legs: the API mints a configuration version and a presigned PUT, then the
  * tarball goes straight to S3 on that URL, so it never passes through Lambda.
+ *
+ * The file's own size is declared up front because the presigned URL signs it
+ * as `Content-Length`, and S3 enforces that at the header.
  */
 function UploadForm({
   workspaceId,
@@ -162,7 +167,6 @@ function UploadForm({
   queryKey: string;
 }): React.ReactElement {
   const input = useRef<HTMLInputElement>(null);
-  const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [done, setDone] = useState(false);
@@ -177,12 +181,11 @@ function UploadForm({
     setDone(false);
     try {
       const upload = await api.createConfigVersion(workspaceId, {
-        ...(message === '' ? {} : { message }),
+        size_bytes: file.size,
       });
       await uploadConfigTarball(upload, file);
       invalidateQueries([queryKey]);
       setDone(true);
-      setMessage('');
       if (input.current !== null) {
         input.current.value = '';
       }
@@ -210,16 +213,6 @@ function UploadForm({
           required
           accept=".tar.gz,application/gzip"
           className="mt-1 text-surface-200"
-        />
-      </label>
-      <label className="text-sm">
-        <span className="block text-surface-300">Message</span>
-        <input
-          value={message}
-          onChange={(event) => {
-            setMessage(event.target.value);
-          }}
-          className="mt-1 rounded-md border border-surface-600 bg-surface-900 px-3 py-2"
         />
       </label>
       <button

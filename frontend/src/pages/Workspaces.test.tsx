@@ -1,4 +1,5 @@
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { aWorkspace } from '../test-helpers/fixtures';
@@ -23,7 +24,7 @@ describe('Workspaces', () => {
 
   it('renders the workspaces the API returned, each linking to its detail', async () => {
     apiMock.listWorkspaces.mockResolvedValue({
-      workspaces: [
+      items: [
         aWorkspace(),
         aWorkspace({ workspace_id: 'ws-2', name: 'organization' }),
       ],
@@ -44,11 +45,53 @@ describe('Workspaces', () => {
   });
 
   it('says so when there are no workspaces', async () => {
-    apiMock.listWorkspaces.mockResolvedValue({ workspaces: [] });
+    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
 
     renderWithAuth(<Workspaces />, signedInAuthClient());
 
     expect(await screen.findByText('No workspaces yet.')).toBeInTheDocument();
+  });
+
+  it('posts the run role ARN with the rest of the create body', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
+    apiMock.createWorkspace.mockResolvedValue(aWorkspace());
+
+    renderWithAuth(<Workspaces />, signedInAuthClient());
+
+    await screen.findByRole('form', { name: 'Create a workspace' });
+    await userEvent.type(screen.getByLabelText('Name'), 'platform');
+    await userEvent.type(
+      screen.getByLabelText('Run role ARN'),
+      'arn:aws:iam::123456789012:role/terraform-run'
+    );
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Create workspace' })
+    );
+
+    expect(apiMock.createWorkspace).toHaveBeenCalledWith({
+      name: 'platform',
+      engine: 'terraform',
+      engine_version: '1.11.0',
+      run_role_arn: 'arn:aws:iam::123456789012:role/terraform-run',
+    });
+  });
+
+  it('refuses to post a run role ARN that is not one', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
+
+    renderWithAuth(<Workspaces />, signedInAuthClient());
+
+    await screen.findByRole('form', { name: 'Create a workspace' });
+    await userEvent.type(screen.getByLabelText('Name'), 'platform');
+    await userEvent.type(screen.getByLabelText('Run role ARN'), 'not-an-arn');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Create workspace' })
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Enter a role ARN like arn:aws:iam::123456789012:role/terraform-run.'
+    );
+    expect(apiMock.createWorkspace).not.toHaveBeenCalled();
   });
 
   it('surfaces a failed read without losing the create form', async () => {

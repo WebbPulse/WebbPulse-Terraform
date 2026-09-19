@@ -26,7 +26,7 @@ export function RunsTab({ workspaceId }: RunsTabProps): React.ReactElement {
       {query.isLoading ? (
         <Spinner label="Loading runs" />
       ) : (
-        <RunTable runs={query.data?.runs ?? []} />
+        <RunTable runs={query.data?.items ?? []} />
       )}
     </div>
   );

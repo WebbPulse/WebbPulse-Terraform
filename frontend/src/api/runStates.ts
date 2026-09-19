@@ -37,7 +37,7 @@ export function isTerminal(state: RunState): boolean {
  * stored its confirmation task token yet.
  */
 export function canConfirm(run: Run): boolean {
-  return run.state === 'awaiting_confirmation' && !run.plan_only;
+  return run.status === 'awaiting_confirmation' && !run.plan_only;
 }
 
 /** The states that hold a finished plan a person can throw away. */
@@ -54,7 +54,7 @@ const DISCARDABLE_STATES: readonly RunState[] = [
  * task token yet.
  */
 export function canDiscard(run: Run): boolean {
-  return DISCARDABLE_STATES.includes(run.state);
+  return DISCARDABLE_STATES.includes(run.status);
 }
 
 /** The states with a phase running or queued that cancel can stop. */
@@ -71,7 +71,7 @@ const CANCELLABLE_STATES: readonly RunState[] = [
  * finished plan is discarded instead.
  */
 export function canCancel(run: Run): boolean {
-  return CANCELLABLE_STATES.includes(run.state);
+  return CANCELLABLE_STATES.includes(run.status);
 }
 
 /** How a state badge is coloured. */

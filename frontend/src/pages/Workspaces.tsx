@@ -8,7 +8,14 @@ import {
 } from '@webbpulse/api-client/react';
 import { useAuthClient } from '@webbpulse/auth/react';
 
-import { api, type Engine, type WorkspaceList } from '../api';
+import {
+  RUN_ROLE_ARN_MESSAGE,
+  api,
+  isRunRoleArn,
+  type Engine,
+  type WorkspaceCreate,
+  type WorkspaceList,
+} from '../api';
 import { ErrorNotice, Spinner } from '../components';
 
 /** The refetch key the list reads and the create form invalidates. */
@@ -36,7 +43,7 @@ export function Workspaces(): React.ReactElement {
       {query.isLoading ? (
         <Spinner label="Loading workspaces" />
       ) : (
-        <WorkspaceTable workspaces={query.data?.workspaces ?? []} />
+        <WorkspaceTable workspaces={query.data?.items ?? []} />
       )}
     </div>
   );
@@ -46,7 +53,7 @@ export function Workspaces(): React.ReactElement {
 function WorkspaceTable({
   workspaces,
 }: {
-  workspaces: WorkspaceList['workspaces'];
+  workspaces: WorkspaceList['items'];
 }): React.ReactElement {
   if (workspaces.length === 0) {
     return <p className="text-surface-300">No workspaces yet.</p>;
@@ -57,7 +64,7 @@ function WorkspaceTable({
         <tr>
           <th className="py-2">Name</th>
           <th className="py-2">Engine</th>
-          <th className="py-2">Auto apply</th>
+          <th className="py-2">Run role</th>
         </tr>
       </thead>
       <tbody>
@@ -77,8 +84,8 @@ function WorkspaceTable({
             <td className="py-2 text-surface-300">
               {workspace.engine} {workspace.engine_version}
             </td>
-            <td className="py-2 text-surface-300">
-              {workspace.auto_apply ? 'On' : 'Off'}
+            <td className="py-2 font-mono text-surface-300">
+              {workspace.run_role_arn}
             </td>
           </tr>
         ))}
@@ -92,16 +99,29 @@ function CreateWorkspaceForm(): React.ReactElement {
   const [name, setName] = useState('');
   const [engine, setEngine] = useState<Engine>('terraform');
   const [engineVersion, setEngineVersion] = useState('1.11.0');
+  const [runRoleArn, setRunRoleArn] = useState('');
+  const [invalidArn, setInvalidArn] = useState(false);
   const { mutate, isMutating, error } = useMutationWithRefetch(
-    (body: { name: string; engine: Engine; engine_version: string }) =>
-      api.createWorkspace(body),
+    (body: WorkspaceCreate) => api.createWorkspace(body),
     WORKSPACES_KEY
   );
 
   const submit = async (): Promise<void> => {
+    const trimmedArn = runRoleArn.trim();
+    if (!isRunRoleArn(trimmedArn)) {
+      setInvalidArn(true);
+      return;
+    }
+    setInvalidArn(false);
     try {
-      await mutate({ name, engine, engine_version: engineVersion });
+      await mutate({
+        name,
+        engine,
+        engine_version: engineVersion,
+        run_role_arn: trimmedArn,
+      });
       setName('');
+      setRunRoleArn('');
     } catch {
       return;
     }
@@ -154,6 +174,21 @@ function CreateWorkspaceForm(): React.ReactElement {
           className="mt-1 rounded-md border border-surface-600 bg-surface-900 px-3 py-2"
         />
       </label>
+      <label className="text-sm">
+        <span className="block text-surface-300">Run role ARN</span>
+        <input
+          required
+          value={runRoleArn}
+          aria-invalid={invalidArn}
+          aria-describedby={invalidArn ? 'create-run-role-error' : undefined}
+          placeholder="arn:aws:iam::123456789012:role/terraform-run"
+          onChange={(event) => {
+            setRunRoleArn(event.target.value);
+            setInvalidArn(false);
+          }}
+          className="mt-1 w-96 rounded-md border border-surface-600 bg-surface-900 px-3 py-2 font-mono"
+        />
+      </label>
       <button
         type="submit"
         disabled={isMutating}
@@ -162,6 +197,15 @@ function CreateWorkspaceForm(): React.ReactElement {
         {isMutating ? <Spinner label="Creating the workspace" /> : null}
         Create workspace
       </button>
+      {invalidArn ? (
+        <p
+          id="create-run-role-error"
+          role="alert"
+          className="w-full text-sm text-rose-300"
+        >
+          {RUN_ROLE_ARN_MESSAGE}
+        </p>
+      ) : null}
       <ErrorNotice error={error} className="w-full" />
     </form>
   );

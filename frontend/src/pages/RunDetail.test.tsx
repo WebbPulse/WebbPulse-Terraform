@@ -35,9 +35,8 @@ describe('RunDetail', () => {
     apiMock.getRunLogs.mockResolvedValue({
       run_id: 'run-1',
       phase: 'plan',
-      lines: [{ timestamp: 1, message: 'Plan: 3 to add, 1 to change.' }],
+      events: [{ timestamp: 1, message: 'Plan: 3 to add, 1 to change.' }],
       next_after: 'tok-1',
-      complete: true,
     });
   });
 

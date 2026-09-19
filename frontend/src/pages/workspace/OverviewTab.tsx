@@ -3,7 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useMutationWithRefetch } from '@webbpulse/api-client/react';
 
-import { api, type Engine, type Workspace } from '../../api';
+import {
+  RUN_ROLE_ARN_MESSAGE,
+  api,
+  isRunRoleArn,
+  type Engine,
+  type Workspace,
+} from '../../api';
 import { ErrorNotice, Spinner } from '../../components';
 
 /** Props for {@link OverviewTab}. */
@@ -21,40 +27,44 @@ export function OverviewTab({
   workspace,
   queryKey,
 }: OverviewTabProps): React.ReactElement {
-  const [name, setName] = useState(workspace.name);
-  const [description, setDescription] = useState(workspace.description ?? '');
+  const [description, setDescription] = useState(workspace.description);
   const [engine, setEngine] = useState<Engine>(workspace.engine);
   const [engineVersion, setEngineVersion] = useState(workspace.engine_version);
   const [workingDirectory, setWorkingDirectory] = useState(
-    workspace.working_directory ?? ''
+    workspace.working_directory
   );
-  const [autoApply, setAutoApply] = useState(workspace.auto_apply);
+  const [runRoleArn, setRunRoleArn] = useState(workspace.run_role_arn);
+  const [invalidArn, setInvalidArn] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    setName(workspace.name);
-    setDescription(workspace.description ?? '');
+    setDescription(workspace.description);
     setEngine(workspace.engine);
     setEngineVersion(workspace.engine_version);
-    setWorkingDirectory(workspace.working_directory ?? '');
-    setAutoApply(workspace.auto_apply);
+    setWorkingDirectory(workspace.working_directory);
+    setRunRoleArn(workspace.run_role_arn);
+    setInvalidArn(false);
   }, [workspace]);
 
   const { mutate, isMutating, error } = useMutationWithRefetch(
     () =>
       api.updateWorkspace(workspace.workspace_id, {
-        name,
         description,
         engine,
         engine_version: engineVersion,
         working_directory: workingDirectory,
-        auto_apply: autoApply,
+        run_role_arn: runRoleArn.trim(),
       }),
     queryKey
   );
 
   const submit = async (): Promise<void> => {
     setSaved(false);
+    if (!isRunRoleArn(runRoleArn)) {
+      setInvalidArn(true);
+      return;
+    }
+    setInvalidArn(false);
     try {
       await mutate();
       setSaved(true);
@@ -72,17 +82,12 @@ export function OverviewTab({
         void submit();
       }}
     >
-      <label className="block text-sm">
+      <p className="text-sm">
         <span className="text-surface-300">Name</span>
-        <input
-          required
-          value={name}
-          onChange={(event) => {
-            setName(event.target.value);
-          }}
-          className="mt-1 w-full rounded-md border border-surface-600 bg-surface-800 px-3 py-2"
-        />
-      </label>
+        <span className="mt-1 block font-mono text-surface-100">
+          {workspace.name}
+        </span>
+      </p>
       <label className="block text-sm">
         <span className="text-surface-300">Description</span>
         <textarea
@@ -131,16 +136,30 @@ export function OverviewTab({
           className="mt-1 w-full rounded-md border border-surface-600 bg-surface-800 px-3 py-2 font-mono"
         />
       </label>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="block text-sm">
+        <span className="text-surface-300">Run role ARN</span>
         <input
-          type="checkbox"
-          checked={autoApply}
+          required
+          value={runRoleArn}
+          aria-invalid={invalidArn}
+          aria-describedby={invalidArn ? 'overview-run-role-error' : undefined}
+          placeholder="arn:aws:iam::123456789012:role/terraform-run"
           onChange={(event) => {
-            setAutoApply(event.target.checked);
+            setRunRoleArn(event.target.value);
+            setInvalidArn(false);
           }}
+          className="mt-1 w-full rounded-md border border-surface-600 bg-surface-800 px-3 py-2 font-mono"
         />
-        <span className="text-surface-300">Apply without confirmation</span>
       </label>
+      {invalidArn ? (
+        <p
+          id="overview-run-role-error"
+          role="alert"
+          className="text-sm text-rose-300"
+        >
+          {RUN_ROLE_ARN_MESSAGE}
+        </p>
+      ) : null}
       <ErrorNotice error={error} />
       {saved ? (
         <p role="status" className="text-sm text-emerald-300">

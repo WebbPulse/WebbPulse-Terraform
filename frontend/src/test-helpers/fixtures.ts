@@ -11,11 +11,9 @@ export function aWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     engine: 'terraform',
     engine_version: '1.11.0',
     working_directory: 'terraform',
-    auto_apply: false,
-    run_role_arn: null,
+    run_role_arn: 'arn:aws:iam::123456789012:role/terraform-run',
     created_at: '2026-09-17T00:00:00Z',
     updated_at: null,
-    latest_run_id: null,
     ...overrides,
   };
 }
@@ -28,8 +26,7 @@ export function aVariable(overrides: Partial<Variable> = {}): Variable {
     value: 'us-west-2',
     category: 'terraform',
     sensitive: false,
-    hcl: false,
-    description: null,
+    description: '',
     created_at: '2026-09-17T00:00:00Z',
     updated_at: null,
     ...overrides,
@@ -43,36 +40,35 @@ export function aConfigVersion(
   return {
     config_version_id: 'cv-01J000000000000000000000',
     workspace_id: 'ws-01J000000000000000000000',
+    key: 'configs/ws-01J000000000000000000000/cv-01J000000000000000000000.tar.gz',
     status: 'uploaded',
     size_bytes: 2048,
-    message: 'Seed the stack.',
     created_at: '2026-09-17T00:00:00Z',
-    uploaded_at: '2026-09-17T00:00:05Z',
+    updated_at: '2026-09-17T00:00:05Z',
     ...overrides,
   };
 }
 
-/** A run in the given state, overridable field by field. */
+/** A run in the given status, overridable field by field. */
 export function aRun(
-  state: RunState = 'planned',
+  status: RunState = 'planned',
   overrides: Partial<Run> = {}
 ): Run {
   return {
     run_id: 'run-01J000000000000000000000',
     workspace_id: 'ws-01J000000000000000000000',
     config_version_id: 'cv-01J000000000000000000000',
-    state,
+    status,
     plan_only: false,
     message: 'Seed the stack.',
     changes: { add: 3, change: 1, destroy: 0 },
-    has_changes: true,
-    error_message: null,
+    error: null,
     created_at: '2026-09-17T00:00:00Z',
     updated_at: null,
-    plan_started_at: '2026-09-17T00:00:01Z',
-    plan_finished_at: '2026-09-17T00:00:40Z',
-    apply_started_at: null,
-    apply_finished_at: null,
+    started_at: '2026-09-17T00:00:01Z',
+    finished_at: null,
+    queued_behind: null,
+    execution_arn: null,
     ...overrides,
   };
 }

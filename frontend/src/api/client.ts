@@ -14,10 +14,12 @@ import { identityOriginFrom as packageIdentityOriginFrom } from '@webbpulse/disc
 
 import type {
   ConfigVersion,
+  ConfigVersionCreate,
   ConfigVersionList,
   ConfigVersionUpload,
   Run,
   RunCreate,
+  RunCreated,
   RunList,
   RunLogPage,
   RunPhase,
@@ -233,7 +235,7 @@ export class TerraformApi {
    */
   async createConfigVersion(
     workspaceId: string,
-    body: { message?: string } = {},
+    body: ConfigVersionCreate = {},
     options: RequestOptions = {}
   ): Promise<ConfigVersionUpload> {
     const response = await this.client.post<ConfigVersionUpload>(
@@ -275,8 +277,11 @@ export class TerraformApi {
   }
 
   /** Starts a run. */
-  async createRun(body: RunCreate, options: RequestOptions = {}): Promise<Run> {
-    const response = await this.client.post<Run>('/runs', body, options);
+  async createRun(
+    body: RunCreate,
+    options: RequestOptions = {}
+  ): Promise<RunCreated> {
+    const response = await this.client.post<RunCreated>('/runs', body, options);
     return response.data;
   }
 
@@ -290,42 +295,30 @@ export class TerraformApi {
   }
 
   /** Confirms a planned run, which starts its apply. */
-  async confirmRun(
-    runId: string,
-    body: { comment?: string } = {},
-    options: RequestOptions = {}
-  ): Promise<Run> {
+  async confirmRun(runId: string, options: RequestOptions = {}): Promise<Run> {
     const response = await this.client.post<Run>(
       `/runs/${encodeURIComponent(runId)}/confirm`,
-      body,
+      undefined,
       options
     );
     return response.data;
   }
 
   /** Cancels a run in flight or not yet started. */
-  async cancelRun(
-    runId: string,
-    body: { comment?: string } = {},
-    options: RequestOptions = {}
-  ): Promise<Run> {
+  async cancelRun(runId: string, options: RequestOptions = {}): Promise<Run> {
     const response = await this.client.post<Run>(
       `/runs/${encodeURIComponent(runId)}/cancel`,
-      body,
+      undefined,
       options
     );
     return response.data;
   }
 
   /** Discards a plan nobody will apply. */
-  async discardRun(
-    runId: string,
-    body: { comment?: string } = {},
-    options: RequestOptions = {}
-  ): Promise<Run> {
+  async discardRun(runId: string, options: RequestOptions = {}): Promise<Run> {
     const response = await this.client.post<Run>(
       `/runs/${encodeURIComponent(runId)}/discard`,
-      body,
+      undefined,
       options
     );
     return response.data;
@@ -365,6 +358,9 @@ export class TerraformApi {
  * Deliberately not on {@link TerraformApi}: the URL is pre-signed for S3, so
  * the request must carry neither the API's auth header nor its cookies, and a
  * bare `fetch` is the only way to guarantee that.
+ *
+ * Every header the API returned is sent verbatim. They are signed into the
+ * URL, so dropping or changing one makes S3 reject the PUT.
  */
 export async function uploadConfigTarball(
   upload: ConfigVersionUpload,
@@ -375,7 +371,7 @@ export async function uploadConfigTarball(
   const response = await doFetch(upload.upload_url, {
     method: 'PUT',
     body: file,
-    headers: upload.upload_headers ?? {},
+    headers: upload.headers,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (!response.ok) {

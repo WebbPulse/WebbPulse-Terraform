@@ -52,7 +52,7 @@ export function VariablesTab({
         <VariableTable
           workspaceId={workspaceId}
           queryKey={queryKey}
-          variables={query.data?.variables ?? []}
+          variables={query.data?.items ?? []}
           onEdit={setEditing}
         />
       )}
@@ -154,7 +154,6 @@ function VariableForm({
   const [value, setValue] = useState('');
   const [category, setCategory] = useState<VariableCategory>('terraform');
   const [sensitive, setSensitive] = useState(false);
-  const [hcl, setHcl] = useState(false);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
   const editingKey = editing?.key ?? null;
@@ -164,7 +163,6 @@ function VariableForm({
     setValue(editing?.sensitive === true ? '' : (editing?.value ?? ''));
     setCategory(editing?.category ?? 'terraform');
     setSensitive(editing?.sensitive ?? false);
-    setHcl(editing?.hcl ?? false);
   }
 
   const { mutate, isMutating, error } = useMutationWithRefetch(
@@ -173,7 +171,6 @@ function VariableForm({
         value,
         category,
         sensitive,
-        hcl,
       }),
     queryKey
   );
@@ -250,16 +247,6 @@ function VariableForm({
           }}
         />
         Sensitive
-      </label>
-      <label className="flex items-center gap-2 text-sm text-surface-300">
-        <input
-          type="checkbox"
-          checked={hcl}
-          onChange={(event) => {
-            setHcl(event.target.checked);
-          }}
-        />
-        HCL
       </label>
       <button
         type="submit"

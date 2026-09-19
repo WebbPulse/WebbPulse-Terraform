@@ -30,11 +30,11 @@ function apiOver(routes: Parameters<typeof mockFetch>[0]): {
 describe('TerraformApi workspaces', () => {
   it('lists workspaces', async () => {
     const { api } = apiOver({
-      'GET /api/v1/workspaces': { body: { workspaces: [aWorkspace()] } },
+      'GET /api/v1/workspaces': { body: { items: [aWorkspace()] } },
     });
     const result = await api.listWorkspaces();
-    expect(result.workspaces).toHaveLength(1);
-    expect(result.workspaces[0]?.name).toBe('platform');
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.name).toBe('platform');
   });
 
   it('creates a workspace, posting the body', async () => {
@@ -45,6 +45,7 @@ describe('TerraformApi workspaces', () => {
       name: 'platform',
       engine: 'tofu',
       engine_version: '1.11.0',
+      run_role_arn: 'arn:aws:iam::123456789012:role/terraform-run',
     });
     const request = transport.requests[0];
     expect(request?.method).toBe('POST');
@@ -52,6 +53,7 @@ describe('TerraformApi workspaces', () => {
       name: 'platform',
       engine: 'tofu',
       engine_version: '1.11.0',
+      run_role_arn: 'arn:aws:iam::123456789012:role/terraform-run',
     });
   });
 
@@ -59,10 +61,14 @@ describe('TerraformApi workspaces', () => {
     const { api, transport } = apiOver({
       'PATCH /api/v1/workspaces/ws-1': { body: aWorkspace() },
     });
-    await api.updateWorkspace('ws-1', { auto_apply: true });
+    await api.updateWorkspace('ws-1', {
+      run_role_arn: 'arn:aws:iam::123456789012:role/other-run',
+    });
     expect(transport.requests[0]?.method).toBe('PATCH');
     expect(transport.requests[0]?.path).toBe('/api/v1/workspaces/ws-1');
-    expect(transport.requests[0]?.body).toEqual({ auto_apply: true });
+    expect(transport.requests[0]?.body).toEqual({
+      run_role_arn: 'arn:aws:iam::123456789012:role/other-run',
+    });
   });
 
   it('escapes an id into the path', async () => {
@@ -87,7 +93,7 @@ describe('TerraformApi variables', () => {
     const { api } = apiOver({
       'GET /api/v1/workspaces/ws-1/variables': {
         body: {
-          variables: [
+          items: [
             aVariable(),
             aVariable({ key: 'token', sensitive: true, value: null }),
           ],
@@ -95,8 +101,8 @@ describe('TerraformApi variables', () => {
       },
     });
     const result = await api.listVariables('ws-1');
-    expect(result.variables[1]?.sensitive).toBe(true);
-    expect(result.variables[1]?.value).toBeNull();
+    expect(result.items[1]?.sensitive).toBe(true);
+    expect(result.items[1]?.value).toBeNull();
   });
 
   it('puts a variable on its keyed path', async () => {
@@ -107,7 +113,6 @@ describe('TerraformApi variables', () => {
       value: 'us-west-2',
       category: 'terraform',
       sensitive: false,
-      hcl: false,
     });
     expect(transport.requests[0]?.method).toBe('PUT');
     expect(transport.requests[0]?.path).toBe(
@@ -126,37 +131,45 @@ describe('TerraformApi variables', () => {
 
 describe('TerraformApi config versions', () => {
   it('creates a configuration version and returns the presigned PUT', async () => {
-    const { api } = apiOver({
+    const { api, transport } = apiOver({
       'POST /api/v1/workspaces/ws-1/config-versions': {
         status: 201,
         body: {
           config_version: aConfigVersion({ status: 'pending' }),
           upload_url: 'https://bucket.s3.test/configs/ws-1/cv-1.tar.gz?sig=1',
-          upload_headers: { 'content-type': 'application/gzip' },
+          headers: {
+            'Content-Type': 'application/gzip',
+            'Content-Length': '2048',
+          },
           expires_in: 900,
         },
       },
     });
-    const result = await api.createConfigVersion('ws-1', { message: 'Seed.' });
+    const result = await api.createConfigVersion('ws-1', { size_bytes: 2048 });
+    expect(transport.requests[0]?.body).toEqual({ size_bytes: 2048 });
     expect(result.upload_url).toContain('sig=1');
+    expect(result.headers).toEqual({
+      'Content-Type': 'application/gzip',
+      'Content-Length': '2048',
+    });
     expect(result.config_version.status).toBe('pending');
   });
 
   it('lists configuration versions', async () => {
     const { api } = apiOver({
       'GET /api/v1/workspaces/ws-1/config-versions': {
-        body: { config_versions: [aConfigVersion()] },
+        body: { items: [aConfigVersion()] },
       },
     });
     const result = await api.listConfigVersions('ws-1');
-    expect(result.config_versions).toHaveLength(1);
+    expect(result.items).toHaveLength(1);
   });
 });
 
 describe('TerraformApi runs', () => {
   it('lists runs scoped to a workspace through the query', async () => {
     const { api, transport } = apiOver({
-      'GET /api/v1/runs': { body: { runs: [aRun()] } },
+      'GET /api/v1/runs': { body: { items: [aRun()] } },
     });
     await api.listRuns({ workspace_id: 'ws-1' });
     expect(transport.requests[0]?.query.get('workspace_id')).toBe('ws-1');
@@ -164,7 +177,7 @@ describe('TerraformApi runs', () => {
 
   it('omits the workspace filter when there is none', async () => {
     const { api, transport } = apiOver({
-      'GET /api/v1/runs': { body: { runs: [] } },
+      'GET /api/v1/runs': { body: { items: [] } },
     });
     await api.listRuns();
     expect(transport.requests[0]?.query.has('workspace_id')).toBe(false);
@@ -193,8 +206,8 @@ describe('TerraformApi runs', () => {
       'POST /api/v1/runs/run-1/confirm': { body: aRun('applying') },
       'POST /api/v1/runs/run-1/cancel': { body: aRun('cancelled') },
     });
-    expect((await api.confirmRun('run-1')).state).toBe('applying');
-    expect((await api.cancelRun('run-1')).state).toBe('cancelled');
+    expect((await api.confirmRun('run-1')).status).toBe('applying');
+    expect((await api.cancelRun('run-1')).status).toBe('cancelled');
     expect(transport.requests[0]?.path).toBe('/api/v1/runs/run-1/confirm');
     expect(transport.requests[1]?.path).toBe('/api/v1/runs/run-1/cancel');
   });
@@ -203,9 +216,9 @@ describe('TerraformApi runs', () => {
     const { api, transport } = apiOver({
       'POST /api/v1/runs/run-1/discard': { body: aRun('discarded') },
     });
-    expect((await api.discardRun('run-1')).state).toBe('discarded');
+    expect((await api.discardRun('run-1')).status).toBe('discarded');
     expect(transport.requests[0]?.path).toBe('/api/v1/runs/run-1/discard');
-    expect(transport.requests[0]?.body).toEqual({});
+    expect(transport.requests[0]?.body).toBeUndefined();
   });
 
   it('sends the phase and the cursor on the logs route', async () => {
@@ -214,9 +227,8 @@ describe('TerraformApi runs', () => {
         body: {
           run_id: 'run-1',
           phase: 'plan',
-          lines: [{ timestamp: 1, message: 'Terraform will perform...' }],
+          events: [{ timestamp: 1, message: 'Terraform will perform...' }],
           next_after: 'tok-2',
-          complete: false,
         },
       },
     });
@@ -235,9 +247,8 @@ describe('TerraformApi runs', () => {
         body: {
           run_id: 'run-1',
           phase: 'plan',
-          lines: [],
+          events: [],
           next_after: null,
-          complete: true,
         },
       },
     });
@@ -278,7 +289,10 @@ describe('uploadConfigTarball', () => {
     const upload = {
       config_version: aConfigVersion({ status: 'pending' }),
       upload_url: 'https://bucket.s3.test/configs/ws-1/cv-1.tar.gz?sig=1',
-      upload_headers: { 'content-type': 'application/gzip' },
+      headers: {
+        'Content-Type': 'application/gzip',
+        'Content-Length': '7',
+      },
       expires_in: 900,
     };
     const file = new Blob(['tarball'], { type: 'application/gzip' });
@@ -288,8 +302,33 @@ describe('uploadConfigTarball', () => {
     expect(put).toHaveBeenCalledWith(upload.upload_url, {
       method: 'PUT',
       body: file,
-      headers: { 'content-type': 'application/gzip' },
+      headers: {
+        'Content-Type': 'application/gzip',
+        'Content-Length': '7',
+      },
     });
+  });
+
+  it('sends every signed header, not only the content type', async () => {
+    const put = vi.fn<typeof globalThis.fetch>(() =>
+      Promise.resolve(new Response(null, { status: 200 }))
+    );
+    const headers = {
+      'Content-Type': 'application/gzip',
+      'Content-Length': '7',
+      'x-amz-server-side-encryption': 'aws:kms',
+    };
+    await uploadConfigTarball(
+      {
+        config_version: aConfigVersion({ status: 'pending' }),
+        upload_url: 'https://bucket.s3.test/x',
+        headers,
+        expires_in: 900,
+      },
+      new Blob(['tarball'], { type: 'application/gzip' }),
+      { fetch: put }
+    );
+    expect(put.mock.calls[0]?.[1]?.headers).toEqual(headers);
   });
 
   it('throws when S3 refuses the upload', async () => {
@@ -301,7 +340,7 @@ describe('uploadConfigTarball', () => {
         {
           config_version: aConfigVersion(),
           upload_url: 'https://bucket.s3.test/x',
-          upload_headers: null,
+          headers: { 'Content-Type': 'application/gzip' },
           expires_in: 900,
         },
         new Blob(['x']),
