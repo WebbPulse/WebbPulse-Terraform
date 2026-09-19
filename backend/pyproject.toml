@@ -60,3 +60,7 @@ exclude_dirs = [".venv", "venv", "__pycache__", ".pytest_cache", ".pyright_cache
 [tool.webbpulse.ci]
 test-root = "tests"
 domains-root = "tests/domains"
+
+[tool.webbpulse.reachability]
+anchor = "app.domains.workspaces.entrypoint"
+loaded-by-name = ["app.common.identity", "app.common.identity.*"]

@@ -14,7 +14,7 @@ from webbpulse.identity.scopes import SCOPES_KEY
 
 from app.common.core.auth import ALL_SCOPES, RUNNER_SCOPE
 from app.common.db.users import User, UserRepository
-from app.domains.identity.identity_hooks import (
+from app.common.identity.identity_hooks import (
     ADMIN_ROLE,
     READ_SCOPES,
     ControlPlaneIdentityHooks,
@@ -150,3 +150,22 @@ def test_the_claims_round_trip_into_the_scopes_list(hooks: ControlPlaneIdentityH
     plain = hooks.load_user_by_id("user-2")
     assert plain is not None
     assert coerce_claims(hooks.claims_for(plain))[SCOPES_KEY] == list(READ_SCOPES)
+
+
+def test_delete_user_removes_the_row_and_reports_it(hooks: ControlPlaneIdentityHooks) -> None:
+    """The ephemeral e2e user route's hook: the row goes, and the answer is `True`."""
+    _store(hooks)
+    assert hooks.delete_user("user-1") is True
+    assert hooks.load_user_by_id("user-1") is None
+
+
+def test_delete_user_answers_false_for_an_unknown_id(hooks: ControlPlaneIdentityHooks) -> None:
+    """A delete of a row that is not there reports it rather than raising."""
+    assert hooks.delete_user("user-missing") is False
+
+
+def test_delete_user_releases_the_address(hooks: ControlPlaneIdentityHooks) -> None:
+    """The address is free afterwards, so an e2e run can reuse it on the next pass."""
+    _store(hooks)
+    hooks.delete_user("user-1")
+    assert hooks.load_user_by_email(EMAIL.lower()) is None

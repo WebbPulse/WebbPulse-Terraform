@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from tests.domains.identity.conftest import ISSUER
+from tests.common.identity.conftest import ISSUER
 
 DISCOVERY_PATH = "/api/auth/.well-known/openid-configuration"
 

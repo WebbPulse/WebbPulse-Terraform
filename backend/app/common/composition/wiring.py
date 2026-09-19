@@ -81,7 +81,7 @@ def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
     if not settings.IDENTITY_ISSUER:
         return []
 
-    from app.domains.identity.package_glue import build_router
+    from app.common.identity.package_glue import build_router
 
     return [build_router(settings)]
 

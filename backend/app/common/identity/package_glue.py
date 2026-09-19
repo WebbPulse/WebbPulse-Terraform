@@ -78,7 +78,7 @@ def build_router(settings: "Settings") -> "APIRouter":
     )
 
     from app.common.db.identity_tables import identity_table_prefix
-    from app.domains.identity.identity_hooks import ControlPlaneIdentityHooks
+    from app.common.identity.identity_hooks import ControlPlaneIdentityHooks
 
     prefix = identity_table_prefix(settings)
 
