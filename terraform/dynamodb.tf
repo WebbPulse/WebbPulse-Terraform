@@ -43,6 +43,17 @@ locals {
         { name = "by_workspace", hash_key = "workspace_id", range_key = "created_at", projection_type = "ALL" },
       ]
     }
+
+    users = {
+      hash_key = "id"
+      attributes = [
+        { name = "id", type = "S" },
+        { name = "email_lower", type = "S" },
+      ]
+      global_secondary_indexes = [
+        { name = "email_lower-index", hash_key = "email_lower", projection_type = "ALL" },
+      ]
+    }
   }
 }
 

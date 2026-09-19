@@ -28,6 +28,10 @@ module "app_secrets" {
           format = "bytes32-base64"
           keep   = true
         }
+        mfa_master_key = {
+          format = "bytes32-base64"
+          keep   = true
+        }
       }
     }
   }

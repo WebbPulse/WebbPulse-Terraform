@@ -2,7 +2,7 @@ locals {
   lambda_domains_declared = {
     workspaces = {
       memory            = 512
-      tables            = ["workspaces", "variables", "config-versions"]
+      tables            = ["workspaces", "variables", "config-versions", "users"]
       read_tables       = ["runs"]
       sqs_event_sources = {}
     }
@@ -109,6 +109,9 @@ module "lambda_domain" {
       RUNS_TABLE            = module.dynamodb.table_names["runs"]
       VARIABLES_TABLE       = module.dynamodb.table_names["variables"]
       CONFIG_VERSIONS_TABLE = module.dynamodb.table_names["config-versions"]
+      USERS_TABLE           = module.dynamodb.table_names["users"]
+
+      IDENTITY_TABLE_PREFIX = local.prefix
 
       STATE_BUCKET     = module.state.bucket
       ARTIFACTS_BUCKET = module.artifacts.bucket
