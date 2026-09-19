@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { usePolledQuery } from '@webbpulse/api-client/react';
-import { useAuthClient } from '@webbpulse/auth/react';
+import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
   api,
@@ -22,7 +22,7 @@ import { RunLogViewer } from '../components/RunLogViewer';
 /** The run detail page. */
 export function RunDetail(): React.ReactElement {
   const { runId = '' } = useParams<{ runId: string }>();
-  const auth = useAuthClient();
+  const auth = useQueryAuth();
   const [phase, setPhase] = useState<RunPhase | null>(null);
   const query = usePolledQuery<Run>(
     ({ signal }) => api.getRun(runId, { signal }),
