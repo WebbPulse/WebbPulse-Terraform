@@ -16,6 +16,7 @@ every terminal transition is what keeps a leaked token from outliving its run.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Final, Optional
 
@@ -29,6 +30,8 @@ from ...common.db.tables import RUNS_BY_WORKSPACE_INDEX
 from ..workspaces import service as workspaces_service
 from . import session_policy
 from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
+
+_log = logging.getLogger(__name__)
 
 RUN_ID_PREFIX: Final = "run-"
 
@@ -225,6 +228,12 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
 def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     """Mint this run's token, start its execution and move it to `planning`.
 
+    A run that already carries an `execution_arn` is returned untouched. Starting
+    it again would mint a second token, overwrite the hash of the one the running
+    execution is already carrying, and hit `ExecutionAlreadyExists` on the name,
+    which is the run id. The caller gets no `run_token` back in that case, because
+    the live plaintext only ever existed on the first start.
+
     The token is minted before the execution starts because it travels on the
     execution input: the state machine reads `$.run_token` into the plan and the
     apply container overrides, which is the only way the runner gets a
@@ -242,6 +251,8 @@ def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any
 
     resolved = settings or get_settings()
     run = get_run(run_id, settings=resolved)
+    if run.get("execution_arn"):
+        return run
 
     minted = mint(
         user_id=run_id,
@@ -513,17 +524,28 @@ def _promote_queue(workspace_id: str, *, settings: Settings) -> None:
     """Start the oldest run queued on this workspace, if nothing else is active.
 
     Best effort: a failure to start the next run must not fail the transition that
-    finished the previous one, which would leave a run stuck non-terminal.
+    finished the previous one, which would leave a run stuck non-terminal. It is
+    logged rather than swallowed silently, because a promotion that never happens
+    leaves a run `pending` with nothing left to start it.
     """
     if active_run(workspace_id, statuses=EXECUTING_STATUSES, settings=settings) is not None:
         return
     queued = _queued_runs(workspace_id, settings=settings)
     if not queued:
         return
+    next_run_id = str(queued[0]["run_id"])
     try:
-        start_run(str(queued[0]["run_id"]), settings=settings)
-    except Exception:  # noqa: BLE001
-        return
+        start_run(next_run_id, settings=settings)
+    except Exception as error:  # noqa: BLE001
+        _log.exception(
+            "Could not promote the next queued run.",
+            extra={
+                "event": "runs.promote.failed",
+                "run_id": next_run_id,
+                "workspace_id": workspace_id,
+                "error": type(error).__name__,
+            },
+        )
 
 
 def record_phase_result(

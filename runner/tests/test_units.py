@@ -88,6 +88,72 @@ def test_unreadable_archive_is_rejected(tmp_path: Path) -> None:
         workspace.unpack_config(archive, tmp_path / "work")
 
 
+def test_working_directory_defaults_to_the_configuration_root(tmp_path: Path) -> None:
+    """An empty working directory runs the engine from the tarball root."""
+    root = tmp_path / "config"
+    root.mkdir()
+    assert workspace.resolve_working_directory(root, "") == root
+    assert workspace.resolve_working_directory(root, "  ") == root
+
+
+def test_working_directory_selects_a_subdirectory(tmp_path: Path) -> None:
+    """A non empty value points the engine at that directory in the configuration."""
+    root = tmp_path / "config"
+    (root / "infra" / "prod").mkdir(parents=True)
+    assert workspace.resolve_working_directory(root, "infra/prod") == (root / "infra" / "prod").resolve()
+    assert workspace.resolve_working_directory(root, "infra/") == (root / "infra").resolve()
+    assert workspace.resolve_working_directory(root, "./infra") == (root / "infra").resolve()
+
+
+def test_working_directory_escaping_the_configuration_is_rejected(tmp_path: Path) -> None:
+    """A climbing or absolute value would point the engine at the task filesystem.
+
+    The value comes from the workspace record rather than from the configuration,
+    so it is refused rather than normalised into something that happens to exist.
+    """
+    root = tmp_path / "config"
+    root.mkdir()
+    (tmp_path / "outside").mkdir()
+    for escaping in ("../outside", "infra/../../outside", "/etc", "/infra"):
+        with pytest.raises(workspace.ConfigError, match="escapes the configuration"):
+            workspace.resolve_working_directory(root, escaping)
+
+
+def test_working_directory_that_is_absent_is_rejected(tmp_path: Path) -> None:
+    """A directory the configuration does not carry is a config error, not a cwd failure."""
+    root = tmp_path / "config"
+    root.mkdir()
+    (root / "main.tf").write_text("")
+    with pytest.raises(workspace.ConfigError, match="not in the configuration"):
+        workspace.resolve_working_directory(root, "infra")
+    with pytest.raises(workspace.ConfigError, match="not in the configuration"):
+        workspace.resolve_working_directory(root, "main.tf")
+
+
+def test_prepare_writes_the_files_into_the_working_directory(
+    tmp_path: Path, run_role_arn: str, config_tarball: bytes
+) -> None:
+    """The override and the tfvars land where the engine runs, not at the root.
+
+    Neither file is loaded from a parent directory, so writing them at the root
+    while running the engine in a subdirectory would silently drop the backend.
+    """
+    archive = tmp_path / "config.tar.gz"
+    archive.write_bytes(config_tarball)
+    payload = bundle_payload(run_role_arn) | {"working_directory": "infra"}
+    bundle = Bundle.model_validate(payload)
+    root = tmp_path / "config"
+    root.mkdir()
+    (root / "infra").mkdir()
+
+    target = workspace.prepare(root, bundle, archive)
+
+    assert target == (root / "infra").resolve()
+    assert (target / workspace.BACKEND_FILENAME).exists()
+    assert (target / workspace.TFVARS_FILENAME).exists()
+    assert not (root / workspace.BACKEND_FILENAME).exists()
+
+
 def test_parse_changes_counts_each_action() -> None:
     """Creates, updates, deletes and replacements are counted; no-op and read are not."""
     changes, has_changes = parse_changes(json.dumps(PLAN_JSON_WITH_CHANGES))

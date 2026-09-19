@@ -53,16 +53,20 @@ the token. The runner then:
 1. `GET {API_BASE_URL}/api/v1/runs/{RUN_ID}/bundle` with the run token as
    bearer, validating the response as `Bundle`: `run_id`, `workspace_id`,
    `engine`, `engine_version`, `config_url`, the nested `backend`, `run_role`
-   and `artifacts`, and the two variable maps. The backend also sends `phase`,
-   `plan_only` and `working_directory`, which the model ignores: the phase comes
-   from `PHASE` and the configuration is run from the unpack directory.
+   and `artifacts`, `working_directory` and the two variable maps. The backend
+   also sends `phase` and `plan_only`, which the model ignores: the phase comes
+   from `PHASE`.
 2. Downloads and unpacks the config tarball, refusing members that escape the
-   working directory.
+   unpack directory, then resolves `working_directory` under it. An absolute
+   value, one climbing out with `..`, or one the configuration does not carry
+   fails the task before the engine runs. Empty means the tarball root.
 3. Writes the S3 backend override with `use_lockfile = true` and the terraform
-   variables as an auto loaded `*.auto.tfvars.json`.
+   variables as an auto loaded `*.auto.tfvars.json`, both into the working
+   directory, since neither is loaded from a parent.
 4. Assumes the bundle's run role with the workspace id as the external id and the
    phase session policy, and exports only those credentials to the engine.
-5. Runs `init`, then `plan -out plan.tfplan -detailed-exitcode` plus `show -json`
+5. Runs the engine from the working directory: `init`, then
+   `plan -out plan.tfplan -detailed-exitcode` plus `show -json`
    for the plan phase, or downloads `plan.tfplan` and runs `apply plan.tfplan`
    for the apply phase.
 6. Streams the engine's combined output line by line to the `<run_id>/<phase>`

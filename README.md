@@ -193,7 +193,7 @@ shape is `Bundle` in `runner/app/models.py`, which the backend serves exactly:
 | `phase` | Derived from the run's status, never taken from the caller |
 | `plan_only` | Whether the run stops after the plan |
 | `engine`, `engine_version` | `terraform` or `tofu`, and the pinned version |
-| `working_directory` | Directory within the configuration |
+| `working_directory` | Directory within the configuration to run the engine from, empty for the root |
 | `config_url` | Presigned GET for the config tarball |
 | `backend` | `bucket`, `key`, `region`, `kms_key_id`, the last holding the key ARN |
 | `run_role` | `role_arn`, `external_id` (the workspace id), `session_policy`, `duration_seconds` |
@@ -201,16 +201,19 @@ shape is `Bundle` in `runner/app/models.py`, which the backend serves exactly:
 | `artifacts` | `plan_put_url`, `plan_json_put_url`, `plan_get_url`, `log_put_url` |
 
 The session policy is read only for a plan and unrestricted for an apply. The
-runner models the nested objects and `engine_version` and ignores the other three
-top level fields, which state what the API served rather than instructing it.
+runner models the nested objects, `engine_version` and `working_directory`, and
+ignores `phase` and `plan_only`, which state what the API served rather than
+instructing it: the runner takes its phase from `PHASE`.
 
 Presigned URLs live for one hour and all four objects sit under `runs/<run_id>/`
 in the artifacts bucket, which is the prefix the bucket's lifecycle rule expires.
 The log key is `runs/<run_id>/<phase>.log`, so a plan and an apply keep separate
 transcripts. The runner unpacks the tarball refusing members
-that escape the working directory, writes the S3 backend override and an auto
-loaded tfvars file, assumes the run role with the workspace id as the external id
-and the phase session policy, and exports only those credentials to the engine.
+that escape the unpack directory, resolves `working_directory` under it, refusing
+one that is absolute, climbs out or is not in the configuration, writes the S3
+backend override and an auto loaded tfvars file there, assumes the run role with
+the workspace id as the external id and the phase session policy, and exports
+only those credentials to the engine.
 It streams the engine's output to the `<run_id>/<phase>` stream in the runner log
 group, uploads the plan artifacts and the log over the presigned URLs, posts
 `POST /runs/{run_id}/phase-result`, then sends task success with the exit code

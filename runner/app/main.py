@@ -104,7 +104,7 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
         except ApiError as error:
             raise PhaseFailure("ConfigDownloadFailed", str(error)) from error
         try:
-            workspace.prepare(config_directory, bundle, archive)
+            engine_directory = workspace.prepare(config_directory, bundle, archive)
         except workspace.ConfigError as error:
             raise PhaseFailure("ConfigUnpackFailed", str(error)) from error
 
@@ -119,16 +119,16 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
             aws_credentials,
             bundle.environment_variables,
             bundle.backend.region,
-            config_directory,
+            engine_directory,
         )
 
         try:
-            runner = engine.EngineRunner(bundle.engine, config_directory, environment, sink)
+            runner = engine.EngineRunner(bundle.engine, engine_directory, environment, sink)
         except engine.EngineError as error:
             raise PhaseFailure("EngineMissing", str(error)) from error
 
-        plan_path = config_directory / engine.PLAN_FILE
-        plan_json_path = config_directory / engine.PLAN_JSON_FILE
+        plan_path = engine_directory / engine.PLAN_FILE
+        plan_json_path = engine_directory / engine.PLAN_JSON_FILE
         changes = Changes()
         has_changes = False
 

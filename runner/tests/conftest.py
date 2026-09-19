@@ -81,17 +81,29 @@ def run_role_arn(aws: None) -> str:
     return str(role["Role"]["Arn"])
 
 
-@pytest.fixture
-def config_tarball() -> bytes:
-    """A minimal terraform config as a gzipped tarball."""
+def build_config_tarball(*names: str) -> bytes:
+    """A terraform config as a gzipped tarball, one `main.tf` per given path."""
     buffer = io.BytesIO()
     body = 'terraform {\n  required_version = ">= 1.11"\n}\n'
     with tarfile.open(fileobj=buffer, mode="w:gz") as handle:
-        info = tarfile.TarInfo("main.tf")
-        payload = body.encode()
-        info.size = len(payload)
-        handle.addfile(info, io.BytesIO(payload))
+        for name in names or ("main.tf",):
+            info = tarfile.TarInfo(name)
+            payload = body.encode()
+            info.size = len(payload)
+            handle.addfile(info, io.BytesIO(payload))
     return buffer.getvalue()
+
+
+@pytest.fixture
+def config_tarball() -> bytes:
+    """A minimal terraform config as a gzipped tarball."""
+    return build_config_tarball("main.tf")
+
+
+@pytest.fixture
+def nested_config_tarball() -> bytes:
+    """A config whose terraform lives in `infra/`, as a working directory needs."""
+    return build_config_tarball("main.tf", "infra/main.tf")
 
 
 def bundle_payload(run_role_arn: str, *, engine: str = "terraform", plan_get_url: str | None = None) -> dict[str, Any]:
