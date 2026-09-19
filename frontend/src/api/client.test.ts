@@ -175,12 +175,12 @@ describe('TerraformApi runs', () => {
     expect(transport.requests[0]?.query.get('workspace_id')).toBe('ws-1');
   });
 
-  it('omits the workspace filter when there is none', async () => {
+  it('always sends the workspace, which the route requires', async () => {
     const { api, transport } = apiOver({
       'GET /api/v1/runs': { body: { items: [] } },
     });
-    await api.listRuns();
-    expect(transport.requests[0]?.query.has('workspace_id')).toBe(false);
+    await api.listRuns({ workspace_id: 'ws-2' });
+    expect(transport.requests[0]?.query.get('workspace_id')).toBe('ws-2');
   });
 
   it('starts a run with the contract body', async () => {

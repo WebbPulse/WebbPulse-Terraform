@@ -21,7 +21,9 @@ import type {
   RunCreate,
   RunCreated,
   RunList,
+  RunListQuery,
   RunLogPage,
+  RunLogsQuery,
   RunPhase,
   Variable,
   VariableList,
@@ -259,19 +261,20 @@ export class TerraformApi {
     return response.data;
   }
 
-  /** Lists runs, optionally scoped to one workspace. */
+  /**
+   * Lists one workspace's runs.
+   *
+   * The workspace is required, not a filter: the backend queries the runs table
+   * by its workspace index and answers 404 for a workspace that does not exist,
+   * so there is no environment wide listing to ask for.
+   */
   async listRuns(
-    query: { workspace_id?: string } = {},
+    query: RunListQuery,
     options: RequestOptions = {}
   ): Promise<RunList> {
     const response = await this.client.get<RunList>('/runs', {
       ...options,
-      query: {
-        ...options.query,
-        ...(query.workspace_id === undefined
-          ? {}
-          : { workspace_id: query.workspace_id }),
-      },
+      query: { ...options.query, workspace_id: query.workspace_id },
     });
     return response.data;
   }
@@ -329,10 +332,14 @@ export class TerraformApi {
    *
    * `after` is the cursor the previous page returned, so the viewer tails the
    * stream instead of re-reading every line on each poll.
+   *
+   * `phase` is narrowed to {@link RunPhase}. The route declares it as a pattern
+   * constrained string rather than a literal, so the generated query type is a
+   * bare `string` and a caller could otherwise pass a phase the route rejects.
    */
   async getRunLogs(
     runId: string,
-    query: { phase: RunPhase; after?: string | null },
+    query: Omit<RunLogsQuery, 'phase'> & { phase: RunPhase },
     options: RequestOptions = {}
   ): Promise<RunLogPage> {
     const response = await this.client.get<RunLogPage>(
