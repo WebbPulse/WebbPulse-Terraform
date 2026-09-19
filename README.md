@@ -133,7 +133,9 @@ the `workspaces` function with no prefix because it already carries the issuer's
 path. The glue lives in `backend/app/domains/identity/`, is imported only when
 `IDENTITY_ISSUER` is set, and reads the identity module's ten tables plus the
 `users` table through `IdentityHooks`, where `is_admin` becomes an `admin` entry
-in the `roles` claim. Registration is disabled in every environment, so the first
+in the `roles` claim and the `scope` claim an admin's token carries: an admin
+holds every scope, anyone else the read scopes only.
+Registration is disabled in every environment, so the first
 account is created with `backend/scripts/create_user.py`; the backend README has
 the command. There is no email sender configured, so the package declares no
 email route, and no OAuth client id, so it declares no OAuth route.

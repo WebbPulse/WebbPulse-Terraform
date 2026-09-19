@@ -7,11 +7,12 @@ OAuth links are the package's own tables, so none of them appear here.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from webbpulse.identity import AuthenticationRefused
 
+from app.common.core.auth import ALL_SCOPES
 from app.common.db.users import User, UserRepository
 
 REFUSAL_MESSAGE: Final = "This account may not sign in."
@@ -20,6 +21,10 @@ an unverified one and use the difference to enumerate addresses."""
 
 ADMIN_ROLE: Final = "admin"
 """The role the `is_admin` flag maps to in the `roles` claim."""
+
+READ_SCOPES: Final = tuple(scope for scope in ALL_SCOPES if scope.endswith(":read"))
+"""What a non-admin holds: every read scope and no write or apply one. Derived from
+`ALL_SCOPES` rather than listed again, so a new scope cannot be forgotten here."""
 
 
 class ControlPlaneIdentityHooks:
@@ -59,13 +64,20 @@ class ControlPlaneIdentityHooks:
             raise AuthenticationRefused(REFUSAL_MESSAGE, error_code="EMAIL_NOT_VERIFIED")
 
     def claims_for(self, user: Mapping[str, Any]) -> Mapping[str, Any]:
-        """This product's claims: the roles list and the display name.
+        """This product's claims: the roles list, the display name and the scopes.
 
         `roles` is always a list so a consumer's check is one shape. Consumers must
-        test membership and never index.
+        test membership and never index. `scope` is the space-joined string the JWT
+        specification gives that claim, which `coerce_claims` splits back into the
+        `scopes` list `require_scopes` reads, so a token without it is refused every
+        guarded route.
         """
         roles: list[str] = [ADMIN_ROLE] if user.get("is_admin") else []
-        return {"roles": roles, "display_name": user.get("display_name", "")}
+        return {
+            "roles": roles,
+            "display_name": user.get("display_name", ""),
+            "scope": scope_claim_for_roles(roles),
+        }
 
     def create_user(self, *, email: str, attributes: Mapping[str, Any]) -> Mapping[str, Any]:
         """Create a users row for a package registration and return it.
@@ -123,6 +135,17 @@ class ControlPlaneIdentityHooks:
     def user_repository(self) -> object:
         """This product's users repository. Typed `object`, as the protocol has it."""
         return self._users
+
+
+def scope_claim_for_roles(roles: Sequence[str]) -> str:
+    """The `scope` claim these roles earn, as the space-joined string the claim takes.
+
+    An admin holds every scope in `ALL_SCOPES`. Anyone else holds the read scopes
+    only, so a signed-in non-admin can see the control plane without changing it.
+    The `runner` scope is not in `ALL_SCOPES` and so reaches neither.
+    """
+    granted = ALL_SCOPES if ADMIN_ROLE in roles else READ_SCOPES
+    return " ".join(granted)
 
 
 def _as_mapping(user: User) -> Mapping[str, Any]:
