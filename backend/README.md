@@ -81,7 +81,7 @@ transition revokes the token.
 The JWTs above are issued by this same backend. The workspaces function mounts
 the `webbpulse.identity` router, which carries its own `/api/auth` prefix, so the
 issuer and the product API are one deployment. The router mounts only when
-`IDENTITY_ISSUER` is set, and `app/domains/identity/package_glue.py` imports the
+`IDENTITY_ISSUER` is set, and `app/common/identity/package_glue.py` imports the
 package inside function bodies, so the runs image never carries any of it.
 
 Accounts live in the `users` table, which is this repository's own. The identity

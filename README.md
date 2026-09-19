@@ -131,7 +131,7 @@ Adapter's pass-through path, so the HTTP API never routes it.
 
 `/api/auth` is the shared `webbpulse.identity` package's own router, mounted by
 the `workspaces` function with no prefix because it already carries the issuer's
-path. The glue lives in `backend/app/domains/identity/`, is imported only when
+path. The glue lives in `backend/app/common/identity/`, is imported only when
 `IDENTITY_ISSUER` is set, and reads the identity module's ten tables plus the
 `users` table through `IdentityHooks`, where `is_admin` becomes an `admin` entry
 in the `roles` claim and the `scope` claim an admin's token carries: an admin

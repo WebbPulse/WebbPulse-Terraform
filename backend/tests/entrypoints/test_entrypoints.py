@@ -109,7 +109,7 @@ def test_the_domain_header_names_the_serving_domain(settings):
     assert response.headers[DOMAIN_HEADER] == "runs"
 
 
-IDENTITY_GLUE_MODULE = "app.domains.identity.package_glue"
+IDENTITY_GLUE_MODULE = "app.common.identity.package_glue"
 
 ISOLATION_PROGRAM = (
     "import sys;"
