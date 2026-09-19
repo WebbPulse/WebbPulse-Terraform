@@ -41,8 +41,11 @@ class Domain:
     load_unprefixed_routers: Callable[[Settings], "list[APIRouter]"] | None = None
     """Routers that mount at the root rather than under `API_PREFIX`.
 
-    The consumer routes: the Lambda Web Adapter posts a queue invocation to its own
-    pass-through path, which is outside `/api/v1`, and the HTTP API never routes it.
+    Two kinds reach it. The consumer routes, because the Lambda Web Adapter posts a
+    queue invocation to its own pass-through path, which is outside `/api/v1` and
+    which the HTTP API never routes. And the identity router, because it carries the
+    issuer's own `/api/auth` path and a prefix would double it.
+
     Called lazily with the resolved settings, for the same reason `load_routers` is."""
     router_prefix: str = API_PREFIX
     """Where this domain's routers mount, so both roots supply the same prefix."""
@@ -62,6 +65,25 @@ def _workspaces_routers() -> "list[APIRouter]":
     from app.domains.workspaces.router import router
 
     return [router]
+
+
+def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
+    """The shared package's identity router, which carries the issuer's own path.
+
+    Identity is served by the workspaces function rather than a domain of its own,
+    so the glue mounts here. It takes no prefix; a prefix would double every path to
+    `/api/auth/api/auth/...`.
+
+    Empty when `IDENTITY_ISSUER` is unset, so a deployment without an issuer builds
+    none of the glue's AWS clients. The import is inside the body for the same
+    reason every loader's is: the runs image must never reach this module.
+    """
+    if not settings.IDENTITY_ISSUER:
+        return []
+
+    from app.domains.identity.package_glue import build_router
+
+    return [build_router(settings)]
 
 
 def _runs_routers() -> "list[APIRouter]":
@@ -87,6 +109,7 @@ DOMAINS: Final[dict[str, Domain]] = {
         name="workspaces",
         title="WebbPulse Terraform workspaces",
         load_routers=_workspaces_routers,
+        load_unprefixed_routers=_workspaces_unprefixed_routers,
         router_tags=("workspaces",),
     ),
     "runs": Domain(

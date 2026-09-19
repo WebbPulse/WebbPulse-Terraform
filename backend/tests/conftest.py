@@ -39,6 +39,7 @@ os.environ.update(
         "RUNS_TABLE": f"{TABLE_PREFIX}-runs",
         "VARIABLES_TABLE": f"{TABLE_PREFIX}-variables",
         "CONFIG_VERSIONS_TABLE": f"{TABLE_PREFIX}-config-versions",
+        "USERS_TABLE": f"{TABLE_PREFIX}-users",
         "STATE_BUCKET": STATE_BUCKET,
         "ARTIFACTS_BUCKET": ARTIFACTS_BUCKET,
         "RUNNER_LOG_GROUP": RUNNER_LOG_GROUP,
@@ -66,7 +67,7 @@ REGION = "us-west-2"
 
 
 def create_all_tables() -> None:
-    """Create the four project tables plus the identity `api-keys` table.
+    """Create the project tables plus the identity `api-keys` table.
 
     The identity table is created here rather than by a fixture a test opts into,
     because every guarded route verifies a key against it and an absent table
@@ -106,6 +107,26 @@ def aws_environment():
         yield
         settings_module.reset_settings_cache()
         webbpulse.storage.reset_client_cache()
+
+
+@pytest.fixture
+def identity_tables():
+    """Every identity module table, for a test that exercises the `/api/auth` routes.
+
+    Created by the package's own specs rather than by shapes restated here, so a
+    table the package renames is a failing import rather than a silent miss. Opt-in
+    because only the identity tests need them, and creating eleven tables per test
+    would slow the rest of the suite for nothing.
+    """
+    from webbpulse.identity import TABLES
+
+    client = boto3.client("dynamodb", region_name=REGION)
+    existing = set(client.list_tables()["TableNames"])
+    for spec in TABLES:
+        request = spec.create_table_request(TABLE_PREFIX)
+        if request["TableName"] not in existing:
+            client.create_table(**request)
+    return TABLE_PREFIX
 
 
 @pytest.fixture

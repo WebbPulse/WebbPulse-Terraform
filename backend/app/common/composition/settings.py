@@ -45,6 +45,10 @@ class Settings(BaseServiceSettings):
     RUNS_TABLE: str = ""
     VARIABLES_TABLE: str = ""
     CONFIG_VERSIONS_TABLE: str = ""
+    USERS_TABLE: str = ""
+    """The account rows the identity hooks read and write. Separate from the identity
+    module's own ten tables, which the package names from a prefix rather than from
+    the environment."""
 
     STATE_BUCKET: str = ""
     ARTIFACTS_BUCKET: str = ""
@@ -55,6 +59,15 @@ class Settings(BaseServiceSettings):
     IDENTITY_ISSUER: str = ""
     """The identity issuer. Present exactly when a JWT authorizer fronts this
     deployment, which is how the composition root tests for it cheaply."""
+
+    IDENTITY_TABLE_PREFIX: str = ""
+    """The prefix the identity module's own tables carry, set by Terraform to
+    `local.prefix`.
+
+    It cannot be derived from `ENVIRONMENT`: the stack slugs production to `prod`
+    while `ENVIRONMENT` is the word `production`, so a derived prefix would name
+    tables that do not exist there. `identity_table_prefix` falls back to the derived
+    form only for the local stack and the suite, where the two do agree."""
 
     STATE_KMS_KEY_ARN: str = ""
     AWS_REGION_NAME: str = "us-west-2"

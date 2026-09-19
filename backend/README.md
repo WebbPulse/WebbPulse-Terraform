@@ -76,6 +76,50 @@ to that run and expiring after four hours, and only that token opens
 decrypted sensitive variables, so no human scope reaches it, and every terminal
 transition revokes the token.
 
+## Identity
+
+The JWTs above are issued by this same backend. The workspaces function mounts
+the `webbpulse.identity` router, which carries its own `/api/auth` prefix, so the
+issuer and the product API are one deployment. The router mounts only when
+`IDENTITY_ISSUER` is set, and `app/domains/identity/package_glue.py` imports the
+package inside function bodies, so the runs image never carries any of it.
+
+Accounts live in the `users` table, which is this repository's own. The identity
+module's ten tables are named from `IDENTITY_TABLE_PREFIX`, which Terraform sets
+to `local.prefix`. That variable is read rather than derived because the stack
+slugs production to `prod` while `ENVIRONMENT` is the word `production`.
+
+`ControlPlaneIdentityHooks` refuses a disabled or unverified account with one
+message for both, so a caller cannot use the refusal to tell which addresses
+exist, and maps `is_admin` onto an `admin` entry in the token's `roles` claim.
+
+### Creating the first account
+
+`IDENTITY_REGISTRATION_ENABLED` is `false` in every deployed environment, so
+there is no self-service sign-up. `scripts/create_user.py` creates or updates one
+verified admin and its password credential. It is re-runnable, which is also how
+a password is rotated, and it prints nothing secret.
+
+The password comes from `CONTROL_PLANE_USER_PASSWORD`, never from an argument,
+so it stays out of the shell history and the process list. The `--environment`
+flag must match `ENVIRONMENT`, which is what stops a staging shell writing into
+production.
+
+```bash
+AWS_PROFILE=WebbPulse-Terraform-Staging/AgentToolkit \
+AWS_REGION=us-west-2 \
+ENVIRONMENT=staging \
+IDENTITY_TABLE_PREFIX=webbpulse-terraform-staging \
+USERS_TABLE=webbpulse-terraform-staging-users \
+CONTROL_PLANE_USER_PASSWORD='...' \
+  uv run python scripts/create_user.py --environment staging tyler@webbpulse.com
+```
+
+`IDENTITY_TABLE_PREFIX` is passed explicitly here because a shell is not the
+Lambda and carries none of the function's environment. It is `local.prefix`:
+`webbpulse-terraform-staging` in staging and `webbpulse-terraform-prod` in
+production.
+
 ## Sensitive variables
 
 A variable marked sensitive is sealed app side with AES-256-GCM under a key

@@ -60,7 +60,7 @@ State locking is Terraform's native S3 lockfile, which is why the engine floor i
 
 ## DynamoDB
 
-Four tables, prefixed `webbpulse-terraform-<slug>-`, with point in time recovery
+Five tables, prefixed `webbpulse-terraform-<slug>-`, with point in time recovery
 on and deletion protection in production.
 
 | Table | Key | Index |
@@ -69,14 +69,18 @@ on and deletion protection in production.
 | `runs` | `run_id` | `by_workspace` on `workspace_id`, range `created_at` |
 | `variables` | `workspace_id`, range `key` | none |
 | `config-versions` | `config_version_id` | `by_workspace` on `workspace_id`, range `created_at` |
+| `users` | `id` | `email_lower-index` on `email_lower` |
 
 The `runs` table also holds the concurrency semaphore as a single item with
 `run_id` of `run-semaphore`, whose `holders` string set the state machine adds to
 and removes from. `var.run_concurrency_cap`, default 2, is the size it is
 condition checked against.
 
-The `workspaces` domain owns `workspaces`, `variables` and `config-versions` and
-reads `runs`; the `runs` domain owns `runs` and reads the other three.
+The `workspaces` domain owns `workspaces`, `variables`, `config-versions` and
+`users`, and reads `runs`; the `runs` domain owns `runs` and reads the other
+three. The identity module creates ten tables of its own beside these, for
+credentials, refresh tokens, second factors and the rest, and `users` is the only
+account row this control plane keeps.
 
 ## Backend
 
@@ -116,6 +120,18 @@ shared identity module and are served by the `workspaces` function.
 
 The confirmations queue consumer is mounted outside `/api/v1`, on the Lambda Web
 Adapter's pass-through path, so the HTTP API never routes it.
+
+### Identity
+
+`/api/auth` is the shared `webbpulse.identity` package's own router, mounted by
+the `workspaces` function with no prefix because it already carries the issuer's
+path. The glue lives in `backend/app/domains/identity/`, is imported only when
+`IDENTITY_ISSUER` is set, and reads the identity module's ten tables plus the
+`users` table through `IdentityHooks`, where `is_admin` becomes an `admin` entry
+in the `roles` claim. Registration is disabled in every environment, so the first
+account is created with `backend/scripts/create_user.py`; the backend README has
+the command. There is no email sender configured, so the package declares no
+email route, and no OAuth client id, so it declares no OAuth route.
 
 ## Runs and Step Functions
 
