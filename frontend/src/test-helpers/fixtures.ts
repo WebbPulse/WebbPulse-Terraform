@@ -11,11 +11,35 @@ export function aWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     engine: 'terraform',
     engine_version: '1.11.0',
     working_directory: 'terraform',
-    run_role_arn: 'arn:aws:iam::123456789012:role/terraform-run',
+    run_role_arn:
+      'arn:aws:iam::123456789012:role/webbpulse-terraform-staging-workspace-01J000000000000000000000',
+    run_role_setup: {
+      principal_arn:
+        'arn:aws:iam::210987654321:role/webbpulse-terraform-staging-runner-plan',
+      principal_arns: [
+        'arn:aws:iam::210987654321:role/webbpulse-terraform-staging-runner-plan',
+        'arn:aws:iam::210987654321:role/webbpulse-terraform-staging-runner-apply',
+      ],
+      external_id: 'ws-01J000000000000000000000',
+      role_name:
+        'webbpulse-terraform-staging-workspace-01J000000000000000000000',
+    },
+    run_role_checked_at: '2026-09-17T00:05:00Z',
+    run_role_account_id: '123456789012',
     created_at: '2026-09-17T00:00:00Z',
     updated_at: null,
     ...overrides,
   };
+}
+
+/** A workspace nobody has connected an account to yet. */
+export function aFreshWorkspace(overrides: Partial<Workspace> = {}): Workspace {
+  return aWorkspace({
+    run_role_arn: null,
+    run_role_checked_at: null,
+    run_role_account_id: null,
+    ...overrides,
+  });
 }
 
 /** A variable, overridable field by field. */

@@ -28,11 +28,14 @@ import type {
   Variable,
   VariableList,
   VariableWrite,
+  WorkspaceUpdate,
+} from './types';
+import type {
+  RunRoleCheck,
   Workspace,
   WorkspaceCreate,
   WorkspaceList,
-  WorkspaceUpdate,
-} from './types';
+} from './runRoleSetup';
 
 const config = loadAppConfig(import.meta.env, {
   defaultApiBaseUrl:
@@ -178,6 +181,22 @@ export class TerraformApi {
       `/workspaces/${encodeURIComponent(workspaceId)}`,
       options
     );
+  }
+
+  /**
+   * Checks that the workspace's run role can be assumed, and persists what it
+   * found on the workspace. Rejects with `RUN_ROLE_MISSING` when no role is set.
+   */
+  async checkRunRole(
+    workspaceId: string,
+    options: RequestOptions = {}
+  ): Promise<RunRoleCheck> {
+    const response = await this.client.post<RunRoleCheck>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/run-role/check`,
+      undefined,
+      options
+    );
+    return response.data;
   }
 
   /** Lists a workspace's variables. Sensitive ones carry no value. */

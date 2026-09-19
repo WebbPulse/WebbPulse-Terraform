@@ -5,7 +5,7 @@ import {
   useMutationWithRefetch,
   usePolledQuery,
 } from '@webbpulse/api-client/react';
-import { useAuthClient } from '@webbpulse/auth/react';
+import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
   api,
@@ -13,7 +13,18 @@ import {
   type VariableCategory,
   type VariableList,
 } from '../../api';
-import { ErrorNotice, Spinner } from '../../components';
+import {
+  Button,
+  EmptyState,
+  ErrorNotice,
+  Field,
+  INPUT_CLASS,
+  Spinner,
+  Table,
+  Td,
+  Th,
+  Tr,
+} from '../../components';
 
 /** Props for {@link VariablesTab}. */
 export interface VariablesTabProps {
@@ -27,7 +38,7 @@ const CATEGORIES: readonly VariableCategory[] = ['terraform', 'env'];
 export function VariablesTab({
   workspaceId,
 }: VariablesTabProps): React.ReactElement {
-  const auth = useAuthClient();
+  const auth = useQueryAuth();
   const queryKey = `variables:${workspaceId}`;
   const query = usePolledQuery<VariableList>(
     ({ signal }) => api.listVariables(workspaceId, { signal }),
@@ -47,7 +58,10 @@ export function VariablesTab({
         }}
       />
       {query.isLoading ? (
-        <Spinner label="Loading variables" />
+        <div className="flex items-center gap-2 text-sm text-text-faint">
+          <Spinner label="Loading variables" className="size-4" />
+          Loading variables
+        </div>
       ) : (
         <VariableTable
           workspaceId={workspaceId}
@@ -78,56 +92,89 @@ function VariableTable({
   );
 
   if (variables.length === 0) {
-    return <p className="text-surface-300">No variables yet.</p>;
+    return (
+      <EmptyState
+        title="No variables yet."
+        hint="Terraform variables become -var values; env variables are set on the runner."
+      />
+    );
   }
   return (
     <div className="space-y-2">
       <ErrorNotice error={error} />
-      <table className="w-full text-left text-sm">
-        <thead className="text-surface-400">
+      <Table label="Variables">
+        <thead>
           <tr>
-            <th className="py-2">Key</th>
-            <th className="py-2">Value</th>
-            <th className="py-2">Category</th>
-            <th className="py-2" />
+            <Th>Key</Th>
+            <Th>Value</Th>
+            <Th>Category</Th>
+            <Th className="text-right">Actions</Th>
           </tr>
         </thead>
         <tbody>
           {variables.map((variable) => (
-            <tr key={variable.key} className="border-t border-surface-700">
-              <td className="py-2 font-mono">{variable.key}</td>
-              <td className="py-2 text-surface-300">
+            <Tr key={variable.key}>
+              <Td className="font-mono text-xs text-text-strong">
+                {variable.key}
+              </Td>
+              <Td className="max-w-md">
                 {variable.sensitive ? (
-                  <span className="text-surface-400">Write only</span>
+                  <span className="inline-flex items-center gap-1.5 text-xs text-text-faint">
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      className="size-3.5"
+                      fill="none"
+                    >
+                      <rect
+                        x="3.5"
+                        y="7"
+                        width="9"
+                        height="6.5"
+                        rx="1.5"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                      />
+                      <path
+                        d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                      />
+                    </svg>
+                    Write only
+                  </span>
                 ) : (
-                  <span className="font-mono">{variable.value ?? ''}</span>
+                  <span className="block truncate font-mono text-xs text-text">
+                    {variable.value ?? ''}
+                  </span>
                 )}
-              </td>
-              <td className="py-2 text-surface-300">{variable.category}</td>
-              <td className="py-2 text-right">
-                <button
-                  type="button"
+              </Td>
+              <Td className="text-xs text-text-muted">{variable.category}</Td>
+              <Td className="text-right whitespace-nowrap">
+                <Button
+                  size="sm"
+                  variant="ghost"
                   onClick={() => {
                     onEdit(variable);
                   }}
-                  className="mr-3 text-brand-300 hover:text-brand-200"
                 >
                   Edit
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-rose-300 hover:text-rose-200"
                   onClick={() => {
                     void mutate(variable.key).catch(() => undefined);
                   }}
-                  className="text-rose-300 hover:text-rose-200"
                 >
                   Delete
-                </button>
-              </td>
-            </tr>
+                </Button>
+              </Td>
+            </Tr>
           ))}
         </tbody>
-      </table>
+      </Table>
     </div>
   );
 }
@@ -189,83 +236,102 @@ function VariableForm({
   return (
     <form
       aria-label={editing === null ? 'Create a variable' : 'Edit the variable'}
-      className="flex flex-wrap items-end gap-3 rounded-lg border border-surface-700 bg-surface-800 p-4"
+      className="space-y-3 rounded-lg border border-line bg-panel p-4"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
-      <label className="text-sm">
-        <span className="block text-surface-300">Key</span>
-        <input
-          required
-          value={key}
-          readOnly={editing !== null}
-          onChange={(event) => {
-            setKey(event.target.value);
-          }}
-          className="mt-1 rounded-md border border-surface-600 bg-surface-900 px-3 py-2 font-mono read-only:text-surface-400"
-        />
-      </label>
-      <label className="text-sm">
-        <span className="block text-surface-300">
-          Value{sensitive ? ' (write only)' : ''}
-        </span>
-        <input
-          required
-          type={sensitive ? 'password' : 'text'}
-          autoComplete="off"
-          value={value}
-          onChange={(event) => {
-            setValue(event.target.value);
-          }}
-          className="mt-1 rounded-md border border-surface-600 bg-surface-900 px-3 py-2 font-mono"
-        />
-      </label>
-      <label className="text-sm">
-        <span className="block text-surface-300">Category</span>
-        <select
-          value={category}
-          onChange={(event) => {
-            setCategory(event.target.value as VariableCategory);
-          }}
-          className="mt-1 rounded-md border border-surface-600 bg-surface-900 px-3 py-2"
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold text-text-strong">
+          {editing === null ? 'Add a variable' : `Edit ${editing.key}`}
+        </h2>
+        {sensitive ? (
+          <span className="text-xs text-text-faint">
+            Sensitive values are stored write only and never shown again.
+          </span>
+        ) : null}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_8rem]">
+        <Field label="Key">
+          {(control) => (
+            <input
+              {...control}
+              required
+              value={key}
+              readOnly={editing !== null}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(event) => {
+                setKey(event.target.value);
+              }}
+              className={`${INPUT_CLASS} font-mono`}
+            />
+          )}
+        </Field>
+        <Field label={sensitive ? 'Value (write only)' : 'Value'}>
+          {(control) => (
+            <input
+              {...control}
+              required
+              type={sensitive ? 'password' : 'text'}
+              autoComplete="off"
+              spellCheck={false}
+              value={value}
+              onChange={(event) => {
+                setValue(event.target.value);
+              }}
+              className={`${INPUT_CLASS} font-mono`}
+            />
+          )}
+        </Field>
+        <Field label="Category">
+          {(control) => (
+            <select
+              {...control}
+              value={category}
+              onChange={(event) => {
+                setCategory(event.target.value as VariableCategory);
+              }}
+              className={INPUT_CLASS}
+            >
+              {CATEGORIES.map((value_) => (
+                <option key={value_} value={value_}>
+                  {value_}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-sm text-text-muted">
+          <input
+            type="checkbox"
+            checked={sensitive}
+            onChange={(event) => {
+              setSensitive(event.target.checked);
+            }}
+            className="size-3.5 accent-brand-500"
+          />
+          Sensitive
+        </label>
+        <span className="flex-1" />
+        {editing === null ? null : (
+          <Button variant="ghost" onClick={onDone}>
+            Cancel
+          </Button>
+        )}
+        <Button
+          type="submit"
+          variant="primary"
+          busy={isMutating}
+          busyLabel="Saving the variable"
         >
-          {CATEGORIES.map((value_) => (
-            <option key={value_} value={value_}>
-              {value_}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex items-center gap-2 text-sm text-surface-300">
-        <input
-          type="checkbox"
-          checked={sensitive}
-          onChange={(event) => {
-            setSensitive(event.target.checked);
-          }}
-        />
-        Sensitive
-      </label>
-      <button
-        type="submit"
-        disabled={isMutating}
-        className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-      >
-        {isMutating ? <Spinner label="Saving the variable" /> : null}
-        {editing === null ? 'Add variable' : 'Save variable'}
-      </button>
-      {editing === null ? null : (
-        <button
-          type="button"
-          onClick={onDone}
-          className="rounded-md border border-surface-600 px-3 py-2 text-sm text-surface-200"
-        >
-          Cancel
-        </button>
-      )}
-      <ErrorNotice error={error} className="w-full" />
+          {editing === null ? 'Add variable' : 'Save variable'}
+        </Button>
+      </div>
+      <ErrorNotice error={error} />
     </form>
   );
 }

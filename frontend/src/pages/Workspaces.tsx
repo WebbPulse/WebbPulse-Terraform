@@ -1,22 +1,37 @@
-/** The workspaces list, with the form that creates one. */
+/** The workspaces list, with the dialog that creates one. */
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   useMutationWithRefetch,
   usePolledQuery,
 } from '@webbpulse/api-client/react';
-import { useAuthClient } from '@webbpulse/auth/react';
+import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
-  RUN_ROLE_ARN_MESSAGE,
   api,
-  isRunRoleArn,
+  isConnected,
   type Engine,
+  type Workspace,
   type WorkspaceCreate,
   type WorkspaceList,
 } from '../api';
-import { ErrorNotice, Spinner } from '../components';
+import {
+  Button,
+  Dialog,
+  EmptyState,
+  ErrorNotice,
+  Field,
+  INPUT_CLASS,
+  PageHeader,
+  Spinner,
+  Table,
+  Td,
+  Th,
+  Tr,
+  formatDateTime,
+  formatRelative,
+} from '../components';
 
 /** The refetch key the list reads and the create form invalidates. */
 export const WORKSPACES_KEY = 'workspaces';
@@ -24,104 +39,201 @@ export const WORKSPACES_KEY = 'workspaces';
 /** The engines a workspace can be created with. */
 const ENGINES: readonly Engine[] = ['terraform', 'tofu'];
 
-/** The workspaces list and its create form. */
+/** The engine version a new workspace starts on. */
+const DEFAULT_ENGINE_VERSION = '1.11.0';
+
+/** The workspaces list and its create dialog. */
 export function Workspaces(): React.ReactElement {
-  const auth = useAuthClient();
+  const auth = useQueryAuth();
+  const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
   const query = usePolledQuery<WorkspaceList>(
     ({ signal }) => api.listWorkspaces({ signal }),
     { intervalMs: 30_000, queryKey: WORKSPACES_KEY, auth }
   );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold text-surface-50">Workspaces</h1>
-        {query.isFetching ? <Spinner label="Refreshing workspaces" /> : null}
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="Workspaces"
+        description="Each workspace holds one root module, its variables and its runs."
+        meta={
+          query.isFetching && !query.isLoading ? (
+            <Spinner label="Refreshing workspaces" className="size-3.5" />
+          ) : null
+        }
+        actions={
+          <Button
+            variant="primary"
+            onClick={() => {
+              setCreating(true);
+            }}
+          >
+            New workspace
+          </Button>
+        }
+      />
       <ErrorNotice error={query.error} />
-      <CreateWorkspaceForm />
       {query.isLoading ? (
-        <Spinner label="Loading workspaces" />
+        <div className="flex items-center gap-2 text-sm text-text-faint">
+          <Spinner label="Loading workspaces" className="size-4" />
+          Loading workspaces
+        </div>
       ) : (
-        <WorkspaceTable workspaces={query.data?.items ?? []} />
+        <WorkspaceTable
+          workspaces={query.data?.items ?? []}
+          onCreate={() => {
+            setCreating(true);
+          }}
+        />
       )}
+      <Dialog
+        open={creating}
+        onClose={() => {
+          setCreating(false);
+        }}
+        title="New workspace"
+        description="Name it now. Connecting an AWS account comes next, on the workspace page."
+      >
+        <CreateWorkspaceForm
+          onCancel={() => {
+            setCreating(false);
+          }}
+          onCreated={(workspace) => {
+            setCreating(false);
+            void navigate(`/workspaces/${workspace.workspace_id}`);
+          }}
+        />
+      </Dialog>
     </div>
   );
 }
 
-/** The table of workspaces, or a sentence when there are none. */
+/** The table of workspaces, or an invitation to create the first one. */
 function WorkspaceTable({
   workspaces,
+  onCreate,
 }: {
-  workspaces: WorkspaceList['items'];
+  workspaces: Workspace[];
+  onCreate: () => void;
 }): React.ReactElement {
   if (workspaces.length === 0) {
-    return <p className="text-surface-300">No workspaces yet.</p>;
+    return (
+      <EmptyState
+        title="No workspaces yet."
+        hint="A workspace holds one root module, its variables and its runs."
+        action={
+          <Button variant="primary" onClick={onCreate}>
+            Create the first workspace
+          </Button>
+        }
+      />
+    );
   }
   return (
-    <table className="w-full text-left text-sm">
-      <thead className="text-surface-400">
+    <Table label="Workspaces">
+      <thead>
         <tr>
-          <th className="py-2">Name</th>
-          <th className="py-2">Engine</th>
-          <th className="py-2">Run role</th>
+          <Th>Name</Th>
+          <Th>Engine</Th>
+          <Th>AWS account</Th>
+          <Th>Created</Th>
         </tr>
       </thead>
       <tbody>
         {workspaces.map((workspace) => (
-          <tr
-            key={workspace.workspace_id}
-            className="border-t border-surface-700"
-          >
-            <td className="py-2">
+          <Tr key={workspace.workspace_id}>
+            <Td>
               <Link
                 to={`/workspaces/${workspace.workspace_id}`}
-                className="text-brand-300 hover:text-brand-200"
+                className="font-medium text-text-strong hover:text-brand-300"
               >
                 {workspace.name}
               </Link>
-            </td>
-            <td className="py-2 text-surface-300">
-              {workspace.engine} {workspace.engine_version}
-            </td>
-            <td className="py-2 font-mono text-surface-300">
-              {workspace.run_role_arn}
-            </td>
-          </tr>
+              {(workspace.description ?? '') === '' ? null : (
+                <p className="max-w-md truncate text-xs text-text-faint">
+                  {workspace.description}
+                </p>
+              )}
+            </Td>
+            <Td className="text-text-muted">
+              {workspace.engine ?? 'terraform'}{' '}
+              <span className="font-mono text-xs">
+                {workspace.engine_version}
+              </span>
+            </Td>
+            <Td>
+              <ConnectionCell workspace={workspace} />
+            </Td>
+            <Td
+              className="text-xs whitespace-nowrap text-text-faint"
+              title={formatDateTime(workspace.created_at)}
+            >
+              {formatRelative(workspace.created_at)}
+            </Td>
+          </Tr>
         ))}
       </tbody>
-    </table>
+    </Table>
   );
 }
 
-/** The form that creates a workspace and refetches the list on success. */
-function CreateWorkspaceForm(): React.ReactElement {
+/** The account id with a green dot, or the words for a missing connection. */
+function ConnectionCell({
+  workspace,
+}: {
+  workspace: Workspace;
+}): React.ReactElement {
+  if (isConnected(workspace)) {
+    return (
+      <span className="inline-flex items-center gap-2 font-mono text-xs text-text">
+        <span
+          aria-hidden="true"
+          className="inline-block size-2 rounded-full bg-emerald-400"
+        />
+        {workspace.run_role_account_id}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-2 text-xs text-text-faint">
+      <span
+        aria-hidden="true"
+        className="inline-block size-2 rounded-full bg-surface-600"
+      />
+      {workspace.run_role_arn === null ? 'Not connected' : 'Not checked'}
+    </span>
+  );
+}
+
+/** The form that creates a workspace with a name and its engine. */
+function CreateWorkspaceForm({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: (workspace: Workspace) => void;
+}): React.ReactElement {
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [engine, setEngine] = useState<Engine>('terraform');
-  const [engineVersion, setEngineVersion] = useState('1.11.0');
-  const [runRoleArn, setRunRoleArn] = useState('');
-  const [invalidArn, setInvalidArn] = useState(false);
+  const [engineVersion, setEngineVersion] = useState(DEFAULT_ENGINE_VERSION);
   const { mutate, isMutating, error } = useMutationWithRefetch(
     (body: WorkspaceCreate) => api.createWorkspace(body),
     WORKSPACES_KEY
   );
 
   const submit = async (): Promise<void> => {
-    const trimmedArn = runRoleArn.trim();
-    if (!isRunRoleArn(trimmedArn)) {
-      setInvalidArn(true);
-      return;
+    const body: WorkspaceCreate = {
+      name: name.trim(),
+      engine,
+      engine_version: engineVersion.trim(),
+    };
+    if (description.trim() !== '') {
+      body.description = description.trim();
     }
-    setInvalidArn(false);
     try {
-      await mutate({
-        name,
-        engine,
-        engine_version: engineVersion,
-        run_role_arn: trimmedArn,
-      });
-      setName('');
-      setRunRoleArn('');
+      onCreated(await mutate(body));
     } catch {
       return;
     }
@@ -130,83 +242,90 @@ function CreateWorkspaceForm(): React.ReactElement {
   return (
     <form
       aria-label="Create a workspace"
-      className="flex flex-wrap items-end gap-3 rounded-lg border border-surface-700 bg-surface-800 p-4"
+      className="space-y-4"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
-      <label className="text-sm">
-        <span className="block text-surface-300">Name</span>
-        <input
-          required
-          value={name}
-          onChange={(event) => {
-            setName(event.target.value);
-          }}
-          className="mt-1 rounded-md border border-surface-600 bg-surface-900 px-3 py-2"
-        />
-      </label>
-      <label className="text-sm">
-        <span className="block text-surface-300">Engine</span>
-        <select
-          value={engine}
-          onChange={(event) => {
-            setEngine(event.target.value as Engine);
-          }}
-          className="mt-1 rounded-md border border-surface-600 bg-surface-900 px-3 py-2"
-        >
-          {ENGINES.map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="text-sm">
-        <span className="block text-surface-300">Engine version</span>
-        <input
-          required
-          value={engineVersion}
-          onChange={(event) => {
-            setEngineVersion(event.target.value);
-          }}
-          className="mt-1 rounded-md border border-surface-600 bg-surface-900 px-3 py-2"
-        />
-      </label>
-      <label className="text-sm">
-        <span className="block text-surface-300">Run role ARN</span>
-        <input
-          required
-          value={runRoleArn}
-          aria-invalid={invalidArn}
-          aria-describedby={invalidArn ? 'create-run-role-error' : undefined}
-          placeholder="arn:aws:iam::123456789012:role/terraform-run"
-          onChange={(event) => {
-            setRunRoleArn(event.target.value);
-            setInvalidArn(false);
-          }}
-          className="mt-1 w-96 rounded-md border border-surface-600 bg-surface-900 px-3 py-2 font-mono"
-        />
-      </label>
-      <button
-        type="submit"
-        disabled={isMutating}
-        className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
+      <Field
+        label="Name"
+        hint="Letters, digits, dots, underscores and hyphens."
       >
-        {isMutating ? <Spinner label="Creating the workspace" /> : null}
-        Create workspace
-      </button>
-      {invalidArn ? (
-        <p
-          id="create-run-role-error"
-          role="alert"
-          className="w-full text-sm text-rose-300"
+        {(control) => (
+          <input
+            {...control}
+            required
+            autoFocus
+            value={name}
+            pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"
+            title="Letters, digits, dots, underscores and hyphens, starting with a letter or digit."
+            onChange={(event) => {
+              setName(event.target.value);
+            }}
+            className={INPUT_CLASS}
+          />
+        )}
+      </Field>
+      <Field label="Description">
+        {(control) => (
+          <input
+            {...control}
+            value={description}
+            onChange={(event) => {
+              setDescription(event.target.value);
+            }}
+            className={INPUT_CLASS}
+          />
+        )}
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Engine">
+          {(control) => (
+            <select
+              {...control}
+              value={engine}
+              onChange={(event) => {
+                setEngine(event.target.value as Engine);
+              }}
+              className={INPUT_CLASS}
+            >
+              {ENGINES.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+        <Field label="Engine version">
+          {(control) => (
+            <input
+              {...control}
+              required
+              value={engineVersion}
+              onChange={(event) => {
+                setEngineVersion(event.target.value);
+              }}
+              className={`${INPUT_CLASS} font-mono`}
+            />
+          )}
+        </Field>
+      </div>
+      <ErrorNotice error={error} />
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          variant="primary"
+          busy={isMutating}
+          busyLabel="Creating the workspace"
         >
-          {RUN_ROLE_ARN_MESSAGE}
-        </p>
-      ) : null}
-      <ErrorNotice error={error} className="w-full" />
+          Create workspace
+        </Button>
+      </div>
     </form>
   );
 }

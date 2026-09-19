@@ -32,6 +32,7 @@ export function createApiMock(): ApiMock {
     'getWorkspace',
     'updateWorkspace',
     'deleteWorkspace',
+    'checkRunRole',
     'listVariables',
     'putVariable',
     'deleteVariable',

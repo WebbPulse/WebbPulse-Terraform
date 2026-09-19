@@ -87,13 +87,14 @@ challenge is not lost with it.
 
 `src/api/` is the whole surface:
 
-| File           | What it holds                                                   |
-| -------------- | --------------------------------------------------------------- |
-| `openapi.json` | The backend's OpenAPI document, generated. Do not edit          |
-| `schema.d.ts`  | Types generated from that document. Do not edit                 |
-| `types.ts`     | The contract types, each an alias into `schema.d.ts`            |
-| `runStates.ts` | Which actions each run state allows, and how it is badged       |
-| `client.ts`    | `TerraformApi`, one method per route, plus the presigned upload |
+| File              | What it holds                                                   |
+| ----------------- | --------------------------------------------------------------- |
+| `openapi.json`    | The backend's OpenAPI document, generated. Do not edit          |
+| `schema.d.ts`     | Types generated from that document. Do not edit                 |
+| `types.ts`        | The contract types, each an alias into `schema.d.ts`            |
+| `runStates.ts`    | Which actions each run state allows, and how it is badged       |
+| `runRoleSetup.ts` | The run role contract and the trust policy and role snippets    |
+| `client.ts`       | `TerraformApi`, one method per route, plus the presigned upload |
 
 `TerraformApi` wraps `@webbpulse/api-client`, which rejects on a non-2xx, so the
 pages read failures off `usePolledQuery` and `useMutationWithRefetch` rather
@@ -103,6 +104,24 @@ its cookies.
 
 Sensitive variable values are write-only. The API never returns them, so editing
 one starts with an empty box and a save re-enters the value.
+
+### Workspace setup
+
+A workspace is created from its name alone. The run role comes afterwards, on
+the workspace page, which leads with a three step checklist until the first
+plan has run: connect an AWS account, upload a configuration, run a plan. Each
+workspace response carries `run_role_setup`, the role name, the runner
+principals and the external id, and the connect step renders the trust policy
+and a Terraform, CloudFormation and AWS CLI snippet from those values. Saving
+the role ARN is a `PATCH` of `run_role_arn`; `POST
+/workspaces/{id}/run-role/check` assumes the role once and persists the outcome
+as `run_role_checked_at` and `run_role_account_id`. Run starts are disabled
+until a check has passed, and a `409` carrying `RUN_ROLE_MISSING` renders the
+same sentence.
+
+`runRoleSetup.ts` types this contract by hand and overrides the generated
+`Workspace` shapes through `index.ts` until the backend change lands in
+`openapi.json`. Once it does, the overrides collapse into aliases.
 
 ### Regenerating the types
 
@@ -135,13 +154,28 @@ Pydantic default is emitted as required, which would make an omitted
 
 ```
 src/
-├── api/            types, run state gating, the typed client
-├── components/     guards, layout, the badge, the log viewer
+├── api/            types, run state gating, the run role setup, the typed client
+├── components/     guards, the app shell, the primitives, the badge, the log viewer
 ├── pages/          sign-in, workspaces, workspace detail, runs, run detail
-│   └── workspace/  the four workspace detail tabs
-├── styles/         global styles
+│   └── workspace/  the setup checklist, the connect panel, the four tabs
+├── styles/         the Tailwind theme: the surface and brand scales, and the
+│                   semantic tokens (bg, panel, line, text, accent) built on them
 └── test-helpers/   fixtures, the fetch double, the api mock, render helpers
 ```
+
+## UI
+
+The app is dark only. `styles/globals.css` defines the palette twice: a raw
+`surface` and `brand` scale, and semantic tokens (`bg`, `panel`, `raised`,
+`line`, `text`, `text-muted`, `text-faint`, `accent`) that every component
+uses, so a light theme is a second block of token values rather than a sweep of
+class names. `components/` holds the shell (`Layout`, a left rail with the
+sections and the session) and the primitives every page is built from:
+`PageHeader`, `Tabs`, `Table`, `Field` with `INPUT_CLASS`, `EmptyState`,
+`Button`, `Dialog`, `SegmentedControl`, `CodeBlock` and `CopyButton`. Lists
+render one of three shapes: a spinner with a sentence while loading, an
+`EmptyState` when empty, and the table otherwise, with `ErrorNotice` above any
+of them when the read failed.
 
 ## Tests
 
