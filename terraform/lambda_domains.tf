@@ -119,6 +119,9 @@ module "lambda_domain" {
 
       RUN_STATE_MACHINE_ARN = module.run_state_machine.arn
 
+      RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
+      RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
+
       APP_SECRET_ID = module.app_secrets.arns["app"]
 
       WEBBPULSE_OTEL_SAMPLE_RATIO        = var.environment == "production" ? "0.1" : "1.0"
@@ -158,7 +161,14 @@ module "lambda_domain" {
 
 locals {
   lambda_domain_extra_statements = {
-    workspaces = []
+    workspaces = [
+      {
+        Sid      = "CheckAWorkspaceRunRole"
+        Effect   = "Allow"
+        Action   = ["sts:AssumeRole"]
+        Resource = local.workspace_run_role_arns
+      },
+    ]
     runs = [
       {
         Sid      = "StartAndStopRunExecutions"

@@ -44,9 +44,14 @@ def _not_found(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
 
 
-def _conflict(message: str) -> HTTPException:
-    """The 409 every refused transition raises."""
-    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
+def _conflict(message: str, *, error_code: str | None = None) -> HTTPException:
+    """The 409 every refused transition raises, optionally carrying a stable code."""
+    detail: Any = message if error_code is None else {"message": message, "error_code": error_code}
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
+RUN_ROLE_MISSING_CODE = "RUN_ROLE_MISSING"
+"""The code a caller matches on to send a person to the workspace's run role setup."""
 
 
 @router.post(
@@ -61,11 +66,19 @@ def create_run(payload: RunCreate) -> dict[str, Any]:
     A run queued behind the workspace's active one comes back `pending` with
     `queued_behind` set and no token, which is the caller's signal that nothing is
     executing yet.
+
+    A workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the
+    runner would have nothing to assume.
     """
     try:
         created = service.create_run(payload.model_dump())
     except workspaces_service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
+    except workspaces_service.RunRoleMissing as error:
+        raise _conflict(
+            "This workspace has no run role ARN yet, so a run has nothing to assume.",
+            error_code=RUN_ROLE_MISSING_CODE,
+        ) from error
     except workspaces_service.ConfigVersionNotFound as error:
         raise _not_found("No such config version.") from error
     except service.ConfigVersionNotReady as error:

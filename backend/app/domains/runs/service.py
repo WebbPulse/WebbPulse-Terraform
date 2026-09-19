@@ -190,6 +190,7 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
 
     Raises:
         WorkspaceNotFound: No such workspace.
+        RunRoleMissing: The workspace has no run role, so nothing could be assumed.
         ConfigVersionNotFound: No such config version on that workspace.
         ConfigVersionNotReady: The tarball was never uploaded.
     """
@@ -197,7 +198,9 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
     workspace_id = str(payload["workspace_id"])
     config_version_id = str(payload["config_version_id"])
 
-    workspaces_service.get_workspace(workspace_id, settings=resolved)
+    workspace = workspaces_service.get_workspace(workspace_id, settings=resolved)
+    if not str(workspace.get("run_role_arn", "") or ""):
+        raise workspaces_service.RunRoleMissing(workspace_id)
     config_version = workspaces_service.get_config_version(workspace_id, config_version_id, settings=resolved)
     if str(config_version.get("status", "")) != "uploaded":
         raise ConfigVersionNotReady(config_version_id)

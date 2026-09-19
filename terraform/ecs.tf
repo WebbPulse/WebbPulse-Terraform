@@ -1,6 +1,11 @@
 locals {
   runner_image = "${module.registry.repository_urls["runner"]}:${var.runner_image_tag}"
 
+  workspace_run_role_arns = [
+    "arn:aws:iam::*:role/${local.prefix}-workspace-*",
+    "arn:aws:iam::*:role/${local.example_run_role_name}",
+  ]
+
   runner_task_statements = concat(
     [
       {
@@ -14,12 +19,9 @@ locals {
         resources = ["${aws_cloudwatch_log_group.runner.arn}:*"]
       },
       {
-        sid     = "AssumeAnyWorkspaceRunRole"
-        actions = ["sts:AssumeRole", "sts:TagSession"]
-        resources = [
-          "arn:aws:iam::*:role/${local.prefix}-workspace-*",
-          "arn:aws:iam::*:role/${local.example_run_role_name}",
-        ]
+        sid       = "AssumeAnyWorkspaceRunRole"
+        actions   = ["sts:AssumeRole", "sts:TagSession"]
+        resources = local.workspace_run_role_arns
       },
     ],
     [

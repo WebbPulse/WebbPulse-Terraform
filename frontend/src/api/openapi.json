@@ -821,6 +821,74 @@
         "title": "RunRole",
         "type": "object"
       },
+      "RunRoleCheck": {
+        "description": "The outcome of one AssumeRole against a workspace's run role.\n\n`error` is a sentence for a person rather than the STS code, and no part of\nthe temporary credentials reaches it.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "required": [
+          "connected"
+        ],
+        "title": "RunRoleCheck",
+        "type": "object"
+      },
+      "RunRoleSetup": {
+        "description": "What a person needs to build the run role for one workspace.\n\nThe role cannot exist before the workspace does: its trust policy names the\nworkspace id as the external id, so the id has to be handed out first. Every\nworkspace response carries these three values so the setup can be followed\nwithout reading the stack's outputs.",
+        "properties": {
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "principal_arn": {
+            "title": "Principal Arn",
+            "type": "string"
+          },
+          "principal_arns": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Principal Arns",
+            "type": "array"
+          },
+          "role_name": {
+            "title": "Role Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "principal_arn",
+          "external_id",
+          "role_name"
+        ],
+        "title": "RunRoleSetup",
+        "type": "object"
+      },
       "ValidationErrorDetail": {
         "description": "One offending field in a 422, carrying its location and reason but never its input.",
         "properties": {
@@ -965,7 +1033,7 @@
         "type": "object"
       },
       "Workspace": {
-        "description": "A stored workspace.",
+        "description": "A stored workspace, with everything the run role setup needs.",
         "properties": {
           "created_at": {
             "title": "Created At",
@@ -995,11 +1063,44 @@
             "title": "Name",
             "type": "string"
           },
+          "run_role_account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Account Id"
+          },
           "run_role_arn": {
-            "maxLength": 2048,
-            "minLength": 20,
-            "title": "Run Role Arn",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Arn"
+          },
+          "run_role_checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Checked At"
+          },
+          "run_role_setup": {
+            "$ref": "#/components/schemas/RunRoleSetup"
           },
           "updated_at": {
             "anyOf": [
@@ -1024,10 +1125,10 @@
         },
         "required": [
           "engine_version",
-          "run_role_arn",
           "workspace_id",
           "name",
-          "created_at"
+          "created_at",
+          "run_role_setup"
         ],
         "title": "Workspace",
         "type": "object"
@@ -1063,10 +1164,17 @@
             "type": "string"
           },
           "run_role_arn": {
-            "maxLength": 2048,
-            "minLength": 20,
-            "title": "Run Role Arn",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Arn"
           },
           "working_directory": {
             "default": "",
@@ -1076,7 +1184,6 @@
         },
         "required": [
           "engine_version",
-          "run_role_arn",
           "name"
         ],
         "title": "WorkspaceCreate",
@@ -2157,7 +2264,7 @@
         ]
       },
       "post": {
-        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.",
+        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.",
         "operationId": "create_run_api_v1_runs_post",
         "requestBody": {
           "content": {
@@ -2553,7 +2660,7 @@
     },
     "/api/v1/workspaces": {
       "get": {
-        "description": "Every workspace in this environment.",
+        "description": "Every workspace in this environment, each with its run role setup.",
         "operationId": "list_workspaces_api_v1_workspaces_get",
         "responses": {
           "200": {
@@ -2583,7 +2690,7 @@
         ]
       },
       "post": {
-        "description": "Create a workspace. The name has to be free.",
+        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.",
         "operationId": "create_workspace_api_v1_workspaces_post",
         "requestBody": {
           "content": {
@@ -2662,7 +2769,7 @@
         ]
       },
       "get": {
-        "description": "One workspace by id.",
+        "description": "One workspace by id, with its run role setup.",
         "operationId": "get_workspace_api_v1_workspaces__workspace_id__get",
         "parameters": [
           {
@@ -2706,7 +2813,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nChanging `run_role_arn` drops the recorded check outcome, so the new role reads\nas unchecked until `run-role/check` says otherwise.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {
@@ -2913,6 +3020,52 @@
           }
         },
         "summary": "Get Config Version",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/run-role/check": {
+      "post": {
+        "description": "Assume the workspace's run role and report whether it answered.\n\nAlways 200 when a role is configured, whether or not it answered: a trust\npolicy that is not there yet is an expected state of the setup rather than a\nrequest error. A workspace with no role at all is a 400 carrying\n`RUN_ROLE_MISSING`.",
+        "operationId": "check_run_role_api_v1_workspaces__workspace_id__run_role_check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRoleCheck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Check Run Role",
         "tags": [
           "workspaces"
         ]

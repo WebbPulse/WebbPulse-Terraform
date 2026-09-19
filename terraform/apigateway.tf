@@ -23,6 +23,9 @@ locals {
     {
       "GET /api/v1/workspaces/{workspace_id}/config-versions/{config_version_id}" = { integration = "workspaces" }
     },
+    {
+      "POST /api/v1/workspaces/{workspace_id}/run-role/check" = { integration = "workspaces" }
+    },
   )
 
   runs_routes = {

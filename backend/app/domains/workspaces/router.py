@@ -26,6 +26,7 @@ from .schemas.workspace import (
     ConfigVersionCreate,
     ConfigVersionList,
     ConfigVersionUpload,
+    RunRoleCheck,
     Variable,
     VariableList,
     VariableWrite,
@@ -34,6 +35,9 @@ from .schemas.workspace import (
     WorkspaceList,
     WorkspaceUpdate,
 )
+
+RUN_ROLE_MISSING_CODE = "RUN_ROLE_MISSING"
+"""The stable code a caller matches on when a workspace has no run role yet."""
 
 router = APIRouter()
 
@@ -53,8 +57,8 @@ def _not_found(message: str) -> HTTPException:
     dependencies=[Depends(scopes(WORKSPACES_READ))],
 )
 def list_workspaces() -> dict[str, Any]:
-    """Every workspace in this environment."""
-    return {"items": service.list_workspaces()}
+    """Every workspace in this environment, each with its run role setup."""
+    return {"items": [service.render_workspace(item) for item in service.list_workspaces()]}
 
 
 @router.post(
@@ -64,9 +68,15 @@ def list_workspaces() -> dict[str, Any]:
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
 def create_workspace(payload: WorkspaceCreate) -> dict[str, Any]:
-    """Create a workspace. The name has to be free."""
+    """Create a workspace. The name has to be free.
+
+    The run role is optional here on purpose: its trust policy names the workspace
+    id as the external id, so the role cannot exist until the workspace does. The
+    response's `run_role_setup` carries everything needed to build it, and
+    `PATCH /workspaces/{id}` attaches it afterwards.
+    """
     try:
-        return service.create_workspace(payload.model_dump())
+        return service.render_workspace(service.create_workspace(payload.model_dump()))
     except service.WorkspaceNameTaken as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -80,9 +90,9 @@ def create_workspace(payload: WorkspaceCreate) -> dict[str, Any]:
     dependencies=[Depends(scopes(WORKSPACES_READ))],
 )
 def get_workspace(workspace_id: str = WorkspaceId) -> dict[str, Any]:
-    """One workspace by id."""
+    """One workspace by id, with its run role setup."""
     try:
-        return service.get_workspace(workspace_id)
+        return service.render_workspace(service.get_workspace(workspace_id))
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
 
@@ -93,11 +103,43 @@ def get_workspace(workspace_id: str = WorkspaceId) -> dict[str, Any]:
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
 def update_workspace(payload: WorkspaceUpdate, workspace_id: str = WorkspaceId) -> dict[str, Any]:
-    """Edit one workspace. The name and the id are not editable."""
+    """Edit one workspace. The name and the id are not editable.
+
+    Changing `run_role_arn` drops the recorded check outcome, so the new role reads
+    as unchecked until `run-role/check` says otherwise.
+    """
     try:
-        return service.update_workspace(workspace_id, payload.model_dump(exclude_unset=True))
+        updated = service.update_workspace(workspace_id, payload.model_dump(exclude_unset=True))
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
+    return service.render_workspace(updated)
+
+
+@router.post(
+    "/workspaces/{workspace_id}/run-role/check",
+    response_model=RunRoleCheck,
+    dependencies=[Depends(scopes(WORKSPACES_WRITE))],
+)
+def check_run_role(workspace_id: str = WorkspaceId) -> dict[str, Any]:
+    """Assume the workspace's run role and report whether it answered.
+
+    Always 200 when a role is configured, whether or not it answered: a trust
+    policy that is not there yet is an expected state of the setup rather than a
+    request error. A workspace with no role at all is a 400 carrying
+    `RUN_ROLE_MISSING`.
+    """
+    try:
+        return service.check_run_role(workspace_id)
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except service.RunRoleMissing as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "This workspace has no run role ARN yet.",
+                "error_code": RUN_ROLE_MISSING_CODE,
+            },
+        ) from error
 
 
 @router.delete(

@@ -69,6 +69,17 @@ class Settings(BaseServiceSettings):
     tables that do not exist there. `identity_table_prefix` falls back to the derived
     form only for the local stack and the suite, where the two do agree."""
 
+    RUNNER_TASK_ROLE_ARN: str = ""
+    """The runner task roles a workspace run role has to trust, comma separated.
+
+    One role per phase, so a trust policy that names only the first leaves the
+    apply phase unable to assume. `runner_task_role_arns` splits it."""
+
+    RUN_ROLE_NAME_PREFIX: str = ""
+    """The prefix every workspace run role name carries, `${local.prefix}-workspace-`.
+    The runner's AssumeRole grant is scoped to it, so a role named outside it cannot
+    be assumed however its trust policy reads."""
+
     STATE_KMS_KEY_ARN: str = ""
     AWS_REGION_NAME: str = "us-west-2"
 
@@ -118,6 +129,11 @@ class Settings(BaseServiceSettings):
         if self.APP_SECRET_ID and not self.app_secrets_arn:
             object.__setattr__(self, "app_secrets_arn", self.APP_SECRET_ID)
         return self
+
+    @property
+    def runner_task_role_arns(self) -> list[str]:
+        """Every runner task role ARN, in the order Terraform set them."""
+        return [arn.strip() for arn in self.RUNNER_TASK_ROLE_ARN.split(",") if arn.strip()]
 
     @property
     def dynamodb_endpoint_url(self) -> str | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,12 +15,32 @@ VariableCategory = Literal["terraform", "env"]
 becomes a process environment variable on the task."""
 
 
+class RunRoleSetup(BaseModel):
+    """What a person needs to build the run role for one workspace.
+
+    The role cannot exist before the workspace does: its trust policy names the
+    workspace id as the external id, so the id has to be handed out first. Every
+    workspace response carries these three values so the setup can be followed
+    without reading the stack's outputs.
+    """
+
+    principal_arn: str
+    """The first runner task role the run role's trust policy has to name."""
+    principal_arns: list[str] = []
+    """Every runner task role, one per phase. A trust policy naming only the plan
+    role leaves the apply phase unable to assume, so all of them belong in it."""
+    external_id: str
+    """The workspace id, which the runner sends as `sts:ExternalId`."""
+    role_name: str
+    """The name the role has to carry to fall inside the runner's AssumeRole grant."""
+
+
 class WorkspaceBase(BaseModel):
     """Fields every workspace representation carries."""
 
     engine: Engine = "terraform"
     engine_version: str = Field(min_length=1, max_length=32)
-    run_role_arn: str = Field(min_length=20, max_length=2048)
+    run_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
     working_directory: str = ""
     description: str = ""
 
@@ -46,12 +67,17 @@ class WorkspaceUpdate(BaseModel):
 
 
 class Workspace(WorkspaceBase):
-    """A stored workspace."""
+    """A stored workspace, with everything the run role setup needs."""
 
     workspace_id: str
     name: str
     created_at: str
     updated_at: Optional[str] = None
+    run_role_setup: RunRoleSetup
+    run_role_checked_at: Optional[datetime] = None
+    """When the run role last answered an AssumeRole, or `None` when it never has."""
+    run_role_account_id: Optional[str] = None
+    """The account the run role resolved to on that check."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -60,6 +86,18 @@ class WorkspaceList(BaseModel):
     """Every workspace, newest last by id, which is a ULID and so time ordered."""
 
     items: list[Workspace]
+
+
+class RunRoleCheck(BaseModel):
+    """The outcome of one AssumeRole against a workspace's run role.
+
+    `error` is a sentence for a person rather than the STS code, and no part of
+    the temporary credentials reaches it.
+    """
+
+    connected: bool
+    account_id: Optional[str] = None
+    error: Optional[str] = None
 
 
 class VariableWrite(BaseModel):

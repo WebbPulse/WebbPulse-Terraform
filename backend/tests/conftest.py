@@ -23,6 +23,12 @@ ARTIFACTS_BUCKET = f"{TABLE_PREFIX}-artifacts"
 RUNNER_LOG_GROUP = f"/aws/ecs/{TABLE_PREFIX}-runner"
 STATE_MACHINE_NAME = f"{TABLE_PREFIX}-run"
 VARIABLES_MASTER_KEY = base64.b64encode(b"k" * 32).decode()
+RUNNER_TASK_ROLE_ARNS = [
+    f"arn:aws:iam::870550636948:role/{TABLE_PREFIX}-runner-apply",
+    f"arn:aws:iam::870550636948:role/{TABLE_PREFIX}-runner-plan",
+]
+RUNNER_TASK_ROLE_ARN = ",".join(RUNNER_TASK_ROLE_ARNS)
+RUN_ROLE_NAME_PREFIX = f"{TABLE_PREFIX}-workspace-"
 
 os.environ.update(
     {
@@ -44,6 +50,8 @@ os.environ.update(
         "ARTIFACTS_BUCKET": ARTIFACTS_BUCKET,
         "RUNNER_LOG_GROUP": RUNNER_LOG_GROUP,
         "VARIABLES_MASTER_KEY": VARIABLES_MASTER_KEY,
+        "RUNNER_TASK_ROLE_ARN": RUNNER_TASK_ROLE_ARN,
+        "RUN_ROLE_NAME_PREFIX": RUN_ROLE_NAME_PREFIX,
     }
 )
 os.environ.pop("APP_SECRET_ID", None)
