@@ -1,5 +1,7 @@
 """Creating, reading and listing runs, and the per workspace serialisation."""
 
+import json
+
 import boto3
 
 from app.common.db.tables import RUNS, local_table_name
@@ -45,6 +47,67 @@ def test_the_run_token_is_stored_only_as_a_hash(created_run):
     item = stored_run(created_run["run_id"])
     assert item["run_token_hash"]
     assert created_run["run_token"] not in str(item)
+
+
+def test_the_execution_input_carries_the_run_token(created_run):
+    """The token travels on the execution input, which is how the runner gets it.
+
+    The state machine reads `$.run_token` into both container overrides, so a
+    start that omits it produces a task that exits before it fetches a bundle.
+    """
+    client = boto3.client("stepfunctions", region_name=REGION)
+    described = client.describe_execution(executionArn=created_run["execution_arn"])
+    execution_input = json.loads(described["input"])
+    assert execution_input["run_token"] == created_run["run_token"]
+    assert execution_input["run_id"] == created_run["run_id"]
+    assert execution_input["workspace_id"]
+    assert execution_input["plan_only"] is False
+
+
+def test_starting_an_already_started_run_is_a_no_op(created_run):
+    """A second start returns the run untouched rather than minting a second token.
+
+    The execution is named for the run id, so a real second start would raise
+    `ExecutionAlreadyExists`. Worse, it would overwrite the token hash the running
+    execution's runner is already authenticating with, locking that runner out of
+    its own bundle.
+    """
+    run_id = created_run["run_id"]
+    first_hash = stored_run(run_id)["run_token_hash"]
+
+    again = runs_service.start_run(run_id)
+
+    assert again["execution_arn"] == created_run["execution_arn"]
+    assert "run_token" not in again
+    assert stored_run(run_id)["run_token_hash"] == first_hash
+
+
+def test_a_failed_promotion_is_logged_and_leaves_the_transition_done(
+    auth_client, workspace, uploaded_config_version, created_run, monkeypatch, caplog
+):
+    """A promotion that cannot start must not fail the transition that finished.
+
+    Finishing a run has already been recorded by the time the next one is
+    promoted, so raising here would leave the finished run non-terminal. The
+    failure is logged instead, which is the only trace a stuck `pending` run has.
+    """
+    queued = auth_client.post(
+        BASE,
+        json=create_body(workspace["workspace_id"], uploaded_config_version["config_version_id"]),
+    ).json()
+    assert queued["status"] == "pending"
+
+    def explode(*args, **kwargs):
+        """Stand in for a Step Functions start that will not go through."""
+        raise RuntimeError("step functions is unavailable")
+
+    monkeypatch.setattr(runs_service, "start_run", explode)
+    with caplog.at_level("ERROR"):
+        finished = runs_service.finish_run(created_run["run_id"], "applied")
+
+    assert finished["status"] == "applied"
+    assert runs_service.get_run(queued["run_id"])["status"] == "pending"
+    assert any(record.__dict__.get("event") == "runs.promote.failed" for record in caplog.records)
 
 
 def test_create_is_404_for_an_absent_workspace(auth_client, uploaded_config_version):

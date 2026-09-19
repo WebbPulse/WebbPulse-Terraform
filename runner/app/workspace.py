@@ -65,9 +65,40 @@ def write_tfvars(directory: Path, variables: dict[str, object]) -> Path | None:
     return path
 
 
+def resolve_working_directory(directory: Path, working_directory: str) -> Path:
+    """Resolve the bundle's working directory under the unpacked configuration.
+
+    The value comes from the workspace record, so it is operator supplied rather
+    than trusted: an absolute path or one climbing out with `..` would point the
+    engine at the task filesystem instead of the configuration, so both are
+    refused rather than normalised away.
+    """
+    candidate = working_directory.strip()
+    if not candidate:
+        return directory
+    if Path(candidate).is_absolute():
+        raise ConfigError(f"working directory escapes the configuration: {working_directory}")
+    relative = candidate.strip("/")
+    if not relative:
+        return directory
+    root = directory.resolve()
+    target = (root / relative).resolve()
+    if target != root and root not in target.parents:
+        raise ConfigError(f"working directory escapes the configuration: {working_directory}")
+    if not target.is_dir():
+        raise ConfigError(f"working directory is not in the configuration: {working_directory}")
+    return target
+
+
 def prepare(directory: Path, bundle: Bundle, archive: Path) -> Path:
-    """Unpack the config and lay down the backend override and the tfvars file."""
+    """Unpack the config, resolve the working directory and lay down the files.
+
+    The backend override and the tfvars file go in the working directory rather
+    than the tarball root, because that is the directory the engine is run from
+    and neither file is loaded from anywhere else.
+    """
     unpack_config(archive, directory)
-    write_backend_override(directory, bundle.backend)
-    write_tfvars(directory, bundle.terraform_variables)
-    return directory
+    target = resolve_working_directory(directory, bundle.working_directory)
+    write_backend_override(target, bundle.backend)
+    write_tfvars(target, bundle.terraform_variables)
+    return target

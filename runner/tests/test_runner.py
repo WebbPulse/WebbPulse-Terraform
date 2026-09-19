@@ -68,6 +68,49 @@ def test_plan_with_changes_reports_counts(
     assert json.loads(recorder.uploads["/runs/plan.json"])["format_version"] == "1.2"
 
 
+def test_plan_runs_in_the_bundles_working_directory(
+    aws: None,
+    run_role_arn: str,
+    nested_config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A working directory runs the engine there, with the override written beside it.
+
+    The backend override and the tfvars file are only loaded from the directory
+    the engine runs in, so writing them at the tarball root would silently drop
+    the backend and every variable.
+    """
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn) | {"working_directory": "infra"}
+    transport = make_transport(bundle, nested_config_tarball, recorder)
+    clients = make_clients(transport)
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+    assert recorder.phase_results[0]["exit_code"] == 2
+    log = recorder.uploads["/runs/plan.log"].decode()
+    assert "tfvars file zz_webbpulse.auto.tfvars.json" in log
+
+
+def test_a_working_directory_the_config_lacks_fails_the_task(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A working directory that is not in the tarball fails before the engine runs."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn) | {"working_directory": "infra"}
+    transport = make_transport(bundle, config_tarball, recorder)
+    clients = make_clients(transport)
+
+    assert run(make_env("plan"), clients, tmp_path) == 1
+    assert recorder.phase_results == []
+
+
 def test_plan_with_no_changes_reports_zero(
     aws: None,
     run_role_arn: str,

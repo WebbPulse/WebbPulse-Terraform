@@ -101,6 +101,9 @@ class Bundle(BaseModel):
     engine: Engine = "terraform"
     engine_version: str | None = None
     config_url: str
+    working_directory: str = ""
+    """Directory within the unpacked configuration to run the engine from. Empty
+    means the tarball root, which is the common case."""
     backend: BackendConfig
     run_role: RunRole
     environment_variables: dict[str, str] = Field(default_factory=dict)

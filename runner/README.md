@@ -44,25 +44,38 @@ checks, so an unannotated parameter or a wrong return type still fails.
 
 ## Protocol
 
-The task definition overrides supply `RUN_ID`, `PHASE` (`plan` or `apply`),
-`TASK_TOKEN`, `API_BASE_URL`, `RUN_TOKEN` and `RUNNER_LOG_GROUP`. The runner
-then:
+The task definition supplies `RUNNER_LOG_GROUP` and the state machine's
+container overrides supply `RUN_ID`, `WORKSPACE_ID`, `PHASE` (`plan` or
+`apply`), `TASK_TOKEN`, `RUN_TOKEN` and `API_BASE_URL`. `RUN_TOKEN` comes from
+`$.run_token` on the execution input, which the runs domain sets when it mints
+the token. The runner then:
 
-1. `GET {API_BASE_URL}/api/v1/runs/{RUN_ID}/bundle` with the run token as bearer.
+1. `GET {API_BASE_URL}/api/v1/runs/{RUN_ID}/bundle` with the run token as
+   bearer, validating the response as `Bundle`: `run_id`, `workspace_id`,
+   `engine`, `engine_version`, `config_url`, the nested `backend`, `run_role`
+   and `artifacts`, `working_directory` and the two variable maps. The backend
+   also sends `phase` and `plan_only`, which the model ignores: the phase comes
+   from `PHASE`.
 2. Downloads and unpacks the config tarball, refusing members that escape the
-   working directory.
+   unpack directory, then resolves `working_directory` under it. An absolute
+   value, one climbing out with `..`, or one the configuration does not carry
+   fails the task before the engine runs. Empty means the tarball root.
 3. Writes the S3 backend override with `use_lockfile = true` and the terraform
-   variables as an auto loaded `*.auto.tfvars.json`.
+   variables as an auto loaded `*.auto.tfvars.json`, both into the working
+   directory, since neither is loaded from a parent.
 4. Assumes the bundle's run role with the workspace id as the external id and the
    phase session policy, and exports only those credentials to the engine.
-5. Runs `init`, then `plan -out plan.tfplan -detailed-exitcode` plus `show -json`
+5. Runs the engine from the working directory: `init`, then
+   `plan -out plan.tfplan -detailed-exitcode` plus `show -json`
    for the plan phase, or downloads `plan.tfplan` and runs `apply plan.tfplan`
    for the apply phase.
 6. Streams the engine's combined output line by line to the `<run_id>/<phase>`
    stream in `RUNNER_LOG_GROUP` and to stdout.
-7. Uploads `plan.tfplan`, `plan.json` and the log to the bundle's presigned PUT
-   URLs, posts `POST /runs/{RUN_ID}/phase-result`, then sends task success with
-   `{exit_code, changes: {add, change, destroy}}` or task failure.
+7. Uploads `plan.tfplan` and `plan.json` on a plan phase and the redacted log on
+   both, to `artifacts.plan_put_url`, `artifacts.plan_json_put_url` and
+   `artifacts.log_put_url`, then posts `POST /runs/{RUN_ID}/phase-result` and
+   sends task success with `{exit_code, changes: {add, change, destroy}}` or
+   task failure.
 
 The engine comes from the bundle's `engine` field, `terraform` or `tofu`.
 

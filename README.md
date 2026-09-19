@@ -105,6 +105,7 @@ application on a run token bound to the run in the path.
 | `GET /runs/{run_id}` | `runs:read` |
 | `POST /runs/{run_id}/confirm` | `runs:apply` |
 | `POST /runs/{run_id}/cancel` | `runs:write` |
+| `POST /runs/{run_id}/discard` | `runs:write` |
 | `GET /runs/{run_id}/logs` | `runs:read` |
 | `GET /runs/{run_id}/bundle` | run token |
 | `POST /runs/{run_id}/phase-result` | run token |
@@ -138,7 +139,12 @@ terminal. Only `awaiting_confirmation` is confirmable; `planned` and
 `awaiting_confirmation` are discardable.
 
 One execution per run, named for the run id, started by the runs domain with
-`run_id`, `workspace_id` and `plan_only`. The states in order:
+`run_id`, `workspace_id`, `plan_only` and `run_token`. Every state writes
+`ResultPath` as `null` or into its own key and none sets `OutputPath`, so the
+input survives to the apply task, which is what lets both container overrides
+read `RUN_TOKEN` from `$.run_token`. The execution input is the only place the
+token plaintext is written; the state machine runs with `include_execution_data`
+off, so it never reaches the execution log. The states in order:
 
 1. `AcquireSemaphore` adds the run to the `holders` set, condition checked
    against the cap, retrying every 15 seconds up to 240 times.
@@ -172,14 +178,14 @@ token nobody else holds.
 A linux/arm64 image on Fargate, one task per phase, launched into the public
 subnets of the runner VPC. The task definition supplies `TF_IN_AUTOMATION`,
 `ENVIRONMENT`, `AWS_REGION_NAME`, `PHASE` and `RUNNER_LOG_GROUP`; the state
-machine's container overrides add `RUN_ID`, `WORKSPACE_ID`, `PHASE`, `TASK_TOKEN`
-and `API_BASE_URL`. `RunnerEnv` requires `RUN_ID`, `PHASE`, `TASK_TOKEN`,
-`API_BASE_URL`, `RUN_TOKEN` and `RUNNER_LOG_GROUP`.
+machine's container overrides add `RUN_ID`, `WORKSPACE_ID`, `PHASE`,
+`TASK_TOKEN`, `RUN_TOKEN` and `API_BASE_URL`. `RunnerEnv` requires `RUN_ID`,
+`PHASE`, `TASK_TOKEN`, `API_BASE_URL`, `RUN_TOKEN` and `RUNNER_LOG_GROUP`.
 
 The runner fetches `GET /api/v1/runs/{run_id}/bundle` with the run token as
 bearer. The bundle is the only response in the API carrying decrypted variable
-values, which is why it is gated on the run token rather than on scopes. The
-backend serves it flat:
+values, which is why it is gated on the run token rather than on scopes. Its
+shape is `Bundle` in `runner/app/models.py`, which the backend serves exactly:
 
 | Field | Holds |
 | --- | --- |
@@ -187,18 +193,27 @@ backend serves it flat:
 | `phase` | Derived from the run's status, never taken from the caller |
 | `plan_only` | Whether the run stops after the plan |
 | `engine`, `engine_version` | `terraform` or `tofu`, and the pinned version |
-| `working_directory` | Directory within the configuration |
+| `working_directory` | Directory within the configuration to run the engine from, empty for the root |
 | `config_url` | Presigned GET for the config tarball |
-| `backend_config` | `bucket`, `key`, `region`, `kms_key_arn`, `use_lockfile` |
-| `run_role_arn` | The per workspace role the engine runs as |
-| `session_policy` | Read only for a plan, unrestricted for an apply |
-| `terraform_variables`, `env_variables` | Decrypted values |
-| `plan_artifacts` | `plan_put_url`, `plan_json_put_url`, `plan_get_url` |
+| `backend` | `bucket`, `key`, `region`, `kms_key_id`, the last holding the key ARN |
+| `run_role` | `role_arn`, `external_id` (the workspace id), `session_policy`, `duration_seconds` |
+| `terraform_variables`, `environment_variables` | Decrypted values |
+| `artifacts` | `plan_put_url`, `plan_json_put_url`, `plan_get_url`, `log_put_url` |
 
-Presigned URLs live for one hour. The runner unpacks the tarball refusing members
-that escape the working directory, writes the S3 backend override and an auto
-loaded tfvars file, assumes the run role with the workspace id as the external id
-and the phase session policy, and exports only those credentials to the engine.
+The session policy is read only for a plan and unrestricted for an apply. The
+runner models the nested objects, `engine_version` and `working_directory`, and
+ignores `phase` and `plan_only`, which state what the API served rather than
+instructing it: the runner takes its phase from `PHASE`.
+
+Presigned URLs live for one hour and all four objects sit under `runs/<run_id>/`
+in the artifacts bucket, which is the prefix the bucket's lifecycle rule expires.
+The log key is `runs/<run_id>/<phase>.log`, so a plan and an apply keep separate
+transcripts. The runner unpacks the tarball refusing members
+that escape the unpack directory, resolves `working_directory` under it, refusing
+one that is absolute, climbs out or is not in the configuration, writes the S3
+backend override and an auto loaded tfvars file there, assumes the run role with
+the workspace id as the external id and the phase session policy, and exports
+only those credentials to the engine.
 It streams the engine's output to the `<run_id>/<phase>` stream in the runner log
 group, uploads the plan artifacts and the log over the presigned URLs, posts
 `POST /runs/{run_id}/phase-result`, then sends task success with the exit code

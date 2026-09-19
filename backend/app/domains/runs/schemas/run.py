@@ -23,6 +23,9 @@ RunStatus = Literal[
 Phase = Literal["plan", "apply"]
 """Which half of a run a task, a log stream or a phase result belongs to."""
 
+RUN_ROLE_DURATION_SECONDS = 3600
+"""One hour on the assumed run role, matching the plan timeout plus headroom."""
+
 
 class RunCreate(BaseModel):
     """A new run against one workspace and one config version."""
@@ -103,30 +106,52 @@ class LogPage(BaseModel):
 
 
 class BackendConfig(BaseModel):
-    """The S3 backend the runner initialises against."""
+    """The S3 backend the runner initialises against.
+
+    `kms_key_id` carries the key ARN. The name is the backend block's own
+    argument name, so the runner writes it into the override verbatim.
+    """
 
     bucket: str
     key: str
     region: str
-    kms_key_arn: str = ""
-    use_lockfile: bool = True
-    """Terraform 1.11 native S3 locking. The runner floor is >= 1.11 for this."""
+    kms_key_id: str = ""
 
 
-class PlanArtifacts(BaseModel):
-    """Presigned URLs for the plan artifacts of one run.
+class RunRole(BaseModel):
+    """The per workspace role the engine runs as, with the phase session policy.
 
-    A plan phase PUTs the two files and an apply phase GETs the binary plan, so
-    both directions are signed and the runner needs no bucket credentials.
+    The external id is the workspace id, so a role trusted for one workspace
+    cannot be assumed by a run against another.
+    """
+
+    role_arn: str
+    external_id: str
+    session_policy: dict[str, object]
+    duration_seconds: int = RUN_ROLE_DURATION_SECONDS
+
+
+class Artifacts(BaseModel):
+    """Presigned URLs for one run's artifacts, in both directions.
+
+    A plan phase PUTs the two plan files and an apply phase GETs the binary
+    plan; both phases PUT their redacted log. Everything is signed, so the
+    runner needs no bucket credentials of its own.
     """
 
     plan_put_url: str
     plan_json_put_url: str
     plan_get_url: str
+    log_put_url: str
 
 
 class RunBundle(BaseModel):
     """Everything the runner needs for one phase of one run.
+
+    The shape is the runner's `Bundle`: the nested `backend`, `run_role` and
+    `artifacts` objects are what `runner/app/models.py` validates, and the four
+    extra top level fields are what the runner ignores for now but the API
+    states about the phase it is serving.
 
     The only response in the API that carries decrypted variable values, which is
     why it is gated on a run token bound to this run rather than on scopes.
@@ -140,12 +165,11 @@ class RunBundle(BaseModel):
     engine_version: str
     working_directory: str
     config_url: str
-    backend_config: BackendConfig
-    run_role_arn: str
-    session_policy: dict[str, object]
+    backend: BackendConfig
+    run_role: RunRole
     terraform_variables: dict[str, str]
-    env_variables: dict[str, str]
-    plan_artifacts: PlanArtifacts
+    environment_variables: dict[str, str]
+    artifacts: Artifacts
 
 
 class PhaseResult(BaseModel):
