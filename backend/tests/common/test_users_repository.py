@@ -84,3 +84,25 @@ def test_deleting_reports_whether_a_row_was_there(users: UserRepository) -> None
     assert users.delete("user-1") is True
     assert users.delete("user-1") is False
     assert users.get("user-1") is None
+
+
+RESERVED_DOMAIN_EMAIL = "e2e-local@e2e.invalid"
+
+
+def test_a_reserved_domain_address_round_trips(users: UserRepository) -> None:
+    """A `.invalid` address stores and reads back, which the local e2e stack signs in as."""
+    _create(users, email=RESERVED_DOMAIN_EMAIL)
+    stored = users.get("user-1")
+    assert stored is not None
+    assert stored.email == RESERVED_DOMAIN_EMAIL
+    assert users.get_by_email("E2E-Local@E2E.Invalid") is not None
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["someone", "@example.com", "someone@", "someone@example", "some one@example.com", "a@b@example.com"],
+)
+def test_a_malformed_address_is_still_refused(address: str) -> None:
+    """Relaxing the reserved domain check must not let a non address onto the row."""
+    with pytest.raises(ValueError):
+        User(id="user-1", email=address)

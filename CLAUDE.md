@@ -283,3 +283,16 @@ merge through the GitHub API with admin rather than waiting on that check.
 Pull request CI is the single `.github/workflows/ci.yml`: one changed-paths job
 fans out to the backend, frontend, runner and terraform slices and the terminal
 `all-checks-passed` job is the required check.
+
+## End-to-end
+
+`backend/e2e/` extends the shared `webbpulse.e2e` plugin and is never forked: a
+gap belongs upstream in `webbpulse-python`. `e2e.yml` calls the org
+`e2e.yml@v3` after Deploy Backend, Deploy Frontend and Deploy Runner, running
+the full suite against staging. `e2e-local.yml` calls `e2e-local.yml@v3` on
+pull requests against a stack built from source; it is `continue-on-error` and
+is deliberately not part of `all-checks-passed`.
+
+The `E2E_*` variables live on the `staging` GitHub Environment. The suite makes
+its own login user per run through `/api/auth/e2e/users`, which is gated by
+`ephemeral_users_enabled` and so exists outside production only.

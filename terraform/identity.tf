@@ -23,6 +23,13 @@ variable "passkeys_enabled" {
   nullable    = true
 }
 
+variable "ephemeral_users_enabled" {
+  description = "Whether the e2e ephemeral user routes are declared. Null derives it from the environment: true outside production, false in production."
+  type        = bool
+  default     = null
+  nullable    = true
+}
+
 variable "passkeys_passwordless" {
   description = "Whether a passkey is a way in as well as a credential. Null derives it from the environment: true in staging, false in production."
   type        = bool
@@ -31,6 +38,8 @@ variable "passkeys_passwordless" {
 }
 
 locals {
+  ephemeral_users_enabled = var.ephemeral_users_enabled != null ? var.ephemeral_users_enabled : var.environment != "production"
+
   passkeys_enabled = var.passkeys_enabled != null ? var.passkeys_enabled : var.environment != "production"
 
   passkeys_passwordless = var.passkeys_passwordless != null ? var.passkeys_passwordless : var.environment != "production"

@@ -147,3 +147,8 @@ output "example_run_role_arn" {
   description = "ARN of the example run role, set as run_role_arn on the example workspace. Null when example_workspace_id is empty"
   value       = one(aws_iam_role.example_run_role[*].arn)
 }
+
+output "e2e_run_role_arn" {
+  description = "ARN of the run role the e2e suite passes when it creates a workspace. Null outside staging"
+  value       = one(aws_iam_role.e2e_run_role[*].arn)
+}
