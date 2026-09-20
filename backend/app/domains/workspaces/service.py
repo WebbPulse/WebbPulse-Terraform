@@ -445,8 +445,9 @@ def create_config_version(
 
     The row is written before the URL is minted, so an upload that never happens
     leaves a `pending` row a person can see rather than a signed URL nothing
-    recorded. The row goes to `uploaded` when a run is created against it, which
-    is the first moment anything reads the object.
+    recorded. Nothing tells the control plane when the client's PUT lands, so the
+    row stays `pending` until a read reconciles it against the object: see
+    `reconcile_config_version`.
     """
     from webbpulse.storage import presigned_put
 
@@ -477,6 +478,64 @@ def create_config_version(
     return item, upload
 
 
+def _s3(settings: Settings) -> Any:
+    """An S3 client. Imported late so nothing connects at import."""
+    import boto3
+
+    return boto3.client(
+        "s3",
+        region_name=settings.AWS_REGION_NAME or None,
+        endpoint_url=settings.s3_endpoint_url,
+    )
+
+
+def config_object_exists(key: str, *, settings: Settings) -> bool:
+    """Whether the config tarball is in the artifacts bucket.
+
+    A HEAD rather than a GET, so deciding that a multi-megabyte tarball arrived
+    costs one metadata call. Any error other than an absent object propagates:
+    a denied HEAD is a broken deployment, and swallowing it would report every
+    uploaded config version as still pending.
+    """
+    from botocore.exceptions import ClientError
+
+    try:
+        _s3(settings).head_object(Bucket=settings.ARTIFACTS_BUCKET, Key=key)
+    except ClientError as error:
+        status = int(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
+        if status == 404 or error.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+    return True
+
+
+def reconcile_config_version(
+    item: dict[str, Any],
+    *,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Move a `pending` row to `uploaded` once its object is in the bucket.
+
+    S3 tells the control plane nothing when a presigned PUT completes, so the row
+    a client uploaded against stays `pending` until something looks. Every read
+    looks, which is what makes the status a caller sees reflect the bucket rather
+    than the moment the URL was minted.
+
+    A row already `uploaded` is returned untouched, so the HEAD is spent only on
+    rows that could still change.
+    """
+    if str(item.get("status", "")) != "pending":
+        return item
+
+    resolved = settings or get_settings()
+    key = str(item.get("key", ""))
+    if not key or not config_object_exists(key, settings=resolved):
+        return item
+
+    mark_config_version_uploaded(str(item["config_version_id"]), settings=resolved)
+    return dict(item) | {"status": "uploaded"}
+
+
 def get_config_version(
     workspace_id: str,
     config_version_id: str,
@@ -492,7 +551,7 @@ def get_config_version(
     item = repositories.config_versions(resolved).get({"config_version_id": config_version_id})
     if item is None or str(item.get("workspace_id")) != workspace_id:
         raise ConfigVersionNotFound(config_version_id)
-    return item
+    return reconcile_config_version(item, settings=resolved)
 
 
 def list_config_versions(
@@ -503,12 +562,13 @@ def list_config_versions(
     """One workspace's config versions, oldest first."""
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
-    return list(
-        repositories.config_versions(resolved).iter_query(
+    return [
+        reconcile_config_version(item, settings=resolved)
+        for item in repositories.config_versions(resolved).iter_query(
             Key("workspace_id").eq(workspace_id),
             index_name=CONFIG_VERSIONS_BY_WORKSPACE_INDEX,
         )
-    )
+    ]
 
 
 def mark_config_version_uploaded(

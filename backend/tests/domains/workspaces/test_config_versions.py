@@ -136,3 +136,65 @@ def test_marking_uploaded_moves_the_status(auth_client, workspace):
     workspaces_service.mark_config_version_uploaded(version["config_version_id"])
     body = auth_client.get(configs_url(workspace_id, version["config_version_id"])).json()
     assert body["status"] == "uploaded"
+
+
+def _put_config_object(key: str) -> None:
+    """Land a tarball at `key`, the way a client's presigned PUT would."""
+    import boto3
+
+    from tests.conftest import ARTIFACTS_BUCKET, REGION
+
+    boto3.client("s3", region_name=REGION).put_object(
+        Bucket=ARTIFACTS_BUCKET, Key=key, Body=b"tarball", ContentType="application/gzip"
+    )
+
+
+def test_get_marks_a_pending_version_uploaded_once_its_object_lands(auth_client, workspace):
+    """The read reconciles against the bucket, since S3 announces nothing.
+
+    This is the defect the first staging e2e run caught: the tarball reached the
+    bucket and the row stayed `pending` forever, so every run against it was a 409.
+    """
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    assert version["status"] == "pending"
+
+    _put_config_object(version["key"])
+
+    body = auth_client.get(configs_url(workspace_id, version["config_version_id"])).json()
+    assert body["status"] == "uploaded"
+
+
+def test_get_leaves_a_version_pending_while_nothing_was_uploaded(auth_client, workspace):
+    """A row whose object never landed keeps reading as `pending`."""
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    body = auth_client.get(configs_url(workspace_id, version["config_version_id"])).json()
+    assert body["status"] == "pending"
+
+
+def test_the_reconcile_survives_the_next_read(auth_client, workspace):
+    """The flip is written to the row, not recomputed per request."""
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    _put_config_object(version["key"])
+    auth_client.get(configs_url(workspace_id, version["config_version_id"]))
+
+    stored = workspaces_service.repositories.config_versions(workspaces_service.get_settings()).get(
+        {"config_version_id": version["config_version_id"]}
+    )
+    assert stored is not None
+    assert str(stored["status"]) == "uploaded"
+
+
+def test_list_reconciles_each_pending_version(auth_client, workspace):
+    """The list reports the bucket's truth for every row it returns."""
+    workspace_id = workspace["workspace_id"]
+    landed = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    missing = auth_client.post(configs_url(workspace_id), json={"size_bytes": 2048}).json()["config_version"]
+    _put_config_object(landed["key"])
+
+    items = auth_client.get(configs_url(workspace_id)).json()["items"]
+    statuses = {item["config_version_id"]: item["status"] for item in items}
+    assert statuses[landed["config_version_id"]] == "uploaded"
+    assert statuses[missing["config_version_id"]] == "pending"
