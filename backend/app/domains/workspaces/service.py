@@ -512,6 +512,7 @@ def config_object_exists(key: str, *, settings: Settings) -> bool:
 def reconcile_config_version(
     item: dict[str, Any],
     *,
+    persist: bool = True,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Move a `pending` row to `uploaded` once its object is in the bucket.
@@ -523,6 +524,11 @@ def reconcile_config_version(
 
     A row already `uploaded` is returned untouched, so the HEAD is spent only on
     rows that could still change.
+
+    With `persist` false the bucket is still consulted and the returned row still
+    reads `uploaded`, but nothing is written. That is for the runs function, whose
+    role holds a read only grant on this table by design; the workspaces domain
+    owns the write and persists the flip on its own reads.
     """
     if str(item.get("status", "")) != "pending":
         return item
@@ -532,7 +538,8 @@ def reconcile_config_version(
     if not key or not config_object_exists(key, settings=resolved):
         return item
 
-    mark_config_version_uploaded(str(item["config_version_id"]), settings=resolved)
+    if persist:
+        mark_config_version_uploaded(str(item["config_version_id"]), settings=resolved)
     return dict(item) | {"status": "uploaded"}
 
 
@@ -540,18 +547,23 @@ def get_config_version(
     workspace_id: str,
     config_version_id: str,
     *,
+    persist: bool = True,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """One config version, or `ConfigVersionNotFound`.
 
     A row belonging to another workspace reads as absent rather than as a 403, so
     nothing here confirms that an id a caller guessed exists elsewhere.
+
+    `persist` is handed to `reconcile_config_version`: a caller reading these rows
+    under a read only grant, as the runs function does, passes false and gets the
+    bucket's truth without the write.
     """
     resolved = settings or get_settings()
     item = repositories.config_versions(resolved).get({"config_version_id": config_version_id})
     if item is None or str(item.get("workspace_id")) != workspace_id:
         raise ConfigVersionNotFound(config_version_id)
-    return reconcile_config_version(item, settings=resolved)
+    return reconcile_config_version(item, persist=persist, settings=resolved)
 
 
 def list_config_versions(

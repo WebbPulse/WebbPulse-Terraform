@@ -198,3 +198,52 @@ def test_list_reconciles_each_pending_version(auth_client, workspace):
     statuses = {item["config_version_id"]: item["status"] for item in items}
     assert statuses[landed["config_version_id"]] == "uploaded"
     assert statuses[missing["config_version_id"]] == "pending"
+
+
+def _stored_status(config_version_id: str) -> str:
+    """The status on the raw row, read around the service so nothing reconciles."""
+    stored = workspaces_service.repositories.config_versions(workspaces_service.get_settings()).get(
+        {"config_version_id": config_version_id}
+    )
+    assert stored is not None
+    return str(stored["status"])
+
+
+def test_reconcile_without_persist_reports_uploaded_and_writes_nothing(auth_client, workspace):
+    """A read only caller gets the bucket's truth without an UpdateItem.
+
+    The runs function holds a read only grant on this table, so its reconciliation
+    has to answer from the HEAD alone. A write here would be the AccessDenied that
+    turned `POST /api/v1/runs` into a 500 in staging.
+    """
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    _put_config_object(version["key"])
+
+    reconciled = workspaces_service.reconcile_config_version(version, persist=False)
+
+    assert reconciled["status"] == "uploaded"
+    assert _stored_status(version["config_version_id"]) == "pending"
+
+
+def test_reconcile_with_persist_still_writes_the_flip(auth_client, workspace):
+    """The owning domain's default keeps stamping the row, as it did before."""
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    _put_config_object(version["key"])
+
+    reconciled = workspaces_service.reconcile_config_version(version, persist=True)
+
+    assert reconciled["status"] == "uploaded"
+    assert _stored_status(version["config_version_id"]) == "uploaded"
+
+
+def test_reconcile_without_persist_leaves_an_absent_object_pending(auth_client, workspace):
+    """No object means `pending`, whether or not the caller may write."""
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+
+    reconciled = workspaces_service.reconcile_config_version(version, persist=False)
+
+    assert reconciled["status"] == "pending"
+    assert _stored_status(version["config_version_id"]) == "pending"
