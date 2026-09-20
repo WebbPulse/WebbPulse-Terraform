@@ -91,6 +91,10 @@ locals {
         integration          = "workspaces"
         require_identity_jwt = true
       }
+      "POST /api/auth/step-up/passkey/options" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
       "POST /api/auth/totp/enrol" = {
         integration          = "workspaces"
         require_identity_jwt = true
