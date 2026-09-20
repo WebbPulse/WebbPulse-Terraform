@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Final, Mapping
 
 from boto3.dynamodb.conditions import Key
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, field_validator
 from webbpulse.dynamodb import Repository
 
 from ..composition.settings import Settings, get_settings
@@ -35,16 +35,46 @@ def new_user_id() -> str:
     return str(uuid.uuid4())
 
 
+def validate_email(value: str) -> str:
+    """The address with surrounding space stripped, rejecting one that is not an address.
+
+    Deliberately looser than `EmailStr`: it checks the shape rather than the
+    deliverability of the domain, so a reserved test domain such as `.invalid` or
+    `.test` round trips. The local e2e stack signs in as one, and `EmailStr` rejects
+    those outright, which would fail every read of the row rather than the write that
+    created it.
+
+    This is the only check an address gets. No request body carries one, so every
+    address arrives through the identity package's hooks or a seeding script, and
+    widening this widens what those may store.
+    """
+    address = value.strip()
+    local, separator, domain = address.partition("@")
+    if not separator or not local or "@" in domain:
+        raise ValueError("value is not a valid email address")
+    if "." not in domain or domain.startswith(".") or domain.endswith("."):
+        raise ValueError("value is not a valid email address")
+    if any(character.isspace() for character in address):
+        raise ValueError("value is not a valid email address")
+    return address
+
+
 class User(BaseModel):
     """One person's control plane account."""
 
     id: str = Field(default_factory=new_user_id)
-    email: EmailStr
+    email: str
     display_name: str = ""
     email_verified: bool = False
     disabled: bool = False
     is_admin: bool = False
     created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("email")
+    @classmethod
+    def _check_email(cls, value: str) -> str:
+        """Normalise and shape check the stored address."""
+        return validate_email(value)
 
     @property
     def email_lower(self) -> str:
