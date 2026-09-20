@@ -1,6 +1,6 @@
 module "alarms" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/api-alarms"
-  version = "2.26.1"
+  version = "~> 2.27"
 
   name_prefix         = local.prefix
   notification_emails = ["tyler@webbpulse.com", "tylert2610@gmail.com"]

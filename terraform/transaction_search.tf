@@ -1,73 +1,36 @@
-data "aws_iam_policy_document" "transaction_search_spans" {
-  statement {
-    sid    = "TransactionSearchAccess"
-    effect = "Allow"
+module "transaction_search" {
+  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/transaction-search"
+  version = "~> 2.27"
 
-    principals {
-      type        = "Service"
-      identifiers = ["xray.amazonaws.com"]
-    }
+  name_prefix = local.prefix
 
-    actions = ["logs:PutLogEvents"]
-
-    resources = [
-      "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:aws/spans:*",
-      "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/application-signals/data:*",
-    ]
-
-    condition {
-      test     = "ArnLike"
-      variable = "aws:SourceArn"
-      values   = ["arn:aws:xray:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [data.aws_caller_identity.current.account_id]
-    }
-  }
-}
-
-resource "aws_cloudwatch_log_resource_policy" "transaction_search_spans" {
-  policy_name     = "${local.prefix}-transaction-search-spans"
-  policy_document = data.aws_iam_policy_document.transaction_search_spans.json
-}
-
-resource "aws_xray_trace_segment_destination" "main" {
-  destination = "CloudWatchLogs"
-
-  depends_on = [aws_cloudwatch_log_resource_policy.transaction_search_spans]
-}
-
-locals {
-  spans_log_groups = var.adopt_spans_log_group ? toset(["aws/spans"]) : toset([])
+  adopt_spans_log_group             = var.adopt_spans_log_group
+  spans_log_group_retention_in_days = 7
 }
 
 import {
-  for_each = local.spans_log_groups
+  for_each = var.adopt_spans_log_group ? toset(["aws/spans"]) : toset([])
 
-  to = aws_cloudwatch_log_group.spans[each.key]
+  to = module.transaction_search.aws_cloudwatch_log_group.spans[each.key]
   id = each.value
 }
 
-resource "aws_cloudwatch_log_group" "spans" {
-  for_each = local.spans_log_groups
-
-  name              = each.value
-  retention_in_days = 7
-
-  depends_on = [aws_xray_trace_segment_destination.main]
+moved {
+  from = aws_cloudwatch_log_resource_policy.transaction_search_spans
+  to   = module.transaction_search.aws_cloudwatch_log_resource_policy.spans
 }
 
-resource "aws_xray_indexing_rule" "default" {
-  name = "Default"
+moved {
+  from = aws_xray_trace_segment_destination.main
+  to   = module.transaction_search.aws_xray_trace_segment_destination.this
+}
 
-  rule {
-    probabilistic {
-      desired_sampling_percentage = 1
-    }
-  }
+moved {
+  from = aws_xray_indexing_rule.default
+  to   = module.transaction_search.aws_xray_indexing_rule.default[0]
+}
 
-  depends_on = [aws_xray_trace_segment_destination.main]
+moved {
+  from = aws_cloudwatch_log_group.spans["aws/spans"]
+  to   = module.transaction_search.aws_cloudwatch_log_group.spans["aws/spans"]
 }

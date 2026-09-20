@@ -1,6 +1,6 @@
 module "state" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/s3-bucket"
-  version = "2.26.1"
+  version = "~> 2.27"
 
   bucket = "${local.prefix}-state"
 
@@ -19,7 +19,7 @@ module "state" {
 
 module "artifacts" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/s3-bucket"
-  version = "2.26.1"
+  version = "~> 2.27"
 
   bucket = "${local.prefix}-artifacts"
 

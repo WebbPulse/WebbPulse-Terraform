@@ -37,7 +37,7 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `staging_access_gate.tf` | Staging only, the email gate in front of the site and the API |
 | `iam_github_actions.tf` | The deploy and CI OIDC roles |
 | `monitoring.tf`, `management.tf` | The three aggregate alarms in production, budgets |
-| `transaction_search.tf` | The X-Ray trace segment destination, the spans log resource policy and the indexing rule |
+| `transaction_search.tf` | The shared `transaction-search` module: the X-Ray trace segment destination, the spans log resource policy and the indexing rule |
 | `example_run_role.tf` | The run role for the first end to end run, gated on `var.example_workspace_id` |
 | `outputs.tf` | Everything the workflows and the GitHub environment variables read |
 
@@ -75,15 +75,17 @@ refresh it to a tag that still exists before any apply that recreates one.
 
 Both domain functions export OTLP spans, and X-Ray rejects the export with a 400
 until the account's trace segment destination is `CloudWatchLogs`.
-`transaction_search.tf` sets that destination, grants `xray.amazonaws.com` the
-`logs:PutLogEvents` it needs on `aws/spans` and `/aws/application-signals/data`,
-and holds the indexing rule at 1 percent.
+`transaction_search.tf` instantiates the shared `transaction-search` module,
+which sets that destination, grants `xray.amazonaws.com` the `logs:PutLogEvents`
+it needs on `aws/spans` and `/aws/application-signals/data`, and holds the
+indexing rule at 1 percent.
 
 X-Ray creates the reserved `aws/spans` log group itself on the first span it
 writes, and Terraform cannot pre-create a name beginning with `aws/`. So an
 account applies once with `adopt_spans_log_group` false, generates one span, then
 sets the workspace variable true and applies again to adopt the group and hold it
-at 7 day retention. Neither account has written a span yet, so both start false.
+at 7 day retention. The `import` block stays in this root module, because
+Terraform allows `import` only there, and it targets the module's log group. Neither account has written a span yet, so both start false.
 
 ## Staging profile
 
