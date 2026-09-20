@@ -81,6 +81,11 @@ def pytest_e2e_login_form(env: Any) -> Any:
 
     The frontend carries no `data-testid` attributes, so every locator here is a CSS
     selector over the markup the pages already render.
+
+    The signed-in chrome renders twice, as a rail for wide viewports and a header for
+    narrow ones, and only one of the two is ever visible. These select the rail, which
+    is the copy shown at the viewport the browser suite runs at, so the marker the
+    plugin waits on is the one actually on screen.
     """
     from webbpulse.e2e import LoginForm
 
@@ -90,8 +95,8 @@ def pytest_e2e_login_form(env: Any) -> Any:
         email="input[type=email]",
         password="input[type=password]",
         submit="button[type=submit]:has-text('Sign in')",
-        signed_in_marker="header a[href='/workspaces']",
-        sign_out="header button:has-text('Sign out')",
+        signed_in_marker="aside nav[aria-label='Primary'] a[href='/workspaces']",
+        sign_out="aside button:has-text('Sign out')",
         signed_out_marker="button[type=submit]:has-text('Sign in')",
         protected_redirect="/sign-in",
         guest_redirect="/workspaces",
@@ -266,45 +271,14 @@ def pytest_e2e_cleanup(env: Any, phase: str, created: Sequence[Any]) -> Any:
 
 
 @pytest.fixture(scope="session")
-def ephemeral_user(
-    request: pytest.FixtureRequest,
-    e2e_env: Any,
-    anon: Any,
-    admin_mint_token: str,
-) -> Iterator[Any]:
-    """This run's own login user, created with the admin flag this product needs.
+def ephemeral_user_attributes() -> dict[str, Any]:
+    """The attributes this run's own login user is created with.
 
-    Overrides the plugin's fixture for one reason: the plugin creates an ephemeral user
-    with no attributes, and this product grants write scopes only to a user whose row
-    carries `is_admin`. A user created without it holds read scopes alone and every
-    write journey would be refused. Everything else follows the plugin's own helpers.
+    This product grants write scopes only to a user whose row carries `is_admin`, so a
+    user created without it would hold read scopes alone and every write journey would
+    be refused. The plugin owns the fixture's lifecycle and passes this through.
     """
-    from webbpulse.e2e.ephemeral import create_ephemeral_user, describe_delete_failure
-    from webbpulse.e2e.xdist import worker_id
-
-    if e2e_env.read_only or not admin_mint_token:
-        yield None
-        return
-
-    run_id = f"{e2e_env.run_id}-{worker_id(request.config)}"
-    user = create_ephemeral_user(
-        anon,
-        run_id=run_id,
-        admin_token=admin_mint_token,
-        attributes={"is_admin": True, "email_verified": True},
-    )
-    try:
-        yield user
-    finally:
-        failure = describe_delete_failure(anon, user, admin_token=admin_mint_token) if user is not None else ""
-        if user is not None and failure:
-            request.config.issue_config_time_warning(
-                UserWarning(
-                    f"The ephemeral e2e user {user.user_id} could not be deleted: {failure} It "
-                    "carries the e2e- prefix, so the next run's start sweep will collect it."
-                ),
-                stacklevel=2,
-            )
+    return {"is_admin": True, "email_verified": True}
 
 
 def resolve_run_role_arn(env: Any) -> str:
