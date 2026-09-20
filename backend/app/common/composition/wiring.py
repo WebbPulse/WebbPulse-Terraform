@@ -61,10 +61,16 @@ class Domain:
 
 
 def _workspaces_routers() -> "list[APIRouter]":
-    """Import and return the workspaces domain's routers."""
+    """Import and return the workspaces domain's routers.
+
+    The API key routes ride on this domain because it already serves the identity
+    router, so a key is minted by the same function that issued the session token
+    minting it.
+    """
+    from app.domains.workspaces.api_keys_router import router as api_keys_router
     from app.domains.workspaces.router import router
 
-    return [router]
+    return [router, api_keys_router]
 
 
 def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":

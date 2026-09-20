@@ -1,6 +1,211 @@
 {
   "components": {
     "schemas": {
+      "ApiKey": {
+        "description": "A stored key as every route but the mint renders it. Never the plaintext.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key_id",
+          "name",
+          "prefix",
+          "scopes",
+          "created_at"
+        ],
+        "title": "ApiKey",
+        "type": "object"
+      },
+      "ApiKeyCreate": {
+        "description": "A request to mint one key.\n\n`scopes` is optional and bounded rather than free: omitting it mints a key\ncarrying everything the caller holds, and naming a scope the caller does not\nhold is refused rather than quietly dropped.",
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scopes"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ApiKeyCreate",
+        "type": "object"
+      },
+      "ApiKeyCreated": {
+        "description": "A freshly minted key, carrying the one and only sight of its plaintext.\n\nReturned by `POST /api/v1/api-keys` and by nothing else. The plaintext is not\nstored, so a caller that loses it has to mint another key.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key_id",
+          "name",
+          "prefix",
+          "scopes",
+          "created_at",
+          "key"
+        ],
+        "title": "ApiKeyCreated",
+        "type": "object"
+      },
+      "ApiKeyList": {
+        "description": "The caller's own keys, newest first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApiKey"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ApiKeyList",
+        "type": "object"
+      },
       "Artifacts": {
         "description": "Presigned URLs for one run's artifacts, in both directions.\n\nA plan phase PUTs the two plan files and an apply phase GETs the binary\nplan; both phases PUT their redacted log. Everything is signed, so the\nrunner needs no bucket credentials of its own.",
         "properties": {
@@ -2215,6 +2420,124 @@
         "summary": "Enrol Totp",
         "tags": [
           "identity"
+        ]
+      }
+    },
+    "/api/v1/api-keys": {
+      "get": {
+        "description": "The caller's own keys, newest first. Never a plaintext.\n\nRevoked and expired keys stay in the list so a person can recognise one they\nretired, and run tokens are left out: they live in the same table but belong\nto a run rather than to anybody.",
+        "operationId": "list_api_keys_api_v1_api_keys_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Api Keys",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "description": "Mint one key and return its plaintext, once.\n\nThe response body is the only place the plaintext ever exists outside the\ncaller's own storage: the table holds its SHA-256 and nothing else, so a\ncaller that loses it mints another key rather than recovering this one.\n\nRequires a signed-in person. A key presenting itself here is refused with\n`API_KEY_ACTOR_FORBIDDEN`, because a key able to mint its successor would\nsurvive being revoked.",
+        "operationId": "create_api_key_api_v1_api_keys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Create Api Key",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/api-keys/{key_id}": {
+      "delete": {
+        "description": "Revoke one key, taking effect on the caller's next request.\n\nReturns the key as it was rather than 204, so the caller can render what it\njust retired without a second read.\n\nThe caller's own key, or anybody's when the caller is an admin. Somebody\nelse's key reads as a 404 rather than a 403, because a 403 would confirm the\nid exists and turn the list into a way to enumerate other people's keys.",
+        "operationId": "revoke_api_key_api_v1_api_keys__key_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Key Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKey"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Revoke Api Key",
+        "tags": [
+          "workspaces"
         ]
       }
     },
