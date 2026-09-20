@@ -169,3 +169,50 @@ def test_delete_user_releases_the_address(hooks: ControlPlaneIdentityHooks) -> N
     _store(hooks)
     hooks.delete_user("user-1")
     assert hooks.load_user_by_email(EMAIL.lower()) is None
+
+
+def test_delete_user_is_idempotent(hooks: ControlPlaneIdentityHooks) -> None:
+    """A second delete reports `False` rather than raising.
+
+    Teardown runs even when the test body already failed, so the route has to
+    tolerate being called twice for one user.
+    """
+    _store(hooks)
+    assert hooks.delete_user("user-1") is True
+    assert hooks.delete_user("user-1") is False
+
+
+def test_delete_user_succeeds_with_a_totp_factor_stored(hooks: ControlPlaneIdentityHooks, identity_tables: str) -> None:
+    """A user carrying a TOTP factor row still deletes cleanly.
+
+    In the staging run where `POST /api/auth/totp/enrol` answered 500, the e2e
+    teardown delete for that same user answered 500 moments later, which reads as
+    the hook choking on a half enrolled user. It does not. The factor lives in the
+    identity module's own table and this hook removes only the `users` row, so an
+    enrolment left inactive by a failed seal cannot reach the delete. The two
+    failures had separate causes and this pins the half of it that is ours.
+    """
+    from webbpulse.dynamodb import Repository
+    from webbpulse.identity import (
+        TOTP_FACTORS_TABLE,
+        DynamoTotpFactorStore,
+        TotpFactorRecord,
+    )
+
+    _store(hooks)
+    factors = DynamoTotpFactorStore(Repository(TOTP_FACTORS_TABLE, prefix=identity_tables))
+    factors.put(
+        TotpFactorRecord(
+            user_id="user-1",
+            secret_ciphertext="ciphertext",
+            secret_nonce="nonce",
+            wrapped_data_key="",
+            created_at="2026-09-20T02:55:43Z",
+            secret_scheme="hkdf-aes256gcm",
+        )
+    )
+
+    assert factors.get("user-1") is not None
+
+    assert hooks.delete_user("user-1") is True
+    assert hooks.load_user_by_id("user-1") is None
