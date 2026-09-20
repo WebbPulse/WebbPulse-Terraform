@@ -22,6 +22,8 @@ pytest_plugins = ["webbpulse.e2e"]
 
 RUN_ROLE_ARN_VARIABLE = "E2E_RUN_ROLE_ARN"
 
+JOURNEY_RUN_ROLE_ARN_VARIABLE = "E2E_JOURNEY_RUN_ROLE_ARN"
+
 STALE_SECONDS = 3600
 
 _DOCUMENT_ENVIRONMENT = {
@@ -134,8 +136,7 @@ def pytest_e2e_journeys(env: Any) -> Any:
     """
     from webbpulse.e2e import Click, ExpectText, ExpectUrl, ExpectVisible, Fill, Goto, Journey, Record
 
-    run_role_arn = resolve_run_role_arn(env)
-    if not run_role_arn:
+    if not resolve_journey_run_role_arn(env):
         return []
 
     prefix = getattr(env, "resource_prefix", "") or "e2e-{run_id}-"
@@ -321,6 +322,22 @@ def resolve_run_role_arn(env: Any) -> str:
     """
     del env
     return os.environ.get(RUN_ROLE_ARN_VARIABLE, "").strip()
+
+
+def resolve_journey_run_role_arn(env: Any) -> str:
+    """The ARN that decides whether the browser journeys are declared.
+
+    The journeys never submit an ARN: the create form no longer carries one, and the role
+    is saved afterwards through the setup checklist. So any syntactically real ARN is
+    enough to declare them, and the local stack sets `E2E_JOURNEY_RUN_ROLE_ARN` to a
+    placeholder to exercise them on every pull request.
+
+    It is a separate variable from `E2E_RUN_ROLE_ARN` on purpose. That one also gates the
+    API run lifecycle cases, which upload a configuration to S3 and really do assume the
+    role, and the local stack has neither, so pointing it at a placeholder would turn
+    their skips into failures.
+    """
+    return os.environ.get(JOURNEY_RUN_ROLE_ARN_VARIABLE, "").strip() or resolve_run_role_arn(env)
 
 
 @pytest.fixture(scope="session")
