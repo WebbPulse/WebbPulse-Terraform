@@ -354,3 +354,70 @@ def test_a_run_is_409_while_the_tarball_never_landed(auth_client, workspace, sta
 
     response = auth_client.post(BASE, json=create_body(workspace_id, version["config_version_id"]))
     assert response.status_code == 409, response.text
+
+
+def stored_config_version_status(config_version_id: str) -> str:
+    """The status on the raw config version row, read around the service."""
+    from app.common.db.tables import CONFIG_VERSIONS
+
+    table = boto3.resource("dynamodb", region_name=REGION).Table(local_table_name(CONFIG_VERSIONS, ENVIRONMENT))
+    item = table.get_item(Key={"config_version_id": config_version_id}).get("Item", {})
+    return str(item.get("status", ""))
+
+
+def put_config_object(key: str) -> None:
+    """Land a tarball at `key`, the way a client's presigned PUT would."""
+    from tests.conftest import ARTIFACTS_BUCKET
+
+    boto3.client("s3", region_name=REGION).put_object(
+        Bucket=ARTIFACTS_BUCKET, Key=key, Body=b"tarball", ContentType="application/gzip"
+    )
+
+
+def test_create_accepts_a_pending_version_whose_object_landed(auth_client, workspace, state_machine):
+    """An upload S3 never announced still starts a run, from the HEAD alone."""
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(
+        f"/api/v1/workspaces/{workspace_id}/config-versions",
+        json={"size_bytes": 1024},
+    ).json()["config_version"]
+    put_config_object(version["key"])
+
+    response = auth_client.post(BASE, json=create_body(workspace_id, version["config_version_id"]))
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "planning"
+
+
+def test_create_does_not_write_the_config_version_row(auth_client, workspace, state_machine):
+    """Run creation never calls UpdateItem on config-versions.
+
+    The runs function role reads these rows under a read only grant, so a write
+    from here is an AccessDeniedException and a 500. The row staying `pending`
+    is what proves the reconciliation did not persist.
+    """
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(
+        f"/api/v1/workspaces/{workspace_id}/config-versions",
+        json={"size_bytes": 1024},
+    ).json()["config_version"]
+    put_config_object(version["key"])
+
+    response = auth_client.post(BASE, json=create_body(workspace_id, version["config_version_id"]))
+
+    assert response.status_code == 201, response.text
+    assert stored_config_version_status(version["config_version_id"]) == "pending"
+
+
+def test_create_is_409_when_the_pending_versions_object_is_absent(auth_client, workspace, state_machine):
+    """No tarball in the bucket is still `ConfigVersionNotReady`."""
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(
+        f"/api/v1/workspaces/{workspace_id}/config-versions",
+        json={"size_bytes": 1024},
+    ).json()["config_version"]
+
+    response = auth_client.post(BASE, json=create_body(workspace_id, version["config_version_id"]))
+
+    assert response.status_code == 409, response.text
+    assert stored_config_version_status(version["config_version_id"]) == "pending"

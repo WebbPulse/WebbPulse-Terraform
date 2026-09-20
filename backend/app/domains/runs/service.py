@@ -186,6 +186,12 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
     Validates the workspace and the config version before writing anything, so a
     run never exists against a config version that was never uploaded.
 
+    The config version is read with `persist` false: this function runs under the
+    runs role, whose grant on the workspaces, variables and config-versions tables
+    is read only by design, so the reconciliation against the bucket must not write
+    the `uploaded` flip back. The workspaces domain owns that write and persists it
+    on its own reads.
+
     Returns the stored run, carrying `run_token` only when an execution started.
 
     Raises:
@@ -201,7 +207,12 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
     workspace = workspaces_service.get_workspace(workspace_id, settings=resolved)
     if not str(workspace.get("run_role_arn", "") or ""):
         raise workspaces_service.RunRoleMissing(workspace_id)
-    config_version = workspaces_service.get_config_version(workspace_id, config_version_id, settings=resolved)
+    config_version = workspaces_service.get_config_version(
+        workspace_id,
+        config_version_id,
+        persist=False,
+        settings=resolved,
+    )
     if str(config_version.get("status", "")) != "uploaded":
         raise ConfigVersionNotReady(config_version_id)
 
