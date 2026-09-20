@@ -710,6 +710,10 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     so a runner holding a plan-phase token cannot ask for the apply phase's
     unrestricted session policy.
 
+    The config version is read with `persist` false for the same reason run
+    creation reads it that way: this function runs under the runs role, which
+    holds only a read grant on the config-versions table.
+
     Raises:
         RunNotFound: No such run.
         WorkspaceNotFound: The workspace was deleted under the run.
@@ -722,7 +726,10 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     workspace_id = str(run["workspace_id"])
     workspace = workspaces_service.get_workspace(workspace_id, settings=resolved)
     config_version = workspaces_service.get_config_version(
-        workspace_id, str(run["config_version_id"]), settings=resolved
+        workspace_id,
+        str(run["config_version_id"]),
+        persist=False,
+        settings=resolved,
     )
 
     phase = _phase_for_status(str(run.get("status", "")))
