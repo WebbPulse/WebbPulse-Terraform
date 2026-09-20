@@ -47,7 +47,7 @@ def _master_key(settings: Settings) -> bytes:
     if not configured:
         raise MasterKeyUnavailable(
             "No variables_master_key is configured. Set VARIABLES_MASTER_KEY or add the "
-            "entry to the APP_SECRET_ID secret; a sensitive variable is never stored in "
+            "entry to the APP_SECRETS_ARN secret; a sensitive variable is never stored in "
             "the clear."
         )
     try:
