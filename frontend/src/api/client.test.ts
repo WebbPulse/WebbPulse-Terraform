@@ -296,6 +296,29 @@ describe('TerraformApi failures', () => {
     expect(describeError(new Error('Boom.'))).toBe('Boom.');
     expect(describeError('nope')).toBe('The request failed. Please try again.');
   });
+
+  it('describes a refused sign-in from the identity envelope', async () => {
+    const { api } = apiOver({
+      'GET /api/v1/workspaces': {
+        status: 401,
+        body: {
+          success: false,
+          status: 401,
+          message: 'Wrong email or password.',
+          error_code: 'INVALID_CREDENTIALS',
+          request_id: 'r-2',
+        },
+      },
+    });
+    const error = await api.listWorkspaces().catch((thrown: unknown) => thrown);
+    expect(describeError(error)).toBe('Wrong email or password.');
+  });
+
+  it('falls back rather than rendering an error with no message', () => {
+    expect(describeError(new Error(''))).toBe(
+      'The request failed. Please try again.'
+    );
+  });
 });
 
 describe('uploadConfigTarball', () => {

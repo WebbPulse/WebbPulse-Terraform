@@ -1,16 +1,18 @@
 /** The typed client for the control plane API, and the auth client beside it. */
 
 import {
-  ApiError,
   createApiClient,
-  getWebbPulseError,
   type ApiClient,
   type AuthTokenProvider,
   type RequestOptions,
 } from '@webbpulse/api-client';
 import { loadAppConfig } from '@webbpulse/config';
-import { createAuthClient, type AuthClient } from '@webbpulse/auth';
-import { identityOriginFrom as packageIdentityOriginFrom } from '@webbpulse/discovery';
+import {
+  createAuthClient,
+  describeAuthError,
+  type AuthClient,
+} from '@webbpulse/auth';
+import { identityOriginFrom as packageIdentityOriginFrom } from '@webbpulse/auth/browser';
 
 import type {
   ConfigVersion,
@@ -57,15 +59,15 @@ export function identityOriginFrom(apiBaseUrl: string): string {
   return packageIdentityOriginFrom(apiBaseUrl, { relativeAs: 'passthrough' });
 }
 
-/** Turns a thrown request error into a sentence a page can render. */
+/**
+ * Turns a thrown request error into a sentence a page can render.
+ *
+ * `describeAuthError` unwraps the WebbPulse envelope the control plane and the
+ * identity routes both answer with, so one renderer covers a failed plan and a
+ * refused sign-in alike. The fallback is this product's own wording.
+ */
 export function describeError(error: unknown): string {
-  if (error instanceof ApiError) {
-    return getWebbPulseError(error).message;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return 'The request failed. Please try again.';
+  return describeAuthError(error, 'The request failed. Please try again.');
 }
 
 /** Options for {@link TerraformApi}. */
