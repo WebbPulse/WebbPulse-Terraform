@@ -11,6 +11,7 @@ import {
   aVariable,
   aWorkspace,
 } from '../test-helpers/fixtures';
+import { runRolePrefix } from '../api/runRoleSetup';
 import {
   renderWithAuth,
   signedInAuthClient,
@@ -24,6 +25,11 @@ import {
 vi.mock('../api/client', () => apiClientModuleMock());
 
 const { WorkspaceDetail } = await import('./WorkspaceDetail');
+
+/** The role name prefix the fixture's runner may assume. */
+function assumablePrefix(): string {
+  return runRolePrefix(aWorkspace().run_role_setup.role_name);
+}
 
 /** Mounts the detail page on a route carrying the workspace id. */
 function renderDetail(): void {
@@ -291,7 +297,7 @@ describe('WorkspaceDetail setup checklist', () => {
     expect(
       within(checklist).getByLabelText('Role ARN')
     ).toHaveAccessibleDescription(
-      /starts with webbpulse-terraform-staging-workspace-/
+      new RegExp(`starts with ${assumablePrefix()}`)
     );
   });
 
@@ -331,7 +337,7 @@ describe('WorkspaceDetail setup checklist', () => {
     );
 
     expect(await within(checklist).findByRole('alert')).toHaveTextContent(
-      'The role name must start with webbpulse-terraform-staging-workspace-'
+      `The role name must start with ${assumablePrefix()}`
     );
     expect(apiMock.updateWorkspace).not.toHaveBeenCalled();
   });

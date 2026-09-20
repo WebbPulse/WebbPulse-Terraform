@@ -93,7 +93,7 @@ challenge is not lost with it.
 | `schema.d.ts`     | Types generated from that document. Do not edit                 |
 | `types.ts`        | The contract types, each an alias into `schema.d.ts`            |
 | `runStates.ts`    | Which actions each run state allows, and how it is badged       |
-| `runRoleSetup.ts` | The run role contract and the trust policy and role snippets    |
+| `runRoleSetup.ts` | The trust policy, the role snippets and the connection state    |
 | `client.ts`       | `TerraformApi`, one method per route, plus the presigned upload |
 
 `TerraformApi` wraps `@webbpulse/api-client`, which rejects on a non-2xx, so the
@@ -119,9 +119,11 @@ as `run_role_checked_at` and `run_role_account_id`. Run starts are disabled
 until a check has passed, and a `409` carrying `RUN_ROLE_MISSING` renders the
 same sentence.
 
-`runRoleSetup.ts` types this contract by hand and overrides the generated
-`Workspace` shapes through `index.ts` until the backend change lands in
-`openapi.json`. Once it does, the overrides collapse into aliases.
+`RunRoleSetup` and `RunRoleCheck` are aliases into `schema.d.ts` like every
+other contract type, so `runRoleSetup.ts` holds only the trust policy, the
+snippets and the connection predicates. The generated `Workspace` leaves the
+run role fields optional, so code that reads one coalesces an absent value to
+null rather than comparing against `null` alone.
 
 ### Regenerating the types
 

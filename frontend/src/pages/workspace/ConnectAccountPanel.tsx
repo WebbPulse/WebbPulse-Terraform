@@ -160,6 +160,7 @@ function RoleArnForm({
   );
 
   const dirty = arn.trim() !== (workspace.run_role_arn ?? '');
+  const unsaved = (workspace.run_role_arn ?? null) === null;
 
   const submit = async (): Promise<void> => {
     setSaved(false);
@@ -239,9 +240,7 @@ function RoleArnForm({
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="submit"
-          variant={
-            dirty || workspace.run_role_arn === null ? 'primary' : 'secondary'
-          }
+          variant={dirty || unsaved ? 'primary' : 'secondary'}
           busy={save.isMutating}
           busyLabel="Saving the role ARN"
           disabled={arn.trim() === ''}
@@ -249,16 +248,14 @@ function RoleArnForm({
           Save
         </Button>
         <Button
-          variant={
-            dirty || workspace.run_role_arn === null ? 'secondary' : 'primary'
-          }
+          variant={dirty || unsaved ? 'secondary' : 'primary'}
           busy={checking}
           busyLabel="Checking the connection"
-          disabled={workspace.run_role_arn === null || dirty}
+          disabled={unsaved || dirty}
           title={
             dirty
               ? 'Save the ARN before checking it.'
-              : workspace.run_role_arn === null
+              : unsaved
                 ? 'Save a role ARN first.'
                 : undefined
           }
@@ -287,7 +284,9 @@ function ConnectionStatus({
   workspace: Workspace;
   result: RunRoleCheck | null;
 }): React.ReactElement | null {
+  const checkedAt = workspace.run_role_checked_at ?? null;
   if (result !== null) {
+    const error = result.error ?? null;
     return result.connected ? (
       <StatusLine tone="ok" testValue="connected">
         Connected to account{' '}
@@ -296,11 +295,11 @@ function ConnectionStatus({
     ) : (
       <StatusLine tone="bad" testValue="failed">
         Could not assume the role
-        {result.error === null ? '.' : `: ${result.error}`}
+        {error === null ? '.' : `: ${error}`}
       </StatusLine>
     );
   }
-  if (workspace.run_role_arn === null) {
+  if ((workspace.run_role_arn ?? null) === null) {
     return null;
   }
   if (isConnected(workspace)) {
@@ -308,17 +307,15 @@ function ConnectionStatus({
       <StatusLine tone="ok" testValue="connected">
         Connected to account{' '}
         <code className="font-mono">{workspace.run_role_account_id}</code>
-        {workspace.run_role_checked_at === null
-          ? '.'
-          : `, checked ${formatDateTime(workspace.run_role_checked_at)}.`}
+        {checkedAt === null ? '.' : `, checked ${formatDateTime(checkedAt)}.`}
       </StatusLine>
     );
   }
-  if (workspace.run_role_checked_at !== null) {
+  if (checkedAt !== null) {
     return (
       <StatusLine tone="bad" testValue="failed">
-        The last check, {formatDateTime(workspace.run_role_checked_at)}, could
-        not assume the role. Check again once the trust policy is in place.
+        The last check, {formatDateTime(checkedAt)}, could not assume the role.
+        Check again once the trust policy is in place.
       </StatusLine>
     );
   }

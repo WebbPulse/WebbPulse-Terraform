@@ -25,17 +25,15 @@ import type {
   RunLogPage,
   RunLogsQuery,
   RunPhase,
+  RunRoleCheck,
   Variable,
   VariableList,
   VariableWrite,
-  WorkspaceUpdate,
-} from './types';
-import type {
-  RunRoleCheck,
   Workspace,
   WorkspaceCreate,
   WorkspaceList,
-} from './runRoleSetup';
+  WorkspaceUpdate,
+} from './types';
 
 const config = loadAppConfig(import.meta.env, {
   defaultApiBaseUrl:

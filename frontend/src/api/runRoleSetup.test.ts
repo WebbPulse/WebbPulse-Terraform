@@ -96,7 +96,7 @@ describe('runRoleArnProblem', () => {
     expect(
       runRoleArnProblem('arn:aws:iam::123456789012:role/terraform-run', setup)
     ).toBe(
-      'The role name must start with webbpulse-terraform-staging-workspace- for the runner to assume it.'
+      `The role name must start with ${runRolePrefix(setup.role_name)} for the runner to assume it.`
     );
   });
 });

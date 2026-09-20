@@ -1,67 +1,14 @@
 /**
- * The run role setup contract, typed by hand until the types are regenerated.
+ * The run role setup helpers: trust policy, snippets and connection state.
  *
- * The backend change that makes the run role optional at create and adds the
- * connection check is landing in parallel with this module. Until
- * `npm run api:generate` picks it up, the workspace shapes below override the
- * generated ones through `index.ts`, and the check route is typed here. Once
- * the generated `Workspace` carries these fields, the overrides collapse into
- * plain aliases and this file keeps only the helpers.
+ * Every shape here is an alias into the generated contract. This module holds
+ * only the logic that turns a workspace's `run_role_setup` into something a
+ * person can paste, plus the predicates the setup UI reads.
  */
 
 import { ApiError, getWebbPulseError } from '@webbpulse/api-client';
 
-import type {
-  Workspace as GeneratedWorkspace,
-  WorkspaceCreate as GeneratedWorkspaceCreate,
-} from './types';
-
-/** What a workspace hands a person so they can create its run role. */
-export interface RunRoleSetup {
-  /** The first runner task role, kept for callers that only want one. */
-  principal_arn: string;
-  /**
-   * Every runner task role, one per phase. The trust policy has to name them
-   * all: one naming only the plan role passes the check and fails at apply.
-   */
-  principal_arns: string[];
-  /** The external id the runner presents, bound to this workspace. */
-  external_id: string;
-  /** The suggested role name, carrying the prefix the runner may assume. */
-  role_name: string;
-}
-
-/** The run role fields a workspace carries once the role is optional. */
-export interface RunRoleFields {
-  /** The role runs assume, or null until one is saved. */
-  run_role_arn: string | null;
-  run_role_setup: RunRoleSetup;
-  /** When the connection was last checked, or null if never. */
-  run_role_checked_at: string | null;
-  /** The account the last successful check assumed into, or null. */
-  run_role_account_id: string | null;
-}
-
-/** A workspace as the API returns it, with the run role optional. */
-export type Workspace = Omit<GeneratedWorkspace, 'run_role_arn'> &
-  RunRoleFields;
-
-/** The body that creates a workspace. The run role is set up afterwards. */
-export type WorkspaceCreate = Omit<GeneratedWorkspaceCreate, 'run_role_arn'> & {
-  run_role_arn?: string | null;
-};
-
-/** Every workspace, newest last by id. */
-export interface WorkspaceList {
-  items: Workspace[];
-}
-
-/** What the connection check returns, and persists on the workspace. */
-export interface RunRoleCheck {
-  connected: boolean;
-  account_id: string | null;
-  error: string | null;
-}
+import type { RunRoleSetup, Workspace } from './types';
 
 /** The error code a run start or a check answers when no role is set. */
 export const RUN_ROLE_MISSING_CODE = 'RUN_ROLE_MISSING';
@@ -78,10 +25,16 @@ export function isRunRoleMissing(error: unknown): boolean {
   );
 }
 
-/** Whether the workspace has a role that the last check could assume. */
+/**
+ * Whether the workspace has a role that the last check could assume.
+ *
+ * Both fields are optional on the wire, so an absent one counts as unset
+ * exactly as an explicit null does.
+ */
 export function isConnected(workspace: Workspace): boolean {
   return (
-    workspace.run_role_arn !== null && workspace.run_role_account_id !== null
+    (workspace.run_role_arn ?? null) !== null &&
+    (workspace.run_role_account_id ?? null) !== null
   );
 }
 
@@ -135,7 +88,7 @@ export const ADMINISTRATOR_POLICY_ARN =
 
 /** Every principal the trust policy names, falling back to the first alone. */
 export function trustedPrincipals(setup: RunRoleSetup): string[] {
-  const all = setup.principal_arns.filter((arn) => arn !== '');
+  const all = (setup.principal_arns ?? []).filter((arn) => arn !== '');
   if (all.length > 0) {
     return all;
   }

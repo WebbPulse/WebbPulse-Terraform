@@ -185,7 +185,9 @@ function ConnectionCell({
         aria-hidden="true"
         className="inline-block size-2 rounded-full bg-surface-600"
       />
-      {workspace.run_role_arn === null ? 'Not connected' : 'Not checked'}
+      {(workspace.run_role_arn ?? null) === null
+        ? 'Not connected'
+        : 'Not checked'}
     </span>
   );
 }
