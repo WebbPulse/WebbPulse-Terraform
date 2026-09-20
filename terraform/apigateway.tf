@@ -26,6 +26,11 @@ locals {
     {
       "POST /api/v1/workspaces/{workspace_id}/run-role/check" = { integration = "workspaces" }
     },
+    {
+      "POST /api/v1/api-keys"            = { integration = "workspaces" }
+      "GET /api/v1/api-keys"             = { integration = "workspaces" }
+      "DELETE /api/v1/api-keys/{key_id}" = { integration = "workspaces" }
+    },
   )
 
   runs_routes = {

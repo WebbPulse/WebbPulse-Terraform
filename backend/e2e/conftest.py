@@ -22,6 +22,8 @@ pytest_plugins = ["webbpulse.e2e"]
 
 RUN_ROLE_ARN_VARIABLE = "E2E_RUN_ROLE_ARN"
 
+JOURNEY_RUN_ROLE_ARN_VARIABLE = "E2E_JOURNEY_RUN_ROLE_ARN"
+
 STALE_SECONDS = 3600
 
 _DOCUMENT_ENVIRONMENT = {
@@ -118,39 +120,66 @@ def pytest_e2e_routes(env: Any) -> Any:
 def pytest_e2e_journeys(env: Any) -> Any:
     """The UI journeys that would have caught the regressions found by hand.
 
-    The create journey fills the run role ARN field, which is the field whose absence
-    from the form let a workspace be created that no run could ever assume.
+    Each journey creates its own workspace and then proves one outcome about it. They
+    cannot share one, because the journeys are separate parametrised cases distributed by
+    `--dist loadgroup` and each xdist worker signs in as an ephemeral user of its own, so
+    a row one journey creates is neither ordered before nor even visible to the other.
+
+    The locators are roles and accessible names rather than structure, so restyling the
+    shell or the table does not break them. The create form lives in a dialog behind the
+    "New workspace" button, and creating a workspace navigates straight to its detail
+    page, which is where the run role ARN is now saved through the setup checklist.
+
+    The names are resolved here from the run's own prefix rather than left as `{run_id}`,
+    because only `Fill`, `ExpectText` and `ExpectUrl` expand that placeholder: a `Click`
+    locator carrying it would be searched for literally and never match a row.
     """
     from webbpulse.e2e import Click, ExpectText, ExpectUrl, ExpectVisible, Fill, Goto, Journey, Record
 
-    run_role_arn = resolve_run_role_arn(env)
-    if not run_role_arn:
+    if not resolve_journey_run_role_arn(env):
         return []
 
-    name = "e2e-{run_id}-ui"
+    prefix = getattr(env, "resource_prefix", "") or "e2e-{run_id}-"
+    created = f"{prefix}ui-created"
+    opened = f"{prefix}ui-opened"
+
+    def create(name: str) -> list[Any]:
+        """The steps that open the dialog and create a workspace called `name`."""
+        return [
+            Goto("/workspaces"),
+            Click("button:has-text('New workspace')"),
+            ExpectVisible("form[aria-label='Create a workspace']"),
+            Fill('form[aria-label="Create a workspace"] >> internal:label="Name"i', name),
+            Record({"kind": "workspace-name", "name": name}),
+            Click("form[aria-label='Create a workspace'] button:has-text('Create workspace')"),
+            ExpectUrl(r"/workspaces/ws-"),
+        ]
+
     return [
         Journey(
             name="create a workspace through the form",
             signed_in=True,
             mutates=True,
             steps=[
+                *create(created),
+                ExpectText("h1", created),
                 Goto("/workspaces"),
-                ExpectVisible("form[aria-label='Create a workspace']"),
-                Fill("form[aria-label='Create a workspace'] label:has-text('Name') input", name),
-                Fill("form[aria-label='Create a workspace'] label:has-text('Run role ARN') input", run_role_arn),
-                Click("form[aria-label='Create a workspace'] button[type=submit]"),
-                ExpectText("table", name),
-                Record({"kind": "workspace-name", "name": name}),
+                ExpectText("table[aria-label='Workspaces']", created),
             ],
         ),
         Journey(
             name="open a workspace detail page",
             signed_in=True,
+            mutates=True,
             steps=[
+                *create(opened),
                 Goto("/workspaces"),
-                Click(f"table a:has-text('{name}')"),
+                Click(f"table[aria-label='Workspaces'] a:has-text('{opened}')"),
                 ExpectUrl(r"/workspaces/ws-"),
-                ExpectVisible("[role=tablist]"),
+                ExpectText("h1", opened),
+                ExpectVisible("section[aria-labelledby='setup-checklist-title']"),
+                ExpectVisible("form[aria-label='Run role']"),
+                ExpectVisible("[role=tablist][aria-label='Workspace sections']"),
             ],
         ),
     ]
@@ -246,8 +275,10 @@ def pytest_e2e_cleanup(env: Any, phase: str, created: Sequence[Any]) -> Any:
         if phase == "start":
             targets = [str(item["workspace_id"]) for item in listed if _is_stale(item)]
         else:
+            from webbpulse.e2e.journeys import expand
+
             recorded = {
-                str(item.get("name"))
+                expand(str(item.get("name")), env.run_id)
                 for item in created
                 if isinstance(item, dict) and item.get("kind") == "workspace-name"
             }
@@ -291,6 +322,22 @@ def resolve_run_role_arn(env: Any) -> str:
     """
     del env
     return os.environ.get(RUN_ROLE_ARN_VARIABLE, "").strip()
+
+
+def resolve_journey_run_role_arn(env: Any) -> str:
+    """The ARN that decides whether the browser journeys are declared.
+
+    The journeys never submit an ARN: the create form no longer carries one, and the role
+    is saved afterwards through the setup checklist. So any syntactically real ARN is
+    enough to declare them, and the local stack sets `E2E_JOURNEY_RUN_ROLE_ARN` to a
+    placeholder to exercise them on every pull request.
+
+    It is a separate variable from `E2E_RUN_ROLE_ARN` on purpose. That one also gates the
+    API run lifecycle cases, which upload a configuration to S3 and really do assume the
+    role, and the local stack has neither, so pointing it at a placeholder would turn
+    their skips into failures.
+    """
+    return os.environ.get(JOURNEY_RUN_ROLE_ARN_VARIABLE, "").strip() or resolve_run_role_arn(env)
 
 
 @pytest.fixture(scope="session")

@@ -1,7 +1,7 @@
 """The control plane's settings, on the shared package's base.
 
 Every field is an environment variable Terraform sets on the function. The one
-secret field, `variables_master_key`, resolves from the `APP_SECRET_ID` blob on
+secret field, `variables_master_key`, resolves from the `APP_SECRETS_ARN` blob on
 first read, so constructing this makes no Secrets Manager call and importing it
 needs no credentials.
 """
@@ -54,7 +54,20 @@ class Settings(BaseServiceSettings):
     ARTIFACTS_BUCKET: str = ""
     RUN_STATE_MACHINE_ARN: str = ""
     RUNNER_LOG_GROUP: str = ""
+    APP_SECRETS_ARN: str = ""
+    """The one JSON app secret every runtime key is read from.
+
+    Named exactly as the shared package expects: `webbpulse.security.app_secrets`
+    and `webbpulse.identity.crypto.resolve_totp_master_key` fall back to the
+    `APP_SECRETS_ARN` environment variable directly, so a differently named
+    variable leaves the package unable to find `mfa_master_key` however well this
+    class resolves it.
+    """
+
     APP_SECRET_ID: str = ""
+    """Legacy spelling of `APP_SECRETS_ARN`, still read so a function running the
+    previous environment keeps resolving its secret across a deploy. Prefer
+    `app_secret_arn`, which takes the standard name first."""
 
     IDENTITY_ISSUER: str = ""
     """The identity issuer. Present exactly when a JWT authorizer fronts this
@@ -126,9 +139,14 @@ class Settings(BaseServiceSettings):
         object.__setattr__(self, "log_level", self.LOG_LEVEL.strip().upper())
         origins = [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
         object.__setattr__(self, "cors_allow_origins", sorted(set(origins + LOCALHOST_ORIGINS)))
-        if self.APP_SECRET_ID and not self.app_secrets_arn:
-            object.__setattr__(self, "app_secrets_arn", self.APP_SECRET_ID)
+        if self.app_secret_arn and not self.app_secrets_arn:
+            object.__setattr__(self, "app_secrets_arn", self.app_secret_arn)
         return self
+
+    @property
+    def app_secret_arn(self) -> str:
+        """The app secret ARN, standard name ahead of the legacy one."""
+        return self.APP_SECRETS_ARN or self.APP_SECRET_ID
 
     @property
     def runner_task_role_arns(self) -> list[str]:
@@ -149,7 +167,7 @@ class Settings(BaseServiceSettings):
         """The base64 HKDF master key for sensitive variable values.
 
         Read from the environment first so a workstation needs no AWS, then from
-        the `APP_SECRET_ID` blob, and cached for the life of the process. Returns
+        the `APP_SECRETS_ARN` blob, and cached for the life of the process. Returns
         `""` when no source carries it, which the cipher factory turns into a
         named failure rather than a silent plaintext write.
         """
@@ -161,8 +179,8 @@ class Settings(BaseServiceSettings):
         from webbpulse.security import app_secrets
 
         resolved = os.environ.get("VARIABLES_MASTER_KEY", "")
-        if not resolved and self.APP_SECRET_ID:
-            resolved = str(app_secrets(self.APP_SECRET_ID).get(VARIABLES_MASTER_KEY_ENTRY, "") or "")
+        if not resolved and self.app_secret_arn:
+            resolved = str(app_secrets(self.app_secret_arn).get(VARIABLES_MASTER_KEY_ENTRY, "") or "")
         object.__setattr__(self, "_variables_master_key", resolved)
         return resolved
 

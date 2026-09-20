@@ -122,7 +122,7 @@ module "lambda_domain" {
       RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
       RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
 
-      APP_SECRET_ID = module.app_secrets.arns["app"]
+      APP_SECRETS_ARN = module.app_secrets.arns["app"]
 
       WEBBPULSE_OTEL_SAMPLE_RATIO        = var.environment == "production" ? "0.1" : "1.0"
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "https://xray.${var.aws_region}.amazonaws.com/v1/traces"
