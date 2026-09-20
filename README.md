@@ -110,6 +110,9 @@ gate's Lambda authorizer or an equivalent before agents can use it.
 | `POST /workspaces/{workspace_id}/config-versions` | `configs:write` |
 | `GET /workspaces/{workspace_id}/config-versions` | `configs:read` |
 | `GET /workspaces/{workspace_id}/config-versions/{config_version_id}` | `configs:read` |
+| `POST /api-keys` | signed-in person |
+| `GET /api-keys` | authenticated |
+| `DELETE /api-keys/{key_id}` | authenticated |
 | `POST /runs` | `runs:write` |
 | `GET /runs` | `runs:read` |
 | `GET /runs/{run_id}` | `runs:read` |
@@ -123,6 +126,23 @@ gate's Lambda authorizer or an equivalent before agents can use it.
 `runs:apply` exists so confirming an apply can be granted separately from
 creating or cancelling a run. The identity routes under `/api/auth` come from the
 shared identity module and are served by the `workspaces` function.
+
+### Agent API keys
+
+The three `/api-keys` routes are how a `wpk_` key comes to exist. `POST` mints
+one and returns the plaintext in that response and nowhere else, since only its
+SHA-256 reaches the table; `GET` lists the caller's own keys without the
+plaintext; `DELETE` revokes one, the caller's own or, for an admin, anybody's.
+Keys and run tokens share the identity `api-keys` table, and the list and revoke
+routes leave run tokens out: revoking one would strand a run mid-apply.
+
+They are guarded by authentication rather than by a scope. A key carries at most
+what its minter holds, narrowed further if the request asks for less, so
+requiring a scope to mint one would gate a capability the caller already has.
+What is gated is the credential kind: minting requires a signed-in person and
+refuses an API key actor with `API_KEY_ACTOR_FORBIDDEN`, because a key able to
+mint its successor would outlive being revoked. Listing and revoking stay open to
+a key so a service can rotate the credential it is holding.
 
 The confirmations queue consumer is mounted outside `/api/v1`, on the Lambda Web
 Adapter's pass-through path, so the HTTP API never routes it.

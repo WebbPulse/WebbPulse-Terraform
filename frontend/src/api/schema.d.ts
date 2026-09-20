@@ -414,6 +414,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Api Keys
+         * @description The caller's own keys, newest first. Never a plaintext.
+         *
+         *     Revoked and expired keys stay in the list so a person can recognise one they
+         *     retired, and run tokens are left out: they live in the same table but belong
+         *     to a run rather than to anybody.
+         */
+        get: operations["list_api_keys_api_v1_api_keys_get"];
+        put?: never;
+        /**
+         * Create Api Key
+         * @description Mint one key and return its plaintext, once.
+         *
+         *     The response body is the only place the plaintext ever exists outside the
+         *     caller's own storage: the table holds its SHA-256 and nothing else, so a
+         *     caller that loses it mints another key rather than recovering this one.
+         *
+         *     Requires a signed-in person. A key presenting itself here is refused with
+         *     `API_KEY_ACTOR_FORBIDDEN`, because a key able to mint its successor would
+         *     survive being revoked.
+         */
+        post: operations["create_api_key_api_v1_api_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api-keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Api Key
+         * @description Revoke one key, taking effect on the caller's next request.
+         *
+         *     Returns the key as it was rather than 204, so the caller can render what it
+         *     just retired without a second read.
+         *
+         *     The caller's own key, or anybody's when the caller is an admin. Somebody
+         *     else's key reads as a 404 rather than a 403, because a 403 would confirm the
+         *     id exists and turn the list into a way to enumerate other people's keys.
+         */
+        delete: operations["revoke_api_key_api_v1_api_keys__key_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -769,6 +832,79 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ApiKey
+         * @description A stored key as every route but the mint renders it. Never the plaintext.
+         */
+        ApiKey: {
+            /** Created At */
+            created_at: string;
+            /** Expires At */
+            expires_at?: number | null;
+            /** Key Id */
+            key_id: string;
+            /** Last Used At */
+            last_used_at?: string | null;
+            /** Name */
+            name: string;
+            /** Prefix */
+            prefix: string;
+            /** Revoked At */
+            revoked_at?: string | null;
+            /** Scopes */
+            scopes: string[];
+        };
+        /**
+         * ApiKeyCreate
+         * @description A request to mint one key.
+         *
+         *     `scopes` is optional and bounded rather than free: omitting it mints a key
+         *     carrying everything the caller holds, and naming a scope the caller does not
+         *     hold is refused rather than quietly dropped.
+         */
+        ApiKeyCreate: {
+            /** Expires At */
+            expires_at?: string | null;
+            /** Name */
+            name: string;
+            /** Scopes */
+            scopes?: string[] | null;
+        };
+        /**
+         * ApiKeyCreated
+         * @description A freshly minted key, carrying the one and only sight of its plaintext.
+         *
+         *     Returned by `POST /api/v1/api-keys` and by nothing else. The plaintext is not
+         *     stored, so a caller that loses it has to mint another key.
+         */
+        ApiKeyCreated: {
+            /** Created At */
+            created_at: string;
+            /** Expires At */
+            expires_at?: number | null;
+            /** Key */
+            key: string;
+            /** Key Id */
+            key_id: string;
+            /** Last Used At */
+            last_used_at?: string | null;
+            /** Name */
+            name: string;
+            /** Prefix */
+            prefix: string;
+            /** Revoked At */
+            revoked_at?: string | null;
+            /** Scopes */
+            scopes: string[];
+        };
+        /**
+         * ApiKeyList
+         * @description The caller's own keys, newest first.
+         */
+        ApiKeyList: {
+            /** Items */
+            items: components["schemas"]["ApiKey"][];
+        };
         /**
          * Artifacts
          * @description Presigned URLs for one run's artifacts, in both directions.
@@ -2407,6 +2543,99 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    list_api_keys_api_v1_api_keys_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_api_key_api_v1_api_keys_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApiKeyCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreated"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    revoke_api_key_api_v1_api_keys__key_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKey"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
