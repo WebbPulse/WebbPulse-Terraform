@@ -319,3 +319,38 @@ def test_the_missing_run_role_conflict_leaves_no_run_behind(auth_client, uploade
     )
     listed = auth_client.get(BASE, params={"workspace_id": workspace_id})
     assert listed.json()["items"] == []
+
+
+def test_a_run_starts_against_a_version_whose_object_landed(auth_client, workspace, state_machine):
+    """Uploading to the presigned PUT is enough to start a run.
+
+    The first staging e2e run failed exactly here: the tarball was in the bucket
+    and creating the run still answered 409, because nothing reconciled the row.
+    """
+    import boto3
+
+    from tests.conftest import ARTIFACTS_BUCKET, REGION
+
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(
+        f"/api/v1/workspaces/{workspace_id}/config-versions",
+        json={"size_bytes": 1024},
+    ).json()["config_version"]
+    boto3.client("s3", region_name=REGION).put_object(
+        Bucket=ARTIFACTS_BUCKET, Key=version["key"], Body=b"tarball", ContentType="application/gzip"
+    )
+
+    response = auth_client.post(BASE, json=create_body(workspace_id, version["config_version_id"]))
+    assert response.status_code == 201, response.text
+
+
+def test_a_run_is_409_while_the_tarball_never_landed(auth_client, workspace, state_machine):
+    """A config version with no object in the bucket still refuses a run."""
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(
+        f"/api/v1/workspaces/{workspace_id}/config-versions",
+        json={"size_bytes": 1024},
+    ).json()["config_version"]
+
+    response = auth_client.post(BASE, json=create_body(workspace_id, version["config_version_id"]))
+    assert response.status_code == 409, response.text
