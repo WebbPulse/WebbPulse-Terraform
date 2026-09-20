@@ -22,8 +22,6 @@ pytest_plugins = ["webbpulse.e2e"]
 
 RUN_ROLE_ARN_VARIABLE = "E2E_RUN_ROLE_ARN"
 
-RUN_ROLE_NAME_SUFFIX = "-workspace-e2e"
-
 STALE_SECONDS = 3600
 
 _DOCUMENT_ENVIRONMENT = {
@@ -312,23 +310,13 @@ def ephemeral_user(
 def resolve_run_role_arn(env: Any) -> str:
     """The ARN of the run role a created workspace carries, or an empty string.
 
-    `E2E_RUN_ROLE_ARN` wins where it is set. The reusable workflow forwards a fixed list
-    of `E2E_*` variables and this is not one of them, so the ARN is otherwise derived
-    from the caller's own account and the role name Terraform gives it, which needs no
-    permission beyond the `sts:GetCallerIdentity` every caller already has.
+    Read from `E2E_RUN_ROLE_ARN` alone. The reusable workflow forwards every `E2E_*`
+    Environment variable, so the ARN the environment was applied with arrives directly
+    and nothing has to be rebuilt from an account id and a naming convention that
+    Terraform is free to change.
     """
-    declared = os.environ.get(RUN_ROLE_ARN_VARIABLE, "").strip()
-    if declared:
-        return declared
-    if env.is_local or env.is_production:
-        return ""
-    try:
-        import boto3
-
-        account = boto3.session.Session(region_name=env.aws_region).client("sts").get_caller_identity()["Account"]
-    except Exception:
-        return ""
-    return f"arn:aws:iam::{account}:role/webbpulse-terraform-{env.environment}{RUN_ROLE_NAME_SUFFIX}"
+    del env
+    return os.environ.get(RUN_ROLE_ARN_VARIABLE, "").strip()
 
 
 @pytest.fixture(scope="session")
