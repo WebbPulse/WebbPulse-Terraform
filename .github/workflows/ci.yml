@@ -50,6 +50,8 @@ jobs:
               - '.github/workflows/ci.yml'
             api-contract:
               - 'backend/app/**'
+              - 'backend/pyproject.toml'
+              - 'backend/uv.lock'
               - 'backend/scripts/export_openapi.py'
               - 'frontend/src/api/**'
               - 'frontend/package.json'

@@ -345,9 +345,36 @@ export interface paths {
         put?: never;
         /**
          * Step Up
-         * @description Re-assert the second factor, returning a stepped-up access token and no cookie.
+         * @description Re-assert a factor with a code or a passkey, returning a fresher token and no cookie.
+         *
+         *     One route and two bodies: `{"code": ...}` or `{"challenge_id": ..., "credential": ...}`.
+         *     Neither and both are the same 422, so a client is told what it sent rather than that
+         *     its factor was wrong.
          */
         post: operations["step_up_api_auth_step_up_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/step-up/passkey/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Step Up Passkey Options
+         * @description Issue an assertion challenge scoped to the signed-in caller's own passkeys.
+         *
+         *     Re-authentication rather than sign-in, so it is not gated on passwordless login.
+         *     The body is ignored and may be empty.
+         */
+        post: operations["step_up_passkey_options_api_auth_step_up_passkey_options_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2398,6 +2425,76 @@ export interface operations {
             };
             /** @description Too many attempts from this address */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A passkey step-up was sent to a deployment with passkeys off */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    step_up_passkey_options_api_auth_step_up_passkey_options_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description No bearer token was presented */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No passkey is registered on this account, or no such account */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many attempts from this address */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Passkeys are not configured on this deployment */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

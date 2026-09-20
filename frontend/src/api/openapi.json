@@ -2245,7 +2245,7 @@
     },
     "/api/auth/step-up": {
       "post": {
-        "description": "Re-assert the second factor, returning a stepped-up access token and no cookie.",
+        "description": "Re-assert a factor with a code or a passkey, returning a fresher token and no cookie.\n\nOne route and two bodies: `{\"code\": ...}` or `{\"challenge_id\": ..., \"credential\": ...}`.\nNeither and both are the same 422, so a client is told what it sent rather than that\nits factor was wrong.",
         "operationId": "step_up_api_auth_step_up_post",
         "requestBody": {
           "content": {
@@ -2283,9 +2283,65 @@
           },
           "429": {
             "description": "Too many attempts from this address"
+          },
+          "501": {
+            "description": "A passkey step-up was sent to a deployment with passkeys off"
           }
         },
         "summary": "Step Up",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/step-up/passkey/options": {
+      "post": {
+        "description": "Issue an assertion challenge scoped to the signed-in caller's own passkeys.\n\nRe-authentication rather than sign-in, so it is not gated on passwordless login.\nThe body is ignored and may be empty.",
+        "operationId": "step_up_passkey_options_api_auth_step_up_passkey_options_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "404": {
+            "description": "No passkey is registered on this account, or no such account"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many attempts from this address"
+          },
+          "501": {
+            "description": "Passkeys are not configured on this deployment"
+          }
+        },
+        "summary": "Step Up Passkey Options",
         "tags": [
           "identity"
         ]
