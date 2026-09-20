@@ -1,9 +1,37 @@
 /** Contract shaped fixtures the tests build their responses from. */
 
-import type { ConfigVersion, Run, RunState, Variable, Workspace } from '../api';
+import type {
+  ConfigVersion,
+  Run,
+  RunRoleSetup,
+  RunState,
+  Variable,
+  Workspace,
+} from '../api';
 
-/** A workspace, overridable field by field. */
-export function aWorkspace(overrides: Partial<Workspace> = {}): Workspace {
+/**
+ * A workspace whose optional run role fields are all present.
+ *
+ * The generated contract leaves them optional, so without this a value read
+ * off a fixture is `string | null | undefined` and cannot be handed back to
+ * one under `exactOptionalPropertyTypes`.
+ */
+type SettledWorkspace = Workspace & {
+  run_role_arn: string | null;
+  run_role_setup: RunRoleSetup & { principal_arns: string[] };
+  run_role_checked_at: string | null;
+  run_role_account_id: string | null;
+};
+
+/**
+ * A workspace, overridable field by field.
+ *
+ * The run role fields are optional on the wire but always concrete here, so a
+ * test can read one back and pass it straight into another fixture.
+ */
+export function aWorkspace(
+  overrides: Partial<SettledWorkspace> = {}
+): SettledWorkspace {
   return {
     workspace_id: 'ws-01J000000000000000000000',
     name: 'platform',
@@ -11,19 +39,32 @@ export function aWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     engine: 'terraform',
     engine_version: '1.11.0',
     working_directory: 'terraform',
-    run_role_arn: 'arn:aws:iam::123456789012:role/terraform-run',
+    run_role_arn:
+      'arn:aws:iam::123456789012:role/control-plane-workspace-ws-01J000000000000000000000',
     run_role_setup: {
       principal_arn: 'arn:aws:iam::210987654321:role/control-plane-runner',
       principal_arns: ['arn:aws:iam::210987654321:role/control-plane-runner'],
       external_id: 'ws-01J000000000000000000000',
       role_name: 'control-plane-workspace-ws-01J000000000000000000000',
     },
-    run_role_checked_at: null,
-    run_role_account_id: null,
+    run_role_checked_at: '2026-09-17T00:05:00Z',
+    run_role_account_id: '123456789012',
     created_at: '2026-09-17T00:00:00Z',
     updated_at: null,
     ...overrides,
   };
+}
+
+/** A workspace nobody has connected an account to yet. */
+export function aFreshWorkspace(
+  overrides: Partial<SettledWorkspace> = {}
+): SettledWorkspace {
+  return aWorkspace({
+    run_role_arn: null,
+    run_role_checked_at: null,
+    run_role_account_id: null,
+    ...overrides,
+  });
 }
 
 /** A variable, overridable field by field. */

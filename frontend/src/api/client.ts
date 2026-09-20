@@ -25,6 +25,7 @@ import type {
   RunLogPage,
   RunLogsQuery,
   RunPhase,
+  RunRoleCheck,
   Variable,
   VariableList,
   VariableWrite,
@@ -178,6 +179,22 @@ export class TerraformApi {
       `/workspaces/${encodeURIComponent(workspaceId)}`,
       options
     );
+  }
+
+  /**
+   * Checks that the workspace's run role can be assumed, and persists what it
+   * found on the workspace. Rejects with `RUN_ROLE_MISSING` when no role is set.
+   */
+  async checkRunRole(
+    workspaceId: string,
+    options: RequestOptions = {}
+  ): Promise<RunRoleCheck> {
+    const response = await this.client.post<RunRoleCheck>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/run-role/check`,
+      undefined,
+      options
+    );
+    return response.data;
   }
 
   /** Lists a workspace's variables. Sensitive ones carry no value. */

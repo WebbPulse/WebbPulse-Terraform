@@ -27,6 +27,23 @@ export type Workspace = Schemas['Workspace'];
 export type WorkspaceCreate = Schemas['WorkspaceCreate'];
 
 /**
+ * What a workspace hands a person so they can create its run role.
+ *
+ * `principal_arns` names every runner task role, one per phase. A trust policy
+ * naming only the plan role passes the connection check and then fails at
+ * apply, so the snippets name them all.
+ */
+export type RunRoleSetup = Schemas['RunRoleSetup'];
+
+/**
+ * The outcome of one AssumeRole against a workspace's run role.
+ *
+ * `error` is a sentence for a person rather than the STS code, and no part of
+ * the temporary credentials reaches it.
+ */
+export type RunRoleCheck = Schemas['RunRoleCheck'];
+
+/**
  * The body that edits a workspace. Every field is optional.
  *
  * The name is absent because the backend's update model omits it: a rename

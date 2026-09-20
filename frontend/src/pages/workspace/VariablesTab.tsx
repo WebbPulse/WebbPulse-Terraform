@@ -5,7 +5,7 @@ import {
   useMutationWithRefetch,
   usePolledQuery,
 } from '@webbpulse/api-client/react';
-import { useAuthClient } from '@webbpulse/auth/react';
+import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
   api,
@@ -27,7 +27,7 @@ const CATEGORIES: readonly VariableCategory[] = ['terraform', 'env'];
 export function VariablesTab({
   workspaceId,
 }: VariablesTabProps): React.ReactElement {
-  const auth = useAuthClient();
+  const auth = useQueryAuth();
   const queryKey = `variables:${workspaceId}`;
   const query = usePolledQuery<VariableList>(
     ({ signal }) => api.listVariables(workspaceId, { signal }),
