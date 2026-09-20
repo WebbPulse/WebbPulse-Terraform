@@ -1,6 +1,6 @@
 /** Everything a person needs to let runs into their AWS account. */
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   invalidateQueries,
   useMutationWithRefetch,
@@ -23,6 +23,8 @@ import {
   CodeBlock,
   CopyButton,
   ErrorNotice,
+  Field,
+  INPUT_CLASS,
   SegmentedControl,
   formatDateTime,
 } from '../../components';
@@ -45,7 +47,7 @@ export function ConnectAccountPanel({
   const { run_role_setup: setup } = workspace;
   return (
     <div className="space-y-5">
-      <p className="max-w-prose text-sm text-surface-300">
+      <p className="max-w-prose text-sm text-text-muted">
         Runs assume an IAM role in your AWS account to read and write your
         infrastructure. Create the role below with a trust policy that names the
         runner and this workspace's external id, then save its ARN here.
@@ -62,11 +64,11 @@ export function ConnectAccountPanel({
         <ValueRow label="External id" value={setup.external_id} />
       </dl>
       {collapsible ? (
-        <details className="group rounded-md border border-surface-700">
-          <summary className="cursor-pointer px-3 py-2 text-sm text-surface-200 select-none hover:text-surface-50">
+        <details className="group rounded-md border border-line">
+          <summary className="cursor-pointer px-3 py-2 text-sm text-text select-none hover:text-text-strong">
             Role creation snippets
           </summary>
-          <div className="border-t border-surface-700 p-3">
+          <div className="border-t border-line p-3">
             <RoleSnippets workspace={workspace} />
           </div>
         </details>
@@ -88,9 +90,9 @@ function ValueRow({
 }): React.ReactElement {
   return (
     <>
-      <dt className="text-surface-400 sm:py-1">{label}</dt>
+      <dt className="text-text-faint sm:py-1">{label}</dt>
       <dd className="flex min-w-0 items-center gap-2">
-        <code className="min-w-0 truncate rounded bg-surface-900 px-1.5 py-1 font-mono text-xs text-surface-100">
+        <code className="min-w-0 truncate rounded bg-bg px-1.5 py-1 font-mono text-xs text-text">
           {value}
         </code>
         <CopyButton value={value} subject={value} />
@@ -121,7 +123,7 @@ function RoleSnippets({
         code={snippetFor(format, setup)}
         subject={`${label} snippet`}
       />
-      <p className="text-xs text-surface-400">
+      <p className="text-xs text-text-faint">
         The snippets attach AdministratorAccess so a first run has what it
         needs. Attach a narrower policy instead when the configuration needs
         less.
@@ -145,8 +147,6 @@ function RoleArnForm({
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<unknown>(null);
   const [result, setResult] = useState<RunRoleCheck | null>(null);
-  const helpId = useId();
-  const problemId = useId();
 
   useEffect(() => {
     setArn(workspace.run_role_arn ?? '');
@@ -204,37 +204,35 @@ function RoleArnForm({
         void submit();
       }}
     >
-      <label className="block text-sm">
-        <span className="text-surface-300">Role ARN</span>
-        <input
-          value={arn}
-          aria-invalid={problem !== null}
-          aria-describedby={
-            problem === null ? helpId : `${helpId} ${problemId}`
-          }
-          placeholder={`arn:aws:iam::123456789012:role/${setup.role_name}`}
-          spellCheck={false}
-          autoComplete="off"
-          onChange={(event) => {
-            setArn(event.target.value);
-            setProblem(null);
-            setSaved(false);
-          }}
-          className="mt-1 h-8 w-full rounded-md border border-surface-600 bg-surface-900 px-2.5 font-mono text-xs text-surface-100 placeholder:text-surface-500 focus-visible:border-brand-400 focus-visible:ring-1 focus-visible:ring-brand-400 focus-visible:outline-none aria-[invalid=true]:border-rose-500"
-        />
-      </label>
-      <p id={helpId} className="text-xs text-surface-400">
-        The runner only assumes roles whose name starts with{' '}
-        <code className="font-mono text-surface-200">
-          {runRolePrefix(setup.role_name)}
-        </code>
-        , so keep that prefix if you rename the role.
-      </p>
-      {problem === null ? null : (
-        <p id={problemId} role="alert" className="text-sm text-rose-300">
-          {problem}
-        </p>
-      )}
+      <Field
+        label="Role ARN"
+        error={problem}
+        hint={
+          <>
+            The runner only assumes roles whose name starts with{' '}
+            <code className="font-mono text-text">
+              {runRolePrefix(setup.role_name)}
+            </code>
+            , so keep that prefix if you rename the role.
+          </>
+        }
+      >
+        {(control) => (
+          <input
+            {...control}
+            value={arn}
+            placeholder={`arn:aws:iam::123456789012:role/${setup.role_name}`}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => {
+              setArn(event.target.value);
+              setProblem(null);
+              setSaved(false);
+            }}
+            className={`${INPUT_CLASS} font-mono text-xs`}
+          />
+        )}
+      </Field>
       <ErrorNotice error={save.error} />
       <ErrorNotice error={checkError} />
       <div className="flex flex-wrap items-center gap-2">
@@ -344,7 +342,7 @@ function StatusLine({
   const text = {
     ok: 'text-emerald-200',
     bad: 'text-rose-200',
-    neutral: 'text-surface-300',
+    neutral: 'text-text-muted',
   }[tone];
   return (
     <p

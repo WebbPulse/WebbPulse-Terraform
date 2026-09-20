@@ -11,7 +11,7 @@ import {
   type RunList,
   type Workspace,
 } from '../api';
-import { ErrorNotice, Spinner } from '../components';
+import { ErrorNotice, PageHeader, Spinner, Tabs } from '../components';
 import { ConfigVersionsTab } from './workspace/ConfigVersionsTab';
 import { OverviewTab } from './workspace/OverviewTab';
 import { RunsTab } from './workspace/RunsTab';
@@ -55,7 +55,12 @@ export function WorkspaceDetail(): React.ReactElement {
   );
 
   if (query.isLoading) {
-    return <Spinner label="Loading the workspace" />;
+    return (
+      <div className="flex items-center gap-2 text-sm text-text-faint">
+        <Spinner label="Loading the workspace" className="size-4" />
+        Loading the workspace
+      </div>
+    );
   }
   if (query.data === null) {
     return (
@@ -72,35 +77,38 @@ export function WorkspaceDetail(): React.ReactElement {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-3">
-            <h1 className="truncate text-xl font-semibold text-surface-50">
-              {workspace.name}
-            </h1>
-            {settled ? (
+      <PageHeader
+        crumbs={[{ label: 'Workspaces', to: '/workspaces' }]}
+        title={workspace.name}
+        meta={
+          settled ? (
+            <span
+              data-testid="workspace-status"
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                ready
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+              }`}
+            >
               <span
-                data-testid="workspace-status"
-                className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
-                  ready
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
-                }`}
-              >
-                {ready ? 'Ready' : 'Setup incomplete'}
-              </span>
-            ) : null}
-          </div>
-          {(workspace.description ?? '') === '' ? null : (
-            <p className="mt-0.5 text-sm text-surface-300">
-              {workspace.description}
-            </p>
-          )}
-          <p className="mt-0.5 font-mono text-xs text-surface-500">
+                aria-hidden="true"
+                className={`size-1.5 rounded-full ${ready ? 'bg-emerald-400' : 'bg-amber-400'}`}
+              />
+              {ready ? 'Ready' : 'Setup incomplete'}
+            </span>
+          ) : null
+        }
+        description={
+          (workspace.description ?? '') === ''
+            ? undefined
+            : workspace.description
+        }
+        actions={
+          <code className="font-mono text-xs text-text-faint">
             {workspaceId}
-          </p>
-        </div>
-      </div>
+          </code>
+        }
+      />
       <ErrorNotice error={query.error} />
       {settled && !ready ? (
         <SetupChecklist
@@ -111,31 +119,13 @@ export function WorkspaceDetail(): React.ReactElement {
           keys={keys}
         />
       ) : null}
-      <div
-        role="tablist"
-        aria-label="Workspace sections"
-        className="flex gap-1 border-b border-surface-700"
-      >
-        {TABS.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === entry.id}
-            onClick={() => {
-              setTab(entry.id);
-            }}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:outline-none ${
-              tab === entry.id
-                ? 'border-brand-400 text-surface-50'
-                : 'border-transparent text-surface-300 hover:text-surface-50'
-            }`}
-          >
-            {entry.label}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel">
+      <Tabs
+        label="Workspace sections"
+        tabs={TABS}
+        value={tab}
+        onChange={setTab}
+      />
+      <div role="tabpanel" className="pt-1">
         {tab === 'overview' ? (
           <OverviewTab
             workspace={workspace}

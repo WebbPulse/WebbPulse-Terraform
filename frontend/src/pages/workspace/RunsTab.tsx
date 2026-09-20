@@ -1,8 +1,7 @@
 /** The runs tab: every run on the workspace, newest first. */
 
 import type { Run } from '../../api';
-import { ErrorNotice, Spinner } from '../../components';
-import { RunTable } from '../../components/RunTable';
+import { ErrorNotice, RunTable, Spinner } from '../../components';
 
 /** Props for {@link RunsTab}. The page owns the query and hands its state down. */
 export interface RunsTabProps {
@@ -20,7 +19,14 @@ export function RunsTab({
   return (
     <div className="space-y-3">
       <ErrorNotice error={error} />
-      {isLoading ? <Spinner label="Loading runs" /> : <RunTable runs={runs} />}
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-sm text-text-faint">
+          <Spinner label="Loading runs" className="size-4" />
+          Loading runs
+        </div>
+      ) : (
+        <RunTable runs={runs} />
+      )}
     </div>
   );
 }

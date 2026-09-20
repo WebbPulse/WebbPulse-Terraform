@@ -157,12 +157,27 @@ Pydantic default is emitted as required, which would make an omitted
 ```
 src/
 ├── api/            types, run state gating, the run role setup, the typed client
-├── components/     guards, layout, the primitives, the badge, the log viewer
+├── components/     guards, the app shell, the primitives, the badge, the log viewer
 ├── pages/          sign-in, workspaces, workspace detail, runs, run detail
 │   └── workspace/  the setup checklist, the connect panel, the four tabs
-├── styles/         global styles
+├── styles/         the Tailwind theme: the surface and brand scales, and the
+│                   semantic tokens (bg, panel, line, text, accent) built on them
 └── test-helpers/   fixtures, the fetch double, the api mock, render helpers
 ```
+
+## UI
+
+The app is dark only. `styles/globals.css` defines the palette twice: a raw
+`surface` and `brand` scale, and semantic tokens (`bg`, `panel`, `raised`,
+`line`, `text`, `text-muted`, `text-faint`, `accent`) that every component
+uses, so a light theme is a second block of token values rather than a sweep of
+class names. `components/` holds the shell (`Layout`, a left rail with the
+sections and the session) and the primitives every page is built from:
+`PageHeader`, `Tabs`, `Table`, `Field` with `INPUT_CLASS`, `EmptyState`,
+`Button`, `Dialog`, `SegmentedControl`, `CodeBlock` and `CopyButton`. Lists
+render one of three shapes: a spinner with a sentence while loading, an
+`EmptyState` when empty, and the table otherwise, with `ErrorNotice` above any
+of them when the read failed.
 
 ## Tests
 
