@@ -51,6 +51,7 @@ jobs:
           "IDENTITY_PASSKEYS_ENABLED": "true",
           "IDENTITY_PASSKEYS_PASSWORDLESS": "true",
           "IDENTITY_WEBAUTHN_ORIGINS": "[\"http://127.0.0.1:4173\"]",
+          "IDENTITY_RP_ID": "127.0.0.1",
           "CONTROL_PLANE_USER_PASSWORD": "e2e-local-stack-password",
           "E2E_USER_EMAIL": "e2e-local@e2e.invalid",
           "E2E_USER_PASSWORD": "e2e-local-stack-password"
