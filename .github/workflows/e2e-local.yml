@@ -29,6 +29,7 @@ jobs:
       backend-env-json: >-
         {
           "ENVIRONMENT": "local",
+          "CORS_ORIGINS": "http://127.0.0.1:4173",
           "AWS_ACCESS_KEY_ID": "local",
           "AWS_SECRET_ACCESS_KEY": "local",
           "AWS_DEFAULT_REGION": "us-west-2",
