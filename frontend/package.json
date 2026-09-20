@@ -23,7 +23,6 @@
     "@webbpulse/api-client": ">=0.13.0 <1",
     "@webbpulse/auth": ">=0.13.0 <1",
     "@webbpulse/config": ">=0.13.0 <1",
-    "@webbpulse/discovery": ">=0.13.0 <1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.3"
