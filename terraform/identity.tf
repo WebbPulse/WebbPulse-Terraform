@@ -47,7 +47,7 @@ locals {
 
 module "identity" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/identity"
-  version = "2.26.1"
+  version = "2.28.0"
 
   name_prefix        = local.prefix
   issuer             = local.identity_issuer
@@ -61,6 +61,8 @@ module "identity" {
 
   enable_mfa_encryption_key = false
 
+  api_keys_table_enabled = true
+
   users_stream_enabled = false
 
   tags = {
@@ -72,6 +74,23 @@ module "identity" {
   deletion_protection    = var.environment == "production"
 
   table_policy_actions = local.dynamodb_write_actions
+
+  additional_table_grants = local.identity_additional_table_grants
+}
+
+locals {
+  identity_additional_table_grants = local.domain_functions_enabled ? {
+    runs = {
+      role_name = module.lambda_domain["runs"].role_id
+      tables    = ["api-keys"]
+      actions   = local.dynamodb_write_actions
+    }
+  } : {}
+}
+
+output "identity_api_keys_table_name" {
+  description = "Physical name of the identity api-keys table, which holds agent keys and run tokens alike"
+  value       = module.identity.api_keys_table_name
 }
 
 output "identity_issuer" {
