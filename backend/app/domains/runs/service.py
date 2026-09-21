@@ -854,6 +854,13 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     region = resolved.AWS_REGION_NAME
     endpoint = resolved.s3_endpoint_url
     workspace_state_key = state_key(workspace_id)
+    phase_policy = session_policy.for_phase(
+        phase,
+        state_bucket=resolved.STATE_BUCKET,
+        state_key=workspace_state_key,
+        artifacts_bucket=resolved.ARTIFACTS_BUCKET,
+        run_id=run_id,
+    )
 
     return {
         "run_id": run_id,
@@ -879,13 +886,8 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "run_role": {
             "role_arn": str(workspace.get("run_role_arn", "")),
             "external_id": workspace_id,
-            "session_policy": session_policy.for_phase(
-                phase,
-                state_bucket=resolved.STATE_BUCKET,
-                state_key=workspace_state_key,
-                artifacts_bucket=resolved.ARTIFACTS_BUCKET,
-                run_id=run_id,
-            ),
+            "session_policy": phase_policy.document,
+            "session_policy_arns": list(phase_policy.policy_arns),
             "duration_seconds": RUN_ROLE_DURATION_SECONDS,
         },
         "terraform_variables": variables["terraform"],

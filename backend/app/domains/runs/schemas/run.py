@@ -128,6 +128,10 @@ class RunRole(BaseModel):
     role_arn: str
     external_id: str
     session_policy: dict[str, object]
+    session_policy_arns: list[str] = []
+    """Managed policies the session unions with the inline document. A plan
+    carries `ReadOnlyAccess`, because IAM allows no wildcard in an action's
+    service portion; an apply carries none."""
     duration_seconds: int = RUN_ROLE_DURATION_SECONDS
 
 

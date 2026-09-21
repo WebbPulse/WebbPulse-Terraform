@@ -8,59 +8,51 @@ state and artifact buckets, so a provider bug or a malicious module in someone's
 configuration cannot mutate an account during what the caller was told is a
 read-only operation.
 
-The read-only allowance is expressed as verb prefixes rather than an enumeration
-of services, because an enumeration silently fails closed for a provider nobody
-listed and silently fails open for a mutating call that happens to start with
-`Get`. Neither is ideal, and the prefix form is the one whose failure mode is a
-plan that errors rather than a plan that writes.
+The plan's "read everything" half is the AWS managed policy `ReadOnlyAccess`,
+passed to `AssumeRole` as a session policy ARN rather than written inline,
+because IAM rejects a wildcard in an action's service portion: `*:Get*` is
+malformed and only the bare `*` may stand for every service. A session's
+permissions are the intersection of the role with the union of its session
+policies, so pairing the managed policy with the inline state, artifact and
+encryption statements below reads as widely as the role allows while writing
+only this run's own objects.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Final
 
 from .schemas.run import Phase
 
-READ_ONLY_ACTION_PREFIXES: Final = (
-    "Describe*",
-    "Get*",
-    "List*",
-    "Lookup*",
-    "Search*",
-    "BatchGet*",
-    "Scan",
-    "Query",
-    "Head*",
-    "Select*",
-    "Check*",
-    "Validate*",
-    "Simulate*",
-    "Preview*",
-    "Estimate*",
-    "Generate*Report",
-    "Retrieve*",
-    "View*",
-    "Read*",
-    "Test*",
-    "Query*",
-)
-"""Verb prefixes a plan is allowed to call, across every service.
+PLAN_SESSION_POLICY_ARNS: Final = ("arn:aws:iam::aws:policy/ReadOnlyAccess",)
+"""The managed policies a plan's session unions with its inline document.
 
-Wildcarded as `*:<prefix>` rather than per service. A few of these are mutating
-on some service somewhere, which is why the state-write statement below is an
-explicit allow rather than something inherited from a prefix.
+`ReadOnlyAccess` is AWS's own enumeration of every non mutating action across
+every service, which is the thing the inline document cannot express.
 """
 
-_READ_ONLY_ACTIONS: Final = tuple(f"*:{prefix}" for prefix in READ_ONLY_ACTION_PREFIXES)
+
+@dataclass(frozen=True)
+class SessionPolicy:
+    """One phase's session policy, in both forms `AssumeRole` accepts.
+
+    Attributes:
+        document: The inline policy, passed as `Policy`.
+        policy_arns: The managed policies, passed as `PolicyArns`.
+    """
+
+    document: dict[str, Any]
+    policy_arns: tuple[str, ...]
 
 
 def plan_policy(state_bucket: str, state_key: str, artifacts_bucket: str, run_id: str) -> dict[str, Any]:
-    """The read-only session policy for a plan phase.
+    """The inline half of a plan phase's session policy.
 
-    Reads are allowed everywhere by verb prefix. Writes are allowed only against
-    this workspace's state object, its lock and this run's artifact keys, because
-    `terraform plan` does write: it takes the S3 lock, refreshes state and
-    uploads the plan files.
+    Reads come from the managed `ReadOnlyAccess` policy the session unions this
+    with. Writes are allowed only against this workspace's state object, its
+    lock and this run's artifact keys, because `terraform plan` does write: it
+    takes the S3 lock, refreshes state and uploads the plan files.
 
     Args:
         state_bucket: The state bucket.
@@ -71,12 +63,6 @@ def plan_policy(state_bucket: str, state_key: str, artifacts_bucket: str, run_id
     return {
         "Version": "2012-10-17",
         "Statement": [
-            {
-                "Sid": "ReadEverything",
-                "Effect": "Allow",
-                "Action": list(_READ_ONLY_ACTIONS),
-                "Resource": "*",
-            },
             {
                 "Sid": "StateAndLock",
                 "Effect": "Allow",
@@ -122,11 +108,14 @@ def for_phase(
     state_key: str,
     artifacts_bucket: str,
     run_id: str,
-) -> dict[str, Any]:
-    """The session policy for one phase of one run."""
+) -> SessionPolicy:
+    """The session policy for one phase of one run, inline document and ARNs."""
     if phase == "plan":
-        return plan_policy(state_bucket, state_key, artifacts_bucket, run_id)
-    return apply_policy()
+        return SessionPolicy(
+            document=plan_policy(state_bucket, state_key, artifacts_bucket, run_id),
+            policy_arns=PLAN_SESSION_POLICY_ARNS,
+        )
+    return SessionPolicy(document=apply_policy(), policy_arns=())
 
 
-__all__ = ["READ_ONLY_ACTION_PREFIXES", "apply_policy", "for_phase", "plan_policy"]
+__all__ = ["PLAN_SESSION_POLICY_ARNS", "SessionPolicy", "apply_policy", "for_phase", "plan_policy"]

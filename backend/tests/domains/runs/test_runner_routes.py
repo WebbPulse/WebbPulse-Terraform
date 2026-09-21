@@ -160,7 +160,29 @@ def test_the_plan_phase_gets_a_read_only_session_policy(runner_client, created_r
     assert body["phase"] == "plan"
     statements = body["run_role"]["session_policy"]["Statement"]
     assert not any(statement.get("Action") == "*" for statement in statements)
-    assert any("ReadEverything" == statement.get("Sid") for statement in statements)
+    assert {statement["Sid"] for statement in statements} == {
+        "StateAndLock",
+        "PlanArtifacts",
+        "StateEncryption",
+    }
+
+
+def test_the_plan_bundle_carries_the_managed_read_only_policy_arn(runner_client, created_run):
+    """The bundle hands the runner the ReadOnlyAccess ARN to union in.
+
+    The inline document grants no reads at all now, so a bundle that dropped
+    this field would give a plan a session that cannot refresh state.
+    """
+    role = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()["run_role"]
+    assert role["session_policy_arns"] == ["arn:aws:iam::aws:policy/ReadOnlyAccess"]
+
+
+def test_the_apply_bundle_carries_no_session_policy_arns(auth_client, runner_client, awaiting_confirmation):
+    """An apply's session unions nothing, because its inline policy allows everything."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    role = runner_client.get(f"{BASE}/{run_id}/bundle").json()["run_role"]
+    assert role["session_policy_arns"] == []
 
 
 def test_the_apply_phase_gets_an_unrestricted_session_policy(auth_client, runner_client, awaiting_confirmation):
