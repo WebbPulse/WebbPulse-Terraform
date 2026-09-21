@@ -41,6 +41,7 @@ locals {
     "POST /api/v1/runs/{run_id}/cancel"           = { integration = "runs" }
     "POST /api/v1/runs/{run_id}/discard"          = { integration = "runs" }
     "GET /api/v1/runs/{run_id}/logs"              = { integration = "runs" }
+    "GET /api/v1/runs/{run_id}/plan"              = { integration = "runs" }
     "GET /api/v1/runs/{run_id}/bundle"            = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/artifact-uploads" = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/phase-result"     = { integration = "runs", authorization_type = "NONE" }

@@ -607,6 +607,175 @@
         "title": "PhaseResultAccepted",
         "type": "object"
       },
+      "PlanOutputChange": {
+        "description": "One root output's change in a plan.\n\nA sensitive output carries the redaction string rather than its value, the\nsame way a sensitive resource attribute does.",
+        "properties": {
+          "action": {
+            "enum": [
+              "create",
+              "update",
+              "delete",
+              "replace",
+              "read",
+              "no-op"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "after": {
+            "title": "After"
+          },
+          "after_unknown": {
+            "default": false,
+            "title": "After Unknown",
+            "type": "boolean"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "action"
+        ],
+        "title": "PlanOutputChange",
+        "type": "object"
+      },
+      "PlanResourceChange": {
+        "description": "One resource's entry in a plan, as the viewer renders it.\n\n`before` and `after` are the planned state on either side, with every value\nthe plan marked sensitive already replaced by a redaction string, so no\nsealed variable or sensitive attribute reaches the browser. They carry\nwhatever shape the plan put there rather than an object, because the plan\nformat allows a scalar or a list and a run view that 500s on an unusual\nplan is a worse failure than a loose type.",
+        "properties": {
+          "action": {
+            "enum": [
+              "create",
+              "update",
+              "delete",
+              "replace",
+              "read",
+              "no-op"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "action_reason": {
+            "default": "",
+            "title": "Action Reason",
+            "type": "string"
+          },
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "after": {
+            "title": "After"
+          },
+          "after_sensitive": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Sensitive"
+          },
+          "after_unknown": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Unknown"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "before_sensitive": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Sensitive"
+          },
+          "mode": {
+            "enum": [
+              "managed",
+              "data"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "module_address": {
+            "default": "",
+            "title": "Module Address",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider_name": {
+            "default": "",
+            "title": "Provider Name",
+            "type": "string"
+          },
+          "replace_paths": {
+            "items": {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "title": "Replace Paths",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "mode",
+          "type",
+          "name",
+          "action"
+        ],
+        "title": "PlanResourceChange",
+        "type": "object"
+      },
       "Run": {
         "description": "A stored run as the API renders it.\n\nThe task tokens and the run token hash are stored on the row and never in\nthis model: a caller who could read a confirm task token could confirm a run\nit was not allowed to confirm.",
         "properties": {
@@ -1038,6 +1207,48 @@
           "items"
         ],
         "title": "RunList",
+        "type": "object"
+      },
+      "RunPlan": {
+        "description": "A run's plan as structured data, derived from `terraform show -json`.\n\nThe raw plan document is never returned: it can reach hundreds of megabytes\nand it carries sensitive values verbatim. This is the summarised, redacted\nprojection the run view renders.",
+        "properties": {
+          "changes": {
+            "$ref": "#/components/schemas/RunChanges"
+          },
+          "has_changes": {
+            "default": false,
+            "title": "Has Changes",
+            "type": "boolean"
+          },
+          "output_changes": {
+            "items": {
+              "$ref": "#/components/schemas/PlanOutputChange"
+            },
+            "title": "Output Changes",
+            "type": "array"
+          },
+          "resource_changes": {
+            "items": {
+              "$ref": "#/components/schemas/PlanResourceChange"
+            },
+            "title": "Resource Changes",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "terraform_version": {
+            "default": "",
+            "title": "Terraform Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "changes"
+        ],
+        "title": "RunPlan",
         "type": "object"
       },
       "RunRole": {
@@ -3137,6 +3348,52 @@
           }
         },
         "summary": "Phase Result",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/plan": {
+      "get": {
+        "description": "A run's plan as structured data: the counts, the resource changes and the outputs.\n\nThe raw `terraform show -json` document is never returned. Every value the\nplan marked sensitive is redacted before the response is built.",
+        "operationId": "run_plan_api_v1_runs__run_id__plan_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Run Plan",
         "tags": [
           "runs"
         ]
