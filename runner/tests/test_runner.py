@@ -312,6 +312,78 @@ def test_assume_role_failure_fails_the_task(
     assert recorder.phase_results == []
 
 
+def test_a_refused_artifact_upload_names_itself(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An upload the API refuses fails the phase as `ArtifactUploadFailed`.
+
+    Before this it escaped `execute` as a bare `ApiError`, which the generic
+    handler reported as the type name alone, so a run that could not store its
+    plan failed with `RunnerFailed "ApiError"` and no way to tell why.
+    """
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder, upload_request_status=500)
+    clients = make_clients(transport)
+
+    assert run(make_env("plan"), clients, tmp_path) == 1
+    assert recorder.phase_results == []
+    assert "ArtifactUploadFailed: plan upload request returned 500" in capsys.readouterr().err
+
+
+def test_an_unknown_failure_keeps_its_message(
+    aws: None,
+    config_tarball: bytes,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An exception no phase raised is reported with its message, scrubbed.
+
+    Printing only the type name is what hid the artifact upload failure, so the
+    generic handler carries the message and the redactor keeps the tokens out.
+    """
+    recorder = ApiRecorder()
+    clients = make_clients(make_transport(None, config_tarball, recorder))
+
+    def explode(*_: object, **__: object) -> None:
+        raise RuntimeError(f"boom with {RUN_TOKEN} in it")
+
+    monkeypatch.setattr("app.main.execute", explode)
+
+    assert run(make_env("plan"), clients, tmp_path) == 1
+    captured = capsys.readouterr().err
+    assert "RuntimeError: boom with" in captured
+    assert RUN_TOKEN not in captured
+
+
+def test_the_plan_artifacts_are_uploaded_at_their_real_size(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """Each artifact's URL is minted for the bytes that phase actually produced."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder)
+    clients = make_clients(transport)
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+
+    requested = {entry["artifact"]: entry["size_bytes"] for entry in recorder.upload_requests}
+    assert requested["plan"] == len(recorder.uploads["/runs/plan.tfplan"])
+    assert requested["plan_json"] == len(recorder.uploads["/runs/plan.json"])
+    assert requested["log"] == len(recorder.uploads["/runs/plan.log"])
+    assert recorder.upload_headers["/runs/plan.tfplan"]["content-type"] == "application/octet-stream"
+
+
 def test_clients_build_uses_the_region(aws: None) -> None:
     """The real client factory honours the runner's region."""
     clients = Clients.build("us-west-2")

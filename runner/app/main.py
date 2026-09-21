@@ -135,8 +135,11 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
         if env.phase == "plan":
             exit_code, changes, has_changes, plan_json = _run_plan(runner, sink)
             plan_json_path.write_text(plan_json)
-            api.upload_file(bundle.artifacts.plan_put_url, plan_path, "application/octet-stream")
-            api.upload_file(bundle.artifacts.plan_json_put_url, plan_json_path, "application/json")
+            try:
+                api.upload_file("plan", plan_path)
+                api.upload_file("plan_json", plan_json_path)
+            except ApiError as error:
+                raise PhaseFailure("ArtifactUploadFailed", str(error)) from error
         else:
             if not bundle.artifacts.plan_get_url:
                 raise PhaseFailure("PlanUnavailable", "the apply phase bundle carries no plan get url")
@@ -147,7 +150,10 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
             exit_code = _run_apply(runner)
 
         sink.flush()
-        api.upload_text(bundle.artifacts.log_put_url, sink.text(), "text/plain")
+        try:
+            api.upload_text("log", sink.text())
+        except ApiError as error:
+            raise PhaseFailure("ArtifactUploadFailed", str(error)) from error
 
         result = PhaseResult(
             run_id=env.run_id,
@@ -178,13 +184,9 @@ def run(env: RunnerEnv, clients: Clients, directory: Path) -> int:
         )
         return 1
     except Exception as error:
-        print(f"unexpected failure: {type(error).__name__}", file=sys.stderr, flush=True)
-        callback.send_failure(
-            clients.sfn,
-            env.task_token.get_secret_value(),
-            "RunnerFailed",
-            type(error).__name__,
-        )
+        cause = redactor.scrub(f"{type(error).__name__}: {error}")
+        print(f"unexpected failure: {cause}", file=sys.stderr, flush=True)
+        callback.send_failure(clients.sfn, env.task_token.get_secret_value(), "RunnerFailed", cause)
         return 1
     callback.send_success(clients.sfn, env.task_token.get_secret_value(), result.exit_code, result.changes)
     return 0

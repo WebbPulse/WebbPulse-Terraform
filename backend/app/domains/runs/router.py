@@ -1,10 +1,10 @@
-"""The runs domain's routes, including the two the runner owns.
+"""The runs domain's routes, including the three the runner owns.
 
-Ten routes on two different credentials. Eight are guarded by `require_scopes`
-and reached by a person through the JWT authorizer or an agent through a `wpk_`
-key. Two, the bundle and the phase result, are guarded by a run token bound to
-the run in the path, because the bundle carries decrypted variables and no
-human scope should open it.
+Eleven routes on two different credentials. Eight are guarded by
+`require_scopes` and reached by a person through the JWT authorizer or an agent
+through a `wpk_` key. Three, the bundle, the artifact upload and the phase
+result, are guarded by a run token bound to the run in the path, because the
+bundle carries decrypted variables and no human scope should open it.
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ from ...common.core.auth import (
 from ..workspaces import service as workspaces_service
 from . import service
 from .schemas.run import (
+    ArtifactUpload,
+    ArtifactUploadCreate,
     LogPage,
     PhaseResult,
     PhaseResultAccepted,
@@ -194,6 +196,33 @@ def run_bundle(run_id: str = RunId) -> dict[str, Any]:
         raise _not_found("That run's workspace no longer exists.") from error
     except workspaces_service.ConfigVersionNotFound as error:
         raise _not_found("That run's config version no longer exists.") from error
+
+
+@router.post(
+    "/runs/{run_id}/artifact-uploads",
+    response_model=ArtifactUpload,
+    dependencies=[Depends(require_run_token())],
+)
+def artifact_upload(payload: ArtifactUploadCreate, run_id: str = RunId) -> dict[str, Any]:
+    """Mint the presigned PUT for one of this run's artifacts. Runner only.
+
+    The size is the caller's, not a ceiling: `Content-Length` is inside the
+    signature, so S3 refuses a body of any other length. A runner therefore asks
+    once per artifact, after it knows how many bytes it is about to send, and
+    sends the returned headers verbatim.
+
+    The log's key is per phase and the phase comes from the run's status, so a
+    plan-phase runner cannot ask for the apply transcript's key.
+    """
+    try:
+        return service.artifact_upload(run_id, payload.artifact, payload.size_bytes)
+    except service.RunNotFound as error:
+        raise _not_found("No such run.") from error
+    except service.ArtifactTooLarge as error:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=str(error),
+        ) from error
 
 
 @router.post(

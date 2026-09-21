@@ -136,17 +136,41 @@ class RunRole(BaseModel):
 
 
 class Artifacts(BaseModel):
-    """Presigned URLs for one run's artifacts, in both directions.
+    """Presigned URLs the runner reads from, for one run.
 
-    A plan phase PUTs the two plan files and an apply phase GETs the binary
-    plan; both phases PUT their redacted log. Everything is signed, so the
-    runner needs no bucket credentials of its own.
+    Only the read direction is minted here. An upload's URL signs the exact
+    `Content-Length` the client will send, which is not known when the bundle is
+    built, so the runner asks for one per artifact through
+    `POST /runs/{id}/artifact-uploads` once it knows the byte count.
     """
 
-    plan_put_url: str
-    plan_json_put_url: str
     plan_get_url: str
-    log_put_url: str
+
+
+ArtifactKind = Literal["plan", "plan_json", "log"]
+"""The three objects a phase uploads: the binary plan, its JSON rendering and
+the redacted transcript."""
+
+
+class ArtifactUploadCreate(BaseModel):
+    """A request for somewhere to upload one of a run's artifacts."""
+
+    artifact: ArtifactKind
+    size_bytes: int = Field(gt=0)
+    """The exact byte count the presigned PUT signs, which the client has to
+    declare as `Content-Length` and S3 enforces at the header."""
+
+
+class ArtifactUpload(BaseModel):
+    """The presigned PUT one artifact goes to.
+
+    `headers` is not advisory: every one is inside the signature, so a request
+    that omits or changes one is rejected by S3.
+    """
+
+    url: str
+    headers: dict[str, str]
+    expires_in: int
 
 
 class RunBundle(BaseModel):
@@ -155,7 +179,8 @@ class RunBundle(BaseModel):
     The shape is the runner's `Bundle`: the nested `backend`, `run_role` and
     `artifacts` objects are what `runner/app/models.py` validates, and the four
     extra top level fields are what the runner ignores for now but the API
-    states about the phase it is serving.
+    states about the phase it is serving. Uploads are not here: the runner asks
+    for each one's presigned PUT by size once it has the bytes.
 
     The only response in the API that carries decrypted variable values, which is
     why it is gated on a run token bound to this run rather than on scopes.

@@ -130,13 +130,16 @@ def bundle_payload(run_role_arn: str, *, engine: str = "terraform", plan_get_url
         },
         "environment_variables": {"PROVIDER_TOKEN": SECRET_ENVVAR},
         "terraform_variables": {"db_password": SECRET_TFVAR, "instance_count": 2},
-        "artifacts": {
-            "plan_put_url": "https://artifacts.example.invalid/runs/plan.tfplan?sig=2",
-            "plan_get_url": plan_get_url,
-            "plan_json_put_url": "https://artifacts.example.invalid/runs/plan.json?sig=3",
-            "log_put_url": "https://artifacts.example.invalid/runs/plan.log?sig=4",
-        },
+        "artifacts": {"plan_get_url": plan_get_url},
     }
+
+
+ARTIFACT_OBJECTS: dict[str, tuple[str, str]] = {
+    "plan": ("/runs/plan.tfplan", "application/octet-stream"),
+    "plan_json": ("/runs/plan.json", "application/json"),
+    "log": ("/runs/plan.log", "text/plain"),
+}
+"""The path and signed content type the fake API mints an upload for, per kind."""
 
 
 class ApiRecorder:
@@ -145,6 +148,8 @@ class ApiRecorder:
     def __init__(self) -> None:
         self.phase_results: list[dict[str, Any]] = []
         self.uploads: dict[str, bytes] = {}
+        self.upload_headers: dict[str, dict[str, str]] = {}
+        self.upload_requests: list[dict[str, Any]] = []
         self.bundle_requests = 0
 
 
@@ -155,8 +160,15 @@ def make_transport(
     *,
     bundle_status: int = 200,
     plan_bytes: bytes = b"fake-plan",
+    upload_request_status: int = 200,
+    upload_status: int = 200,
 ) -> httpx.MockTransport:
-    """An httpx transport serving the bundle, the config tarball and the presigned puts."""
+    """An httpx transport serving the bundle, the config tarball and the artifact uploads.
+
+    The upload route mints a URL that names the declared size, and the PUT handler
+    refuses a body whose length does not match it, so a runner that sent the wrong
+    `Content-Length` fails here the way S3 fails it.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -165,13 +177,34 @@ def make_transport(
             if bundle_status != 200 or bundle is None:
                 return httpx.Response(bundle_status, json={"detail": "nope"})
             return httpx.Response(200, json=bundle)
+        if path.endswith("/artifact-uploads"):
+            payload = json.loads(request.content)
+            recorder.upload_requests.append(payload)
+            if upload_request_status != 200:
+                return httpx.Response(upload_request_status, json={"detail": "nope"})
+            object_path, content_type = ARTIFACT_OBJECTS[str(payload["artifact"])]
+            size = int(payload["size_bytes"])
+            return httpx.Response(
+                200,
+                json={
+                    "url": f"https://artifacts.example.invalid{object_path}?sig=1&len={size}",
+                    "headers": {"Content-Type": content_type, "Content-Length": str(size)},
+                    "expires_in": 3600,
+                },
+            )
         if path.endswith("/phase-result"):
             recorder.phase_results.append(json.loads(request.content))
             return httpx.Response(204)
         if "config.tar.gz" in path:
             return httpx.Response(200, content=config_tarball)
         if request.method == "PUT":
+            if upload_status != 200:
+                return httpx.Response(upload_status)
+            signed = request.url.params.get("len")
+            if signed is not None and int(signed) != len(request.content):
+                return httpx.Response(403, json={"detail": "content length does not match the signature"})
             recorder.uploads[path] = request.content
+            recorder.upload_headers[path] = dict(request.headers)
             return httpx.Response(200)
         if path.endswith("plan.tfplan"):
             return httpx.Response(200, content=plan_bytes)
