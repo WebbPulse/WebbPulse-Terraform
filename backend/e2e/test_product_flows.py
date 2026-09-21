@@ -24,6 +24,7 @@ EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "first-run"
 
 PLAN_TERMINAL = ("planned", "planned_and_finished", "errored", "cancelled", "discarded")
 APPLY_TERMINAL = ("applied", "errored", "cancelled", "discarded")
+RUN_TERMINAL = ("applied", "planned_and_finished", "errored", "cancelled", "discarded")
 
 POLL_SECONDS = 5
 PLAN_TIMEOUT_SECONDS = 600
@@ -208,7 +209,12 @@ class TestRunLifecycle:
         assert final["status"] in ("cancelled", "planned", "planned_and_finished"), final
 
     def test_runs_list_carries_this_workspace(self, api: Any, workspace: dict[str, Any]) -> None:
-        """A run started for this workspace appears in the runs list."""
+        """A run started for this workspace appears in the runs list, and is then ended.
+
+        The list is the assertion, so the run is cancelled straight afterwards rather
+        than planned out: the case needs nothing from the plan, and leaving an execution
+        running would outlive the test.
+        """
         workspace_id = workspace["workspace_id"]
         config_version_id = _upload(api, workspace_id)
         run_id = _create_run(api, workspace_id, config_version_id, plan_only=True)
@@ -217,3 +223,9 @@ class TestRunLifecycle:
         assert listed.status_code == 200, listed.text[:400]
         identifiers = [str(item["run_id"]) for item in listed.json()["items"]]
         assert run_id in identifiers
+
+        cancelled = api.post(f"/api/v1/runs/{run_id}/cancel")
+        assert cancelled.status_code in (200, 202, 409), cancelled.text[:400]
+
+        final = _wait_for(api, run_id, RUN_TERMINAL, PLAN_TIMEOUT_SECONDS)
+        assert final["status"] in RUN_TERMINAL, final

@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from typing import Any
 
 import pytest
+from runs_cleanup import end_runs_for_workspace
 
 pytest_plugins = ["webbpulse.e2e"]
 
@@ -215,14 +216,22 @@ def _cleanup_client(env: Any) -> Any:
 
 
 def _delete_workspace(client: Any, workspace_id: str) -> str:
-    """Delete one workspace, describing the failure rather than raising."""
+    """End this workspace's runs, then delete it, describing failures rather than raising.
+
+    The runs go first because deleting the workspace leaves them untouched, and a run
+    still planning or applying holds an execution open. A run that will not end is
+    reported but does not stop the delete, since leaving the workspace behind as well
+    would only add to what is orphaned.
+    """
+    problems = [f"{workspace_id}: run {item}" for item in end_runs_for_workspace(client, workspace_id)]
     try:
         response = client.delete(f"/api/v1/workspaces/{workspace_id}")
     except Exception as error:
-        return f"{workspace_id} ({type(error).__name__})"
+        problems.append(f"{workspace_id} ({type(error).__name__})")
+        return "; ".join(problems)
     if response.status_code not in (200, 204, 404):
-        return f"{workspace_id} ({response.status_code})"
-    return ""
+        problems.append(f"{workspace_id} ({response.status_code})")
+    return "; ".join(problems)
 
 
 def _workspace_ids(client: Any) -> list[dict[str, Any]]:
@@ -256,10 +265,11 @@ def _is_stale(item: dict[str, Any]) -> bool:
 
 
 def pytest_e2e_cleanup(env: Any, phase: str, created: Sequence[Any]) -> Any:
-    """Delete this run's workspaces at the end and stale ones at the start.
+    """End this run's runs and delete its workspaces at the end, and stale ones at the start.
 
-    A workspace is the only resource that outlives a case: variables, config versions
-    and runs are all deleted with it.
+    Deleting a workspace takes its variables and config versions with it, but not its
+    runs, so every non-terminal run is cancelled or discarded and waited out first.
+    Nothing a case started is still executing once this returns.
     """
     if env.read_only:
         return ""
@@ -350,8 +360,12 @@ def run_role_arn(e2e_env: Any) -> str:
 
 
 @pytest.fixture
-def workspace(api: Any, e2e_env: Any, run_role_arn: str, created_resources: list[Any]) -> dict[str, Any]:
-    """A workspace this run owns, registered for cleanup before it is used."""
+def workspace(api: Any, e2e_env: Any, run_role_arn: str, created_resources: list[Any]) -> Iterator[dict[str, Any]]:
+    """A workspace this run owns, registered for cleanup before it is used.
+
+    Teardown ends every run the case left behind, whether it passed or failed, so no
+    execution outlives the case even though the session sweep would also catch it.
+    """
     body = {
         "name": f"{e2e_env.resource_prefix}{secrets.token_hex(3)}",
         "engine": "terraform",
@@ -363,4 +377,9 @@ def workspace(api: Any, e2e_env: Any, run_role_arn: str, created_resources: list
         pytest.fail(f"creating the workspace answered {response.status_code}: {response.text[:400]}")
     created = dict(response.json())
     created_resources.append({"kind": "workspace", "id": created["workspace_id"]})
-    return created
+    try:
+        yield created
+    finally:
+        unfinished = end_runs_for_workspace(api, str(created["workspace_id"]))
+        if unfinished:
+            print(f"e2e cleanup could not end run(s): {', '.join(unfinished)}")
