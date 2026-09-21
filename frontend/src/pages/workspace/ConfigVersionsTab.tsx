@@ -1,4 +1,4 @@
-/** The configuration versions tab: upload a tarball, then start a run from it. */
+/** The configuration versions list: upload a tarball, then start a run from it. */
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -24,6 +24,7 @@ import {
   formatBytes,
   formatDateTime,
   formatRelative,
+  runPath,
 } from '../../components';
 import { UploadConfigForm } from './UploadConfigForm';
 
@@ -63,7 +64,7 @@ export function ConfigVersionsTab({
           className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
         >
           {RUN_ROLE_MISSING_MESSAGE} Runs stay disabled until the connection
-          check passes on the Overview tab.
+          check passes under Settings, AWS account.
         </p>
       )}
       {isLoading ? (
@@ -201,7 +202,7 @@ function StartRunButtons({
         plan_only: planOnly,
       });
       invalidateQueries([runsKey]);
-      void navigate(`/runs/${run.run_id}`);
+      void navigate(runPath({ run_id: run.run_id, workspace_id: workspaceId }));
     } catch (thrown) {
       setError(
         isRunRoleMissing(thrown) ? new Error(RUN_ROLE_MISSING_MESSAGE) : thrown

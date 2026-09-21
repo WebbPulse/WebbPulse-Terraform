@@ -1,9 +1,13 @@
 /** The signed in shell: a left rail of navigation and the routed page beside it. */
 
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { Outlet, useMatch, useNavigate } from 'react-router-dom';
 import { useAuth } from '@webbpulse/auth/react';
 
 import { Button } from './Button';
+import { RailGroupLabel, RailLink } from './RailLink';
+import { WorkspaceNav } from './WorkspaceNav';
+import { WorkspaceNavContext } from './workspaceNavContext';
 
 /** The sections in the rail, in order. */
 const SECTIONS: readonly {
@@ -80,11 +84,19 @@ function emailOf(user: unknown): string | null {
   return null;
 }
 
-/** The rail, the page and a skip link ahead of both. */
+/**
+ * The rail, the page and a skip link ahead of both.
+ *
+ * Inside a workspace the rail gives way to that workspace's sections, the way
+ * a workspace takes over the sidebar in the hosted product this follows.
+ */
 export function Layout(): React.ReactElement {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
   const email = emailOf(user);
+  const workspaceMatch = useMatch('/workspaces/:workspaceId/*');
+  const workspaceId = workspaceMatch?.params.workspaceId ?? null;
+  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
 
   const signOut = async (): Promise<void> => {
     await logout();
@@ -92,107 +104,97 @@ export function Layout(): React.ReactElement {
   };
 
   return (
-    <div className="flex min-h-screen">
-      <a
-        href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-brand-600 focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
-      >
-        Skip to content
-      </a>
-      <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-line bg-panel md:flex">
-        <div className="flex h-12 items-center gap-2 border-b border-line px-4">
-          <Mark />
-          <span className="text-sm font-semibold text-text-strong">
-            Terraform
-          </span>
-        </div>
-        <nav aria-label="Primary" className="flex-1 space-y-0.5 p-2">
-          {SECTIONS.map((section) => (
-            <RailLink key={section.to} {...section} />
-          ))}
-        </nav>
-        <div className="space-y-2 border-t border-line p-3">
-          {email === null ? null : (
-            <p className="truncate px-1 text-xs text-text-faint" title={email}>
-              {email}
-            </p>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start"
-            onClick={() => {
-              void signOut();
-            }}
-          >
-            Sign out
-          </Button>
-        </div>
-      </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-12 items-center justify-between gap-3 border-b border-line bg-bg/90 px-4 backdrop-blur md:hidden">
-          <div className="flex items-center gap-2">
+    <WorkspaceNavContext.Provider
+      value={{ name: workspaceName, setName: setWorkspaceName }}
+    >
+      <div className="flex min-h-screen">
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-brand-600 focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
+        >
+          Skip to content
+        </a>
+        <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-line bg-panel md:flex">
+          <div className="flex h-12 items-center gap-2 border-b border-line px-4">
             <Mark />
             <span className="text-sm font-semibold text-text-strong">
               Terraform
             </span>
           </div>
-          <nav aria-label="Primary" className="flex items-center gap-1">
-            {SECTIONS.map((section) => (
-              <RailLink key={section.to} {...section} compact />
-            ))}
+          {workspaceId === null ? (
+            <nav aria-label="Primary" className="flex-1 space-y-0.5 p-2">
+              <RailGroupLabel>Manage</RailGroupLabel>
+              {SECTIONS.map((section) => (
+                <RailLink key={section.to} {...section} />
+              ))}
+            </nav>
+          ) : (
+            <WorkspaceNav workspaceId={workspaceId} name={workspaceName} />
+          )}
+          <div className="space-y-2 border-t border-line p-3">
+            {email === null ? null : (
+              <p
+                className="truncate px-1 text-xs text-text-faint"
+                title={email}
+              >
+                {email}
+              </p>
+            )}
             <Button
               variant="ghost"
               size="sm"
+              className="w-full justify-start"
               onClick={() => {
                 void signOut();
               }}
             >
               Sign out
             </Button>
-          </nav>
-        </header>
-        <main
-          id="main"
-          className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-8"
-        >
-          <Outlet />
-        </main>
+          </div>
+        </aside>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-30 border-b border-line bg-bg/90 backdrop-blur md:hidden">
+            <div className="flex h-12 items-center justify-between gap-3 px-4">
+              <div className="flex items-center gap-2">
+                <Mark />
+                <span className="text-sm font-semibold text-text-strong">
+                  Terraform
+                </span>
+              </div>
+              <nav aria-label="Primary" className="flex items-center gap-1">
+                {SECTIONS.map((section) => (
+                  <RailLink key={section.to} {...section} compact />
+                ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    void signOut();
+                  }}
+                >
+                  Sign out
+                </Button>
+              </nav>
+            </div>
+            {workspaceId === null ? null : (
+              <div className="border-t border-line px-2 py-1">
+                <WorkspaceNav
+                  workspaceId={workspaceId}
+                  name={workspaceName}
+                  compact
+                />
+              </div>
+            )}
+          </header>
+          <main
+            id="main"
+            className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-8"
+          >
+            <Outlet />
+          </main>
+        </div>
       </div>
-    </div>
-  );
-}
-
-/** One link in the rail, with the section's icon and an active state. */
-function RailLink({
-  to,
-  label,
-  icon,
-  compact = false,
-}: {
-  to: string;
-  label: string;
-  icon: React.ReactNode;
-  compact?: boolean;
-}): React.ReactElement {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `flex items-center gap-2 rounded-md text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-          compact ? 'px-2 py-1' : 'px-2.5 py-1.5'
-        } ${
-          isActive
-            ? 'bg-raised text-text-strong'
-            : 'text-text-muted hover:bg-raised/60 hover:text-text-strong'
-        }`
-      }
-    >
-      <span className="text-text-faint" aria-hidden="true">
-        {icon}
-      </span>
-      {label}
-    </NavLink>
+    </WorkspaceNavContext.Provider>
   );
 }
 

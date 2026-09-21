@@ -2,5 +2,13 @@ export { NotFound } from './NotFound';
 export { RunDetail } from './RunDetail';
 export { Runs } from './Runs';
 export { SignIn } from './SignIn';
-export { WorkspaceDetail } from './WorkspaceDetail';
+export { WorkspaceLayout } from './WorkspaceLayout';
+export {
+  useOptionalWorkspace,
+  useWorkspace,
+  workspaceKeys,
+  type WorkspaceContext,
+  type WorkspaceKeys,
+} from './workspaceContext';
+export { workspaceRoutes } from './workspaceRoutes';
 export { Workspaces, WORKSPACES_KEY } from './Workspaces';

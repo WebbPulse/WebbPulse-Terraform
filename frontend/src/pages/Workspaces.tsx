@@ -47,6 +47,7 @@ export function Workspaces(): React.ReactElement {
   const auth = useQueryAuth();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
+  const [filter, setFilter] = useState('');
   const query = usePolledQuery<WorkspaceList>(
     ({ signal }) => api.listWorkspaces({ signal }),
     { intervalMs: 30_000, queryKey: WORKSPACES_KEY, auth }
@@ -82,6 +83,8 @@ export function Workspaces(): React.ReactElement {
       ) : (
         <WorkspaceTable
           workspaces={query.data?.items ?? []}
+          filter={filter}
+          onFilter={setFilter}
           onCreate={() => {
             setCreating(true);
           }}
@@ -109,12 +112,16 @@ export function Workspaces(): React.ReactElement {
   );
 }
 
-/** The table of workspaces, or an invitation to create the first one. */
+/** The table of workspaces behind a name filter, or an invitation to create the first one. */
 function WorkspaceTable({
   workspaces,
+  filter,
+  onFilter,
   onCreate,
 }: {
   workspaces: Workspace[];
+  filter: string;
+  onFilter: (value: string) => void;
   onCreate: () => void;
 }): React.ReactElement {
   if (workspaces.length === 0) {
@@ -130,51 +137,83 @@ function WorkspaceTable({
       />
     );
   }
+  const needle = filter.trim().toLowerCase();
+  const shown =
+    needle === ''
+      ? workspaces
+      : workspaces.filter((workspace) =>
+          workspace.name.toLowerCase().includes(needle)
+        );
   return (
-    <Table label="Workspaces">
-      <thead>
-        <tr>
-          <Th>Name</Th>
-          <Th>Engine</Th>
-          <Th>AWS account</Th>
-          <Th>Created</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {workspaces.map((workspace) => (
-          <Tr key={workspace.workspace_id}>
-            <Td>
-              <Link
-                to={`/workspaces/${workspace.workspace_id}`}
-                className="font-medium text-text-strong hover:text-brand-300"
-              >
-                {workspace.name}
-              </Link>
-              {(workspace.description ?? '') === '' ? null : (
-                <p className="max-w-md truncate text-xs text-text-faint">
-                  {workspace.description}
-                </p>
-              )}
-            </Td>
-            <Td className="text-text-muted">
-              {workspace.engine ?? 'terraform'}{' '}
-              <span className="font-mono text-xs">
-                {workspace.engine_version}
-              </span>
-            </Td>
-            <Td>
-              <ConnectionCell workspace={workspace} />
-            </Td>
-            <Td
-              className="text-xs whitespace-nowrap text-text-faint"
-              title={formatDateTime(workspace.created_at)}
-            >
-              {formatRelative(workspace.created_at)}
-            </Td>
-          </Tr>
-        ))}
-      </tbody>
-    </Table>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <input
+          type="search"
+          aria-label="Filter workspaces by name"
+          placeholder="Filter workspaces by name"
+          value={filter}
+          onChange={(event) => {
+            onFilter(event.target.value);
+          }}
+          className={`${INPUT_CLASS} max-w-xs`}
+        />
+        <span className="text-xs text-text-faint">
+          {shown.length} of {workspaces.length}
+        </span>
+      </div>
+      {shown.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm text-text-faint">
+          No workspaces match that name.
+        </p>
+      ) : (
+        <Table label="Workspaces">
+          <thead>
+            <tr>
+              <Th>Workspace name</Th>
+              <Th>Engine</Th>
+              <Th>AWS account</Th>
+              <Th>Latest change</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((workspace) => (
+              <Tr key={workspace.workspace_id}>
+                <Td>
+                  <Link
+                    to={`/workspaces/${workspace.workspace_id}`}
+                    className="font-medium text-text-strong hover:text-brand-300"
+                  >
+                    {workspace.name}
+                  </Link>
+                  {(workspace.description ?? '') === '' ? null : (
+                    <p className="max-w-md truncate text-xs text-text-faint">
+                      {workspace.description}
+                    </p>
+                  )}
+                </Td>
+                <Td className="text-text-muted">
+                  {workspace.engine ?? 'terraform'}{' '}
+                  <span className="font-mono text-xs">
+                    {workspace.engine_version}
+                  </span>
+                </Td>
+                <Td>
+                  <ConnectionCell workspace={workspace} />
+                </Td>
+                <Td
+                  className="text-xs whitespace-nowrap text-text-faint"
+                  title={formatDateTime(
+                    workspace.updated_at ?? workspace.created_at
+                  )}
+                >
+                  {formatRelative(workspace.updated_at ?? workspace.created_at)}
+                </Td>
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+    </div>
   );
 }
 

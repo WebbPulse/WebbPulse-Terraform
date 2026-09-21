@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
+import { Layout } from '../components/Layout';
+
 import {
   aConfigVersion,
   aFreshWorkspace,
@@ -24,25 +26,34 @@ import {
 
 vi.mock('../api/client', () => apiClientModuleMock());
 
-const { WorkspaceDetail } = await import('./WorkspaceDetail');
+const { workspaceRoutes } = await import('./workspaceRoutes');
 
 /** The role name prefix the fixture's runner may assume. */
 function assumablePrefix(): string {
   return runRolePrefix(aWorkspace().run_role_setup.role_name);
 }
 
-/** Mounts the detail page on a route carrying the workspace id. */
-function renderDetail(): void {
+/** Mounts the workspace pages inside the shell at the given path. */
+function renderDetail(path = '/workspaces/ws-01J000000000000000000000'): void {
   renderWithAuth(
     <Routes>
-      <Route path="/workspaces/:workspaceId" element={<WorkspaceDetail />} />
+      <Route element={<Layout />}>{workspaceRoutes()}</Route>
     </Routes>,
     signedInAuthClient(),
-    ['/workspaces/ws-01J000000000000000000000']
+    [path]
   );
 }
 
-describe('WorkspaceDetail', () => {
+/** The first link in the rail with this name. */
+function railLink(name: string): HTMLElement {
+  const link = screen.getAllByRole('link', { name })[0];
+  if (link === undefined) {
+    throw new Error(`No link named ${name}`);
+  }
+  return link;
+}
+
+describe('WorkspaceLayout', () => {
   beforeEach(() => {
     resetApiMock();
     apiMock.getWorkspace.mockResolvedValue(aWorkspace());
@@ -58,45 +69,53 @@ describe('WorkspaceDetail', () => {
     apiMock.listRuns.mockResolvedValue({ items: [aRun('planned')] });
   });
 
-  it('opens on the overview tab with the workspace settings', async () => {
+  it('opens on the overview with the latest run and the workspace rail', async () => {
     renderDetail();
 
     expect(
       await screen.findByRole('heading', { name: 'platform' })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('form', { name: 'Workspace settings' })
+      screen.getByRole('heading', { name: 'Latest run' })
     ).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
-      'aria-selected',
-      'true'
+    expect(await screen.findByTestId('run-state-badge')).toHaveAttribute(
+      'data-state',
+      'planned'
     );
+    expect(railLink('Overview')).toHaveAttribute('aria-current', 'page');
   });
 
-  it('shows all four tabs', async () => {
+  it('swaps the rail for the workspace sections', async () => {
     renderDetail();
 
     await screen.findByRole('heading', { name: 'platform' });
+    expect(
+      screen.getAllByRole('navigation', { name: 'Workspace sections' })
+    ).not.toHaveLength(0);
     for (const label of [
       'Overview',
-      'Variables',
-      'Configuration versions',
       'Runs',
+      'Configuration versions',
+      'Variables',
+      'Settings',
     ]) {
-      expect(screen.getByRole('tab', { name: label })).toBeInTheDocument();
+      expect(railLink(label)).toBeInTheDocument();
     }
+    expect(railLink('Workspaces')).toHaveAttribute('href', '/workspaces');
   });
 
   it('patches the editable fields without the name or the run role', async () => {
     apiMock.updateWorkspace.mockResolvedValue(aWorkspace());
 
-    renderDetail();
+    renderDetail('/workspaces/ws-01J000000000000000000000/settings/general');
 
     await screen.findByRole('form', { name: 'Workspace settings' });
     const version = screen.getByLabelText('Engine version');
     await userEvent.clear(version);
     await userEvent.type(version, '1.12.0');
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save settings' })
+    );
 
     expect(apiMock.updateWorkspace).toHaveBeenCalledWith(
       'ws-01J000000000000000000000',
@@ -124,19 +143,19 @@ describe('WorkspaceDetail', () => {
     renderDetail();
 
     await screen.findByRole('heading', { name: 'platform' });
-    await userEvent.click(screen.getByRole('tab', { name: 'Variables' }));
+    await userEvent.click(railLink('Variables'));
 
-    expect(await screen.findByText('Write only')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Sensitive, write only')
+    ).toBeInTheDocument();
     expect(screen.getByText('us-west-2')).toBeInTheDocument();
   });
 
-  it('offers the presigned upload form on the configuration versions tab', async () => {
+  it('offers the presigned upload form on the configuration versions page', async () => {
     renderDetail();
 
     await screen.findByRole('heading', { name: 'platform' });
-    await userEvent.click(
-      screen.getByRole('tab', { name: 'Configuration versions' })
-    );
+    await userEvent.click(railLink('Configuration versions'));
 
     expect(
       await screen.findByRole('form', {
@@ -167,9 +186,7 @@ describe('WorkspaceDetail', () => {
     renderDetail();
 
     await screen.findByRole('heading', { name: 'platform' });
-    await userEvent.click(
-      screen.getByRole('tab', { name: 'Configuration versions' })
-    );
+    await userEvent.click(railLink('Configuration versions'));
     await screen.findByRole('form', {
       name: 'Upload a configuration version',
     });
@@ -195,13 +212,18 @@ describe('WorkspaceDetail', () => {
     vi.unstubAllGlobals();
   });
 
-  it('lists the workspace runs on the runs tab', async () => {
-    renderDetail();
+  it('lists the workspace runs behind the filter tabs on the runs page', async () => {
+    renderDetail('/workspaces/ws-01J000000000000000000000/runs');
 
     await screen.findByRole('heading', { name: 'platform' });
-    await userEvent.click(screen.getByRole('tab', { name: 'Runs' }));
 
-    expect(await screen.findByTestId('run-state-badge')).toHaveAttribute(
+    expect(
+      await screen.findByRole('heading', { name: 'Run list' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('tab', { name: /Needs attention/ })
+    ).toHaveTextContent('1');
+    expect(screen.getAllByTestId('run-state-badge')[0]).toHaveAttribute(
       'data-state',
       'planned'
     );
@@ -229,7 +251,7 @@ function runRoleMissingError(): ApiError {
   });
 }
 
-describe('WorkspaceDetail setup checklist', () => {
+describe('WorkspaceLayout setup checklist', () => {
   beforeEach(() => {
     resetApiMock();
     apiMock.getWorkspace.mockResolvedValue(aFreshWorkspace());
@@ -409,9 +431,7 @@ describe('WorkspaceDetail setup checklist', () => {
     renderDetail();
 
     await screen.findByTestId('setup-checklist');
-    await userEvent.click(
-      screen.getByRole('tab', { name: 'Configuration versions' })
-    );
+    await userEvent.click(railLink('Configuration versions'));
 
     const planOnly = await screen.findByRole('button', { name: 'Plan only' });
     expect(planOnly).toBeDisabled();
@@ -451,14 +471,15 @@ describe('WorkspaceDetail setup checklist', () => {
     });
     apiMock.createRun.mockResolvedValue(aRun('pending'));
 
-    renderWithAuth(
-      <Routes>
-        <Route path="/workspaces/:workspaceId" element={<WorkspaceDetail />} />
-        <Route path="/runs/:runId" element={<p>Run page</p>} />
-      </Routes>,
-      signedInAuthClient(),
-      ['/workspaces/ws-01J000000000000000000000']
-    );
+    apiMock.getRun.mockResolvedValue(aRun('pending'));
+    apiMock.getRunLogs.mockResolvedValue({
+      run_id: 'run-01J000000000000000000000',
+      phase: 'plan',
+      events: [],
+      next_after: null,
+    });
+
+    renderDetail();
 
     const checklist = await screen.findByTestId('setup-checklist');
     expect(within(checklist).getByTestId('setup-step-connect')).toHaveAttribute(
@@ -481,7 +502,9 @@ describe('WorkspaceDetail setup checklist', () => {
       config_version_id: 'cv-01J000000000000000000000',
       plan_only: true,
     });
-    expect(await screen.findByText('Run page')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Seed the stack.' })
+    ).toBeInTheDocument();
   });
 
   it('offers the upload form inside the checklist once connected', async () => {

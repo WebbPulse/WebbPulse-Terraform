@@ -1,20 +1,17 @@
-/** The overview tab: the AWS connection and the settings, editable in place. */
+/** The general settings page: the editable fields of the workspace. */
 
 import { useEffect, useState } from 'react';
 import { useMutationWithRefetch } from '@webbpulse/api-client/react';
 
-import { api, type Engine, type Workspace } from '../../api';
-import { Button, ErrorNotice, Field, INPUT_CLASS } from '../../components';
-import { ConnectAccountPanel } from './ConnectAccountPanel';
-
-/** Props for {@link OverviewTab}. */
-export interface OverviewTabProps {
-  workspace: Workspace;
-  /** The refetch key the workspace read is registered under. */
-  queryKey: string;
-  /** Whether the checklist above the tabs is gone, so this tab owns the connection. */
-  setupComplete: boolean;
-}
+import { api, type Engine, type Workspace } from '../../../api';
+import {
+  Button,
+  CopyButton,
+  ErrorNotice,
+  Field,
+  INPUT_CLASS,
+} from '../../../components';
+import { useWorkspace } from '../../workspaceContext';
 
 /** The engines a workspace can run. */
 const ENGINES: readonly Engine[] = ['terraform', 'tofu'];
@@ -24,48 +21,20 @@ function engineOf(workspace: Workspace): Engine {
   return workspace.engine ?? 'terraform';
 }
 
-/** The connection section and the settings form. */
-export function OverviewTab({
-  workspace,
-  queryKey,
-  setupComplete,
-}: OverviewTabProps): React.ReactElement {
+/** The general settings page. */
+export function GeneralSettings(): React.ReactElement {
+  const { workspace, keys } = useWorkspace();
   return (
-    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <section aria-labelledby="overview-settings" className="space-y-3">
-        <h2
-          id="overview-settings"
-          className="text-sm font-semibold text-text-strong"
-        >
-          Settings
-        </h2>
-        <SettingsForm workspace={workspace} queryKey={queryKey} />
-      </section>
-      <section aria-labelledby="overview-account" className="space-y-3">
-        <h2
-          id="overview-account"
-          className="text-sm font-semibold text-text-strong"
-        >
-          AWS account
-        </h2>
-        {setupComplete ? (
-          <ConnectAccountPanel
-            workspace={workspace}
-            queryKey={queryKey}
-            collapsible
-          />
-        ) : (
-          <p className="rounded-lg border border-dashed border-line px-4 py-3 text-sm text-text-muted">
-            The setup checklist above walks through connecting an account. The
-            connection settings move here once the first plan has run.
-          </p>
-        )}
-      </section>
+    <div className="max-w-2xl space-y-4">
+      <h2 className="text-sm font-semibold text-text-strong">
+        General settings
+      </h2>
+      <SettingsForm workspace={workspace} queryKey={keys.workspace} />
     </div>
   );
 }
 
-/** The workspace settings form. The run role lives with the connection. */
+/** The workspace settings form. The run role lives with the AWS account page. */
 function SettingsForm({
   workspace,
   queryKey,
@@ -112,17 +81,28 @@ function SettingsForm({
   return (
     <form
       aria-label="Workspace settings"
-      className="space-y-3 rounded-lg border border-line bg-panel p-4"
+      className="space-y-4 rounded-lg border border-line bg-panel p-4"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
       <div className="text-sm">
+        <span className="text-text-muted">ID</span>
+        <span className="mt-1 flex items-center gap-2 font-mono text-xs text-text">
+          {workspace.workspace_id}
+          <CopyButton
+            value={workspace.workspace_id}
+            subject="the workspace id"
+            className="h-6 px-1.5"
+          />
+        </span>
+      </div>
+      <div className="text-sm">
         <span className="text-text-muted">Name</span>
         <span className="mt-1 block font-mono text-text">{workspace.name}</span>
       </div>
-      <Field label="Description">
+      <Field label="Description" hint="Optional.">
         {(control) => (
           <textarea
             {...control}
@@ -192,7 +172,7 @@ function SettingsForm({
           busy={isMutating}
           busyLabel="Saving the workspace"
         >
-          Save changes
+          Save settings
         </Button>
         {saved ? (
           <span role="status" className="text-sm text-emerald-300">

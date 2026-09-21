@@ -12,7 +12,7 @@ import {
   type Run,
   type Workspace,
 } from '../../api';
-import { Button, ErrorNotice } from '../../components';
+import { Button, ErrorNotice, runPath } from '../../components';
 import { ConnectAccountPanel } from './ConnectAccountPanel';
 import { UploadConfigForm } from './UploadConfigForm';
 import {
@@ -219,7 +219,7 @@ function FirstPlan({
       <p className="text-sm text-text-muted">
         A run is in progress.{' '}
         <Link
-          to={`/runs/${running.run_id}`}
+          to={runPath(running)}
           className="text-brand-300 hover:text-brand-200"
         >
           Follow it
@@ -242,7 +242,9 @@ function FirstPlan({
         plan_only: true,
       });
       invalidateQueries([runsKey]);
-      void navigate(`/runs/${run.run_id}`);
+      void navigate(
+        runPath({ run_id: run.run_id, workspace_id: workspace.workspace_id })
+      );
     } catch (thrown) {
       setError(
         isRunRoleMissing(thrown) ? new Error(RUN_ROLE_MISSING_MESSAGE) : thrown

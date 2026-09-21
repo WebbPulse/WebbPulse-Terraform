@@ -1,4 +1,4 @@
-/** The variables tab: create, edit and delete, with sensitive values write-only. */
+/** The variables page: the table, and an inline form that adds or edits one. */
 
 import { useState } from 'react';
 import {
@@ -25,51 +25,87 @@ import {
   Th,
   Tr,
 } from '../../components';
-
-/** Props for {@link VariablesTab}. */
-export interface VariablesTabProps {
-  workspaceId: string;
-}
+import { useWorkspace } from '../workspaceContext';
 
 /** The categories a variable can be in. */
 const CATEGORIES: readonly VariableCategory[] = ['terraform', 'env'];
 
-/** The variables table and the form that writes one. */
-export function VariablesTab({
-  workspaceId,
-}: VariablesTabProps): React.ReactElement {
+/** The variables page. */
+export function VariablesPage(): React.ReactElement {
+  const { workspace } = useWorkspace();
+  const workspaceId = workspace.workspace_id;
   const auth = useQueryAuth();
   const queryKey = `variables:${workspaceId}`;
   const query = usePolledQuery<VariableList>(
     ({ signal }) => api.listVariables(workspaceId, { signal }),
     { intervalMs: 60_000, queryKey, auth }
   );
-  const [editing, setEditing] = useState<Variable | null>(null);
+  const [form, setForm] = useState<{ editing: Variable | null } | null>(null);
+  const variables = query.data?.items ?? [];
 
   return (
     <div className="space-y-5">
+      <div>
+        <h2 className="text-sm font-semibold text-text-strong">Variables</h2>
+        <p className="mt-1 max-w-prose text-sm text-text-muted">
+          Terraform variables become -var values on every run. Environment
+          variables are set on the runner before the engine starts.
+        </p>
+      </div>
+      <p className="rounded-md border border-line bg-panel px-3 py-2 text-xs text-text-muted">
+        Sensitive variables are write only. Their values are never shown again
+        and must be entered anew on every edit.
+      </p>
       <ErrorNotice error={query.error} />
-      <VariableForm
-        workspaceId={workspaceId}
-        queryKey={queryKey}
-        editing={editing}
-        onDone={() => {
-          setEditing(null);
-        }}
-      />
-      {query.isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-text-faint">
-          <Spinner label="Loading variables" className="size-4" />
-          Loading variables
+      <section aria-labelledby="workspace-variables" className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3
+            id="workspace-variables"
+            className="text-sm font-medium text-text-strong"
+          >
+            Workspace variables{' '}
+            <span className="text-text-faint">({variables.length})</span>
+          </h3>
+          {form === null ? (
+            <Button
+              size="sm"
+              onClick={() => {
+                setForm({ editing: null });
+              }}
+            >
+              + Add variable
+            </Button>
+          ) : null}
         </div>
-      ) : (
-        <VariableTable
-          workspaceId={workspaceId}
-          queryKey={queryKey}
-          variables={query.data?.items ?? []}
-          onEdit={setEditing}
-        />
-      )}
+        {form === null ? null : (
+          <VariableForm
+            workspaceId={workspaceId}
+            queryKey={queryKey}
+            editing={form.editing}
+            onDone={() => {
+              setForm(null);
+            }}
+          />
+        )}
+        {query.isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-text-faint">
+            <Spinner label="Loading variables" className="size-4" />
+            Loading variables
+          </div>
+        ) : (
+          <VariableTable
+            workspaceId={workspaceId}
+            queryKey={queryKey}
+            variables={variables}
+            onEdit={(variable) => {
+              setForm({ editing: variable });
+            }}
+            onAdd={() => {
+              setForm({ editing: null });
+            }}
+          />
+        )}
+      </section>
     </div>
   );
 }
@@ -80,11 +116,13 @@ function VariableTable({
   queryKey,
   variables,
   onEdit,
+  onAdd,
 }: {
   workspaceId: string;
   queryKey: string;
   variables: Variable[];
   onEdit: (variable: Variable) => void;
+  onAdd: () => void;
 }): React.ReactElement {
   const { mutate, error } = useMutationWithRefetch(
     (key: string) => api.deleteVariable(workspaceId, key),
@@ -95,7 +133,12 @@ function VariableTable({
     return (
       <EmptyState
         title="No variables yet."
-        hint="Terraform variables become -var values; env variables are set on the runner."
+        hint="Add one to pass a value into every run."
+        action={
+          <Button variant="primary" onClick={onAdd}>
+            + Add variable
+          </Button>
+        }
       />
     );
   }
@@ -114,34 +157,25 @@ function VariableTable({
         <tbody>
           {variables.map((variable) => (
             <Tr key={variable.key}>
-              <Td className="font-mono text-xs text-text-strong">
-                {variable.key}
+              <Td>
+                <span className="inline-flex items-center gap-2 font-mono text-xs text-text-strong">
+                  {variable.key}
+                  {variable.sensitive ? (
+                    <span className="rounded border border-line-strong px-1 font-sans text-[10px] text-text-faint">
+                      Sensitive
+                    </span>
+                  ) : null}
+                </span>
+                {(variable.description ?? '') === '' ? null : (
+                  <p className="mt-0.5 max-w-md truncate text-xs text-text-faint">
+                    {variable.description}
+                  </p>
+                )}
               </Td>
               <Td className="max-w-md">
                 {variable.sensitive ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs text-text-faint">
-                    <svg
-                      aria-hidden="true"
-                      viewBox="0 0 16 16"
-                      className="size-3.5"
-                      fill="none"
-                    >
-                      <rect
-                        x="3.5"
-                        y="7"
-                        width="9"
-                        height="6.5"
-                        rx="1.5"
-                        stroke="currentColor"
-                        strokeWidth="1.4"
-                      />
-                      <path
-                        d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"
-                        stroke="currentColor"
-                        strokeWidth="1.4"
-                      />
-                    </svg>
-                    Write only
+                  <span className="text-xs text-text-faint">
+                    Sensitive, write only
                   </span>
                 ) : (
                   <span className="block truncate font-mono text-xs text-text">
@@ -197,20 +231,15 @@ function VariableForm({
   editing: Variable | null;
   onDone: () => void;
 }): React.ReactElement {
-  const [key, setKey] = useState('');
-  const [value, setValue] = useState('');
-  const [category, setCategory] = useState<VariableCategory>('terraform');
-  const [sensitive, setSensitive] = useState(false);
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
-
-  const editingKey = editing?.key ?? null;
-  if (editingKey !== loadedFor) {
-    setLoadedFor(editingKey);
-    setKey(editing?.key ?? '');
-    setValue(editing?.sensitive === true ? '' : (editing?.value ?? ''));
-    setCategory(editing?.category ?? 'terraform');
-    setSensitive(editing?.sensitive ?? false);
-  }
+  const [key, setKey] = useState(editing?.key ?? '');
+  const [value, setValue] = useState(
+    editing?.sensitive === true ? '' : (editing?.value ?? '')
+  );
+  const [description, setDescription] = useState(editing?.description ?? '');
+  const [category, setCategory] = useState<VariableCategory>(
+    editing?.category ?? 'terraform'
+  );
+  const [sensitive, setSensitive] = useState(editing?.sensitive ?? false);
 
   const { mutate, isMutating, error } = useMutationWithRefetch(
     () =>
@@ -218,6 +247,7 @@ function VariableForm({
         value,
         category,
         sensitive,
+        description,
       }),
     queryKey
   );
@@ -225,8 +255,6 @@ function VariableForm({
   const submit = async (): Promise<void> => {
     try {
       await mutate();
-      setKey('');
-      setValue('');
       onDone();
     } catch {
       return;
@@ -242,22 +270,16 @@ function VariableForm({
         void submit();
       }}
     >
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-semibold text-text-strong">
-          {editing === null ? 'Add a variable' : `Edit ${editing.key}`}
-        </h2>
-        {sensitive ? (
-          <span className="text-xs text-text-faint">
-            Sensitive values are stored write only and never shown again.
-          </span>
-        ) : null}
-      </div>
+      <h4 className="text-sm font-semibold text-text-strong">
+        {editing === null ? 'Add a variable' : `Edit ${editing.key}`}
+      </h4>
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_8rem]">
         <Field label="Key">
           {(control) => (
             <input
               {...control}
               required
+              autoFocus={editing === null}
               value={key}
               readOnly={editing !== null}
               spellCheck={false}
@@ -304,6 +326,18 @@ function VariableForm({
           )}
         </Field>
       </div>
+      <Field label="Description" hint="Optional.">
+        {(control) => (
+          <input
+            {...control}
+            value={description}
+            onChange={(event) => {
+              setDescription(event.target.value);
+            }}
+            className={INPUT_CLASS}
+          />
+        )}
+      </Field>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-sm text-text-muted">
           <input
@@ -317,11 +351,9 @@ function VariableForm({
           Sensitive
         </label>
         <span className="flex-1" />
-        {editing === null ? null : (
-          <Button variant="ghost" onClick={onDone}>
-            Cancel
-          </Button>
-        )}
+        <Button variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
         <Button
           type="submit"
           variant="primary"

@@ -1,4 +1,5 @@
 import { cleanup, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
@@ -66,9 +67,11 @@ describe('RunDetail', () => {
     renderRun();
 
     expect(
-      await screen.findByRole('button', { name: 'Confirm and apply' })
+      await screen.findByRole('button', { name: 'Confirm & apply' })
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Discard run' })
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Cancel run' })
     ).not.toBeInTheDocument();
@@ -80,7 +83,7 @@ describe('RunDetail', () => {
     renderRun();
 
     expect(
-      await screen.findByRole('button', { name: 'Discard' })
+      await screen.findByRole('button', { name: 'Discard run' })
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Cancel run' })
@@ -96,10 +99,10 @@ describe('RunDetail', () => {
       await screen.findByRole('button', { name: 'Cancel run' })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Confirm and apply' })
+      screen.queryByRole('button', { name: 'Confirm & apply' })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Discard' })
+      screen.queryByRole('button', { name: 'Discard run' })
     ).not.toBeInTheDocument();
   });
 
@@ -111,10 +114,10 @@ describe('RunDetail', () => {
     renderRun();
 
     expect(
-      await screen.findByRole('button', { name: 'Discard' })
+      await screen.findByRole('button', { name: 'Discard run' })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Confirm and apply' })
+      screen.queryByRole('button', { name: 'Confirm & apply' })
     ).not.toBeInTheDocument();
   });
 
@@ -126,18 +129,18 @@ describe('RunDetail', () => {
 
       await screen.findByTestId('run-state-badge');
       expect(
-        screen.queryByRole('button', { name: 'Confirm and apply' })
+        screen.queryByRole('button', { name: 'Confirm & apply' })
       ).not.toBeInTheDocument();
       expect(
         screen.queryByRole('button', { name: 'Cancel run' })
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole('button', { name: 'Discard' })
+        screen.queryByRole('button', { name: 'Discard run' })
       ).not.toBeInTheDocument();
     }
   });
 
-  it('reads the plan log first and disables the apply tab before an apply', async () => {
+  it('reads the plan log first and keeps the apply log closed before an apply', async () => {
     apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
 
     renderRun();
@@ -152,20 +155,49 @@ describe('RunDetail', () => {
         }
       );
     });
-    expect(screen.getByRole('tab', { name: 'Apply log' })).toBeDisabled();
+    expect(apiMock.getRunLogs).not.toHaveBeenCalledWith(
+      'run-01J000000000000000000000',
+      expect.objectContaining({ phase: 'apply' })
+    );
+    expect(
+      screen.getByRole('button', { name: /Plan finished/ })
+    ).toHaveAttribute('aria-expanded', 'true');
+    expect(
+      screen.getByRole('button', { name: /Apply pending/ })
+    ).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('opens on the apply log once the run is applying', async () => {
+  it('opens the apply section on its log once the run is applying', async () => {
     apiMock.getRun.mockResolvedValue(aRun('applying'));
 
     renderRun();
 
     await screen.findByTestId('run-state-badge');
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'Apply log' })).toHaveAttribute(
-        'aria-selected',
-        'true'
+      expect(apiMock.getRunLogs).toHaveBeenCalledWith(
+        'run-01J000000000000000000000',
+        {
+          phase: 'apply',
+          after: null,
+        }
       );
     });
+    expect(
+      screen.getByRole('button', { name: /Apply running/ })
+    ).toHaveAttribute('aria-expanded', 'true');
+    expect(
+      screen.getByRole('button', { name: /Plan finished/ })
+    ).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('shows the elapsed time and the run details on request', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('applied'));
+
+    renderRun();
+
+    await screen.findByTestId('run-state-badge');
+    expect(screen.getByText('Plan and apply duration')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Run details/ }));
+    expect(screen.getByText('cv-01J000000000000000000000')).toBeInTheDocument();
   });
 });

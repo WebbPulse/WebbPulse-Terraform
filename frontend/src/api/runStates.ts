@@ -130,3 +130,93 @@ export function defaultPhase(state: RunState): 'plan' | 'apply' {
 export function hasApplyPhase(state: RunState): boolean {
   return state === 'applying' || state === 'applied';
 }
+
+/** Where a phase of a run stands, for the expandable section that shows it. */
+export type PhaseStatus =
+  | 'queued'
+  | 'running'
+  | 'finished'
+  | 'pending'
+  | 'errored'
+  | 'cancelled'
+  | 'discarded';
+
+/** The plan phase's status for a run, or `absent` for nothing to show. */
+export function planPhaseStatus(run: Run): PhaseStatus {
+  switch (run.status) {
+    case 'pending':
+      return 'queued';
+    case 'planning':
+      return 'running';
+    case 'errored':
+      return run.changes === null || run.changes === undefined
+        ? 'errored'
+        : 'finished';
+    case 'cancelled':
+      return run.changes === null || run.changes === undefined
+        ? 'cancelled'
+        : 'finished';
+    default:
+      return 'finished';
+  }
+}
+
+/**
+ * The apply phase's status for a run, or null when the run has no apply phase.
+ *
+ * A plan only run never applies, and a run that stopped during its plan has no
+ * apply to show. Whether an errored or cancelled run got past its plan is read
+ * from the plan counts, which the runner only reports once a plan finished.
+ */
+export function applyPhaseStatus(run: Run): PhaseStatus | null {
+  if (run.plan_only) {
+    return null;
+  }
+  switch (run.status) {
+    case 'pending':
+    case 'planning':
+    case 'planned_and_finished':
+      return null;
+    case 'planned':
+    case 'awaiting_confirmation':
+      return 'pending';
+    case 'applying':
+      return 'running';
+    case 'applied':
+      return 'finished';
+    case 'discarded':
+      return 'discarded';
+    case 'errored':
+      return run.changes === null || run.changes === undefined
+        ? null
+        : 'errored';
+    case 'cancelled':
+      return run.changes === null || run.changes === undefined
+        ? null
+        : 'cancelled';
+  }
+}
+
+/** The buckets a run list filters by. */
+export type RunGroup = 'attention' | 'errored' | 'running' | 'success';
+
+/** The filter bucket a run falls in, or null for one that was cancelled or discarded. */
+export function runGroup(run: Run): RunGroup | null {
+  switch (run.status) {
+    case 'awaiting_confirmation':
+    case 'planned':
+      return 'attention';
+    case 'errored':
+      return 'errored';
+    case 'pending':
+    case 'planning':
+    case 'applying':
+      return 'running';
+    case 'applied':
+    case 'planned_and_finished':
+      return 'success';
+    case 'cancelled':
+    case 'discarded':
+      return null;
+  }
+}

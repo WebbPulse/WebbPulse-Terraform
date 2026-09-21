@@ -1,39 +1,62 @@
-/** The run detail page: state, plan counts, the log tail and the three actions. */
+/** The run page: its state, its metrics and its phases as expandable sections. */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
   api,
+  applyPhaseStatus,
   canCancel,
   canConfirm,
   canDiscard,
-  defaultPhase,
-  hasApplyPhase,
   isActive,
+  planPhaseStatus,
+  type PhaseStatus,
   type Run,
-  type RunPhase,
+  type RunTone,
 } from '../api';
 import {
   Button,
+  Disclosure,
   ErrorNotice,
   PageHeader,
   RunLogViewer,
   Spinner,
   StateBadge,
-  Tabs,
+  elapsedBetween,
   formatDateTime,
+  formatDuration,
   formatRelative,
   shortRunId,
+  useNow,
 } from '../components';
+import { useOptionalWorkspace } from './workspaceContext';
 
-/** The run detail page. */
+/** The three sections of the page. */
+type SectionId = 'details' | 'plan' | 'apply';
+
+/** Which sections open on their own for a run in this state. */
+function defaultOpen(run: Run): Record<SectionId, boolean> {
+  const apply = applyPhaseStatus(run);
+  const applyBusy =
+    apply === 'running' ||
+    apply === 'finished' ||
+    apply === 'errored' ||
+    apply === 'cancelled';
+  return {
+    details: false,
+    plan: !applyBusy,
+    apply: apply !== null,
+  };
+}
+
+/** The run page, inside a workspace or on its own. */
 export function RunDetail(): React.ReactElement {
   const { runId = '' } = useParams<{ runId: string }>();
   const auth = useQueryAuth();
-  const [phase, setPhase] = useState<RunPhase | null>(null);
+  const inWorkspace = useOptionalWorkspace() !== null;
   const query = usePolledQuery<Run>(
     ({ signal }) => api.getRun(runId, { signal }),
     {
@@ -44,12 +67,6 @@ export function RunDetail(): React.ReactElement {
     }
   );
   const run = query.data;
-
-  useEffect(() => {
-    if (run !== null && phase === null) {
-      setPhase(defaultPhase(run.status));
-    }
-  }, [run, phase]);
 
   if (query.isLoading) {
     return (
@@ -63,8 +80,24 @@ export function RunDetail(): React.ReactElement {
     return <ErrorNotice error={query.error ?? new Error('Run not found.')} />;
   }
 
-  const shownPhase = phase ?? defaultPhase(run.status);
+  const body = (
+    <RunBody
+      run={run}
+      inWorkspace={inWorkspace}
+      onChanged={() => {
+        void query.refetch();
+      }}
+    />
+  );
 
+  if (inWorkspace) {
+    return (
+      <div className="space-y-5">
+        <ErrorNotice error={query.error} />
+        {body}
+      </div>
+    );
+  }
   return (
     <div className="space-y-5">
       <PageHeader
@@ -73,96 +106,334 @@ export function RunDetail(): React.ReactElement {
           { label: run.workspace_id, to: `/workspaces/${run.workspace_id}` },
         ]}
         title={`Run ${shortRunId(run.run_id)}`}
-        meta={<StateBadge state={run.status} />}
-        description={
-          run.message === undefined || run.message === ''
-            ? `${run.plan_only ? 'Plan only' : 'Plan and apply'}, created ${formatRelative(run.created_at)}.`
-            : run.message
-        }
-        actions={
-          <RunActions
-            run={run}
-            onDone={() => {
-              void query.refetch();
-            }}
-          />
-        }
+        mono
       />
-
       <ErrorNotice error={query.error} />
-
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
-        <div className="min-w-0 space-y-4">
-          <PlanSummary run={run} />
-          {run.error === undefined ||
-          run.error === null ||
-          run.error === '' ? null : (
-            <ErrorNotice error={new Error(run.error)} />
-          )}
-          <RunLogViewer
-            runId={run.run_id}
-            phase={shownPhase}
-            live={isActive(run.status)}
-            controls={
-              <Tabs
-                label="Run phase"
-                className="border-b-0"
-                tabs={[
-                  { id: 'plan', label: 'Plan log' },
-                  {
-                    id: 'apply',
-                    label: 'Apply log',
-                    disabled: !hasApplyPhase(run.status),
-                  },
-                ]}
-                value={shownPhase}
-                onChange={setPhase}
-              />
-            }
-          />
-        </div>
-        <PropertiesRail run={run} />
-      </div>
+      {body}
     </div>
   );
 }
 
-/** The plan's resource counts, or a sentence when the plan has not reported. */
-function PlanSummary({ run }: { run: Run }): React.ReactElement {
-  if (run.changes === null || run.changes === undefined) {
-    return (
-      <p className="rounded-lg border border-dashed border-line px-4 py-3 text-sm text-text-faint">
-        No plan summary yet.
-      </p>
-    );
-  }
-  const { add, change, destroy } = run.changes;
-  const counts = [
-    { label: 'To add', value: add, className: 'text-emerald-300' },
-    { label: 'To change', value: change, className: 'text-amber-300' },
-    { label: 'To destroy', value: destroy, className: 'text-rose-300' },
-  ];
+/** The title row, the metrics and the phase sections. */
+function RunBody({
+  run,
+  inWorkspace,
+  onChanged,
+}: {
+  run: Run;
+  inWorkspace: boolean;
+  onChanged: () => void;
+}): React.ReactElement {
+  const [overrides, setOverrides] = useState<
+    Partial<Record<SectionId, boolean>>
+  >({});
+  const defaults = defaultOpen(run);
+  const isOpen = (id: SectionId): boolean => overrides[id] ?? defaults[id];
+  const toggle = (id: SectionId): void => {
+    setOverrides((previous) => ({ ...previous, [id]: !isOpen(id) }));
+  };
+  const active = isActive(run.status);
+  const now = useNow(active);
+  const elapsed = elapsedBetween(run.started_at, run.finished_at, now);
+  const plan = planPhaseStatus(run);
+  const apply = applyPhaseStatus(run);
+  const title =
+    run.message === undefined || run.message === ''
+      ? `Run ${shortRunId(run.run_id)}`
+      : run.message;
+
   return (
-    <dl
-      data-testid="plan-summary"
-      aria-label="Plan summary"
-      className="grid grid-cols-3 divide-x divide-line rounded-lg border border-line bg-panel"
-    >
-      {counts.map((count) => (
-        <div key={count.label} className="px-4 py-3">
-          <dt className="text-xs text-text-faint">{count.label}</dt>
-          <dd
-            className={`mt-0.5 font-mono text-xl tabular-nums ${count.className}`}
-          >
-            {count.value}
-          </dd>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          {inWorkspace ? (
+            <nav
+              aria-label="Run breadcrumb"
+              className="text-xs text-text-faint"
+            >
+              <Link
+                to={`/workspaces/${run.workspace_id}/runs`}
+                className="hover:text-text-strong"
+              >
+                Runs
+              </Link>
+              <span aria-hidden="true" className="mx-1.5 text-surface-600">
+                /
+              </span>
+              <span className="font-mono">{shortRunId(run.run_id)}</span>
+            </nav>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold text-text-strong">
+              {title}
+            </h2>
+            <StateBadge state={run.status} />
+            {run.plan_only ? (
+              <span className="rounded-full border border-line-strong px-2 py-0.5 text-[11px] text-text-muted">
+                Plan only
+              </span>
+            ) : null}
+          </div>
+          <p className="text-xs text-text-faint">
+            <span className="font-mono" title={run.run_id}>
+              #{run.run_id}
+            </span>
+            {' | '}created{' '}
+            <span title={formatDateTime(run.created_at)}>
+              {formatRelative(run.created_at)}
+            </span>
+          </p>
         </div>
-      ))}
-    </dl>
+        <RunActions
+          run={run}
+          onDone={onChanged}
+          only={apply === null ? 'all' : 'cancel'}
+        />
+      </div>
+
+      <dl className="grid grid-cols-2 divide-x divide-line rounded-lg border border-line bg-panel sm:grid-cols-3">
+        <Metric label="Plan and apply duration">
+          {elapsed === null ? 'Not started' : formatDuration(elapsed)}
+        </Metric>
+        <PlanSummary run={run} />
+        <Metric label="Mode">
+          {run.plan_only ? 'Plan only' : 'Plan and apply'}
+        </Metric>
+      </dl>
+
+      {run.error === undefined ||
+      run.error === null ||
+      run.error === '' ? null : (
+        <ErrorNotice error={new Error(run.error)} />
+      )}
+
+      <Disclosure
+        title="Run details"
+        summary={
+          <span title={formatDateTime(run.created_at)}>
+            created {formatRelative(run.created_at)}
+          </span>
+        }
+        open={isOpen('details')}
+        onToggle={() => {
+          toggle('details');
+        }}
+      >
+        <RunProperties run={run} />
+      </Disclosure>
+
+      <Disclosure
+        title={phaseTitle('Plan', plan)}
+        tone={phaseTone(plan)}
+        summary={planSummaryText(run)}
+        open={isOpen('plan')}
+        onToggle={() => {
+          toggle('plan');
+        }}
+      >
+        <PhaseBody
+          run={run}
+          phase="plan"
+          status={plan}
+          live={run.status === 'pending' || run.status === 'planning'}
+        />
+      </Disclosure>
+
+      {apply === null ? null : (
+        <Disclosure
+          title={phaseTitle('Apply', apply)}
+          tone={phaseTone(apply)}
+          summary={apply === 'finished' ? applySummaryText(run) : undefined}
+          open={isOpen('apply')}
+          onToggle={() => {
+            toggle('apply');
+          }}
+        >
+          {apply === 'pending' ? (
+            <ApplyPending run={run} onDone={onChanged} />
+          ) : apply === 'discarded' ? (
+            <p className="text-sm text-text-muted">
+              The plan was discarded and nothing was applied.
+            </p>
+          ) : (
+            <PhaseBody
+              run={run}
+              phase="apply"
+              status={apply}
+              live={run.status === 'applying'}
+            />
+          )}
+        </Disclosure>
+      )}
+    </div>
   );
 }
 
-/** One row of the properties rail. */
+/** The title of a phase section, for example "Plan finished". */
+function phaseTitle(phase: 'Plan' | 'Apply', status: PhaseStatus): string {
+  const words: Record<PhaseStatus, string> = {
+    queued: 'queued',
+    running: 'running',
+    finished: 'finished',
+    pending: 'pending',
+    errored: 'errored',
+    cancelled: 'cancelled',
+    discarded: 'discarded',
+  };
+  return `${phase} ${words[status]}`;
+}
+
+/** The dot colour beside a phase title. */
+function phaseTone(status: PhaseStatus): RunTone {
+  switch (status) {
+    case 'running':
+      return 'running';
+    case 'finished':
+      return 'success';
+    case 'pending':
+      return 'attention';
+    case 'errored':
+      return 'danger';
+    default:
+      return 'neutral';
+  }
+}
+
+/** "Resources: 3 to add, 1 to change, 0 to destroy", once a plan reported. */
+function planSummaryText(run: Run): string | undefined {
+  if (run.changes === null || run.changes === undefined) {
+    return undefined;
+  }
+  const { add, change, destroy } = run.changes;
+  return `Resources: ${String(add)} to add, ${String(change)} to change, ${String(destroy)} to destroy`;
+}
+
+/** "Resources: 3 added, 1 changed, 0 destroyed", once an apply finished. */
+function applySummaryText(run: Run): string | undefined {
+  if (run.changes === null || run.changes === undefined) {
+    return undefined;
+  }
+  const { add, change, destroy } = run.changes;
+  return `Resources: ${String(add)} added, ${String(change)} changed, ${String(destroy)} destroyed`;
+}
+
+/** One figure in the metric row. */
+function Metric({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <div className="min-w-0 px-4 py-3">
+      <dt className="text-xs text-text-faint">{label}</dt>
+      <dd className="mt-0.5 truncate text-sm text-text">{children}</dd>
+    </div>
+  );
+}
+
+/** The plan's resource counts as a metric, or the words for a plan that has not reported. */
+function PlanSummary({ run }: { run: Run }): React.ReactElement {
+  if (run.changes === null || run.changes === undefined) {
+    return <Metric label="Resources changed">Not reported yet</Metric>;
+  }
+  const { add, change, destroy } = run.changes;
+  return (
+    <div
+      data-testid="plan-summary"
+      aria-label="Plan summary"
+      className="min-w-0 px-4 py-3"
+    >
+      <dt className="text-xs text-text-faint">Resources changed</dt>
+      <dd className="mt-0.5 flex items-center gap-3 font-mono text-sm tabular-nums">
+        <span className="text-emerald-300" title="To add">
+          +{add}
+        </span>
+        <span className="text-amber-300" title="To change">
+          ~{change}
+        </span>
+        <span className="text-rose-300" title="To destroy">
+          -{destroy}
+        </span>
+      </dd>
+    </div>
+  );
+}
+
+/** The timestamps and the log of one phase. */
+function PhaseBody({
+  run,
+  phase,
+  status,
+  live,
+}: {
+  run: Run;
+  phase: 'plan' | 'apply';
+  status: PhaseStatus;
+  live: boolean;
+}): React.ReactElement {
+  const finished =
+    phase === 'plan' &&
+    run.finished_at === null &&
+    run.status !== 'planning' &&
+    run.status !== 'pending'
+      ? null
+      : run.finished_at;
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-text-faint">
+        {run.started_at === null || run.started_at === undefined ? (
+          status === 'queued' ? (
+            'Waiting for the workspace to be free.'
+          ) : (
+            'Not started'
+          )
+        ) : (
+          <>
+            Started{' '}
+            <span title={formatDateTime(run.started_at)}>
+              {formatRelative(run.started_at)}
+            </span>
+            {finished === null || finished === undefined ? null : (
+              <>
+                {' | '}Finished{' '}
+                <span title={formatDateTime(finished)}>
+                  {formatRelative(finished)}
+                </span>
+              </>
+            )}
+          </>
+        )}
+      </p>
+      {status === 'queued' ? null : (
+        <RunLogViewer runId={run.run_id} phase={phase} live={live} />
+      )}
+    </div>
+  );
+}
+
+/** The apply section while the plan waits on a person. */
+function ApplyPending({
+  run,
+  onDone,
+}: {
+  run: Run;
+  onDone: () => void;
+}): React.ReactElement {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-text-muted">
+        {run.status === 'awaiting_confirmation'
+          ? 'The plan finished and needs confirmation before it is applied.'
+          : 'The plan finished. Confirmation opens once the run is ready for it.'}
+      </p>
+      <RunActions run={run} onDone={onDone} only="decide" />
+    </div>
+  );
+}
+
+/** One row of the run details. */
 function Property({
   label,
   children,
@@ -173,7 +444,7 @@ function Property({
   mono?: boolean;
 }): React.ReactElement {
   return (
-    <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-2 py-1.5 text-xs">
+    <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-2 py-1.5 text-xs">
       <dt className="text-text-faint">{label}</dt>
       <dd className={`min-w-0 break-all text-text ${mono ? 'font-mono' : ''}`}>
         {children}
@@ -201,68 +472,71 @@ function When({
   );
 }
 
-/** The run's identifiers and timestamps, in a rail beside the log. */
-function PropertiesRail({ run }: { run: Run }): React.ReactElement {
+/** The run's identifiers and timestamps. */
+function RunProperties({ run }: { run: Run }): React.ReactElement {
   return (
-    <aside className="lg:sticky lg:top-6 lg:self-start">
-      <h2 className="text-xs font-medium tracking-wide text-text-faint uppercase">
-        Properties
-      </h2>
-      <dl className="mt-2 divide-y divide-line border-y border-line">
-        <Property label="Workspace" mono>
-          <Link
-            to={`/workspaces/${run.workspace_id}`}
-            className="text-brand-300 hover:text-brand-200"
-          >
-            {run.workspace_id}
-          </Link>
-        </Property>
-        <Property label="Run id" mono>
-          {run.run_id}
-        </Property>
-        <Property label="Configuration" mono>
+    <dl className="divide-y divide-line">
+      <Property label="Run id" mono>
+        {run.run_id}
+      </Property>
+      <Property label="Workspace" mono>
+        <Link
+          to={`/workspaces/${run.workspace_id}`}
+          className="text-brand-300 hover:text-brand-200"
+        >
+          {run.workspace_id}
+        </Link>
+      </Property>
+      <Property label="Configuration" mono>
+        <Link
+          to={`/workspaces/${run.workspace_id}/configuration-versions`}
+          className="text-brand-300 hover:text-brand-200"
+        >
           {run.config_version_id}
+        </Link>
+      </Property>
+      <Property label="Mode">
+        {run.plan_only ? 'Plan only' : 'Plan and apply'}
+      </Property>
+      {run.queued_behind === undefined || run.queued_behind === null ? null : (
+        <Property label="Queued behind" mono>
+          {run.queued_behind}
         </Property>
-        <Property label="Mode">
-          {run.plan_only ? 'Plan only' : 'Plan and apply'}
-        </Property>
-        {run.queued_behind === undefined ||
-        run.queued_behind === null ? null : (
-          <Property label="Queued behind" mono>
-            {run.queued_behind}
-          </Property>
-        )}
-        <When label="Created" iso={run.created_at} />
-        <When label="Started" iso={run.started_at} />
-        <When label="Finished" iso={run.finished_at} />
-      </dl>
-    </aside>
+      )}
+      <When label="Created" iso={run.created_at} />
+      <When label="Started" iso={run.started_at} />
+      <When label="Finished" iso={run.finished_at} />
+    </dl>
   );
 }
 
 /**
- * The confirm, cancel and discard buttons, each shown only in the states the
+ * The cancel, confirm and discard buttons, each shown only in the states the
  * gating module allows.
  *
- * Confirm is not step-up gated: `@webbpulse/auth` exposes `stepUp` only as a
- * TOTP or recovery code exchange, with no passkey ceremony, so a passkey
- * step-up would have to be written here rather than reused. Reported as a gap.
+ * Cancel sits beside the title while a phase runs; confirm and discard sit in
+ * the apply section, which is where the decision is read. Confirm is not step
+ * up gated: `@webbpulse/auth` exposes `stepUp` only as a TOTP or recovery code
+ * exchange, with no passkey ceremony, so a passkey step up would have to be
+ * written here rather than reused. Reported as a gap.
  */
 function RunActions({
   run,
   onDone,
+  only,
 }: {
   run: Run;
   onDone: () => void;
+  only: 'cancel' | 'decide' | 'all';
 }): React.ReactElement | null {
   const [busy, setBusy] = useState<'confirm' | 'cancel' | 'discard' | null>(
     null
   );
   const [error, setError] = useState<unknown>(null);
 
-  const allowConfirm = canConfirm(run);
-  const allowCancel = canCancel(run);
-  const allowDiscard = canDiscard(run);
+  const allowConfirm = only !== 'cancel' && canConfirm(run);
+  const allowDiscard = only !== 'cancel' && canDiscard(run);
+  const allowCancel = only !== 'decide' && canCancel(run);
 
   if (!allowConfirm && !allowCancel && !allowDiscard) {
     return null;
@@ -290,19 +564,19 @@ function RunActions({
   };
 
   return (
-    <div className="flex flex-col items-end gap-2">
+    <div className="flex flex-col items-start gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        {allowCancel ? (
+        {allowConfirm ? (
           <Button
-            variant="danger"
+            variant="primary"
             disabled={busy !== null}
-            busy={busy === 'cancel'}
+            busy={busy === 'confirm'}
             busyLabel="Working"
             onClick={() => {
-              void act('cancel');
+              void act('confirm');
             }}
           >
-            Cancel run
+            Confirm & apply
           </Button>
         ) : null}
         {allowDiscard ? (
@@ -314,20 +588,20 @@ function RunActions({
               void act('discard');
             }}
           >
-            Discard
+            Discard run
           </Button>
         ) : null}
-        {allowConfirm ? (
+        {allowCancel ? (
           <Button
-            variant="primary"
+            variant="danger"
             disabled={busy !== null}
-            busy={busy === 'confirm'}
+            busy={busy === 'cancel'}
             busyLabel="Working"
             onClick={() => {
-              void act('confirm');
+              void act('cancel');
             }}
           >
-            Confirm and apply
+            Cancel run
           </Button>
         ) : null}
       </div>
