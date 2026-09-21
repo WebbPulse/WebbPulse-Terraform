@@ -191,6 +191,20 @@ the runs function through an event source mapping. That route mounts at the root
 rather than under `/api/v1`, and the HTTP API never lists it, so the only way to
 reach it is the Lambda Web Adapter's pass-through path.
 
+### HCL variables
+
+A terraform variable can set `hcl`, which makes the runner write its value into a
+native `zz_webbpulse.auto.tfvars` as a bare `key = expression` assignment rather
+than into the JSON tfvars file, so the engine parses it. That is the only way a
+`list` or `map` typed input variable can be given a value. It is refused on an
+`env` variable, whose value is a string to the process with nothing to parse it.
+The value is structurally checked at write time by `app/domains/workspaces/hcl.py`,
+which rules out an unterminated string, heredoc or comment and unbalanced
+brackets without adding an HCL parser dependency; the engine stays the authority
+on meaning. A sensitive variable can still be HCL: it is sealed like any other
+value, the check runs before sealing and never echoes the value, and the runner
+registers the expression with the redactor.
+
 ### Sensitive variables
 
 A variable marked sensitive is sealed app side with AES-256-GCM under a key
@@ -203,7 +217,7 @@ the only reader.
 
 Step Functions starts the runner with `runTask.waitForTaskToken`. It fetches the
 bundle, unpacks the config tarball, writes the S3 backend override and the auto
-loaded tfvars, assumes the workspace's run role with the phase session policy,
+loaded tfvars files, assumes the workspace's run role with the phase session policy,
 runs the engine (`terraform` or `tofu`, from the bundle), streams redacted output
 to CloudWatch Logs, uploads its artifacts to presigned URLs and reports back
 through the task token. Every line passes through `app.logs.Redactor` first, and

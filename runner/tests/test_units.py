@@ -434,3 +434,97 @@ def test_a_refused_put_is_an_api_error(aws: None, config_tarball: bytes) -> None
 
     with pytest.raises(ApiError, match="403"):
         api.upload_text("log", "a transcript")
+
+
+def test_hcl_tfvars_are_written_unquoted(tmp_path: Path) -> None:
+    """An HCL expression reaches the native tfvars file exactly as it was stored.
+
+    Quoting it would turn a list into an eight character string and hand a
+    `list(string)` input variable the wrong type without anything failing.
+    """
+    path = workspace.write_hcl_tfvars(tmp_path, {"subnets": '["a", "b"]', "count": "2"})
+    assert path is not None
+    assert path.name == workspace.HCL_TFVARS_FILENAME
+    body = path.read_text()
+    assert 'subnets = ["a", "b"]' in body
+    assert "count = 2" in body
+    assert '"["a", "b"]"' not in body
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_hcl_tfvars_keep_a_multi_line_expression_on_one_assignment(tmp_path: Path) -> None:
+    """A map or heredoc spans lines without running into the next assignment."""
+    expression = '{\n  env  = "staging"\n  size = 2\n}'
+    path = workspace.write_hcl_tfvars(tmp_path, {"a": expression, "settings": expression})
+    assert path is not None
+    body = path.read_text()
+    assert f"settings = {expression}" in body
+    assert body.endswith("\n")
+
+
+def test_no_hcl_tfvars_file_without_hcl_variables(tmp_path: Path) -> None:
+    """A workspace with only literal variables gets no native tfvars file at all."""
+    assert workspace.write_hcl_tfvars(tmp_path, {}) is None
+
+
+def test_hcl_tfvars_refuse_a_name_that_is_not_an_identifier(tmp_path: Path) -> None:
+    """A name is written unquoted, so anything but an identifier is refused."""
+    with pytest.raises(workspace.ConfigError, match="valid HCL identifier"):
+        workspace.write_hcl_tfvars(tmp_path, {'a" = "b\nevil': '"x"'})
+
+
+def test_a_literal_with_hcl_punctuation_stays_literal(tmp_path: Path) -> None:
+    """A literal goes to the JSON file, where its punctuation cannot be reread.
+
+    JSON is what makes this safe: the value is the JSON string it is, so quotes,
+    braces and `${` in it are characters rather than syntax.
+    """
+    value = '${var.nope} "quoted" {braces} ["a"]'
+    path = workspace.write_tfvars(tmp_path, {"literal": value})
+    assert path is not None
+    assert json.loads(path.read_text()) == {"literal": value}
+
+
+def test_prepare_writes_both_variable_files(tmp_path: Path, run_role_arn: str, config_tarball: bytes) -> None:
+    """Literal and HCL variables land in their own files in the working directory."""
+    archive = tmp_path / "config.tar.gz"
+    archive.write_bytes(config_tarball)
+    payload = bundle_payload(run_role_arn) | {"hcl_variables": {"subnets": '["a", "b"]'}}
+    bundle = Bundle.model_validate(payload)
+    root = tmp_path / "config"
+    root.mkdir()
+
+    target = workspace.prepare(root, bundle, archive)
+
+    assert (target / workspace.TFVARS_FILENAME).exists()
+    assert 'subnets = ["a", "b"]' in (target / workspace.HCL_TFVARS_FILENAME).read_text()
+
+
+def test_prepare_writes_no_hcl_file_for_a_bundle_without_the_field(
+    tmp_path: Path, run_role_arn: str, config_tarball: bytes
+) -> None:
+    """A bundle from a control plane that predates the flag is unchanged."""
+    archive = tmp_path / "config.tar.gz"
+    archive.write_bytes(config_tarball)
+    bundle = Bundle.model_validate(bundle_payload(run_role_arn))
+    root = tmp_path / "config"
+    root.mkdir()
+
+    target = workspace.prepare(root, bundle, archive)
+
+    assert bundle.hcl_variables == {}
+    assert not (target / workspace.HCL_TFVARS_FILENAME).exists()
+
+
+def test_bundle_sensitive_values_cover_hcl_variables(run_role_arn: str) -> None:
+    """A sensitive HCL expression is registered for redaction like any other value.
+
+    The expression itself is the secret when the variable is sensitive, so it is
+    the expression that has to be masked before any line is emitted.
+    """
+    payload = bundle_payload(run_role_arn) | {"hcl_variables": {"secrets": f'["{SECRET_TFVAR}"]'}}
+    bundle = Bundle.model_validate(payload)
+    assert f'["{SECRET_TFVAR}"]' in bundle.sensitive_values()
+
+    redactor = Redactor(bundle.sensitive_values())
+    assert SECRET_TFVAR not in redactor.scrub(f'subnets = ["{SECRET_TFVAR}"]')

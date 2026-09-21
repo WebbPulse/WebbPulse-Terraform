@@ -9,8 +9,9 @@ from typing import Any, Callable
 import boto3
 import pytest
 
+from app import workspace
 from app.main import Clients, run
-from app.models import RunnerEnvError
+from app.models import Bundle, RunnerEnvError
 from tests.conftest import (
     API_BASE_URL,
     LOG_GROUP,
@@ -18,6 +19,7 @@ from tests.conftest import (
     RUN_ID,
     RUN_TOKEN,
     SECRET_ENVVAR,
+    SECRET_HCL_TFVAR,
     SECRET_TFVAR,
     TASK_TOKEN,
     WORKSPACE_ID,
@@ -398,3 +400,72 @@ def test_clients_build_uses_the_region(aws: None) -> None:
     assert clients.logs.meta.region_name == "us-west-2"
     assert clients.sts.meta.region_name == "us-west-2"
     clients.http.close()
+
+
+def test_an_hcl_variable_reaches_the_engine_as_an_expression(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The engine finds the native tfvars file, and the assignment in it is unquoted.
+
+    The whole point of the flag: the engine has to see `["a", "b"]` as a list,
+    which it does only from a file it parses as HCL. The echoed line comes back
+    with the value masked, because the redactor holds every variable value
+    whether or not the control plane marked it sensitive, so the assertion on the
+    unquoted form reads the file the engine read rather than the log.
+    """
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn) | {"hcl_variables": {"subnets": '["a", "b"]'}}
+    transport = make_transport(bundle, config_tarball, recorder)
+    clients = make_clients(transport)
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+    log = recorder.uploads["/runs/plan.log"].decode()
+    assert "tfvars file zz_webbpulse.auto.tfvars" in log
+    assert "tfvars file zz_webbpulse.auto.tfvars.json" in log
+    assert "tfvars line subnets = " in log
+
+    written = Bundle.model_validate(bundle)
+    directory = tmp_path / "written"
+    directory.mkdir()
+    path = workspace.write_hcl_tfvars(directory, written.hcl_variables)
+    assert path is not None
+    assert path.read_text() == 'subnets = ["a", "b"]\n'
+
+
+def test_a_sensitive_hcl_variable_never_reaches_any_log(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A sensitive HCL expression is masked everywhere a literal one would be.
+
+    The engine reads it from a file the runner never echoes, and the redactor
+    holds the expression, so the line the fake engine does echo comes back masked
+    rather than carrying the members of the list.
+    """
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn) | {"hcl_variables": {"secrets": SECRET_HCL_TFVAR}}
+    transport = make_transport(bundle, config_tarball, recorder)
+    clients = make_clients(transport)
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+
+    captured = capsys.readouterr()
+    haystacks = [
+        *log_stream_messages(f"{RUN_ID}/plan"),
+        captured.out,
+        captured.err,
+        recorder.uploads["/runs/plan.log"].decode(),
+    ]
+    for haystack in haystacks:
+        assert SECRET_HCL_TFVAR not in haystack
+        assert "secret-list-member-abcdefghij" not in haystack

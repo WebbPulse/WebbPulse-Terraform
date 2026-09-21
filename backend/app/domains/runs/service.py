@@ -1202,6 +1202,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
             "duration_seconds": RUN_ROLE_DURATION_SECONDS,
         },
         "terraform_variables": variables["terraform"],
+        "hcl_variables": variables["hcl"],
         "environment_variables": variables["env"],
         "artifacts": _artifacts(run_id, settings=resolved),
     }

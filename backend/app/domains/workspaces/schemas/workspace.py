@@ -144,6 +144,13 @@ class VariableWrite(BaseModel):
     value: str = Field(max_length=32_768)
     category: VariableCategory = "terraform"
     sensitive: bool = False
+    hcl: bool = False
+    """Parse `value` as an HCL expression rather than take it as a literal string.
+
+    This is what makes a list or a map typed input variable expressible at all. It
+    is refused on an `env` variable, because a process environment variable is a
+    string to the process and there is nothing to parse it with.
+    """
     description: str = ""
 
 
@@ -160,6 +167,9 @@ class Variable(BaseModel):
     value: Optional[str] = None
     category: VariableCategory
     sensitive: bool
+    hcl: bool = False
+    """Whether the stored value is an HCL expression. A row written before this
+    flag existed carries no such attribute and reads as `False`."""
     description: str = ""
     created_at: str
     updated_at: Optional[str] = None

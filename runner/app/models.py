@@ -131,6 +131,13 @@ class Bundle(BaseModel):
     run_role: RunRole
     environment_variables: dict[str, str] = Field(default_factory=dict)
     terraform_variables: dict[str, object] = Field(default_factory=dict)
+    """Literal values. They go to a JSON tfvars file, where a string is a string
+    whatever it contains, so quotes and braces in a value cannot be reinterpreted."""
+    hcl_variables: dict[str, str] = Field(default_factory=dict)
+    """Values that are HCL expressions rather than literals, which is the only way
+    a list or map typed input variable can be given one. They go to a native HCL
+    tfvars file, where the engine parses each one. A bundle from a control plane
+    that predates the flag carries none."""
     artifacts: Artifacts = Field(default_factory=Artifacts)
 
     def sensitive_values(self) -> list[str]:
@@ -142,6 +149,9 @@ class Bundle(BaseModel):
         for variable in self.terraform_variables.values():
             if isinstance(variable, str) and variable:
                 values.append(variable)
+        for expression in self.hcl_variables.values():
+            if expression:
+                values.append(expression)
         if self.run_role.external_id:
             values.append(self.run_role.external_id)
         return values

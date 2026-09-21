@@ -159,6 +159,20 @@ Lambda and carries none of the function's environment. It is `local.prefix`:
 `webbpulse-terraform-staging` in staging and `webbpulse-terraform-prod` in
 production.
 
+## HCL variables
+
+A terraform variable can set `hcl`, which makes the runner write its value into a
+native `zz_webbpulse.auto.tfvars` as a bare `key = expression` assignment rather
+than into the JSON tfvars file, so the engine parses it. That is the only way a
+`list` or `map` typed input variable can be given a value. It is refused on an
+`env` variable, whose value is a string to the process with nothing to parse it.
+The value is structurally checked at write time by `app/domains/workspaces/hcl.py`,
+which rules out an unterminated string, heredoc or comment and unbalanced
+brackets without adding an HCL parser dependency; the engine stays the authority
+on meaning. A sensitive variable can still be HCL: it is sealed like any other
+value, the check runs before sealing and never echoes the value, and the runner
+registers the expression with the redactor.
+
 ## Sensitive variables
 
 A variable marked sensitive is sealed app side with AES-256-GCM under a key
