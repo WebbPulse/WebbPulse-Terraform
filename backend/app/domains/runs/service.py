@@ -11,6 +11,13 @@ A run token is minted when an execution starts and revoked when the run finishes
 It is a `wpk_` key whose subject is the run id and whose only scope is `runner`,
 so it opens the two runner routes for one run and nothing else. Revoking it on
 every terminal transition is what keeps a leaked token from outliving its run.
+
+The environment wide concurrency semaphore lives in this table too, as one row
+keyed `run-semaphore` whose `holders` string set the state machine adds to on
+`AcquireSemaphore` and removes from on its release states. Any path that ends a
+run without letting the execution reach a release state has to drop the holder
+itself, and every create prunes stale holders, so the semaphore cannot leak a
+slot permanently.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ from webbpulse.dynamodb import ConditionFailed, Repository, new_ulid, now_iso
 from ...common.composition.settings import Settings, get_settings
 from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store
 from ...common.db import repositories
-from ...common.db.tables import RUNS_BY_WORKSPACE_INDEX
+from ...common.db.tables import RUNS_BY_WORKSPACE_INDEX, SEMAPHORE_RUN_ID
 from ..workspaces import service as workspaces_service
 from . import session_policy
 from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
@@ -140,6 +147,93 @@ def _logs(settings: Settings) -> Any:
     return boto3.client("logs", region_name=settings.AWS_REGION_NAME or None)
 
 
+def _is_run_row(item: dict[str, Any]) -> bool:
+    """Whether a row read from the runs table is a run rather than the semaphore.
+
+    Every query in this module goes through the `by_workspace` GSI, and the
+    semaphore row carries no `workspace_id`, so DynamoDB leaves it out of that
+    index and it cannot be returned by any of them. This is the belt on top of
+    that: if anything ever stamps a `workspace_id` onto the semaphore row it
+    would appear in a workspace's list as a run with no status, and this keeps it
+    out of every read path regardless.
+    """
+    return str(item.get("run_id", "")) != SEMAPHORE_RUN_ID
+
+
+def semaphore_holders(*, settings: Settings | None = None) -> set[str]:
+    """The run ids currently holding a concurrency slot, empty when the row is absent.
+
+    The row is created by the state machine's first `AcquireSemaphore`, so a fresh
+    environment has no row at all and that is not an error.
+    """
+    resolved = settings or get_settings()
+    item = _runs(resolved).get({"run_id": SEMAPHORE_RUN_ID})
+    if not item:
+        return set()
+    holders = item.get("holders")
+    if not holders:
+        return set()
+    return {str(holder) for holder in holders}
+
+
+def release_semaphore(run_id: str, *, settings: Settings | None = None) -> None:
+    """Drop `run_id` from the concurrency semaphore's `holders` set.
+
+    The mirror of the state machine's `ReleaseSemaphore`, for the paths that end a
+    run without the execution reaching one: `StopExecution` kills the execution
+    where it stands, so the release state never runs and the slot would be held
+    forever. Unconditional and idempotent, so releasing a run that never held a
+    slot, or releasing twice, is a no-op rather than a failure.
+    """
+    resolved = settings or get_settings()
+    _runs(resolved).update(
+        {"run_id": SEMAPHORE_RUN_ID},
+        update_expression="DELETE holders :holder",
+        expression_values={":holder": {run_id}},
+    )
+
+
+def prune_semaphore(*, settings: Settings | None = None) -> list[str]:
+    """Drop every holder whose run is finished or gone, returning the ids dropped.
+
+    The self healing pass. A holder leaks whenever a run ends without its execution
+    reaching a release state, from a stopped execution, a lost execution or a
+    partial failure, and a leaked holder costs a slot for good. Run before every
+    start, so a stuck semaphore is fixed by starting any run.
+
+    Cheap by construction: `holders` never exceeds the concurrency cap, so this is
+    one read plus at most one write, and the per holder reads are point gets.
+    """
+    resolved = settings or get_settings()
+    holders = semaphore_holders(settings=resolved)
+    if not holders:
+        return []
+
+    stale: set[str] = set()
+    for holder in holders:
+        try:
+            run = get_run(holder, settings=resolved)
+        except RunNotFound:
+            stale.add(holder)
+            continue
+        if str(run.get("status", "")) in TERMINAL_STATUSES:
+            stale.add(holder)
+
+    if not stale:
+        return []
+
+    _runs(resolved).update(
+        {"run_id": SEMAPHORE_RUN_ID},
+        update_expression="DELETE holders :holder",
+        expression_values={":holder": stale},
+    )
+    _log.info(
+        "Pruned stale concurrency semaphore holders.",
+        extra={"event": "runs.semaphore.pruned", "run_ids": sorted(stale)},
+    )
+    return sorted(stale)
+
+
 def active_run(
     workspace_id: str,
     *,
@@ -161,7 +255,7 @@ def active_run(
         index_name=RUNS_BY_WORKSPACE_INDEX,
         ascending=False,
     ):
-        if str(item.get("status", "")) in statuses:
+        if _is_run_row(item) and str(item.get("status", "")) in statuses:
             return item
     return None
 
@@ -175,7 +269,7 @@ def _queued_runs(workspace_id: str, *, settings: Settings) -> list[dict[str, Any
             index_name=RUNS_BY_WORKSPACE_INDEX,
             ascending=True,
         )
-        if str(item.get("status", "")) == "pending" and item.get("queued_behind")
+        if _is_run_row(item) and str(item.get("status", "")) == "pending" and item.get("queued_behind")
     ]
     return items
 
@@ -258,6 +352,11 @@ def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any
     state machine runs with `include_execution_data` off so it never reaches the
     execution log. Only the hash is stored on the row.
 
+    The semaphore is pruned immediately before the start, so a slot leaked by any
+    cause heals itself the next time someone starts a run rather than sitting in
+    `AcquireSemaphore` retrying for an hour. It runs before rather than after
+    because this run is about to contend for a slot itself.
+
     Returns the run with `run_token` set, which is the only time the plaintext
     reaches a caller.
     """
@@ -279,6 +378,7 @@ def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any
 
     execution_arn = ""
     if resolved.RUN_STATE_MACHINE_ARN:
+        prune_semaphore(settings=resolved)
         started = _stepfunctions(resolved).start_execution(
             stateMachineArn=resolved.RUN_STATE_MACHINE_ARN,
             name=run_id,
@@ -373,10 +473,17 @@ def _update_run(
 def get_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     """One run by id.
 
+    The concurrency semaphore shares this table under the reserved `run-semaphore`
+    key, so asking for it is a 404 rather than a row that would be rendered as a
+    run with no workspace or status. The route's path pattern already rejects the
+    id, and this makes the service itself safe to call from anywhere.
+
     Raises:
-        RunNotFound: No such run.
+        RunNotFound: No such run, or the reserved semaphore key.
     """
     resolved = settings or get_settings()
+    if run_id == SEMAPHORE_RUN_ID:
+        raise RunNotFound(run_id)
     item = _runs(resolved).get({"run_id": run_id})
     if not item:
         raise RunNotFound(run_id)
@@ -384,7 +491,7 @@ def get_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
 
 
 def list_runs(workspace_id: str, *, settings: Settings | None = None) -> list[dict[str, Any]]:
-    """One workspace's runs, newest first.
+    """One workspace's runs, newest first, never the semaphore row.
 
     Raises:
         WorkspaceNotFound: No such workspace, which is a 404 rather than an empty list.
@@ -398,6 +505,7 @@ def list_runs(workspace_id: str, *, settings: Settings | None = None) -> list[di
             index_name=RUNS_BY_WORKSPACE_INDEX,
             ascending=False,
         )
+        if _is_run_row(item)
     ]
 
 
@@ -445,6 +553,11 @@ def cancel_run(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     promotion. A running one is stopped and marked here rather than waiting for
     the execution's own terminal handler, so the caller sees the new state.
 
+    `StopExecution` kills the execution where it stands, so neither release state
+    runs and the run would hold its concurrency slot forever. That is why the
+    semaphore is released here explicitly, right after the stop. A queued run
+    never held a slot and the release is idempotent, so it is unconditional.
+
     Raises:
         RunNotFound: No such run.
         RunNotCancellable: The run already finished.
@@ -463,6 +576,7 @@ def cancel_run(run_id: str, *, settings: Settings | None = None) -> dict[str, An
             cause=f"Cancelled through the API for {run_id}.",
         )
 
+    release_semaphore(run_id, settings=resolved)
     return finish_run(run_id, "cancelled", settings=resolved)
 
 
@@ -472,7 +586,10 @@ def discard_run(run_id: str, *, settings: Settings | None = None) -> dict[str, A
     A discard is not a cancel. The execution is waiting on the confirmation task
     token, so failing that token lets the state machine run its own terminal
     path and release the semaphore, which `StopExecution` would skip. That is why
-    this sends `SendTaskFailure` rather than stopping the execution.
+    this sends `SendTaskFailure` rather than stopping the execution, and why this
+    path deliberately does not call `release_semaphore`: `ReleaseSemaphoreAfterFailure`
+    drops the holder on its own, and a second delete here would be harmless but
+    would hide the fact that the state machine is the one releasing it.
 
     Raises:
         RunNotFound: No such run.
@@ -862,10 +979,13 @@ __all__ = [
     "log_stream_name",
     "plan_json_key",
     "plan_key",
+    "prune_semaphore",
     "record_phase_result",
+    "release_semaphore",
     "render_run",
     "run_bundle",
     "run_logs",
+    "semaphore_holders",
     "start_run",
     "state_key",
     "store_confirm_task_token",
