@@ -3,7 +3,7 @@ module "alarms" {
   version = "~> 2.27"
 
   name_prefix         = local.prefix
-  notification_emails = ["tyler@webbpulse.com", "tylert2610@gmail.com"]
+  notification_emails = local.production_alarms ? ["tyler@webbpulse.com", "tylert2610@gmail.com"] : []
 
   http_api_id = module.api.api_id
 
