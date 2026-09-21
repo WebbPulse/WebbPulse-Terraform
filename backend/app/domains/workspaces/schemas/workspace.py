@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Final, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Engine = Literal["terraform", "tofu"]
 """Which binary runs this workspace. The runner image bundles both."""
@@ -51,12 +51,28 @@ class WorkspaceCreate(WorkspaceBase):
     name: str = Field(min_length=1, max_length=90, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
+CLEARABLE_WORKSPACE_FIELDS: Final = ("run_role_arn", "working_directory", "description")
+"""The update fields an explicit JSON null clears.
+
+The body follows JSON Merge Patch: an omitted key leaves the stored value alone
+and an explicit null removes the attribute from the row. Only these three carry a
+meaningful "not set" state. `engine` and `engine_version` are required on a stored
+workspace, so a null on either is a validation error rather than a clear.
+"""
+
+
 class WorkspaceUpdate(BaseModel):
     """A partial workspace edit. The name and the id are not editable.
 
     A rename would break the state key, which is derived from the workspace id,
     and the `by_name` uniqueness claim at the same time, so it is refused by
     omission rather than by a check.
+
+    The model separates "absent" from "explicitly null" by leaving every field
+    unset by default and reading the body with `model_dump(exclude_unset=True)`,
+    so a key only reaches the service when the request actually carried it. A null
+    on one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service
+    turns into a DynamoDB REMOVE.
     """
 
     engine: Optional[Engine] = None
@@ -64,6 +80,28 @@ class WorkspaceUpdate(BaseModel):
     run_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
     working_directory: Optional[str] = None
     description: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_a_null_on_a_field_that_cannot_be_cleared(cls, data: Any) -> Any:
+        """Reject an explicit null on a field a stored workspace has to carry.
+
+        Every field defaults to `None` so that an omitted key stays unset, which is
+        what keeps absent apart from null. That default makes `None` an accepted
+        value on all five, so the two non-clearable fields are refused here instead
+        of by their annotation. Without this a null on `engine_version` would be
+        read as a clear of a required attribute, and silently dropped.
+        """
+        if not isinstance(data, dict):
+            return data
+        offenders = sorted(
+            key
+            for key, value in data.items()
+            if value is None and key in cls.model_fields and key not in CLEARABLE_WORKSPACE_FIELDS
+        )
+        if offenders:
+            raise ValueError(f"{', '.join(offenders)} cannot be cleared, so null is not an accepted value")
+        return data
 
 
 class Workspace(WorkspaceBase):

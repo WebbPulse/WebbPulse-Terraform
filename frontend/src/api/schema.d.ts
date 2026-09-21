@@ -783,8 +783,13 @@ export interface paths {
          * Update Workspace
          * @description Edit one workspace. The name and the id are not editable.
          *
-         *     Changing `run_role_arn` drops the recorded check outcome, so the new role reads
-         *     as unchecked until `run-role/check` says otherwise.
+         *     The body is JSON Merge Patch: an omitted key leaves the stored value exactly
+         *     as it was, and an explicit null on `run_role_arn`, `working_directory` or
+         *     `description` clears that field. `model_dump(exclude_unset=True)` is what keeps
+         *     the two apart, so a field is only touched when the request carried its key.
+         *
+         *     Changing or clearing `run_role_arn` drops the recorded check outcome, so the
+         *     role reads as unchecked until `run-role/check` says otherwise.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -1748,6 +1753,12 @@ export interface components {
          *     A rename would break the state key, which is derived from the workspace id,
          *     and the `by_name` uniqueness claim at the same time, so it is refused by
          *     omission rather than by a check.
+         *
+         *     The model separates "absent" from "explicitly null" by leaving every field
+         *     unset by default and reading the body with `model_dump(exclude_unset=True)`,
+         *     so a key only reaches the service when the request actually carried it. A null
+         *     on one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service
+         *     turns into a DynamoDB REMOVE.
          */
         WorkspaceUpdate: {
             /** Description */

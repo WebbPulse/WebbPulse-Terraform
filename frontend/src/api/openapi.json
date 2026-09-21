@@ -1675,7 +1675,7 @@
         "type": "object"
       },
       "WorkspaceUpdate": {
-        "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so it is refused by\nomission rather than by a check.",
+        "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so it is refused by\nomission rather than by a check.\n\nThe model separates \"absent\" from \"explicitly null\" by leaving every field\nunset by default and reading the body with `model_dump(exclude_unset=True)`,\nso a key only reaches the service when the request actually carried it. A null\non one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service\nturns into a DynamoDB REMOVE.",
         "properties": {
           "description": {
             "anyOf": [
@@ -3554,7 +3554,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.\n\nChanging `run_role_arn` drops the recorded check outcome, so the new role reads\nas unchecked until `run-role/check` says otherwise.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on `run_role_arn`, `working_directory` or\n`description` clears that field. `model_dump(exclude_unset=True)` is what keeps\nthe two apart, so a field is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {
