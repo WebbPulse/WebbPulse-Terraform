@@ -10,8 +10,8 @@ import {
   RunDetail,
   Runs,
   SignIn,
-  WorkspaceDetail,
   Workspaces,
+  workspaceRoutes,
 } from './pages';
 import './styles/globals.css';
 
@@ -36,7 +36,7 @@ export function AppRoutes(): React.ReactElement {
       >
         <Route path="/" element={<Navigate to="/workspaces" replace />} />
         <Route path="/workspaces" element={<Workspaces />} />
-        <Route path="/workspaces/:workspaceId" element={<WorkspaceDetail />} />
+        {workspaceRoutes()}
         <Route path="/runs" element={<Runs />} />
         <Route path="/runs/:runId" element={<RunDetail />} />
       </Route>
