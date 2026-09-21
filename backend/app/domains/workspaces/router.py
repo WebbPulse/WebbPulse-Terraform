@@ -116,8 +116,13 @@ def get_workspace(workspace_id: str = WorkspaceId) -> dict[str, Any]:
 def update_workspace(payload: WorkspaceUpdate, workspace_id: str = WorkspaceId) -> dict[str, Any]:
     """Edit one workspace. The name and the id are not editable.
 
-    Changing `run_role_arn` drops the recorded check outcome, so the new role reads
-    as unchecked until `run-role/check` says otherwise.
+    The body is JSON Merge Patch: an omitted key leaves the stored value exactly
+    as it was, and an explicit null on `run_role_arn`, `working_directory` or
+    `description` clears that field. `model_dump(exclude_unset=True)` is what keeps
+    the two apart, so a field is only touched when the request carried its key.
+
+    Changing or clearing `run_role_arn` drops the recorded check outcome, so the
+    role reads as unchecked until `run-role/check` says otherwise.
     """
     try:
         updated = service.update_workspace(workspace_id, payload.model_dump(exclude_unset=True))

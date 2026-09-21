@@ -37,6 +37,7 @@ from ...common.workspaces.reads import (
     list_variables,
     resolved_variables,
 )
+from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
 
 __all__ = [
     "CONFIG_VERSION_ID_PREFIX",
@@ -285,24 +286,39 @@ def update_workspace(
 ) -> dict[str, Any]:
     """Apply a partial edit to one workspace, or `WorkspaceNotFound`.
 
+    `changes` is JSON Merge Patch: a key the request body did not carry is absent
+    from the mapping and is left untouched, and a key carrying an explicit null
+    clears that field. The router builds it with `model_dump(exclude_unset=True)`,
+    which is what makes the two distinguishable at all, and only the fields in
+    `CLEARABLE_WORKSPACE_FIELDS` may be cleared.
+
+    A null becomes a DynamoDB REMOVE rather than a stored null, so a cleared field
+    reads back as its declared default and no row carries a null attribute.
+
     A change to `run_role_arn` drops the recorded check outcome in the same write:
     the previous success belonged to the previous role, and leaving it behind would
-    show a new, unchecked role as connected.
+    show a new, unchecked role as connected. Clearing the ARN counts as a change,
+    so the outcome goes with it.
     """
     resolved = settings or get_settings()
-    applied = {key: value for key, value in changes.items() if value is not None}
-    if not applied:
+    assignments = {key: value for key, value in changes.items() if value is not None}
+    clears = [key for key, value in changes.items() if value is None and key in CLEARABLE_WORKSPACE_FIELDS]
+    if not assignments and not clears:
         return get_workspace(workspace_id, settings=resolved)
 
     existing = get_workspace(workspace_id, settings=resolved)
-    role_changed = "run_role_arn" in applied and applied["run_role_arn"] != existing.get("run_role_arn")
+    role_changed = "run_role_arn" in changes and changes["run_role_arn"] != existing.get("run_role_arn")
 
-    applied["updated_at"] = now_iso()
-    names = {f"#{key}": key for key in applied}
-    values = {f":{key}": value for key, value in applied.items()}
-    expression = "SET " + ", ".join(f"#{key} = :{key}" for key in applied)
+    assignments["updated_at"] = now_iso()
+    removals = [*clears]
     if role_changed:
-        expression += " REMOVE run_role_checked_at, run_role_account_id"
+        removals.extend(("run_role_checked_at", "run_role_account_id"))
+
+    names = {f"#{key}": key for key in (*assignments, *removals)}
+    values = {f":{key}": value for key, value in assignments.items()}
+    expression = "SET " + ", ".join(f"#{key} = :{key}" for key in assignments)
+    if removals:
+        expression += " REMOVE " + ", ".join(f"#{key}" for key in removals)
     repository = repositories.workspaces(resolved)
     try:
         updated = repository.update(
