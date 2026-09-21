@@ -35,6 +35,9 @@ describe('Runs', () => {
     const badges = await screen.findAllByTestId('run-state-badge');
     expect(badges[0]).toHaveAttribute('data-state', 'applied');
     expect(badges[1]).toHaveAttribute('data-state', 'errored');
+    expect(apiMock.listRuns.mock.calls[0]?.[0]).toEqual({
+      workspace_id: aWorkspace().workspace_id,
+    });
     expect(
       screen.getAllByLabelText('3 to add, 1 to change, 0 to destroy').length
     ).toBeGreaterThan(0);

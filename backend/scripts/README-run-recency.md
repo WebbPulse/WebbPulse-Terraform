@@ -3,12 +3,17 @@
 Old runs lack `collection`, so creating `by_recency` alone does not index them.
 Actor data cannot be recovered; this migration only adds `collection = "run"`.
 
-1. Apply the reviewed Terraform GSI addition through HCP before deploying the
-   runs backend. Verify the actual plan contains the in-place index addition,
-   and wait for `by_recency` to become `ACTIVE` in the target environment.
-2. Deploy the runs backend that stamps `collection` on new rows. Do not enable
-   global-list consumers until the migration is complete. Existing scoped reads
-   continue to use `by_workspace`.
+1. Main finishes the PR70 apply, then reviews and applies the infrastructure-only
+   [PR71](https://github.com/WebbPulse/WebbPulse-Terraform/pull/71) through HCP.
+   Verify the actual plan contains the in-place index addition, and explicitly
+   verify `by_recency` is `ACTIVE` on the target environment's runs table before
+   merging PR68. A green HCP check or table status alone is insufficient.
+2. Merge PR68 and verify the runs backend image digest and successful deployment
+   match that release. It stamps `collection` on new rows. PR68's frontend changes
+   are compatibility only: generated contracts and cursor handling for existing
+   workspace-scoped requests. They work with both the old unpaginated backend
+   and the new paginated backend, so concurrent compatibility deployment is safe.
+   No UI uses the global-list endpoint at this stage.
 3. With approved runtime credentials, run from `backend/` using the explicit
    target table name and region:
 
@@ -29,7 +34,14 @@ Actor data cannot be recovered; this migration only adds `collection = "run"`.
    workspaces, including old runs with `actor: null`. Confirm no semaphore row is
    listed. Then enable global-list consumers. Repeat these gates for production.
 
-Do not merge this combined infrastructure/backend PR and rely on racing deploys:
-apply its reviewed infrastructure configuration first through the established HCP
-workflow, or separate the infrastructure release before the backend release.
-No live migration or apply is performed by the unit tests.
+5. Only after main records the backend digest, complete zero-eligible dry scan,
+   and paginated global/scoped ID parity, merge the stacked frontend follow-up.
+   Retarget it to staging after PR68 merges. It changes the Runs page to the
+   global-list endpoint. Existing deploy workflows remain unchanged.
+
+Keep these three release boundaries separate in production too. Promote the
+infrastructure first, apply and verify ACTIVE, then promote backend compatibility,
+verify its deployed digest and migrate, then promote the frontend switch. A single
+promotion containing all three slices would bypass the sequencing. Deployment
+workflows are still independent; main enforces these gates at each merge boundary.
+No live migration or apply is performed by the unit tests or this preparation.
