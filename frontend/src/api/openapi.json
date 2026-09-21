@@ -1422,6 +1422,180 @@
         "title": "RunRoleSetup",
         "type": "object"
       },
+      "StateVersion": {
+        "description": "One version of a workspace's Terraform state, as the API renders it.\n\nA state body holds every resource attribute and every output in plaintext,\nroutinely including passwords and private keys, so nothing derived from those\nappears here. The fields are the ones that describe the version rather than\nwhat is inside it, and the body is reachable only through the separate\ndownload route.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "is_current": {
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "state_version_id": {
+            "title": "State Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "state_version_id",
+          "created_at",
+          "size_bytes",
+          "is_current"
+        ],
+        "title": "StateVersion",
+        "type": "object"
+      },
+      "StateVersionDetail": {
+        "description": "One state version with the three fields that only the state body carries.\n\n`serial`, `terraform_version` and `lineage` are read out of the object\nbecause Terraform writes state through its own backend and the control plane\nnever gets to stamp them as S3 metadata. They are the only things lifted out\nof the body; no resource attribute and no output is ever read into a\nresponse. Each is optional because a body that cannot be parsed still has\ndescribable metadata.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "is_current": {
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "lineage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineage"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "serial": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serial"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "state_version_id": {
+            "title": "State Version Id",
+            "type": "string"
+          },
+          "terraform_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terraform Version"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "state_version_id",
+          "created_at",
+          "size_bytes",
+          "is_current"
+        ],
+        "title": "StateVersionDetail",
+        "type": "object"
+      },
+      "StateVersionDownload": {
+        "description": "A short lived URL for one state version's raw bytes.\n\nThe URL is a bearer credential for exactly one object version: it names the\nbucket, the key and the version inside its signature, so it cannot be steered\nat another workspace's state. It is minted only after the caller's scope and\nthe version's ownership have both been checked, and it expires in\n`expires_in` seconds.",
+        "properties": {
+          "download_url": {
+            "title": "Download Url",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "state_version_id": {
+            "title": "State Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "state_version_id",
+          "download_url",
+          "expires_in",
+          "size_bytes"
+        ],
+        "title": "StateVersionDownload",
+        "type": "object"
+      },
+      "StateVersionList": {
+        "description": "One page of a workspace's state versions, newest first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StateVersion"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_page_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page Token"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "StateVersionList",
+        "type": "object"
+      },
       "ValidationErrorDetail": {
         "description": "One offending field in a 422, carrying its location and reason but never its input.",
         "properties": {
@@ -3968,6 +4142,197 @@
           }
         },
         "summary": "Check Run Role",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/state-versions": {
+      "get": {
+        "description": "One page of a workspace's state history, newest first.\n\nGuarded by the same scope as reading the workspace itself, so state history\nis reachable by exactly the callers that can already see the workspace and by\nno one else. A workspace that has never run answers an empty page.",
+        "operationId": "list_state_versions_api_v1_workspaces__workspace_id__state_versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateVersionList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List State Versions",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}": {
+      "get": {
+        "description": "One state version's metadata. Never its resources or its outputs.",
+        "operationId": "get_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "state_version_id",
+            "required": true,
+            "schema": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "title": "State Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateVersionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get State Version",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}/download": {
+      "post": {
+        "description": "Mint a short lived URL for one state version's raw bytes.\n\nA `POST` rather than a `GET` because it is not a read: it mints a bearer\ncredential for the most sensitive object the product stores, and that is an\nevent worth being a distinct, non cacheable, non prefetchable call.\n\nThe scope guard runs before this function is entered and the service checks\nthe version belongs to this workspace before it signs anything, so no URL\nexists until both have passed. The handover is recorded first, because an\naudit line written after the URL is minted would be missing exactly when it\nmatters most.",
+        "operationId": "download_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__download_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "state_version_id",
+            "required": true,
+            "schema": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "title": "State Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateVersionDownload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Download State Version",
         "tags": [
           "workspaces"
         ]

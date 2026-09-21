@@ -24,6 +24,13 @@ locals {
       "GET /api/v1/workspaces/{workspace_id}/config-versions/{config_version_id}" = { integration = "workspaces" }
     },
     {
+      "GET /api/v1/workspaces/{workspace_id}/state-versions"                    = { integration = "workspaces" }
+      "GET /api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}" = { integration = "workspaces" }
+    },
+    {
+      "POST /api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}/download" = { integration = "workspaces" }
+    },
+    {
       "POST /api/v1/workspaces/{workspace_id}/run-role/check" = { integration = "workspaces" }
       "GET /api/v1/workspaces/{workspace_id}/run-role/check"  = { integration = "workspaces" }
     },

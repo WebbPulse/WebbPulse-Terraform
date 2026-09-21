@@ -6,9 +6,11 @@ and an agent holding a `wpk_` key reach them through the same check.
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from webbpulse.identity.claims import AuthorizerClaims
 
 from ...common.core.auth import (
     CONFIGS_READ,
@@ -19,14 +21,18 @@ from ...common.core.auth import (
     WORKSPACES_WRITE,
     scopes,
 )
+from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
-from . import hcl, service
+from . import hcl, service, state_versions
 from .schemas.workspace import (
     ConfigVersion,
     ConfigVersionCreate,
     ConfigVersionList,
     ConfigVersionUpload,
     RunRoleCheck,
+    StateVersionDetail,
+    StateVersionDownload,
+    StateVersionList,
     Variable,
     VariableList,
     VariableWrite,
@@ -43,7 +49,55 @@ router = APIRouter()
 
 WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
 ConfigVersionId = Path(min_length=4, max_length=64, pattern=r"^cv-[0-9A-HJKMNP-TV-Z]{26}$")
+StateVersionId = Path(min_length=1, max_length=1024, pattern=r"^[A-Za-z0-9._-]+$")
+"""An S3 version id, which is opaque and not a ULID like the ids this API mints.
+
+The pattern is a character allowlist rather than a shape: it keeps a path
+separator or a percent escape out of a value that is interpolated into an S3
+request, while accepting every id S3 actually issues, including the literal
+`null` a version predating versioning carries.
+"""
 VariableKey = Path(min_length=1, max_length=256, pattern=r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+
+
+_log = logging.getLogger(__name__)
+
+STATE_DOWNLOAD_EVENT = "workspaces.state_version.download"
+"""The log event a state download is recorded under.
+
+The repository has no audit store, so this is a structured log line on the
+function's own group rather than a durable audit record, and it is the weakest
+part of this feature: it inherits the group's 7 day retention and nothing
+enforces that it is written. It is recorded anyway because a state download is
+the event most worth reconstructing later, and it names who asked, which
+workspace and which version. A real audit trail is a separate decision.
+"""
+
+
+def record_state_download(
+    request: Request,
+    claims: AuthorizerClaims,
+    *,
+    workspace_id: str,
+    state_version_id: str,
+) -> None:
+    """Record that a state download URL was handed out, before it is minted.
+
+    Written ahead of the signing rather than after it so that a failure between
+    the two leaves a line that overstates access rather than one that misses it.
+    The URL itself is never logged: it is a bearer credential, and a log holding
+    it would be a second copy of the thing being protected.
+    """
+    _log.info(
+        "Minted a state version download URL.",
+        extra={
+            "event": STATE_DOWNLOAD_EVENT,
+            "workspace_id": workspace_id,
+            "state_version_id": state_version_id,
+            "subject": str(claims.get("sub", "") or "") or None,
+            "source_ip": request.client.host if request.client else None,
+        },
+    )
 
 
 def _not_found(message: str) -> HTTPException:
@@ -324,3 +378,99 @@ def get_config_version(
         return service.get_config_version(workspace_id, config_version_id)
     except service.ConfigVersionNotFound as error:
         raise _not_found("No such config version.") from error
+
+
+@router.get(
+    "/workspaces/{workspace_id}/state-versions",
+    response_model=StateVersionList,
+    dependencies=[Depends(scopes(WORKSPACES_READ))],
+)
+def list_state_versions(
+    workspace_id: str = WorkspaceId,
+    page_size: int = Query(default=state_versions.DEFAULT_PAGE_SIZE, ge=1, le=state_versions.MAX_PAGE_SIZE),
+    page_token: Optional[str] = Query(default=None, max_length=2048),
+) -> dict[str, Any]:
+    """One page of a workspace's state history, newest first.
+
+    Guarded by the same scope as reading the workspace itself, so state history
+    is reachable by exactly the callers that can already see the workspace and by
+    no one else. A workspace that has never run answers an empty page.
+    """
+    try:
+        return state_versions.list_state_versions(
+            workspace_id,
+            page_size=page_size,
+            page_token=page_token,
+        )
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except state_versions.StateBucketMissing as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="State history is unavailable: no state bucket is configured.",
+        ) from error
+
+
+@router.get(
+    "/workspaces/{workspace_id}/state-versions/{state_version_id}",
+    response_model=StateVersionDetail,
+    dependencies=[Depends(scopes(WORKSPACES_READ))],
+)
+def get_state_version(
+    workspace_id: str = WorkspaceId,
+    state_version_id: str = StateVersionId,
+) -> dict[str, Any]:
+    """One state version's metadata. Never its resources or its outputs."""
+    try:
+        return state_versions.get_state_version(workspace_id, state_version_id)
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except state_versions.StateVersionNotFound as error:
+        raise _not_found("No such state version.") from error
+    except state_versions.StateBucketMissing as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="State history is unavailable: no state bucket is configured.",
+        ) from error
+
+
+@router.post(
+    "/workspaces/{workspace_id}/state-versions/{state_version_id}/download",
+    response_model=StateVersionDownload,
+    dependencies=[Depends(scopes(WORKSPACES_READ))],
+)
+def download_state_version(
+    request: Request,
+    workspace_id: str = WorkspaceId,
+    state_version_id: str = StateVersionId,
+    claims: AuthorizerClaims = Depends(auth_claims),
+) -> dict[str, Any]:
+    """Mint a short lived URL for one state version's raw bytes.
+
+    A `POST` rather than a `GET` because it is not a read: it mints a bearer
+    credential for the most sensitive object the product stores, and that is an
+    event worth being a distinct, non cacheable, non prefetchable call.
+
+    The scope guard runs before this function is entered and the service checks
+    the version belongs to this workspace before it signs anything, so no URL
+    exists until both have passed. The handover is recorded first, because an
+    audit line written after the URL is minted would be missing exactly when it
+    matters most.
+    """
+    try:
+        record_state_download(
+            request,
+            claims,
+            workspace_id=workspace_id,
+            state_version_id=state_version_id,
+        )
+        return state_versions.state_version_download(workspace_id, state_version_id)
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except state_versions.StateVersionNotFound as error:
+        raise _not_found("No such state version.") from error
+    except state_versions.StateBucketMissing as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="State history is unavailable: no state bucket is configured.",
+        ) from error

@@ -218,3 +218,68 @@ class ConfigVersionList(BaseModel):
     """One workspace's config versions, newest last by `created_at`."""
 
     items: list[ConfigVersion]
+
+
+class StateVersion(BaseModel):
+    """One version of a workspace's Terraform state, as the API renders it.
+
+    A state body holds every resource attribute and every output in plaintext,
+    routinely including passwords and private keys, so nothing derived from those
+    appears here. The fields are the ones that describe the version rather than
+    what is inside it, and the body is reachable only through the separate
+    download route.
+    """
+
+    workspace_id: str
+    state_version_id: str
+    """The S3 object version holding this state. The history is S3's own object
+    versioning rather than a copy, so this is the bucket's identifier."""
+    created_at: str
+    size_bytes: int
+    is_current: bool
+    """Whether this is the state a run would read now."""
+
+
+class StateVersionDetail(StateVersion):
+    """One state version with the three fields that only the state body carries.
+
+    `serial`, `terraform_version` and `lineage` are read out of the object
+    because Terraform writes state through its own backend and the control plane
+    never gets to stamp them as S3 metadata. They are the only things lifted out
+    of the body; no resource attribute and no output is ever read into a
+    response. Each is optional because a body that cannot be parsed still has
+    describable metadata.
+    """
+
+    serial: Optional[int] = None
+    terraform_version: Optional[str] = None
+    lineage: Optional[str] = None
+    run_id: Optional[str] = None
+    """The run that produced this state, when it is known. S3 records no such
+    link, so this is populated only when a future write records it and reads as
+    null for every state written before then."""
+
+
+class StateVersionList(BaseModel):
+    """One page of a workspace's state versions, newest first."""
+
+    items: list[StateVersion]
+    next_page_token: Optional[str] = None
+    """Opaque. Absent when this is the last page."""
+
+
+class StateVersionDownload(BaseModel):
+    """A short lived URL for one state version's raw bytes.
+
+    The URL is a bearer credential for exactly one object version: it names the
+    bucket, the key and the version inside its signature, so it cannot be steered
+    at another workspace's state. It is minted only after the caller's scope and
+    the version's ownership have both been checked, and it expires in
+    `expires_in` seconds.
+    """
+
+    workspace_id: str
+    state_version_id: str
+    download_url: str
+    expires_in: int
+    size_bytes: int
