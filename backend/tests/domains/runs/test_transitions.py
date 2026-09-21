@@ -79,10 +79,44 @@ def test_a_failed_plan_without_a_message_still_errors(created_run):
     """An exit code with no message still produces an error string."""
     updated = runs_service.record_phase_result(
         created_run["run_id"],
-        {"phase": "plan", "exit_code": 2, "changes": {}, "error": ""},
+        {"phase": "plan", "exit_code": 3, "changes": {}, "error": ""},
     )
     assert updated["status"] == "errored"
-    assert "2" in updated["error"]
+    assert "3" in updated["error"]
+
+
+def test_a_plan_exiting_two_with_changes_awaits_confirmation(created_run):
+    """Exit 2 is terraform's `-detailed-exitcode` for changes, not a failure.
+
+    The runner reports 0 for it, so this covers a runner that posts the raw
+    terraform code and would otherwise error every plan that found changes.
+    """
+    updated = runs_service.record_phase_result(
+        created_run["run_id"],
+        {"phase": "plan", "exit_code": 2, "changes": {"add": 2, "change": 1, "destroy": 0}, "error": ""},
+    )
+    assert updated["status"] == "awaiting_confirmation"
+    assert updated["changes"] == {"add": 2, "change": 1, "destroy": 0}
+
+
+def test_a_plan_only_run_exiting_two_finishes(plan_only_run):
+    """A `plan_only` run reporting the detailed changes code still finishes."""
+    updated = runs_service.record_phase_result(
+        plan_only_run["run_id"],
+        {"phase": "plan", "exit_code": 2, "changes": {"add": 1, "change": 0, "destroy": 0}, "error": ""},
+    )
+    assert updated["status"] == "planned_and_finished"
+
+
+def test_an_apply_exiting_two_still_errors(auth_client, awaiting_confirmation):
+    """Only the plan phase reads 2 as changes; an apply exiting 2 failed."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    updated = runs_service.record_phase_result(
+        run_id,
+        {"phase": "apply", "exit_code": 2, "changes": {}, "error": ""},
+    )
+    assert updated["status"] == "errored"
 
 
 def test_confirm_moves_the_run_to_applying(auth_client, awaiting_confirmation):

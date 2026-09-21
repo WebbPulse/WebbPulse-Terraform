@@ -262,7 +262,10 @@ only those credentials to the engine.
 It streams the engine's output to the `<run_id>/<phase>` stream in the runner log
 group, uploads the plan artifacts and the log over the presigned URLs, posts
 `POST /runs/{run_id}/phase-result`, then sends task success with the exit code
-and the change counts or task failure. Every line passes through the redactor
+and the change counts or task failure. The plan runs under `-detailed-exitcode`,
+so the engine exits 2 when it found changes; the runner reports 0 for a
+successful plan either way and the change counts alone say whether there were
+changes. Every line passes through the redactor
 first, and the engine's environment is built without the runner's own tokens.
 
 ## Run identity
