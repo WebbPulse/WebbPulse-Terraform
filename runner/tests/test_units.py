@@ -16,11 +16,12 @@ from app.api import ApiError, RunnerApi
 from app.credentials import CredentialsError, assume_run_role
 from app.engine import build_environment, parse_changes
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
-from app.models import BackendConfig, Bundle, RunRole
+from app.models import BackendConfig, Bundle, Changes, PhaseResult, RunRole
 from tests.conftest import (
     LOG_GROUP,
     PLAN_JSON_NO_CHANGES,
     PLAN_JSON_WITH_CHANGES,
+    RUN_ID,
     SECRET_ENVVAR,
     SECRET_TFVAR,
     WORKSPACE_ID,
@@ -376,6 +377,43 @@ def test_upload_of_an_absent_file_is_not_an_error(aws: None, config_tarball: byt
 
     assert api.upload_file("plan", tmp_path / "never-written.tfplan") is False
     assert recorder.upload_requests == []
+
+
+def test_a_clean_phase_result_carries_no_error_key(aws: None, config_tarball: bytes) -> None:
+    """A `None` error is dropped from the payload rather than posted as null.
+
+    The API's phase result schema reads an absent error as the empty default, so
+    omitting the key is what a successful phase reports. Sending null was a 422,
+    which turned every successful plan into an errored run.
+    """
+    recorder = ApiRecorder()
+    api = RunnerApi(make_env("plan"), httpx.Client(transport=make_transport(None, config_tarball, recorder)))
+
+    api.post_phase_result(
+        PhaseResult(
+            run_id=RUN_ID,
+            phase="plan",
+            exit_code=0,
+            changes=Changes(add=1),
+            has_changes=True,
+        )
+    )
+
+    assert len(recorder.phase_results) == 1
+    posted = recorder.phase_results[0]
+    assert "error" not in posted
+    assert posted["exit_code"] == 0
+    assert posted["changes"] == {"add": 1, "change": 0, "destroy": 0}
+
+
+def test_a_failed_phase_result_still_carries_its_error(aws: None, config_tarball: bytes) -> None:
+    """A real failure text is posted, since only `None` is dropped."""
+    recorder = ApiRecorder()
+    api = RunnerApi(make_env("plan"), httpx.Client(transport=make_transport(None, config_tarball, recorder)))
+
+    api.post_phase_result(PhaseResult(run_id=RUN_ID, phase="plan", exit_code=1, error="boom"))
+
+    assert recorder.phase_results[0]["error"] == "boom"
 
 
 def test_a_refused_upload_request_is_an_api_error(aws: None, config_tarball: bytes) -> None:

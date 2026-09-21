@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 RunStatus = Literal[
     "pending",
@@ -202,12 +202,25 @@ class RunBundle(BaseModel):
 
 
 class PhaseResult(BaseModel):
-    """What the runner reports when a phase ends."""
+    """What the runner reports when a phase ends.
+
+    Extra top level fields the runner sends, such as `run_id` and `has_changes`,
+    are ignored: the id comes from the path and the change flag from `changes`.
+    """
 
     phase: Phase
     exit_code: int
     changes: RunChanges = RunChanges()
-    error: str = Field(default="", max_length=4096)
+    error: Optional[str] = Field(default="", max_length=4096)
+    """The failure text, empty when the phase succeeded. Absent, null and empty
+    all mean the same thing and all normalise to the empty string, so the
+    service always reads a str."""
+
+    @field_validator("error", mode="before")
+    @classmethod
+    def _error_is_never_null(cls, value: object) -> object:
+        """Turn a null error into the empty string the service expects."""
+        return "" if value is None else value
 
 
 class PhaseResultAccepted(BaseModel):

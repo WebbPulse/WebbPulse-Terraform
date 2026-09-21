@@ -1152,6 +1152,9 @@ export interface components {
         /**
          * PhaseResult
          * @description What the runner reports when a phase ends.
+         *
+         *     Extra top level fields the runner sends, such as `run_id` and `has_changes`,
+         *     are ignored: the id comes from the path and the change flag from `changes`.
          */
         PhaseResult: {
             /**
@@ -1166,7 +1169,7 @@ export interface components {
              * Error
              * @default
              */
-            error?: string;
+            error?: string | null;
             /** Exit Code */
             exit_code: number;
             /**
