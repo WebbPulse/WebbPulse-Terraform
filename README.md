@@ -200,7 +200,8 @@ off, so it never reaches the execution log. The states in order:
 4. `AwaitConfirmation` uses `sqs:sendMessage.waitForTaskToken` to put a
    `run_confirmation_requested` message carrying the run id and the task token on
    the confirmations queue, timing out at `var.confirmation_timeout_seconds`,
-   default 86400.
+   which defaults to null and lets the environment decide: 86400 in production,
+   7200 in staging.
 5. `Apply` runs the apply task definition the same way, timing out at
    `var.apply_timeout_seconds`, default 7200.
 6. `MarkApplied` or `MarkPlannedAndFinished` then `ReleaseSemaphore`; any failure

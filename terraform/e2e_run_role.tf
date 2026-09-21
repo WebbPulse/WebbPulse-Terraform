@@ -73,7 +73,7 @@ resource "aws_iam_role" "e2e_run_role" {
   count = local.e2e_run_role_count
 
   name        = local.e2e_run_role_name
-  description = "Run role the e2e suite passes when it creates a workspace, scoped to state objects under any ws- prefixed workspace"
+  description = "The only apply boundary the e2e suite ever uses. It may touch nothing but its own S3 state prefix, workspaces/ws-*, and the state KMS key that encrypts those objects, and the suite's applies are random_pet only, so nothing billable can be created through it."
 
   assume_role_policy = data.aws_iam_policy_document.e2e_run_role_trust[0].json
 
