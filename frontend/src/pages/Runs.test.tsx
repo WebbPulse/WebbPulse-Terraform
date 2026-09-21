@@ -35,7 +35,9 @@ describe('Runs', () => {
     const badges = await screen.findAllByTestId('run-state-badge');
     expect(badges[0]).toHaveAttribute('data-state', 'applied');
     expect(badges[1]).toHaveAttribute('data-state', 'errored');
-    expect(screen.getByText('+3 ~1 -0')).toBeInTheDocument();
+    expect(
+      screen.getAllByLabelText('3 to add, 1 to change, 0 to destroy').length
+    ).toBeGreaterThan(0);
   });
 
   it('says so when there are no runs', async () => {

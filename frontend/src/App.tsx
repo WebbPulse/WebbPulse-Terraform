@@ -13,6 +13,7 @@ import {
   Workspaces,
   workspaceRoutes,
 } from './pages';
+import { ThemeProvider } from './theme';
 import './styles/globals.css';
 
 /** The routes, so a test can mount them inside its own router. */
@@ -50,15 +51,19 @@ export function AppRoutes(): React.ReactElement {
  *
  * `AuthProvider` is given the API's own auth client, so the session the guards
  * read is the one the API client refreshes through rather than a second copy
- * with its own token.
+ * with its own token. `ThemeProvider` sits outside it, because the theme is a
+ * property of the browser rather than of the session and should survive a sign
+ * out.
  */
 export function App(): React.ReactElement {
   return (
-    <BrowserRouter>
-      <AuthProvider client={api.getAuthClient() as unknown as AnyAuthClient}>
-        <AppRoutes />
-      </AuthProvider>
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
+        <AuthProvider client={api.getAuthClient() as unknown as AnyAuthClient}>
+          <AppRoutes />
+        </AuthProvider>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }
 
