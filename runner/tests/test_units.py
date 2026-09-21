@@ -270,7 +270,64 @@ def test_assume_role_passes_the_external_id_and_policy(aws: None, run_role_arn: 
 
 
 def test_assume_role_failure_is_wrapped(aws: None) -> None:
-    """A rejected assume role surfaces as a CredentialsError with no AWS detail."""
+    """A rejected assume role surfaces as a CredentialsError naming the cause.
+
+    The botocore message is carried through because it names the malformed
+    field or the denied action and holds no credential material.
+    """
     role = RunRole(role_arn="not-an-arn", external_id=WORKSPACE_ID)
     with pytest.raises(CredentialsError):
         assume_run_role(boto3.client("sts", region_name="us-west-2"), role, "run-01JTEST", "plan")
+
+
+class _RecordingSTS:
+    """An STS stand in that records the assume role request and returns credentials."""
+
+    def __init__(self) -> None:
+        """Start with no recorded request."""
+        self.request: dict[str, object] = {}
+
+    def assume_role(self, **kwargs: object) -> dict[str, dict[str, str]]:
+        """Record the request and hand back a fixed credential triple."""
+        self.request = kwargs
+        return {
+            "Credentials": {
+                "AccessKeyId": "AKIAEXAMPLE",
+                "SecretAccessKey": "secret",
+                "SessionToken": "token",
+            }
+        }
+
+
+def test_assume_role_passes_the_managed_policy_arns() -> None:
+    """A plan role's managed policies reach STS as PolicyArns.
+
+    The plan phase expresses "read everything" with the managed ReadOnlyAccess
+    policy, so losing this argument would silently strip a plan's reads.
+    """
+    client = _RecordingSTS()
+    role = RunRole(
+        role_arn="arn:aws:iam::870550636948:role/run",
+        external_id=WORKSPACE_ID,
+        session_policy={"Version": "2012-10-17", "Statement": []},
+        session_policy_arns=["arn:aws:iam::aws:policy/ReadOnlyAccess"],
+    )
+    assume_run_role(client, role, "run-01JTEST", "plan")  # type: ignore[arg-type]
+    assert client.request["PolicyArns"] == [{"arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}]
+
+
+def test_assume_role_omits_policy_arns_when_there_are_none() -> None:
+    """An apply role sends no PolicyArns key at all.
+
+    STS rejects an empty PolicyArns list, so the key has to be absent rather
+    than present and empty.
+    """
+    client = _RecordingSTS()
+    role = RunRole(
+        role_arn="arn:aws:iam::870550636948:role/run",
+        external_id=WORKSPACE_ID,
+        session_policy={"Version": "2012-10-17", "Statement": []},
+    )
+    assume_run_role(client, role, "run-01JTEST", "apply")  # type: ignore[arg-type]
+    assert "PolicyArns" not in client.request
+    assert "Policy" in client.request

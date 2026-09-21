@@ -77,6 +77,9 @@ class RunRole(BaseModel):
     role_arn: str
     external_id: str
     session_policy: dict[str, object] | None = None
+    session_policy_arns: list[str] = Field(default_factory=list)
+    """Managed policies the session unions with the inline document, empty for
+    an apply."""
     duration_seconds: int = 3600
 
 

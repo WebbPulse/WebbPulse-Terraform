@@ -1339,6 +1339,11 @@ export interface components {
             session_policy: {
                 [key: string]: unknown;
             };
+            /**
+             * Session Policy Arns
+             * @default []
+             */
+            session_policy_arns?: string[];
         };
         /**
          * RunRoleCheck

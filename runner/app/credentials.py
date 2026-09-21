@@ -18,7 +18,13 @@ class CredentialsError(RuntimeError):
 
 
 def assume_run_role(client: STSClient, role: RunRole, run_id: str, phase: str) -> dict[str, str]:
-    """Assume the run role and return the engine's AWS credential environment."""
+    """Assume the run role and return the engine's AWS credential environment.
+
+    The inline document and the managed policy ARNs are both session policies
+    and the session gets their union intersected with the role. A failure is
+    reported with the botocore exception's own type and message, which name the
+    malformed field or the denied action and carry no credential material.
+    """
     session_name = f"{run_id}-{phase}"[:64]
     request: dict[str, object] = {
         "RoleArn": role.role_arn,
@@ -28,10 +34,12 @@ def assume_run_role(client: STSClient, role: RunRole, run_id: str, phase: str) -
     }
     if role.session_policy:
         request["Policy"] = json.dumps(role.session_policy)
+    if role.session_policy_arns:
+        request["PolicyArns"] = [{"arn": arn} for arn in role.session_policy_arns]
     try:
         response = client.assume_role(**request)  # type: ignore[arg-type]
     except Exception as error:
-        raise CredentialsError(f"assume role failed: {type(error).__name__}") from error
+        raise CredentialsError(f"assume role failed: {type(error).__name__}: {error}") from error
     credentials = response["Credentials"]
     return {
         "AWS_ACCESS_KEY_ID": credentials["AccessKeyId"],

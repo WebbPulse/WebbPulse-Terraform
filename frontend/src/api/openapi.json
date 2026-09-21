@@ -1016,6 +1016,14 @@
             "additionalProperties": true,
             "title": "Session Policy",
             "type": "object"
+          },
+          "session_policy_arns": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Session Policy Arns",
+            "type": "array"
           }
         },
         "required": [
