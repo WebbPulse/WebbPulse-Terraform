@@ -235,7 +235,7 @@ def _head(workspace_id: str, state_version_id: str, *, settings: Settings) -> di
     """The S3 metadata for one state version, or `StateVersionNotFound`.
 
     A version id naming an object in another workspace cannot be reached: the
-    HEAD names this workspace's key, so a id lifted from another workspace's
+    HEAD names this workspace's key, so an id lifted from another workspace's
     history answers 404 here rather than returning that workspace's object.
     """
     from botocore.exceptions import ClientError
