@@ -26,6 +26,39 @@ Phase = Literal["plan", "apply"]
 RUN_ROLE_DURATION_SECONDS = 3600
 """One hour on the assumed run role, matching the plan timeout plus headroom."""
 
+ActorKind = Literal["user", "agent", "system"]
+"""How a run was triggered, which is the half of the attribution the UI branches on.
+
+`user` is a person through the browser, `agent` a `wpk_` API key acting for the
+person who minted it, and `system` anything the control plane started for itself
+with no principal to name, such as a queued run promoted when the run ahead of it
+finished. The three are kept apart rather than collapsed to a name because a run a
+person started and a run their key started are different events, and showing a
+person's name against something they did not do is worse than showing nothing.
+"""
+
+
+class RunActor(BaseModel):
+    """Who triggered a run, and how.
+
+    Three fields rather than a free-form string, because the viewer needs the kind
+    to choose an icon, the id to link to a principal and the name to render. It is
+    a snapshot taken at create: a display name that changes later does not rewrite
+    history, which is what an audit trail is for.
+
+    `id` and `display_name` are both optional. A `system` actor has neither, and an
+    `agent` whose key carries no display name has only the id. An actor that cannot
+    name a principal says so by leaving them empty rather than by borrowing one.
+    """
+
+    kind: ActorKind
+    id: Optional[str] = None
+    """The principal's stable id: a user's `sub` for `user`, the minting user's
+    `sub` for `agent`, absent for `system`."""
+    display_name: Optional[str] = None
+    """What to render. Absent when the credential carried none, in which case the
+    viewer falls back to the id or to the kind alone."""
+
 
 class RunCreate(BaseModel):
     """A new run against one workspace and one config version."""
@@ -67,14 +100,24 @@ class Run(BaseModel):
     changes: Optional[RunChanges] = None
     error: Optional[str] = None
     execution_arn: Optional[str] = None
+    actor: Optional[RunActor] = None
+    """Who triggered this run. `None` on a run created before attribution shipped,
+    which is a permanent gap rather than a transient one: the information was never
+    recorded and cannot be recovered, so the viewer renders those as unattributed."""
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class RunList(BaseModel):
-    """One workspace's runs, newest first."""
+    """A page of runs, newest first.
+
+    Scoped to one workspace when the request named one and spanning every workspace
+    when it did not. Both modes page the same way, through `next_cursor`.
+    """
 
     items: list[Run]
+    next_cursor: Optional[str] = None
+    """Pass back as `cursor` to read the next page. `None` on the last page."""
 
 
 class RunCreated(Run):

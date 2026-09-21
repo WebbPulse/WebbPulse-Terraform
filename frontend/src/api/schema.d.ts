@@ -513,7 +513,23 @@ export interface paths {
         };
         /**
          * List Runs
-         * @description One workspace's runs, newest first. The workspace is required.
+         * @description Runs, newest first, in one workspace or across every workspace.
+         *
+         *     Naming `workspace_id` queries that workspace's index and 404s for a workspace
+         *     that does not exist. Omitting it lists every workspace's runs together off the
+         *     recency index, which is what a workspace overview needs to show each row's
+         *     latest run without one request per row.
+         *
+         *     Both modes carry the same authorization, and that is correct rather than a gap.
+         *     This control plane is single tenant with no per workspace membership: a caller
+         *     holding `workspaces:read` already lists every workspace, and one holding
+         *     `runs:read` already lists the runs of any workspace id it names. The unscoped
+         *     list therefore returns exactly the set a caller could assemble from the scoped
+         *     list in a loop, so it widens no authority. Should per workspace authorization
+         *     ever arrive, this route has to filter to the caller's workspaces before the
+         *     scoped one does, because a cross-workspace read is where an ACL gap first shows.
+         *
+         *     Pass `next_cursor` back as `cursor` to continue, in either mode.
          */
         get: operations["list_runs_api_v1_runs_get"];
         put?: never;
@@ -527,6 +543,11 @@ export interface paths {
          *
          *     A workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the
          *     runner would have nothing to assume.
+         *
+         *     The claims are resolved here rather than in the service because this request is
+         *     the only moment the triggering principal exists: nothing written later could
+         *     recover it. `actor_from_claims` never raises, so a credential that names no
+         *     subject records a `system` actor instead of failing the create.
          */
         post: operations["create_run_api_v1_runs_post"];
         delete?: never;
@@ -1336,6 +1357,7 @@ export interface components {
          *     it was not allowed to confirm.
          */
         Run: {
+            actor?: components["schemas"]["RunActor"] | null;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
@@ -1369,6 +1391,30 @@ export interface components {
             updated_at?: string | null;
             /** Workspace Id */
             workspace_id: string;
+        };
+        /**
+         * RunActor
+         * @description Who triggered a run, and how.
+         *
+         *     Three fields rather than a free-form string, because the viewer needs the kind
+         *     to choose an icon, the id to link to a principal and the name to render. It is
+         *     a snapshot taken at create: a display name that changes later does not rewrite
+         *     history, which is what an audit trail is for.
+         *
+         *     `id` and `display_name` are both optional. A `system` actor has neither, and an
+         *     `agent` whose key carries no display name has only the id. An actor that cannot
+         *     name a principal says so by leaving them empty rather than by borrowing one.
+         */
+        RunActor: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Id */
+            id?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "agent" | "system";
         };
         /**
          * RunBundle
@@ -1467,6 +1513,7 @@ export interface components {
          *     state machine starts, which is when the run ahead of it finishes.
          */
         RunCreated: {
+            actor?: components["schemas"]["RunActor"] | null;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
@@ -1505,11 +1552,16 @@ export interface components {
         };
         /**
          * RunList
-         * @description One workspace's runs, newest first.
+         * @description A page of runs, newest first.
+         *
+         *     Scoped to one workspace when the request named one and spanning every workspace
+         *     when it did not. Both modes page the same way, through `next_cursor`.
          */
         RunList: {
             /** Items */
             items: components["schemas"]["Run"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /**
          * RunPlan
@@ -2969,8 +3021,10 @@ export interface operations {
     };
     list_runs_api_v1_runs_get: {
         parameters: {
-            query: {
-                workspace_id: string;
+            query?: {
+                workspace_id?: string | null;
+                limit?: number;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;

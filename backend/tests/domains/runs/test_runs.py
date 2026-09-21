@@ -259,9 +259,20 @@ def test_get_is_422_for_a_malformed_id(auth_client):
     assert auth_client.get(f"{BASE}/nonsense").status_code == 422
 
 
-def test_list_requires_a_workspace(auth_client):
-    """The list is per workspace, so the query parameter is required."""
-    assert auth_client.get(BASE).status_code == 422
+def test_list_accepts_no_workspace(auth_client, created_run):
+    """Omitting the workspace lists every workspace's runs rather than 422ing."""
+    response = auth_client.get(BASE)
+    assert response.status_code == 200, response.text
+    assert [item["run_id"] for item in response.json()["items"]] == [created_run["run_id"]]
+
+
+def test_list_rejects_a_malformed_workspace(auth_client):
+    """A workspace id that is not a `ws-` ULID is refused rather than ignored.
+
+    The parameter being optional must not mean a bad one silently widens the read
+    to every workspace, which is how an unscoped list turns into a leak.
+    """
+    assert auth_client.get(BASE, params={"workspace_id": "nonsense"}).status_code == 422
 
 
 def test_list_returns_the_workspaces_runs(auth_client, workspace, created_run):
