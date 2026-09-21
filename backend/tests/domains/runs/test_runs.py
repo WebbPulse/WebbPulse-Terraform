@@ -409,6 +409,30 @@ def test_create_does_not_write_the_config_version_row(auth_client, workspace, st
     assert stored_config_version_status(version["config_version_id"]) == "pending"
 
 
+def test_the_bundle_does_not_write_the_config_version_row(app, auth_client, workspace, state_machine):
+    """Fetching the bundle never calls UpdateItem on config-versions either.
+
+    The bundle is read under the same read only grant as run creation, against a
+    row the workspaces domain may not have flipped yet. The row staying `pending`
+    while the bundle answers 200 is what proves the reconciliation did not persist.
+    """
+    from fastapi.testclient import TestClient
+
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(
+        f"/api/v1/workspaces/{workspace_id}/config-versions",
+        json={"size_bytes": 1024},
+    ).json()["config_version"]
+    put_config_object(version["key"])
+    created = auth_client.post(BASE, json=create_body(workspace_id, version["config_version_id"])).json()
+
+    with TestClient(app, headers={"Authorization": f"Bearer {created['run_token']}"}) as runner:
+        response = runner.get(f"{BASE}/{created['run_id']}/bundle")
+
+    assert response.status_code == 200, response.text
+    assert stored_config_version_status(version["config_version_id"]) == "pending"
+
+
 def test_create_is_409_when_the_pending_versions_object_is_absent(auth_client, workspace, state_machine):
     """No tarball in the bucket is still `ConfigVersionNotReady`."""
     workspace_id = workspace["workspace_id"]
