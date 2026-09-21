@@ -34,7 +34,7 @@ from ...common.composition.settings import Settings, get_settings
 from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store
 from ...common.db import repositories
 from ...common.db.tables import RUNS_BY_WORKSPACE_INDEX, SEMAPHORE_RUN_ID
-from ..workspaces import service as workspaces_service
+from ...common.workspaces import reads as workspace_reads
 from . import session_policy
 from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
 
@@ -305,11 +305,11 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
     Validates the workspace and the config version before writing anything, so a
     run never exists against a config version that was never uploaded.
 
-    The config version is read with `persist` false: this function runs under the
-    runs role, whose grant on the workspaces, variables and config-versions tables
-    is read only by design, so the reconciliation against the bucket must not write
-    the `uploaded` flip back. The workspaces domain owns that write and persists it
-    on its own reads.
+    The config version is read through `app.common.workspaces.reads`, which never
+    writes: this function runs under the runs role, whose grant on the workspaces,
+    variables and config-versions tables is read only by design, so the
+    reconciliation against the bucket must not write the `uploaded` flip back. The
+    workspaces domain owns that write and persists it on its own reads.
 
     Returns the stored run, carrying `run_token` only when an execution started.
 
@@ -323,13 +323,12 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
     workspace_id = str(payload["workspace_id"])
     config_version_id = str(payload["config_version_id"])
 
-    workspace = workspaces_service.get_workspace(workspace_id, settings=resolved)
+    workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
     if not str(workspace.get("run_role_arn", "") or ""):
-        raise workspaces_service.RunRoleMissing(workspace_id)
-    config_version = workspaces_service.get_config_version(
+        raise workspace_reads.RunRoleMissing(workspace_id)
+    config_version = workspace_reads.get_config_version(
         workspace_id,
         config_version_id,
-        persist=False,
         settings=resolved,
     )
     if str(config_version.get("status", "")) != "uploaded":
@@ -522,7 +521,7 @@ def list_runs(workspace_id: str, *, settings: Settings | None = None) -> list[di
         WorkspaceNotFound: No such workspace, which is a 404 rather than an empty list.
     """
     resolved = settings or get_settings()
-    workspaces_service.get_workspace(workspace_id, settings=resolved)
+    workspace_reads.get_workspace(workspace_id, settings=resolved)
     return [
         dict(item)
         for item in _runs(resolved).iter_query(
@@ -931,7 +930,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     so a runner holding a plan-phase token cannot ask for the apply phase's
     unrestricted session policy.
 
-    The config version is read with `persist` false for the same reason run
+    The config version is read through the shared reads for the same reason run
     creation reads it that way: this function runs under the runs role, which
     holds only a read grant on the config-versions table.
 
@@ -951,16 +950,15 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         )
     run = get_run(run_id, settings=resolved)
     workspace_id = str(run["workspace_id"])
-    workspace = workspaces_service.get_workspace(workspace_id, settings=resolved)
-    config_version = workspaces_service.get_config_version(
+    workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
+    config_version = workspace_reads.get_config_version(
         workspace_id,
         str(run["config_version_id"]),
-        persist=False,
         settings=resolved,
     )
 
     phase = _phase_for_status(str(run.get("status", "")))
-    variables = workspaces_service.resolved_variables(workspace_id, settings=resolved)
+    variables = workspace_reads.resolved_variables(workspace_id, settings=resolved)
     region = resolved.AWS_REGION_NAME
     endpoint = resolved.s3_endpoint_url
     workspace_state_key = state_key(workspace_id)

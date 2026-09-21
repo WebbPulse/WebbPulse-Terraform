@@ -20,7 +20,7 @@ from ...common.core.auth import (
     require_run_token,
     scopes,
 )
-from ..workspaces import service as workspaces_service
+from ...common.workspaces import reads as workspace_reads
 from . import service
 from .schemas.run import (
     ArtifactUpload,
@@ -74,14 +74,14 @@ def create_run(payload: RunCreate) -> dict[str, Any]:
     """
     try:
         created = service.create_run(payload.model_dump())
-    except workspaces_service.WorkspaceNotFound as error:
+    except workspace_reads.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
-    except workspaces_service.RunRoleMissing as error:
+    except workspace_reads.RunRoleMissing as error:
         raise _conflict(
             "This workspace has no run role ARN yet, so a run has nothing to assume.",
             error_code=RUN_ROLE_MISSING_CODE,
         ) from error
-    except workspaces_service.ConfigVersionNotFound as error:
+    except workspace_reads.ConfigVersionNotFound as error:
         raise _not_found("No such config version.") from error
     except service.ConfigVersionNotReady as error:
         raise _conflict("That config version has no uploaded configuration.") from error
@@ -97,7 +97,7 @@ def list_runs(workspace_id: str = WorkspaceIdQuery) -> dict[str, Any]:
     """One workspace's runs, newest first. The workspace is required."""
     try:
         items = service.list_runs(workspace_id)
-    except workspaces_service.WorkspaceNotFound as error:
+    except workspace_reads.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     return {"items": [service.render_run(item) for item in items]}
 
@@ -192,9 +192,9 @@ def run_bundle(run_id: str = RunId) -> dict[str, Any]:
         return service.run_bundle(run_id)
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
-    except workspaces_service.WorkspaceNotFound as error:
+    except workspace_reads.WorkspaceNotFound as error:
         raise _not_found("That run's workspace no longer exists.") from error
-    except workspaces_service.ConfigVersionNotFound as error:
+    except workspace_reads.ConfigVersionNotFound as error:
         raise _not_found("That run's config version no longer exists.") from error
 
 
