@@ -1,6 +1,6 @@
-/** The run page: its state, its metrics and its phases as expandable sections. */
+/** The run page: its header, its progress, its plan and its raw logs. */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
@@ -13,18 +13,19 @@ import {
   canDiscard,
   isActive,
   planPhaseStatus,
-  type PhaseStatus,
   type Run,
-  type RunTone,
 } from '../api';
+import { fetchRunPlan, type RunPlan } from '../api/runPlan';
 import {
   Button,
-  Disclosure,
   ErrorNotice,
   PageHeader,
+  PlanView,
   RunLogViewer,
+  RunTimeline,
   Spinner,
   StateBadge,
+  Tabs,
   elapsedBetween,
   formatDateTime,
   formatDuration,
@@ -34,23 +35,8 @@ import {
 } from '../components';
 import { useOptionalWorkspace } from './workspaceContext';
 
-/** The three sections of the page. */
-type SectionId = 'details' | 'plan' | 'apply';
-
-/** Which sections open on their own for a run in this state. */
-function defaultOpen(run: Run): Record<SectionId, boolean> {
-  const apply = applyPhaseStatus(run);
-  const applyBusy =
-    apply === 'running' ||
-    apply === 'finished' ||
-    apply === 'errored' ||
-    apply === 'cancelled';
-  return {
-    details: false,
-    plan: !applyBusy,
-    apply: apply !== null,
-  };
-}
+/** The tabs the run's body switches between. */
+type BodyTab = 'plan' | 'log';
 
 /** The run page, inside a workspace or on its own. */
 export function RunDetail(): React.ReactElement {
@@ -114,7 +100,13 @@ export function RunDetail(): React.ReactElement {
   );
 }
 
-/** The title row, the metrics and the phase sections. */
+/**
+ * The run's header, its timeline and its plan.
+ *
+ * The layout follows the hosted product this replaces: what the run is at the
+ * top, how far it has got down the left, and the plan itself in the main
+ * column with the raw log a tab away.
+ */
 function RunBody({
   run,
   inWorkspace,
@@ -124,82 +116,14 @@ function RunBody({
   inWorkspace: boolean;
   onChanged: () => void;
 }): React.ReactElement {
-  const [overrides, setOverrides] = useState<
-    Partial<Record<SectionId, boolean>>
-  >({});
-  const defaults = defaultOpen(run);
-  const isOpen = (id: SectionId): boolean => overrides[id] ?? defaults[id];
-  const toggle = (id: SectionId): void => {
-    setOverrides((previous) => ({ ...previous, [id]: !isOpen(id) }));
-  };
-  const active = isActive(run.status);
-  const now = useNow(active);
-  const elapsed = elapsedBetween(run.started_at, run.finished_at, now);
+  const [tab, setTab] = useState<BodyTab>('plan');
   const plan = planPhaseStatus(run);
   const apply = applyPhaseStatus(run);
-  const title =
-    run.message === undefined || run.message === ''
-      ? `Run ${shortRunId(run.run_id)}`
-      : run.message;
+  const logPhase = apply === null || apply === 'pending' ? 'plan' : 'apply';
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          {inWorkspace ? (
-            <nav
-              aria-label="Run breadcrumb"
-              className="text-xs text-text-faint"
-            >
-              <Link
-                to={`/workspaces/${run.workspace_id}/runs`}
-                className="hover:text-accent hover:underline"
-              >
-                Runs
-              </Link>
-              <span aria-hidden="true" className="mx-1.5 text-line-strong">
-                /
-              </span>
-              <span className="font-mono">{shortRunId(run.run_id)}</span>
-            </nav>
-          ) : null}
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-base font-semibold text-text-strong">
-              {title}
-            </h2>
-            <StateBadge state={run.status} />
-            {run.plan_only ? (
-              <span className="rounded-full border border-line-strong px-2 py-0.5 text-[11px] text-text-muted">
-                Plan only
-              </span>
-            ) : null}
-          </div>
-          <p className="text-xs text-text-faint">
-            <span className="font-mono" title={run.run_id}>
-              #{run.run_id}
-            </span>
-            {' | '}created{' '}
-            <span title={formatDateTime(run.created_at)}>
-              {formatRelative(run.created_at)}
-            </span>
-          </p>
-        </div>
-        <RunActions
-          run={run}
-          onDone={onChanged}
-          only={apply === null ? 'all' : 'cancel'}
-        />
-      </div>
-
-      <dl className="grid grid-cols-2 divide-x divide-line rounded-lg border border-line bg-panel sm:grid-cols-3">
-        <Metric label="Plan and apply duration">
-          {elapsed === null ? 'Not started' : formatDuration(elapsed)}
-        </Metric>
-        <PlanSummary run={run} />
-        <Metric label="Mode">
-          {run.plan_only ? 'Plan only' : 'Plan and apply'}
-        </Metric>
-      </dl>
+    <div className="space-y-5">
+      <RunHeader run={run} inWorkspace={inWorkspace} />
 
       {run.error === undefined ||
       run.error === null ||
@@ -207,336 +131,251 @@ function RunBody({
         <ErrorNotice error={new Error(run.error)} />
       )}
 
-      <Disclosure
-        title="Run details"
-        summary={
-          <span title={formatDateTime(run.created_at)}>
-            created {formatRelative(run.created_at)}
-          </span>
-        }
-        open={isOpen('details')}
-        onToggle={() => {
-          toggle('details');
-        }}
-      >
-        <RunProperties run={run} />
-      </Disclosure>
-
-      <Disclosure
-        title={phaseTitle('Plan', plan)}
-        tone={phaseTone(plan)}
-        summary={planSummaryText(run)}
-        open={isOpen('plan')}
-        onToggle={() => {
-          toggle('plan');
-        }}
-      >
-        <PhaseBody
-          run={run}
-          phase="plan"
-          status={plan}
-          live={run.status === 'pending' || run.status === 'planning'}
-        />
-      </Disclosure>
-
-      {apply === null ? null : (
-        <Disclosure
-          title={phaseTitle('Apply', apply)}
-          tone={phaseTone(apply)}
-          summary={apply === 'finished' ? applySummaryText(run) : undefined}
-          open={isOpen('apply')}
-          onToggle={() => {
-            toggle('apply');
-          }}
+      <div className="grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
+        <aside
+          aria-label="Run progress"
+          className="lg:sticky lg:top-6 lg:self-start"
         >
-          {apply === 'pending' ? (
-            <ApplyPending run={run} onDone={onChanged} />
-          ) : apply === 'discarded' ? (
-            <p className="text-sm text-text-muted">
-              The plan was discarded and nothing was applied.
-            </p>
+          <RunTimeline run={run} />
+          <RunFacts run={run} />
+        </aside>
+
+        <div className="min-w-0 space-y-4">
+          <Tabs<BodyTab>
+            label="Run views"
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { id: 'plan', label: 'Plan' },
+              { id: 'log', label: 'Raw log' },
+            ]}
+          />
+          {tab === 'plan' ? (
+            <PlanPanel run={run} planStatus={plan} />
           ) : (
-            <PhaseBody
-              run={run}
-              phase="apply"
-              status={apply}
-              live={run.status === 'applying'}
+            <RunLogViewer
+              runId={run.run_id}
+              phase={logPhase}
+              live={isActive(run.status)}
             />
           )}
-        </Disclosure>
-      )}
+          <ConfirmationPanel run={run} onDone={onChanged} />
+        </div>
+      </div>
     </div>
   );
 }
 
-/** The title of a phase section, for example "Plan finished". */
-function phaseTitle(phase: 'Plan' | 'Apply', status: PhaseStatus): string {
-  const words: Record<PhaseStatus, string> = {
-    queued: 'queued',
-    running: 'running',
-    finished: 'finished',
-    pending: 'pending',
-    errored: 'errored',
-    cancelled: 'cancelled',
-    discarded: 'discarded',
-  };
-  return `${phase} ${words[status]}`;
-}
-
-/** The dot colour beside a phase title. */
-function phaseTone(status: PhaseStatus): RunTone {
-  switch (status) {
-    case 'running':
-      return 'running';
-    case 'finished':
-      return 'success';
-    case 'pending':
-      return 'attention';
-    case 'errored':
-      return 'danger';
-    default:
-      return 'neutral';
-  }
-}
-
-/** "Resources: 3 to add, 1 to change, 0 to destroy", once a plan reported. */
-function planSummaryText(run: Run): string | undefined {
-  if (run.changes === null || run.changes === undefined) {
-    return undefined;
-  }
-  const { add, change, destroy } = run.changes;
-  return `Resources: ${String(add)} to add, ${String(change)} to change, ${String(destroy)} to destroy`;
-}
-
-/** "Resources: 3 added, 1 changed, 0 destroyed", once an apply finished. */
-function applySummaryText(run: Run): string | undefined {
-  if (run.changes === null || run.changes === undefined) {
-    return undefined;
-  }
-  const { add, change, destroy } = run.changes;
-  return `Resources: ${String(add)} added, ${String(change)} changed, ${String(destroy)} destroyed`;
-}
-
-/** One figure in the metric row. */
-function Metric({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <div className="min-w-0 px-4 py-3">
-      <dt className="text-xs text-text-faint">{label}</dt>
-      <dd className="mt-0.5 truncate text-sm text-text">{children}</dd>
-    </div>
-  );
-}
-
-/** The plan's resource counts as a metric, or the words for a plan that has not reported. */
-function PlanSummary({ run }: { run: Run }): React.ReactElement {
-  if (run.changes === null || run.changes === undefined) {
-    return <Metric label="Resources changed">Not reported yet</Metric>;
-  }
-  const { add, change, destroy } = run.changes;
-  return (
-    <div
-      data-testid="plan-summary"
-      aria-label="Plan summary"
-      className="min-w-0 px-4 py-3"
-    >
-      <dt className="text-xs text-text-faint">Resources changed</dt>
-      <dd className="mt-0.5 flex items-center gap-3 font-mono text-sm tabular-nums">
-        <span className="text-success" title="To add">
-          +{add}
-        </span>
-        <span className="text-warning" title="To change">
-          ~{change}
-        </span>
-        <span className="text-danger" title="To destroy">
-          -{destroy}
-        </span>
-      </dd>
-    </div>
-  );
-}
-
-/** The timestamps and the log of one phase. */
-function PhaseBody({
+/** The run's title, its state and who started it. */
+function RunHeader({
   run,
-  phase,
-  status,
-  live,
+  inWorkspace,
 }: {
   run: Run;
-  phase: 'plan' | 'apply';
-  status: PhaseStatus;
-  live: boolean;
+  inWorkspace: boolean;
 }): React.ReactElement {
-  const finished =
-    phase === 'plan' &&
-    run.finished_at === null &&
-    run.status !== 'planning' &&
-    run.status !== 'pending'
-      ? null
-      : run.finished_at;
+  const title =
+    run.message === undefined || run.message === ''
+      ? `Run ${shortRunId(run.run_id)}`
+      : run.message;
   return (
-    <div className="space-y-3">
-      <p className="text-xs text-text-faint">
-        {run.started_at === null || run.started_at === undefined ? (
-          status === 'queued' ? (
-            'Waiting for the workspace to be free.'
-          ) : (
-            'Not started'
-          )
-        ) : (
-          <>
-            Started{' '}
-            <span title={formatDateTime(run.started_at)}>
-              {formatRelative(run.started_at)}
-            </span>
-            {finished === null || finished === undefined ? null : (
-              <>
-                {' | '}Finished{' '}
-                <span title={formatDateTime(finished)}>
-                  {formatRelative(finished)}
-                </span>
-              </>
-            )}
-          </>
-        )}
-      </p>
-      {status === 'queued' ? null : (
-        <RunLogViewer runId={run.run_id} phase={phase} live={live} />
-      )}
-    </div>
-  );
-}
-
-/** The apply section while the plan waits on a person. */
-function ApplyPending({
-  run,
-  onDone,
-}: {
-  run: Run;
-  onDone: () => void;
-}): React.ReactElement {
-  return (
-    <div className="space-y-3">
-      <p className="text-sm text-text-muted">
-        {run.status === 'awaiting_confirmation'
-          ? 'The plan finished and needs confirmation before it is applied.'
-          : 'The plan finished. Confirmation opens once the run is ready for it.'}
-      </p>
-      <RunActions run={run} onDone={onDone} only="decide" />
-    </div>
-  );
-}
-
-/** One row of the run details. */
-function Property({
-  label,
-  children,
-  mono = false,
-}: {
-  label: string;
-  children: React.ReactNode;
-  mono?: boolean;
-}): React.ReactElement {
-  return (
-    <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-2 py-1.5 text-xs">
-      <dt className="text-text-faint">{label}</dt>
-      <dd className={`min-w-0 break-all text-text ${mono ? 'font-mono' : ''}`}>
-        {children}
-      </dd>
-    </div>
-  );
-}
-
-/** A timestamp property, relative with the exact time on hover. */
-function When({
-  label,
-  iso,
-}: {
-  label: string;
-  iso: string | null | undefined;
-}): React.ReactElement {
-  return (
-    <Property label={label}>
-      {iso === null || iso === undefined ? (
-        <span className="text-text-faint">-</span>
-      ) : (
-        <span title={formatDateTime(iso)}>{formatRelative(iso)}</span>
-      )}
-    </Property>
-  );
-}
-
-/** The run's identifiers and timestamps. */
-function RunProperties({ run }: { run: Run }): React.ReactElement {
-  return (
-    <dl className="divide-y divide-line">
-      <Property label="Run id" mono>
-        {run.run_id}
-      </Property>
-      <Property label="Workspace" mono>
-        <Link
-          to={`/workspaces/${run.workspace_id}`}
-          className="text-accent hover:text-accent-hover hover:underline"
-        >
-          {run.workspace_id}
-        </Link>
-      </Property>
-      <Property label="Configuration" mono>
+    <div className="space-y-2 border-b border-line pb-4">
+      {inWorkspace ? (
+        <nav aria-label="Run breadcrumb" className="text-xs text-text-faint">
+          <Link
+            to={`/workspaces/${run.workspace_id}/runs`}
+            className="hover:text-accent hover:underline"
+          >
+            Runs
+          </Link>
+          <span aria-hidden="true" className="mx-1.5 text-line-strong">
+            /
+          </span>
+          <span className="font-mono">{shortRunId(run.run_id)}</span>
+        </nav>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-base font-semibold text-text-strong">{title}</h2>
+        <StateBadge state={run.status} />
+        {run.plan_only ? (
+          <span className="rounded-full border border-line-strong px-2 py-0.5 text-[11px] text-text-muted">
+            Plan only
+          </span>
+        ) : null}
+      </div>
+      <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-text-faint">
+        <span className="font-mono" title={run.run_id}>
+          #{shortRunId(run.run_id)}
+        </span>
+        <span aria-hidden="true">|</span>
+        <span>
+          {run.plan_only ? 'Plan only run' : 'Plan and apply run'} triggered{' '}
+          <span title={formatDateTime(run.created_at)}>
+            {formatRelative(run.created_at)}
+          </span>
+        </span>
+        <span aria-hidden="true">|</span>
         <Link
           to={`/workspaces/${run.workspace_id}/configuration-versions`}
-          className="text-accent hover:text-accent-hover hover:underline"
+          className="font-mono hover:text-accent hover:underline"
         >
           {run.config_version_id}
         </Link>
-      </Property>
-      <Property label="Mode">
-        {run.plan_only ? 'Plan only' : 'Plan and apply'}
-      </Property>
-      {run.queued_behind === undefined || run.queued_behind === null ? null : (
-        <Property label="Queued behind" mono>
-          {run.queued_behind}
-        </Property>
-      )}
-      <When label="Created" iso={run.created_at} />
-      <When label="Started" iso={run.started_at} />
-      <When label="Finished" iso={run.finished_at} />
+      </p>
+    </div>
+  );
+}
+
+/** The run's timings and identifiers, under the timeline. */
+function RunFacts({ run }: { run: Run }): React.ReactElement {
+  const now = useNow(isActive(run.status));
+  const elapsed = elapsedBetween(run.started_at, run.finished_at, now);
+  const rows: { label: string; value: React.ReactNode }[] = [
+    {
+      label: 'Duration',
+      value: elapsed === null ? 'Not started' : formatDuration(elapsed),
+    },
+    {
+      label: 'Started',
+      value:
+        run.started_at === null || run.started_at === undefined ? (
+          <span className="text-text-faint">-</span>
+        ) : (
+          <span title={formatDateTime(run.started_at)}>
+            {formatRelative(run.started_at)}
+          </span>
+        ),
+    },
+    {
+      label: 'Finished',
+      value:
+        run.finished_at === null || run.finished_at === undefined ? (
+          <span className="text-text-faint">-</span>
+        ) : (
+          <span title={formatDateTime(run.finished_at)}>
+            {formatRelative(run.finished_at)}
+          </span>
+        ),
+    },
+  ];
+  if (run.queued_behind !== null && run.queued_behind !== undefined) {
+    rows.push({
+      label: 'Queued behind',
+      value: <span className="font-mono">{shortRunId(run.queued_behind)}</span>,
+    });
+  }
+  return (
+    <dl className="mt-4 space-y-1.5 border-t border-line pt-4 text-xs">
+      {rows.map((row) => (
+        <div
+          key={row.label}
+          className="flex items-baseline justify-between gap-2"
+        >
+          <dt className="text-text-faint">{row.label}</dt>
+          <dd className="min-w-0 truncate text-right text-text">{row.value}</dd>
+        </div>
+      ))}
     </dl>
   );
 }
 
+/** The plan, once the run has one to show. */
+function PlanPanel({
+  run,
+  planStatus,
+}: {
+  run: Run;
+  planStatus: ReturnType<typeof planPhaseStatus>;
+}): React.ReactElement {
+  const [plan, setPlan] = useState<RunPlan | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loading, setLoading] = useState(false);
+  const ready = planStatus === 'finished';
+  const runId = run.run_id;
+
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    fetchRunPlan(runId, { signal: controller.signal })
+      .then((loaded) => {
+        setPlan(loaded);
+        setError(null);
+      })
+      .catch((thrown: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(thrown);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      controller.abort();
+    };
+  }, [runId, ready]);
+
+  if (!ready) {
+    return (
+      <p
+        data-testid="plan-pending"
+        className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-text-faint"
+      >
+        {planStatus === 'queued'
+          ? 'The run is waiting for the workspace to be free.'
+          : planStatus === 'running'
+            ? 'The plan is running. Its resource changes appear here once it finishes.'
+            : 'This run has no finished plan to show. The raw log has what the engine printed.'}
+      </p>
+    );
+  }
+  if (loading && plan === null) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-text-faint">
+        <Spinner label="Loading the plan" className="size-4" />
+        Loading the plan
+      </div>
+    );
+  }
+  if (plan === null) {
+    return (
+      <div className="space-y-2">
+        <ErrorNotice error={error} />
+        <p className="text-sm text-text-faint">
+          The structured plan could not be read. The raw log has what the engine
+          printed.
+        </p>
+      </div>
+    );
+  }
+  return <PlanView plan={plan} />;
+}
+
 /**
- * The cancel, confirm and discard buttons, each shown only in the states the
- * gating module allows.
+ * Confirm and apply, or discard, below the plan.
  *
- * Cancel sits beside the title while a phase runs; confirm and discard sit in
- * the apply section, which is where the decision is read. Confirm is not step
- * up gated: `@webbpulse/auth` exposes `stepUp` only as a TOTP or recovery code
- * exchange, with no passkey ceremony, so a passkey step up would have to be
- * written here rather than reused. Reported as a gap.
+ * Cancel lives here too while a phase is running, so every decision about the
+ * run is in one place, under what it is a decision about.
  */
-function RunActions({
+function ConfirmationPanel({
   run,
   onDone,
-  only,
 }: {
   run: Run;
   onDone: () => void;
-  only: 'cancel' | 'decide' | 'all';
 }): React.ReactElement | null {
   const [busy, setBusy] = useState<'confirm' | 'cancel' | 'discard' | null>(
     null
   );
   const [error, setError] = useState<unknown>(null);
 
-  const allowConfirm = only !== 'cancel' && canConfirm(run);
-  const allowDiscard = only !== 'cancel' && canDiscard(run);
-  const allowCancel = only !== 'decide' && canCancel(run);
+  const allowConfirm = canConfirm(run);
+  const allowDiscard = canDiscard(run);
+  const allowCancel = canCancel(run);
 
   if (!allowConfirm && !allowCancel && !allowDiscard) {
     return null;
@@ -563,8 +402,30 @@ function RunActions({
     }
   };
 
+  const waiting = run.status === 'awaiting_confirmation';
+
   return (
-    <div className="flex flex-col items-start gap-2">
+    <section
+      data-testid="confirmation-panel"
+      aria-labelledby="run-decision"
+      className={`space-y-3 rounded-lg border p-4 ${
+        waiting ? 'border-warning-line bg-warning-soft' : 'border-line bg-panel'
+      }`}
+    >
+      <h3 id="run-decision" className="text-sm font-semibold text-text-strong">
+        {waiting
+          ? 'This plan needs confirmation'
+          : allowCancel
+            ? 'Stop this run'
+            : 'Decide on this plan'}
+      </h3>
+      <p className="max-w-prose text-sm text-text-muted">
+        {waiting
+          ? 'Confirm to apply the plan above to your AWS account, or discard it to throw it away.'
+          : allowCancel
+            ? 'Cancelling stops the phase that is running. Anything already applied stays applied.'
+            : 'The plan finished. Confirmation opens once the run is ready for it.'}
+      </p>
       <div className="flex flex-wrap items-center gap-2">
         {allowConfirm ? (
           <Button
@@ -576,7 +437,7 @@ function RunActions({
               void act('confirm');
             }}
           >
-            Confirm & apply
+            Confirm &amp; apply
           </Button>
         ) : null}
         {allowDiscard ? (
@@ -606,6 +467,6 @@ function RunActions({
         ) : null}
       </div>
       <ErrorNotice error={error} />
-    </div>
+    </section>
   );
 }

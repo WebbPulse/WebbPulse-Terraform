@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { Outlet, useMatch, useNavigate } from 'react-router-dom';
 import { useAuth } from '@webbpulse/auth/react';
 
+import { ThemeToggle } from '../theme';
+import { BrandMark, Wordmark } from './Brand';
 import { Button } from './Button';
 import { RailGroupLabel, RailLink } from './RailLink';
 import { WorkspaceNav } from './WorkspaceNav';
@@ -110,16 +112,14 @@ export function Layout(): React.ReactElement {
       <div className="flex min-h-screen">
         <a
           href="#main"
-          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-1.5 focus:text-sm focus:text-accent-contrast"
         >
           Skip to content
         </a>
         <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-line bg-panel md:flex">
-          <div className="flex h-12 items-center gap-2 border-b border-line px-4">
-            <Mark />
-            <span className="text-sm font-semibold text-text-strong">
-              Terraform
-            </span>
+          <div className="flex h-12 items-center justify-between gap-2 border-b border-line px-4">
+            <Wordmark />
+            <ThemeToggle />
           </div>
           {workspaceId === null ? (
             <nav aria-label="Primary" className="flex-1 space-y-0.5 p-2">
@@ -155,16 +155,12 @@ export function Layout(): React.ReactElement {
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-30 border-b border-line bg-bg/90 backdrop-blur md:hidden">
             <div className="flex h-12 items-center justify-between gap-3 px-4">
-              <div className="flex items-center gap-2">
-                <Mark />
-                <span className="text-sm font-semibold text-text-strong">
-                  Terraform
-                </span>
-              </div>
+              <Wordmark short />
               <nav aria-label="Primary" className="flex items-center gap-1">
                 {SECTIONS.map((section) => (
                   <RailLink key={section.to} {...section} compact />
                 ))}
+                <ThemeToggle />
                 <Button
                   variant="ghost"
                   size="sm"
@@ -198,18 +194,11 @@ export function Layout(): React.ReactElement {
   );
 }
 
-/** The small square mark beside the product name. */
+/** The product mark on its own, where the wordmark would not fit. */
 export function Mark({
-  className = '',
+  className = 'size-5',
 }: {
   className?: string;
 }): React.ReactElement {
-  return (
-    <span
-      aria-hidden="true"
-      className={`inline-flex size-5 items-center justify-center rounded bg-accent text-[10px] font-bold text-white ${className}`}
-    >
-      T
-    </span>
-  );
+  return <BrandMark className={className} />;
 }
