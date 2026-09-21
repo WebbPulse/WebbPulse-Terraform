@@ -113,9 +113,10 @@ module "lambda_domain" {
 
       IDENTITY_TABLE_PREFIX = local.prefix
 
-      STATE_BUCKET     = module.state.bucket
-      ARTIFACTS_BUCKET = module.artifacts.bucket
-      RUNNER_LOG_GROUP = aws_cloudwatch_log_group.runner.name
+      STATE_BUCKET      = module.state.bucket
+      STATE_KMS_KEY_ARN = module.state.kms_key_arn
+      ARTIFACTS_BUCKET  = module.artifacts.bucket
+      RUNNER_LOG_GROUP  = aws_cloudwatch_log_group.runner.name
 
       RUN_STATE_MACHINE_ARN = module.run_state_machine.arn
 

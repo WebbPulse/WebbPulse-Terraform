@@ -5,11 +5,12 @@ unrestricted session policy, so the gate is the security boundary of this domain
 and is tested from every angle a caller could come at it.
 """
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.common.core.auth import RUNNER_SCOPE
 from app.domains.runs import service as runs_service
-from tests.conftest import mint_key
+from tests.conftest import STATE_KMS_KEY_ARN, mint_key
 
 BASE = "/api/v1/runs"
 
@@ -91,7 +92,19 @@ def test_the_bundle_backend_points_at_the_workspace_state(runner_client, created
     assert backend["key"] == f"workspaces/{workspace['workspace_id']}/terraform.tfstate"
     assert backend["bucket"]
     assert backend["region"]
-    assert "kms_key_id" in backend
+    assert backend["kms_key_id"] == STATE_KMS_KEY_ARN
+
+
+def test_the_bundle_refuses_to_serve_an_empty_kms_key(created_run, settings, monkeypatch):
+    """An unset `STATE_KMS_KEY_ARN` fails here rather than at `terraform init`.
+
+    The runner copies the value into the backend override verbatim, and terraform
+    rejects an empty `kms_key_id`, so a deployment that never set the variable
+    would otherwise only surface as a failed init inside every run.
+    """
+    monkeypatch.setattr(settings, "STATE_KMS_KEY_ARN", "")
+    with pytest.raises(runs_service.StateKmsKeyMissing):
+        runs_service.run_bundle(created_run["run_id"], settings=settings)
 
 
 def test_the_bundle_carries_decrypted_variables(auth_client, runner_client, created_run, workspace):

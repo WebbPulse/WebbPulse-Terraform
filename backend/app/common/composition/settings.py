@@ -94,6 +94,10 @@ class Settings(BaseServiceSettings):
     be assumed however its trust policy reads."""
 
     STATE_KMS_KEY_ARN: str = ""
+    """The state bucket's KMS key ARN, which the runner writes into the S3 backend
+    block. Required outside the local stack: `terraform init` rejects an empty
+    `kms_key_id` rather than falling back to the bucket's default encryption."""
+
     AWS_REGION_NAME: str = "us-west-2"
 
     DYNAMODB_ENDPOINT_URL: str = ""

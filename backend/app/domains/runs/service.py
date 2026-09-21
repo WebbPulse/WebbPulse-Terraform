@@ -87,6 +87,10 @@ class ConfigVersionNotReady(Exception):
     """The config version exists but its tarball was never uploaded."""
 
 
+class StateKmsKeyMissing(Exception):
+    """The stack set no state KMS key ARN, so the backend block would be invalid."""
+
+
 class RunNotConfirmable(Exception):
     """The run is not waiting for a confirmation."""
 
@@ -835,10 +839,16 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         RunNotFound: No such run.
         WorkspaceNotFound: The workspace was deleted under the run.
         ConfigVersionNotFound: The config version was deleted under the run.
+        StateKmsKeyMissing: The deployment set no `STATE_KMS_KEY_ARN`.
     """
     from webbpulse.storage import presigned_get
 
     resolved = settings or get_settings()
+    if not resolved.STATE_KMS_KEY_ARN:
+        raise StateKmsKeyMissing(
+            "STATE_KMS_KEY_ARN is unset, so the backend block would carry an empty "
+            "kms_key_id and terraform init would reject it"
+        )
     run = get_run(run_id, settings=resolved)
     workspace_id = str(run["workspace_id"])
     workspace = workspaces_service.get_workspace(workspace_id, settings=resolved)
@@ -968,6 +978,7 @@ __all__ = [
     "RunNotConfirmable",
     "RunNotDiscardable",
     "RunNotFound",
+    "StateKmsKeyMissing",
     "TERMINAL_STATUSES",
     "active_run",
     "cancel_run",
