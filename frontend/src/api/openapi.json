@@ -533,7 +533,7 @@
         "type": "object"
       },
       "PhaseResult": {
-        "description": "What the runner reports when a phase ends.",
+        "description": "What the runner reports when a phase ends.\n\nExtra top level fields the runner sends, such as `run_id` and `has_changes`,\nare ignored: the id comes from the path and the change flag from `changes`.",
         "properties": {
           "changes": {
             "$ref": "#/components/schemas/RunChanges",
@@ -544,10 +544,17 @@
             }
           },
           "error": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "default": "",
-            "maxLength": 4096,
-            "title": "Error",
-            "type": "string"
+            "title": "Error"
           },
           "exit_code": {
             "title": "Exit Code",

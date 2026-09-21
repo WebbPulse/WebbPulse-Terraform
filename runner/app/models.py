@@ -168,3 +168,5 @@ class PhaseResult(BaseModel):
     changes: Changes = Field(default_factory=Changes)
     has_changes: bool = False
     error: str | None = None
+    """The failure text, `None` when the phase succeeded. The API treats an
+    absent and an empty error the same, so `None` is dropped rather than sent."""

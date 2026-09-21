@@ -41,10 +41,16 @@ class RunnerApi:
             raise ApiError("bundle payload was not a valid bundle") from error
 
     def post_phase_result(self, result: PhaseResult) -> None:
-        """Report the phase outcome, raising `ApiError` when the API rejects it."""
+        """Report the phase outcome, raising `ApiError` when the API rejects it.
+
+        `None` fields are left out rather than sent as null, which the API's
+        phase result schema reads as absent and so as the empty default.
+        """
         url = f"{self._env.api_base_url}/api/v1/runs/{self._env.run_id}/phase-result"
         try:
-            response = self._client.post(url, headers=self._headers, json=result.model_dump(mode="json"))
+            response = self._client.post(
+                url, headers=self._headers, json=result.model_dump(mode="json", exclude_none=True)
+            )
         except httpx.HTTPError as error:
             raise ApiError(f"phase result post failed: {type(error).__name__}") from error
         if response.status_code >= 400:

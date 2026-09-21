@@ -370,6 +370,41 @@ def test_the_runner_reports_a_plan_result(runner_client, created_run):
     assert body["status"] == "awaiting_confirmation"
 
 
+def test_the_runner_reports_the_payload_it_actually_sends(runner_client, created_run):
+    """The runner's literal payload is accepted, null error and extra fields and all.
+
+    The runner posts its own `PhaseResult`, which carries `run_id` and
+    `has_changes` that the route ignores and, on a clean phase, `error` as null.
+    A schema that rejected null ended every successful plan as a 422 and so as
+    an errored run.
+    """
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={
+            "run_id": created_run["run_id"],
+            "phase": "plan",
+            "exit_code": 0,
+            "changes": {"add": 1, "change": 0, "destroy": 0},
+            "has_changes": True,
+            "error": None,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "awaiting_confirmation"
+    assert runs_service.get_run(created_run["run_id"]).get("error", "") == ""
+
+
+def test_a_null_error_does_not_become_the_string_none(runner_client, created_run):
+    """A failed phase reporting a null error errors on the exit code, not on "None"."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "plan", "exit_code": 1, "changes": {}, "error": None},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "errored"
+    assert "None" not in runs_service.get_run(created_run["run_id"])["error"]
+
+
 def test_the_runner_reports_a_failure(runner_client, created_run):
     """A reported failure errors the run."""
     response = runner_client.post(
