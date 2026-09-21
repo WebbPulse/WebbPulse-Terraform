@@ -129,10 +129,10 @@ export function RunLogViewer({
             {lines.length} {lines.length === 1 ? 'line' : 'lines'}
           </span>
           {live ? (
-            <span className="inline-flex items-center gap-1 px-1 text-brand-300">
+            <span className="inline-flex items-center gap-1 px-1 text-running">
               <span
                 aria-hidden="true"
-                className="size-1.5 animate-pulse rounded-full bg-brand-400"
+                className="size-1.5 animate-pulse rounded-full bg-running"
               />
               Live
             </span>
@@ -167,11 +167,11 @@ export function RunLogViewer({
       <div
         ref={scroller}
         onScroll={onScroll}
-        className="max-h-[60vh] min-h-48 overflow-auto bg-bg"
+        className="max-h-[60vh] min-h-48 overflow-auto bg-code"
       >
         <pre
           data-testid="run-logs"
-          className={`p-3 font-mono text-xs leading-relaxed text-surface-200 ${
+          className={`p-3 font-mono text-xs leading-relaxed text-code-text ${
             wrap ? 'whitespace-pre-wrap' : ''
           }`}
           style={{ counterReset: 'log' }}
@@ -187,12 +187,15 @@ export function RunLogViewer({
           ))}
         </pre>
         {loading ? (
-          <div className="flex items-center gap-2 px-3 pb-3 text-xs text-text-faint">
-            <Spinner label="Loading the logs" className="size-3.5" />
+          <div className="flex items-center gap-2 px-3 pb-3 text-xs text-code-muted">
+            <Spinner
+              label="Loading the logs"
+              className="size-3.5 border-code-line border-t-code-text"
+            />
             Loading the logs
           </div>
         ) : lines.length === 0 ? (
-          <p className="px-3 pb-3 text-xs text-text-faint">
+          <p className="px-3 pb-3 text-xs text-code-muted">
             {live ? 'Waiting for output.' : 'No output was recorded.'}
           </p>
         ) : null}

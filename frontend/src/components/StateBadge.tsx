@@ -11,24 +11,24 @@ import {
 /** The classes for each tone. */
 const TONE_CLASSES: Record<RunTone, { pill: string; dot: string }> = {
   neutral: {
-    pill: 'border-surface-600 bg-surface-800 text-surface-200',
-    dot: 'bg-surface-400',
+    pill: 'border-line-strong bg-raised text-text',
+    dot: 'bg-surface-500',
   },
   running: {
-    pill: 'border-brand-500/40 bg-brand-600/15 text-brand-300',
-    dot: 'bg-brand-400',
+    pill: 'border-running-line bg-running-soft text-running',
+    dot: 'bg-running',
   },
   attention: {
-    pill: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
-    dot: 'bg-amber-400',
+    pill: 'border-warning-line bg-warning-soft text-warning',
+    dot: 'bg-warning',
   },
   success: {
-    pill: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-    dot: 'bg-emerald-400',
+    pill: 'border-success-line bg-success-soft text-success',
+    dot: 'bg-success',
   },
   danger: {
-    pill: 'border-rose-500/40 bg-rose-500/10 text-rose-300',
-    dot: 'bg-rose-400',
+    pill: 'border-danger-line bg-danger-soft text-danger',
+    dot: 'bg-danger',
   },
 };
 

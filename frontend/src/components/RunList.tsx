@@ -39,7 +39,7 @@ export function RunList({
           <div className="min-w-0 flex-1">
             <Link
               to={runPath(run)}
-              className="block truncate text-sm font-medium text-text-strong hover:text-brand-300"
+              className="block truncate text-sm font-medium text-text-strong hover:text-accent hover:underline"
             >
               {runTitle(run)}
             </Link>
@@ -56,7 +56,7 @@ export function RunList({
                   <span aria-hidden="true">|</span>
                   <Link
                     to={`/workspaces/${run.workspace_id}`}
-                    className="hover:text-text-strong"
+                    className="hover:text-accent hover:underline"
                   >
                     {workspaceNames.get(run.workspace_id) ?? run.workspace_id}
                   </Link>

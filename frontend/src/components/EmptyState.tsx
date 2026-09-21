@@ -21,7 +21,7 @@ export function EmptyState({
 }: EmptyStateProps): React.ReactElement {
   return (
     <div
-      className={`rounded-lg border border-dashed border-line px-4 py-10 text-center ${className}`}
+      className={`rounded-lg border border-dashed border-line-strong bg-panel px-4 py-10 text-center ${className}`}
     >
       <p className="text-sm text-text">{title}</p>
       {hint === undefined ? null : (

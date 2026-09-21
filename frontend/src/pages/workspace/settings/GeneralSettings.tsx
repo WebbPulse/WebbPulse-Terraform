@@ -175,7 +175,7 @@ function SettingsForm({
           Save settings
         </Button>
         {saved ? (
-          <span role="status" className="text-sm text-emerald-300">
+          <span role="status" className="text-sm text-success">
             Saved.
           </span>
         ) : null}

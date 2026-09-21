@@ -153,11 +153,11 @@ function RunBody({
             >
               <Link
                 to={`/workspaces/${run.workspace_id}/runs`}
-                className="hover:text-text-strong"
+                className="hover:text-accent hover:underline"
               >
                 Runs
               </Link>
-              <span aria-hidden="true" className="mx-1.5 text-surface-600">
+              <span aria-hidden="true" className="mx-1.5 text-line-strong">
                 /
               </span>
               <span className="font-mono">{shortRunId(run.run_id)}</span>
@@ -347,13 +347,13 @@ function PlanSummary({ run }: { run: Run }): React.ReactElement {
     >
       <dt className="text-xs text-text-faint">Resources changed</dt>
       <dd className="mt-0.5 flex items-center gap-3 font-mono text-sm tabular-nums">
-        <span className="text-emerald-300" title="To add">
+        <span className="text-success" title="To add">
           +{add}
         </span>
-        <span className="text-amber-300" title="To change">
+        <span className="text-warning" title="To change">
           ~{change}
         </span>
-        <span className="text-rose-300" title="To destroy">
+        <span className="text-danger" title="To destroy">
           -{destroy}
         </span>
       </dd>
@@ -482,7 +482,7 @@ function RunProperties({ run }: { run: Run }): React.ReactElement {
       <Property label="Workspace" mono>
         <Link
           to={`/workspaces/${run.workspace_id}`}
-          className="text-brand-300 hover:text-brand-200"
+          className="text-accent hover:text-accent-hover hover:underline"
         >
           {run.workspace_id}
         </Link>
@@ -490,7 +490,7 @@ function RunProperties({ run }: { run: Run }): React.ReactElement {
       <Property label="Configuration" mono>
         <Link
           to={`/workspaces/${run.workspace_id}/configuration-versions`}
-          className="text-brand-300 hover:text-brand-200"
+          className="text-accent hover:text-accent-hover hover:underline"
         >
           {run.config_version_id}
         </Link>

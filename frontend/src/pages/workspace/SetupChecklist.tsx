@@ -131,9 +131,9 @@ function StepMarker({
   status: SetupStep['status'];
 }): React.ReactElement {
   const classes = {
-    done: 'border-emerald-500 bg-emerald-500/15 text-emerald-300',
-    current: 'border-brand-400 bg-brand-600/20 text-brand-300',
-    blocked: 'border-line-strong text-surface-500',
+    done: 'border-success-line bg-success-soft text-success',
+    current: 'border-accent bg-accent-soft text-accent',
+    blocked: 'border-line-strong bg-panel text-text-faint',
   }[status];
   return (
     <span
@@ -220,7 +220,7 @@ function FirstPlan({
         A run is in progress.{' '}
         <Link
           to={runPath(running)}
-          className="text-brand-300 hover:text-brand-200"
+          className="text-accent hover:text-accent-hover hover:underline"
         >
           Follow it
         </Link>

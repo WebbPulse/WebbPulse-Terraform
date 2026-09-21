@@ -24,7 +24,7 @@ export function DeletionSettings(): React.ReactElement {
       <h2 className="text-sm font-semibold text-text-strong">
         Destruction and deletion
       </h2>
-      <section className="space-y-3 rounded-lg border border-rose-500/30 bg-panel p-4">
+      <section className="space-y-3 rounded-lg border border-danger-line bg-panel p-4">
         <h3 className="text-sm font-medium text-text-strong">
           Delete workspace
         </h3>

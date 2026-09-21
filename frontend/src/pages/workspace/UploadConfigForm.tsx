@@ -86,7 +86,7 @@ export function UploadConfigForm({
               type="file"
               required
               accept=".tar.gz,application/gzip"
-              className="mt-1 block w-full text-sm text-text file:mr-3 file:h-7 file:rounded-md file:border file:border-line-strong file:bg-panel file:px-2.5 file:text-xs file:font-medium file:text-text hover:file:bg-raised"
+              className="mt-1 block w-full text-sm text-text file:mr-3 file:h-7 file:rounded-md file:border file:border-line-strong file:bg-panel file:px-2.5 file:text-xs file:font-medium file:text-text-strong hover:file:bg-raised"
             />
           )}
         </Field>
@@ -100,7 +100,7 @@ export function UploadConfigForm({
         </Button>
       </div>
       {done ? (
-        <p role="status" className="text-sm text-emerald-300">
+        <p role="status" className="text-sm text-success">
           Uploaded.
         </p>
       ) : null}

@@ -30,8 +30,8 @@ export function RailLink({
           compact ? 'px-2 py-1' : 'px-2.5 py-1.5'
         } ${
           isActive
-            ? 'bg-raised text-text-strong'
-            : 'text-text-muted hover:bg-raised/60 hover:text-text-strong'
+            ? 'bg-raised font-medium text-text-strong'
+            : 'text-text hover:bg-raised/60 hover:text-text-strong'
         }`
       }
     >
