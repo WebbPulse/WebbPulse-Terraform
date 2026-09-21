@@ -252,6 +252,57 @@ def test_discard_is_404_for_an_absent_run(auth_client):
     assert auth_client.post(f"{BASE}/run-01JBQ0000000000000000000AA/discard").status_code == 404
 
 
+def test_discard_leaves_the_run_discarded_not_errored(auth_client, awaiting_confirmation):
+    """A discard is a discard on the row, not an error.
+
+    The regression this guards: the confirmation wait used to catch the discard's
+    `RunDiscarded` task failure under `States.ALL` and mark the run errored over the
+    top of the status written here. The stored row is asserted rather than the
+    response, because the response is the write and the row is what survives it.
+    """
+    run_id = awaiting_confirmation["run_id"]
+    assert auth_client.post(f"{BASE}/{run_id}/discard").status_code == 200
+
+    stored = stored_run(run_id)
+    assert stored["status"] == "discarded"
+    assert stored["finished_at"]
+
+
+def test_a_confirmation_timeout_errors_the_run(awaiting_confirmation):
+    """A confirmation nobody answered is a failure, so the run errors.
+
+    The other side of the discard fix. `States.Timeout` on the confirmation wait
+    still reaches `MarkErrored`, which lands here as an ordinary error transition
+    on a run that was never finished by anything else.
+    """
+    run_id = awaiting_confirmation["run_id"]
+    updated = runs_service.finish_run(
+        run_id,
+        "errored",
+        error="The confirmation timed out before anyone answered it.",
+    )
+    assert updated["status"] == "errored"
+    assert updated["error"] == "The confirmation timed out before anyone answered it."
+    assert not stored_run(run_id).get("confirm_task_token")
+
+
+def test_a_terminal_status_is_not_overwritten(auth_client, awaiting_confirmation):
+    """A second ending does not relabel the first one.
+
+    The backend half of the race the state machine catch fixes: even if a state
+    machine path reaches `finish_run` behind a discard, the discarded status stands
+    and the later writer is told what the run actually is.
+    """
+    run_id = awaiting_confirmation["run_id"]
+    assert auth_client.post(f"{BASE}/{run_id}/discard").status_code == 200
+
+    updated = runs_service.finish_run(run_id, "errored", error="A late error.")
+
+    assert updated["status"] == "discarded"
+    assert not updated.get("error")
+    assert stored_run(run_id)["status"] == "discarded"
+
+
 def test_a_terminal_transition_revokes_the_run_token(runner_client, created_run):
     """A finished run's token stops working, so it cannot outlive the run.
 
