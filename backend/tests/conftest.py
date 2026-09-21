@@ -19,6 +19,7 @@ pytest_plugins = ["webbpulse.testing"]
 ENVIRONMENT = "test"
 TABLE_PREFIX = f"webbpulse-terraform-{ENVIRONMENT}"
 STATE_BUCKET = f"{TABLE_PREFIX}-state"
+STATE_KMS_KEY_ARN = "arn:aws:kms:us-west-2:870550636948:key/00000000-0000-0000-0000-000000000000"
 ARTIFACTS_BUCKET = f"{TABLE_PREFIX}-artifacts"
 RUNNER_LOG_GROUP = f"/aws/ecs/{TABLE_PREFIX}-runner"
 STATE_MACHINE_NAME = f"{TABLE_PREFIX}-run"
@@ -47,6 +48,7 @@ os.environ.update(
         "CONFIG_VERSIONS_TABLE": f"{TABLE_PREFIX}-config-versions",
         "USERS_TABLE": f"{TABLE_PREFIX}-users",
         "STATE_BUCKET": STATE_BUCKET,
+        "STATE_KMS_KEY_ARN": STATE_KMS_KEY_ARN,
         "ARTIFACTS_BUCKET": ARTIFACTS_BUCKET,
         "RUNNER_LOG_GROUP": RUNNER_LOG_GROUP,
         "VARIABLES_MASTER_KEY": VARIABLES_MASTER_KEY,
