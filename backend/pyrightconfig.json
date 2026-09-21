@@ -1,5 +1,5 @@
 {
-  "include": ["app", "tests"],
+  "include": ["app", "e2e", "tests"],
   "venvPath": ".",
   "venv": ".venv",
   "exclude": [
