@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import boto3
 import pytest
@@ -198,7 +199,7 @@ def test_metadata_never_returns_resources_or_outputs(auth_client, versioned_stat
     assert body["is_current"] is True
 
 
-def test_metadata_is_404_for_a_version_of_another_workspace(auth_client, versioned_state, app):
+def test_metadata_is_404_for_a_version_of_another_workspace(auth_client, versioned_state):
     """A version id from one workspace cannot be read through another's path.
 
     Both workspaces are readable by this caller, so this is not a scope check: it
@@ -228,8 +229,30 @@ def test_download_returns_a_short_lived_url_pinned_to_the_version(auth_client, v
     assert body["expires_in"] == state_versions.DOWNLOAD_EXPIRES_IN
     assert body["expires_in"] <= 60
     assert state_versions.state_key(workspace_id) in body["download_url"].replace("%2F", "/")
-    assert f"versionId={oldest}" in body["download_url"] or f"VersionId={oldest}" in body["download_url"]
     assert "X-Amz-Signature" in body["download_url"]
+
+    query = parse_qs(urlparse(body["download_url"]).query)
+    assert query["versionId"] == [oldest]
+
+
+def test_download_url_signature_binds_the_key_and_the_version(auth_client, versioned_state):
+    """Tampering with the key or the version invalidates the signature.
+
+    Moto does not verify presigned signatures, so following a tampered URL here
+    would prove nothing. What real S3 enforces is that `versionId` is part of the
+    signed query string, and the observable form of that is the signature moving
+    when only the version moves. Without it a URL for an old version would serve
+    whichever state is current, which is the failure that matters.
+    """
+    workspace_id = versioned_state["workspace_id"]
+    oldest, newest = versioned_state["versions"][0], versioned_state["versions"][-1]
+
+    def signature_for(version_id: str) -> str:
+        response = auth_client.post(f"/api/v1/workspaces/{workspace_id}/state-versions/{version_id}/download")
+        assert response.status_code == 200, response.text
+        return parse_qs(urlparse(response.json()["download_url"]).query)["X-Amz-Signature"][0]
+
+    assert signature_for(oldest) != signature_for(newest)
 
 
 def test_download_is_404_for_a_version_that_does_not_exist(auth_client, versioned_state):
@@ -288,7 +311,7 @@ def test_download_checks_authorization_before_minting_any_url(scoped_client, ver
     workspace_id = versioned_state["workspace_id"]
     version = versioned_state["versions"][0]
 
-    def forbidden_presigner(*args: Any, **kwargs: Any) -> Any:
+    def forbidden_presigner(*_args: Any, **_kwargs: Any) -> Any:
         """Fail loudly: reaching this means a URL was minted before the guard ran."""
         raise AssertionError("A state download URL was minted before authorization was checked.")
 
@@ -308,7 +331,7 @@ def test_download_checks_the_version_belongs_to_the_workspace_before_signing(aut
     """
     workspace_id = versioned_state["workspace_id"]
 
-    def forbidden_presigner(*args: Any, **kwargs: Any) -> Any:
+    def forbidden_presigner(*_args: Any, **_kwargs: Any) -> Any:
         """Fail loudly: reaching this means an unknown version was signed."""
         raise AssertionError("A state download URL was minted for an unknown version.")
 
