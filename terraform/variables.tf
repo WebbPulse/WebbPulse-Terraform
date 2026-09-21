@@ -77,9 +77,10 @@ variable "bootstrap_image_tag" {
 }
 
 variable "runner_image_tag" {
-  description = "Image tag the plan and apply task definitions point at. Unlike a Lambda image this is not under ignore_changes, so a task definition revision follows this value."
+  description = "Pin the plan and apply task definitions to one runner image tag, for example sha-<commit>. Leave it null, the default, and the task definitions follow the environment tag that Deploy Runner moves on every deploy, which is the normal path. Set it only to hold the runner on a known image; unlike a Lambda image this is not under ignore_changes, so a task definition revision follows this value."
   type        = string
-  default     = "bootstrap"
+  default     = null
+  nullable    = true
 }
 
 variable "runner_task_cpu" {

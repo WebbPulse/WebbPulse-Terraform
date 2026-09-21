@@ -9,6 +9,8 @@ module "registry" {
   repositories = {
     workspaces = {}
     runs       = {}
-    runner     = {}
+    runner = {
+      image_tag_mutability = "MUTABLE"
+    }
   }
 }
