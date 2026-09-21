@@ -1,0 +1,382 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: "1.13.3"
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      runner: ${{ steps.filter.outputs.runner }}
+      terraform: ${{ steps.filter.outputs.terraform }}
+      api-contract: ${{ steps.filter.outputs.api-contract }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+            runner:
+              - 'runner/**'
+              - '.github/workflows/ci.yml'
+            terraform:
+              - 'terraform/**'
+              - '.github/workflows/ci.yml'
+            api-contract:
+              - 'backend/app/**'
+              - 'backend/pyproject.toml'
+              - 'backend/uv.lock'
+              - 'backend/scripts/export_openapi.py'
+              - 'frontend/src/api/**'
+              - 'frontend/package.json'
+              - '.github/workflows/ci.yml'
+
+  affected:
+    name: Resolve the affected domains
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      domains: ${{ steps.affected.outputs.domains }}
+      shared: ${{ steps.affected.outputs.shared }}
+      reason: ${{ steps.affected.outputs.reason }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve the base commit
+        id: base
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          BASE="${PR_BASE_SHA:-$PUSH_BEFORE_SHA}"
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE=""
+          fi
+          if [ -n "$BASE" ] && ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$BASE" || true
+          fi
+          echo "Base: ${BASE:-none, so every domain}"
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Work out the affected domains
+        id: affected
+        uses: WebbPulse/.github/actions/affected-domains@v3
+        with:
+          working-directory: backend
+          base: ${{ steps.base.outputs.base }}
+          head: ${{ github.sha }}
+          mode: ci
+
+  backend:
+    name: Backend
+    needs: [changes, affected]
+    if: needs.changes.outputs.backend == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: WebbPulse/.github/.github/workflows/python-ci.yml@v3
+    with:
+      python-version: "3.13"
+      working-directory: backend
+      install-command: >-
+        uv lock --check &&
+        uv lock --upgrade-package webbpulse &&
+        uv sync --locked &&
+        uv run --no-sync python -c "import importlib.metadata as m; print('webbpulse', m.version('webbpulse'))"
+      ruff-target: "app tests"
+      typecheck-command: pyright
+      security-commands: |
+        bandit -r app -ll
+        uv export --frozen --no-dev --no-emit-project --no-hashes --no-emit-package webbpulse -o /tmp/requirements-audit.txt && pip-audit --no-deps -r /tmp/requirements-audit.txt
+      coverage-source: app
+      pytest-args: ""
+      domains-filter: ${{ needs.affected.outputs.domains }}
+      run-shared: ${{ needs.affected.outputs.shared == 'true' }}
+      codeartifact-domain: webbpulse
+      aws-region: us-west-2
+    secrets:
+      role-to-assume: ${{ vars.CI_AWS_ROLE_ARN }}
+      codeartifact-domain-owner: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+
+  frontend:
+    name: Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: WebbPulse/.github/.github/workflows/typescript-ci.yml@v3
+    with:
+      node-version: "22"
+      working-directory: frontend
+      install-command: >-
+        npm ci && npm update $(node -p "const p=require('./package.json');Object.keys({...p.dependencies,...p.devDependencies}).filter(n=>n.startsWith('@webbpulse/')).join(' ')") && { npm ls --depth=0 2>/dev/null | grep @webbpulse || true; }
+      lint-command: npm run lint
+      format-check-command: npm run format:check
+      typecheck-command: ""
+      test-command: npm run test:run -- --coverage
+      build-command: npm run build
+      codeartifact-domain: webbpulse
+      codeartifact-repository: npm
+      codeartifact-namespace: "@webbpulse"
+      aws-region: us-west-2
+    secrets:
+      role-to-assume: ${{ vars.CI_AWS_ROLE_ARN }}
+      codeartifact-domain-owner: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+
+  api-contract:
+    name: API contract
+    needs: changes
+    if: needs.changes.outputs.api-contract == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.10"
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Configure AWS credentials for CodeArtifact
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.CI_AWS_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Authenticate the CodeArtifact index for uv
+        env:
+          CODEARTIFACT_DOMAIN_OWNER: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(aws codeartifact get-authorization-token \
+            --domain webbpulse \
+            --domain-owner "$CODEARTIFACT_DOMAIN_OWNER" \
+            --query authorizationToken \
+            --output text)
+          echo "::add-mask::$TOKEN"
+          echo "UV_INDEX_CODEARTIFACT_USERNAME=aws" >> "$GITHUB_ENV"
+          echo "UV_INDEX_CODEARTIFACT_PASSWORD=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Log in to CodeArtifact for npm
+        env:
+          CODEARTIFACT_DOMAIN_OWNER: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+        run: |
+          set -euo pipefail
+          aws codeartifact login \
+            --tool npm \
+            --domain webbpulse \
+            --domain-owner "$CODEARTIFACT_DOMAIN_OWNER" \
+            --repository npm \
+            --namespace @webbpulse
+
+      - name: Install the backend
+        working-directory: backend
+        run: uv sync --locked
+
+      - name: Install the frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Regenerate the API types
+        working-directory: frontend
+        run: npm run api:generate
+
+      - name: Fail when the generated types are out of date
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code -- frontend/src/api/openapi.json frontend/src/api/schema.d.ts; then
+            echo "::error::The generated API types are out of date. Run 'npm run api:generate' in frontend/ and commit the result."
+            exit 1
+          fi
+
+  runner:
+    name: Runner
+    needs: changes
+    if: needs.changes.outputs.runner == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: WebbPulse/.github/.github/workflows/python-ci.yml@v3
+    with:
+      python-version: "3.13"
+      working-directory: runner
+      install-command: >-
+        uv lock --check &&
+        uv sync --locked
+      ruff-target: "app tests"
+      typecheck-command: uv run pyright
+      coverage-source: app
+      pytest-args: ""
+
+  runner-image:
+    name: Image build for linux/arm64
+    needs: changes
+    if: needs.changes.outputs.runner == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v4.0.0
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build the runner image without pushing
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: runner
+          file: runner/Dockerfile
+          platforms: linux/arm64
+          push: false
+          load: false
+          provenance: false
+          cache-from: type=gha,scope=runner-arm64
+          cache-to: type=gha,scope=runner-arm64,mode=max
+
+  terraform-fmt:
+    name: terraform fmt
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt -recursive -check
+        working-directory: terraform
+        run: terraform fmt -recursive -check -diff
+
+  terraform-validate:
+    name: terraform validate
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Decide whether a registry token is available
+        id: token
+        env:
+          TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TF_API_TOKEN:-}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::secrets.TF_API_TOKEN is not set, so validate is skipped. The module sources live in the private HCP registry and init cannot reach them without it. The HCP workspace plan on this pull request is the real gate."
+          fi
+
+      - name: Set up Terraform
+        if: steps.token.outputs.available == 'true'
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: terraform init -backend=false
+        if: steps.token.outputs.available == 'true'
+        working-directory: terraform
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        if: steps.token.outputs.available == 'true'
+        working-directory: terraform
+        run: terraform validate -no-color
+
+  all-checks-passed:
+    name: all-checks-passed
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - affected
+      - backend
+      - frontend
+      - api-contract
+      - runner
+      - runner-image
+      - terraform-fmt
+      - terraform-validate
+    if: always()
+    steps:
+      - name: Fail unless every upstream job succeeded or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq '"result": *"(failure|cancelled)"'; then
+            echo "::error::at least one upstream job failed or was cancelled"
+            exit 1
+          fi
+          echo "Every upstream job succeeded or was skipped."

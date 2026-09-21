@@ -1,0 +1,4035 @@
+{
+  "components": {
+    "schemas": {
+      "ApiKey": {
+        "description": "A stored key as every route but the mint renders it. Never the plaintext.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key_id",
+          "name",
+          "prefix",
+          "scopes",
+          "created_at"
+        ],
+        "title": "ApiKey",
+        "type": "object"
+      },
+      "ApiKeyCreate": {
+        "description": "A request to mint one key.\n\n`scopes` is optional and bounded rather than free: omitting it mints a key\ncarrying everything the caller holds, and naming a scope the caller does not\nhold is refused rather than quietly dropped.",
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scopes"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ApiKeyCreate",
+        "type": "object"
+      },
+      "ApiKeyCreated": {
+        "description": "A freshly minted key, carrying the one and only sight of its plaintext.\n\nReturned by `POST /api/v1/api-keys` and by nothing else. The plaintext is not\nstored, so a caller that loses it has to mint another key.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key_id",
+          "name",
+          "prefix",
+          "scopes",
+          "created_at",
+          "key"
+        ],
+        "title": "ApiKeyCreated",
+        "type": "object"
+      },
+      "ApiKeyList": {
+        "description": "The caller's own keys, newest first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApiKey"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ApiKeyList",
+        "type": "object"
+      },
+      "ArtifactUpload": {
+        "description": "The presigned PUT one artifact goes to.\n\n`headers` is not advisory: every one is inside the signature, so a request\nthat omits or changes one is rejected by S3.",
+        "properties": {
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "headers",
+          "expires_in"
+        ],
+        "title": "ArtifactUpload",
+        "type": "object"
+      },
+      "ArtifactUploadCreate": {
+        "description": "A request for somewhere to upload one of a run's artifacts.",
+        "properties": {
+          "artifact": {
+            "enum": [
+              "plan",
+              "plan_json",
+              "log"
+            ],
+            "title": "Artifact",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artifact",
+          "size_bytes"
+        ],
+        "title": "ArtifactUploadCreate",
+        "type": "object"
+      },
+      "Artifacts": {
+        "description": "Presigned URLs the runner reads from, for one run.\n\nOnly the read direction is minted here. An upload's URL signs the exact\n`Content-Length` the client will send, which is not known when the bundle is\nbuilt, so the runner asks for one per artifact through\n`POST /runs/{id}/artifact-uploads` once it knows the byte count.",
+        "properties": {
+          "plan_get_url": {
+            "title": "Plan Get Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan_get_url"
+        ],
+        "title": "Artifacts",
+        "type": "object"
+      },
+      "BackendConfig": {
+        "description": "The S3 backend the runner initialises against.\n\n`kms_key_id` carries the key ARN. The name is the backend block's own\nargument name, so the runner writes it into the override verbatim.",
+        "properties": {
+          "bucket": {
+            "title": "Bucket",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kms_key_id": {
+            "default": "",
+            "title": "Kms Key Id",
+            "type": "string"
+          },
+          "region": {
+            "title": "Region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bucket",
+          "key",
+          "region"
+        ],
+        "title": "BackendConfig",
+        "type": "object"
+      },
+      "ConfigVersion": {
+        "description": "A stored config version.",
+        "properties": {
+          "config_version_id": {
+            "title": "Config Version Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "uploaded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "config_version_id",
+          "workspace_id",
+          "key",
+          "status",
+          "size_bytes",
+          "created_at"
+        ],
+        "title": "ConfigVersion",
+        "type": "object"
+      },
+      "ConfigVersionCreate": {
+        "description": "A request for somewhere to upload a config tarball.",
+        "properties": {
+          "size_bytes": {
+            "default": 50000000,
+            "exclusiveMinimum": 0.0,
+            "maximum": 250000000.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "ConfigVersionCreate",
+        "type": "object"
+      },
+      "ConfigVersionList": {
+        "description": "One workspace's config versions, newest last by `created_at`.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigVersion"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ConfigVersionList",
+        "type": "object"
+      },
+      "ConfigVersionUpload": {
+        "description": "A new config version and the presigned PUT its tarball goes to.\n\n`headers` is not advisory: every one is inside the signature, so a request\nthat omits or changes one is rejected by S3.",
+        "properties": {
+          "config_version": {
+            "$ref": "#/components/schemas/ConfigVersion"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "config_version",
+          "upload_url",
+          "headers",
+          "expires_in"
+        ],
+        "title": "ConfigVersionUpload",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "description": "The `\"detailed\"` error envelope every handler renders, and what OpenAPI advertises.\n\n`details` is present only on a 422, where it holds one entry per offending field.",
+        "properties": {
+          "details": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-field validation failures. Present only on a 422.",
+            "title": "Details"
+          },
+          "error_code": {
+            "description": "A stable machine readable code, such as `NOT_FOUND`.",
+            "title": "Error Code",
+            "type": "string"
+          },
+          "message": {
+            "description": "A human readable summary safe to surface to a caller.",
+            "title": "Message",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "The request id, echoed in the `X-Request-ID` header.",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "description": "The HTTP status code, repeated in the body.",
+            "title": "Status",
+            "type": "integer"
+          },
+          "success": {
+            "default": false,
+            "description": "Always `false` on an error response.",
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "status",
+          "message",
+          "request_id",
+          "error_code"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "LogEvent": {
+        "description": "One line from the runner's log stream.",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "timestamp",
+          "message"
+        ],
+        "title": "LogEvent",
+        "type": "object"
+      },
+      "LogPage": {
+        "description": "A page of one run phase's logs, and the token that continues it.",
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/LogEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "next_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next After"
+          },
+          "phase": {
+            "enum": [
+              "plan",
+              "apply"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "phase",
+          "events"
+        ],
+        "title": "LogPage",
+        "type": "object"
+      },
+      "PhaseResult": {
+        "description": "What the runner reports when a phase ends.\n\nExtra top level fields the runner sends, such as `run_id` and `has_changes`,\nare ignored: the id comes from the path and the change flag from `changes`.",
+        "properties": {
+          "changes": {
+            "$ref": "#/components/schemas/RunChanges",
+            "default": {
+              "add": 0,
+              "change": 0,
+              "destroy": 0
+            }
+          },
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "",
+            "title": "Error"
+          },
+          "exit_code": {
+            "title": "Exit Code",
+            "type": "integer"
+          },
+          "phase": {
+            "enum": [
+              "plan",
+              "apply"
+            ],
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase",
+          "exit_code"
+        ],
+        "title": "PhaseResult",
+        "type": "object"
+      },
+      "PhaseResultAccepted": {
+        "description": "The run as it stands after a phase result was recorded.",
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "planning",
+              "planned",
+              "awaiting_confirmation",
+              "applying",
+              "applied",
+              "planned_and_finished",
+              "errored",
+              "cancelled",
+              "discarded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "title": "PhaseResultAccepted",
+        "type": "object"
+      },
+      "PlanOutputChange": {
+        "description": "One root output's change in a plan.\n\nA sensitive output carries the redaction string rather than its value, the\nsame way a sensitive resource attribute does.",
+        "properties": {
+          "action": {
+            "enum": [
+              "create",
+              "update",
+              "delete",
+              "replace",
+              "read",
+              "no-op"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "after": {
+            "title": "After"
+          },
+          "after_unknown": {
+            "default": false,
+            "title": "After Unknown",
+            "type": "boolean"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "action"
+        ],
+        "title": "PlanOutputChange",
+        "type": "object"
+      },
+      "PlanResourceChange": {
+        "description": "One resource's entry in a plan, as the viewer renders it.\n\n`before` and `after` are the planned state on either side, with every value\nthe plan marked sensitive already replaced by a redaction string, so no\nsealed variable or sensitive attribute reaches the browser. They carry\nwhatever shape the plan put there rather than an object, because the plan\nformat allows a scalar or a list and a run view that 500s on an unusual\nplan is a worse failure than a loose type.",
+        "properties": {
+          "action": {
+            "enum": [
+              "create",
+              "update",
+              "delete",
+              "replace",
+              "read",
+              "no-op"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "action_reason": {
+            "default": "",
+            "title": "Action Reason",
+            "type": "string"
+          },
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "after": {
+            "title": "After"
+          },
+          "after_sensitive": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Sensitive"
+          },
+          "after_unknown": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Unknown"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "before_sensitive": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Sensitive"
+          },
+          "mode": {
+            "enum": [
+              "managed",
+              "data"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "module_address": {
+            "default": "",
+            "title": "Module Address",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider_name": {
+            "default": "",
+            "title": "Provider Name",
+            "type": "string"
+          },
+          "replace_paths": {
+            "items": {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "title": "Replace Paths",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "mode",
+          "type",
+          "name",
+          "action"
+        ],
+        "title": "PlanResourceChange",
+        "type": "object"
+      },
+      "Run": {
+        "description": "A stored run as the API renders it.\n\nThe task tokens and the run token hash are stored on the row and never in\nthis model: a caller who could read a confirm task token could confirm a run\nit was not allowed to confirm.",
+        "properties": {
+          "changes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunChanges"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "config_version_id": {
+            "title": "Config Version Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "execution_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Arn"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          },
+          "plan_only": {
+            "title": "Plan Only",
+            "type": "boolean"
+          },
+          "queued_behind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queued Behind"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "planning",
+              "planned",
+              "awaiting_confirmation",
+              "applying",
+              "applied",
+              "planned_and_finished",
+              "errored",
+              "cancelled",
+              "discarded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "workspace_id",
+          "config_version_id",
+          "status",
+          "plan_only",
+          "created_at"
+        ],
+        "title": "Run",
+        "type": "object"
+      },
+      "RunBundle": {
+        "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `run_role` and\n`artifacts` objects are what `runner/app/models.py` validates, and the four\nextra top level fields are what the runner ignores for now but the API\nstates about the phase it is serving. Uploads are not here: the runner asks\nfor each one's presigned PUT by size once it has the bytes.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
+        "properties": {
+          "artifacts": {
+            "$ref": "#/components/schemas/Artifacts"
+          },
+          "backend": {
+            "$ref": "#/components/schemas/BackendConfig"
+          },
+          "config_url": {
+            "title": "Config Url",
+            "type": "string"
+          },
+          "engine": {
+            "enum": [
+              "terraform",
+              "tofu"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "engine_version": {
+            "title": "Engine Version",
+            "type": "string"
+          },
+          "environment_variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Environment Variables",
+            "type": "object"
+          },
+          "phase": {
+            "enum": [
+              "plan",
+              "apply"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "plan_only": {
+            "title": "Plan Only",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_role": {
+            "$ref": "#/components/schemas/RunRole"
+          },
+          "terraform_variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Terraform Variables",
+            "type": "object"
+          },
+          "working_directory": {
+            "title": "Working Directory",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "workspace_id",
+          "phase",
+          "plan_only",
+          "engine",
+          "engine_version",
+          "working_directory",
+          "config_url",
+          "backend",
+          "run_role",
+          "terraform_variables",
+          "environment_variables",
+          "artifacts"
+        ],
+        "title": "RunBundle",
+        "type": "object"
+      },
+      "RunChanges": {
+        "description": "What a plan found: resources to add, change and destroy.",
+        "properties": {
+          "add": {
+            "default": 0,
+            "title": "Add",
+            "type": "integer"
+          },
+          "change": {
+            "default": 0,
+            "title": "Change",
+            "type": "integer"
+          },
+          "destroy": {
+            "default": 0,
+            "title": "Destroy",
+            "type": "integer"
+          }
+        },
+        "title": "RunChanges",
+        "type": "object"
+      },
+      "RunCreate": {
+        "description": "A new run against one workspace and one config version.",
+        "properties": {
+          "config_version_id": {
+            "maxLength": 64,
+            "minLength": 4,
+            "title": "Config Version Id",
+            "type": "string"
+          },
+          "message": {
+            "default": "",
+            "maxLength": 1024,
+            "title": "Message",
+            "type": "string"
+          },
+          "plan_only": {
+            "default": false,
+            "title": "Plan Only",
+            "type": "boolean"
+          },
+          "workspace_id": {
+            "maxLength": 64,
+            "minLength": 4,
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "config_version_id"
+        ],
+        "title": "RunCreate",
+        "type": "object"
+      },
+      "RunCreated": {
+        "description": "A newly created run. Carries the run token only when the run started.\n\nA queued run has no execution and so no token: the token is minted when the\nstate machine starts, which is when the run ahead of it finishes.",
+        "properties": {
+          "changes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunChanges"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "config_version_id": {
+            "title": "Config Version Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "execution_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Arn"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          },
+          "plan_only": {
+            "title": "Plan Only",
+            "type": "boolean"
+          },
+          "queued_behind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queued Behind"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Token"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "planning",
+              "planned",
+              "awaiting_confirmation",
+              "applying",
+              "applied",
+              "planned_and_finished",
+              "errored",
+              "cancelled",
+              "discarded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "workspace_id",
+          "config_version_id",
+          "status",
+          "plan_only",
+          "created_at"
+        ],
+        "title": "RunCreated",
+        "type": "object"
+      },
+      "RunList": {
+        "description": "One workspace's runs, newest first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "RunList",
+        "type": "object"
+      },
+      "RunPlan": {
+        "description": "A run's plan as structured data, derived from `terraform show -json`.\n\nThe raw plan document is never returned: it can reach hundreds of megabytes\nand it carries sensitive values verbatim. This is the summarised, redacted\nprojection the run view renders.",
+        "properties": {
+          "changes": {
+            "$ref": "#/components/schemas/RunChanges"
+          },
+          "has_changes": {
+            "default": false,
+            "title": "Has Changes",
+            "type": "boolean"
+          },
+          "output_changes": {
+            "items": {
+              "$ref": "#/components/schemas/PlanOutputChange"
+            },
+            "title": "Output Changes",
+            "type": "array"
+          },
+          "resource_changes": {
+            "items": {
+              "$ref": "#/components/schemas/PlanResourceChange"
+            },
+            "title": "Resource Changes",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "terraform_version": {
+            "default": "",
+            "title": "Terraform Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "changes"
+        ],
+        "title": "RunPlan",
+        "type": "object"
+      },
+      "RunRole": {
+        "description": "The per workspace role the engine runs as, with the phase session policy.\n\nThe external id is the workspace id, so a role trusted for one workspace\ncannot be assumed by a run against another.",
+        "properties": {
+          "duration_seconds": {
+            "default": 3600,
+            "title": "Duration Seconds",
+            "type": "integer"
+          },
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "role_arn": {
+            "title": "Role Arn",
+            "type": "string"
+          },
+          "session_policy": {
+            "additionalProperties": true,
+            "title": "Session Policy",
+            "type": "object"
+          },
+          "session_policy_arns": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Session Policy Arns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "role_arn",
+          "external_id",
+          "session_policy"
+        ],
+        "title": "RunRole",
+        "type": "object"
+      },
+      "RunRoleCheck": {
+        "description": "The outcome of one AssumeRole against a workspace's run role.\n\n`error` is a sentence for a person rather than the STS code, and no part of\nthe temporary credentials reaches it.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "required": [
+          "connected"
+        ],
+        "title": "RunRoleCheck",
+        "type": "object"
+      },
+      "RunRoleSetup": {
+        "description": "What a person needs to build the run role for one workspace.\n\nThe role cannot exist before the workspace does: its trust policy names the\nworkspace id as the external id, so the id has to be handed out first. Every\nworkspace response carries these three values so the setup can be followed\nwithout reading the stack's outputs.",
+        "properties": {
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "principal_arn": {
+            "title": "Principal Arn",
+            "type": "string"
+          },
+          "principal_arns": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Principal Arns",
+            "type": "array"
+          },
+          "role_name": {
+            "title": "Role Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "principal_arn",
+          "external_id",
+          "role_name"
+        ],
+        "title": "RunRoleSetup",
+        "type": "object"
+      },
+      "ValidationErrorDetail": {
+        "description": "One offending field in a 422, carrying its location and reason but never its input.",
+        "properties": {
+          "field": {
+            "description": "Dotted path to the offending field, or `_root` for the body itself.",
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "description": "Why the value was rejected.",
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "description": "The pydantic error type, such as `missing` or `string_type`.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "message",
+          "type"
+        ],
+        "title": "ValidationErrorDetail",
+        "type": "object"
+      },
+      "Variable": {
+        "description": "A stored variable as the API renders it.\n\n`value` is `None` for a sensitive variable, always, on every route. The\nrunner reads the decrypted value through the run bundle, which is gated on a\nrun token rather than on a human's scopes.",
+        "properties": {
+          "category": {
+            "enum": [
+              "terraform",
+              "env"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "sensitive": {
+            "title": "Sensitive",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "key",
+          "category",
+          "sensitive",
+          "created_at"
+        ],
+        "title": "Variable",
+        "type": "object"
+      },
+      "VariableList": {
+        "description": "Every variable on one workspace, by key.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Variable"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "VariableList",
+        "type": "object"
+      },
+      "VariableWrite": {
+        "description": "A variable value being set. A sensitive value is never returned again.",
+        "properties": {
+          "category": {
+            "default": "terraform",
+            "enum": [
+              "terraform",
+              "env"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          },
+          "value": {
+            "maxLength": 32768,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "VariableWrite",
+        "type": "object"
+      },
+      "Workspace": {
+        "description": "A stored workspace, with everything the run role setup needs.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "engine": {
+            "default": "terraform",
+            "enum": [
+              "terraform",
+              "tofu"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "engine_version": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Engine Version",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "run_role_account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Account Id"
+          },
+          "run_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Arn"
+          },
+          "run_role_checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Checked At"
+          },
+          "run_role_setup": {
+            "$ref": "#/components/schemas/RunRoleSetup"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "working_directory": {
+            "default": "",
+            "title": "Working Directory",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "engine_version",
+          "workspace_id",
+          "name",
+          "created_at",
+          "run_role_setup"
+        ],
+        "title": "Workspace",
+        "type": "object"
+      },
+      "WorkspaceCreate": {
+        "description": "A new workspace. The name is unique across the environment.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "engine": {
+            "default": "terraform",
+            "enum": [
+              "terraform",
+              "tofu"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "engine_version": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Engine Version",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 90,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "title": "Name",
+            "type": "string"
+          },
+          "run_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Arn"
+          },
+          "working_directory": {
+            "default": "",
+            "title": "Working Directory",
+            "type": "string"
+          }
+        },
+        "required": [
+          "engine_version",
+          "name"
+        ],
+        "title": "WorkspaceCreate",
+        "type": "object"
+      },
+      "WorkspaceList": {
+        "description": "Every workspace, newest last by id, which is a ULID and so time ordered.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Workspace"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "WorkspaceList",
+        "type": "object"
+      },
+      "WorkspaceUpdate": {
+        "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so it is refused by\nomission rather than by a check.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "terraform",
+                  "tofu"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "engine_version": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Version"
+          },
+          "run_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Arn"
+          },
+          "working_directory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Working Directory"
+          }
+        },
+        "title": "WorkspaceUpdate",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Workspaces, variables, config versions and runs, as the gateway routes them.",
+    "title": "WebbPulse Terraform control plane",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "description": "Sign in with a password, or answer an MFA challenge when one is required.",
+        "operationId": "login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request carried no email address"
+          },
+          "401": {
+            "description": "The credentials were refused"
+          },
+          "403": {
+            "description": "The account is locked or password sign in is closed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many sign in attempts from this address"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/login/passkey/options": {
+      "post": {
+        "description": "Issue an anonymous WebAuthn assertion challenge; the body is optional.",
+        "operationId": "passkey_login_options_api_auth_login_passkey_options_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request named no account"
+          },
+          "403": {
+            "description": "Passwordless sign in is closed on this deployment"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many attempts from this address"
+          }
+        },
+        "summary": "Passkey Login Options",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/login/passkey/verify": {
+      "post": {
+        "description": "Verify an assertion and issue tokens, or answer an MFA challenge.",
+        "operationId": "passkey_login_verify_api_auth_login_passkey_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "The assertion was refused"
+          },
+          "403": {
+            "description": "Passwordless sign in is closed on this deployment"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many attempts from this address"
+          }
+        },
+        "summary": "Passkey Login Verify",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/login/totp": {
+      "post": {
+        "description": "Complete the second leg of an MFA login using a ticket and a code.",
+        "operationId": "complete_totp_login_api_auth_login_totp_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "The code was refused"
+          },
+          "403": {
+            "description": "The challenge is no longer open"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many attempts from this address"
+          }
+        },
+        "summary": "Complete Totp Login",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "description": "End the presented session and clear the refresh cookie. Always succeeds.",
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "The request did not come from an allowed origin"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/logout-all": {
+      "post": {
+        "description": "Revoke every session for the caller and clear the refresh cookie.",
+        "operationId": "logout_all_api_auth_logout_all_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Logout All",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/oauth/providers": {
+      "get": {
+        "description": "The OAuth providers this deployment can actually sign a user in with.\n\nA provider is listed only when it has both a client id and a client secret.\nAnnotated `-> Any` with `response_model=None` so the OpenAPI schema still builds.",
+        "operationId": "oauth_providers_api_auth_oauth_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "The OAuth providers this deployment can sign a user in with",
+        "tags": [
+          "identity",
+          "oauth"
+        ]
+      }
+    },
+    "/api/auth/passkeys": {
+      "get": {
+        "description": "Every passkey enrolled on the authenticated account.",
+        "operationId": "list_passkeys_api_auth_passkeys_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Passkeys",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/passkeys/availability": {
+      "get": {
+        "description": "Whether this deployment offers passkeys, and whether they are an entry point.\n\nBoth flags are read back from settings rather than inferred from store presence.\nAnnotated `-> Any` with `response_model=None` so the OpenAPI schema still builds.",
+        "operationId": "passkey_availability_api_auth_passkeys_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Whether this deployment offers passkeys, and passwordless sign-in",
+        "tags": [
+          "identity",
+          "passkeys"
+        ]
+      }
+    },
+    "/api/auth/passkeys/register/options": {
+      "post": {
+        "description": "Issue a WebAuthn creation challenge for the signed-in caller.",
+        "operationId": "passkey_register_options_api_auth_passkeys_register_options_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "404": {
+            "description": "No such account"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many registration attempts from this address"
+          }
+        },
+        "summary": "Passkey Register Options",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/passkeys/register/verify": {
+      "post": {
+        "description": "Verify a WebAuthn creation response and store the new passkey.",
+        "operationId": "passkey_register_verify_api_auth_passkeys_register_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "description": "Passkey registered"
+          },
+          "401": {
+            "description": "No bearer token was presented, or the attestation was refused"
+          },
+          "409": {
+            "description": "That credential is already registered"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many registration attempts from this address"
+          }
+        },
+        "summary": "Passkey Register Verify",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/passkeys/{credential_id}": {
+      "delete": {
+        "description": "Delete one of the caller's own passkeys.",
+        "operationId": "delete_passkey_api_auth_passkeys__credential_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "404": {
+            "description": "No such passkey for this account"
+          },
+          "409": {
+            "description": "That passkey is the last way into the account"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Delete Passkey",
+        "tags": [
+          "identity"
+        ]
+      },
+      "patch": {
+        "description": "Rename one of the caller's own passkeys.",
+        "operationId": "rename_passkey_api_auth_passkeys__credential_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "404": {
+            "description": "No such passkey for this account"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Rename Passkey",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/password": {
+      "post": {
+        "description": "Change the caller's password, taking the subject from the verified claims.",
+        "operationId": "change_password_api_auth_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "The current password was refused"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Change Password",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/recovery-codes": {
+      "post": {
+        "description": "Issue a fresh set of recovery codes, requiring a current code.",
+        "operationId": "regenerate_recovery_codes_api_auth_recovery_codes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented, or the code was refused"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many attempts from this address"
+          }
+        },
+        "summary": "Regenerate Recovery Codes",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "description": "Exchange the refresh cookie for a new access token and a rotated cookie.",
+        "operationId": "refresh_api_auth_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "The refresh material was refused"
+          },
+          "403": {
+            "description": "The request did not come from an allowed origin"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many refresh attempts from this address"
+          }
+        },
+        "summary": "Refresh",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "description": "Register an account, returning tokens unless the address already has one.",
+        "operationId": "register_api_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "description": "Account created and signed in"
+          },
+          "400": {
+            "description": "The request carried no email address"
+          },
+          "403": {
+            "description": "Registration or password sign up is closed on this deployment"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many registration attempts from this address"
+          }
+        },
+        "summary": "Register",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/step-up": {
+      "post": {
+        "description": "Re-assert a factor with a code or a passkey, returning a fresher token and no cookie.\n\nOne route and two bodies: `{\"code\": ...}` or `{\"challenge_id\": ..., \"credential\": ...}`.\nNeither and both are the same 422, so a client is told what it sent rather than that\nits factor was wrong.",
+        "operationId": "step_up_api_auth_step_up_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented, or the factor was refused"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many attempts from this address"
+          },
+          "501": {
+            "description": "A passkey step-up was sent to a deployment with passkeys off"
+          }
+        },
+        "summary": "Step Up",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/step-up/passkey/options": {
+      "post": {
+        "description": "Issue an assertion challenge scoped to the signed-in caller's own passkeys.\n\nRe-authentication rather than sign-in, so it is not gated on passwordless login.\nThe body is ignored and may be empty.",
+        "operationId": "step_up_passkey_options_api_auth_step_up_passkey_options_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "404": {
+            "description": "No passkey is registered on this account, or no such account"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many attempts from this address"
+          },
+          "501": {
+            "description": "Passkeys are not configured on this deployment"
+          }
+        },
+        "summary": "Step Up Passkey Options",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/totp/activate": {
+      "post": {
+        "description": "Activate TOTP with a code, returning the recovery codes exactly once.",
+        "operationId": "activate_totp_api_auth_totp_activate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented, or the code was refused"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many attempts from this address"
+          }
+        },
+        "summary": "Activate Totp",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/totp/disable": {
+      "post": {
+        "description": "Turn TOTP off, requiring a current code as well as the bearer token.",
+        "operationId": "disable_totp_api_auth_totp_disable_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented, or the code was refused"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many attempts from this address"
+          }
+        },
+        "summary": "Disable Totp",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/totp/enrol": {
+      "post": {
+        "description": "Begin TOTP enrolment, returning the seed and provisioning URI exactly once.",
+        "operationId": "enrol_totp_api_auth_totp_enrol_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "429": {
+            "description": "Too many enrolment attempts"
+          }
+        },
+        "summary": "Enrol Totp",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/api-keys": {
+      "get": {
+        "description": "The caller's own keys, newest first. Never a plaintext.\n\nRevoked and expired keys stay in the list so a person can recognise one they\nretired, and run tokens are left out: they live in the same table but belong\nto a run rather than to anybody.",
+        "operationId": "list_api_keys_api_v1_api_keys_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Api Keys",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "description": "Mint one key and return its plaintext, once.\n\nThe response body is the only place the plaintext ever exists outside the\ncaller's own storage: the table holds its SHA-256 and nothing else, so a\ncaller that loses it mints another key rather than recovering this one.\n\nRequires a signed-in person. A key presenting itself here is refused with\n`API_KEY_ACTOR_FORBIDDEN`, because a key able to mint its successor would\nsurvive being revoked.",
+        "operationId": "create_api_key_api_v1_api_keys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Create Api Key",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/api-keys/{key_id}": {
+      "delete": {
+        "description": "Revoke one key, taking effect on the caller's next request.\n\nReturns the key as it was rather than 204, so the caller can render what it\njust retired without a second read.\n\nThe caller's own key, or anybody's when the caller is an admin. Somebody\nelse's key reads as a 404 rather than a 403, because a 403 would confirm the\nid exists and turn the list into a way to enumerate other people's keys.",
+        "operationId": "revoke_api_key_api_v1_api_keys__key_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Key Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKey"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Revoke Api Key",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/runs": {
+      "get": {
+        "description": "One workspace's runs, newest first. The workspace is required.",
+        "operationId": "list_runs_api_v1_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Runs",
+        "tags": [
+          "runs"
+        ]
+      },
+      "post": {
+        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.",
+        "operationId": "create_run_api_v1_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Create Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}": {
+      "get": {
+        "description": "One run by id.",
+        "operationId": "get_run_api_v1_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/artifact-uploads": {
+      "post": {
+        "description": "Mint the presigned PUT for one of this run's artifacts. Runner only.\n\nThe size is the caller's, not a ceiling: `Content-Length` is inside the\nsignature, so S3 refuses a body of any other length. A runner therefore asks\nonce per artifact, after it knows how many bytes it is about to send, and\nsends the returned headers verbatim.\n\nThe log's key is per phase and the phase comes from the run's status, so a\nplan-phase runner cannot ask for the apply transcript's key.",
+        "operationId": "artifact_upload_api_v1_runs__run_id__artifact_uploads_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactUploadCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactUpload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Artifact Upload",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/bundle": {
+      "get": {
+        "description": "Everything the runner needs for this run's current phase. Runner only.\n\nThe phase comes from the run's status, not from the caller, so a plan-phase\nrunner cannot request the apply phase's unrestricted session policy.",
+        "operationId": "run_bundle_api_v1_runs__run_id__bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunBundle"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Run Bundle",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/cancel": {
+      "post": {
+        "description": "Cancel a run, stopping its execution if one is running.",
+        "operationId": "cancel_run_api_v1_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Cancel Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/confirm": {
+      "post": {
+        "description": "Apply a planned run. Needs `runs:apply`, not `runs:write`.",
+        "operationId": "confirm_run_api_v1_runs__run_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Confirm Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/discard": {
+      "post": {
+        "description": "Drop a plan that was never applied, ending its execution cleanly.",
+        "operationId": "discard_run_api_v1_runs__run_id__discard_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Discard Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/logs": {
+      "get": {
+        "description": "One page of a phase's logs. Pass `next_after` back as `after` to continue.",
+        "operationId": "run_logs_api_v1_runs__run_id__logs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "phase",
+            "required": false,
+            "schema": {
+              "default": "plan",
+              "pattern": "^(plan|apply)$",
+              "title": "Phase",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Run Logs",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/phase-result": {
+      "post": {
+        "description": "Record a phase's outcome and advance the run. Runner only.",
+        "operationId": "phase_result_api_v1_runs__run_id__phase_result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhaseResult"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhaseResultAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Phase Result",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/plan": {
+      "get": {
+        "description": "A run's plan as structured data: the counts, the resource changes and the outputs.\n\nThe raw `terraform show -json` document is never returned. Every value the\nplan marked sensitive is redacted before the response is built.",
+        "operationId": "run_plan_api_v1_runs__run_id__plan_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Run Plan",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/workspaces": {
+      "get": {
+        "description": "Every workspace in this environment, each with its run role setup.",
+        "operationId": "list_workspaces_api_v1_workspaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Workspaces",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.",
+        "operationId": "create_workspace_api_v1_workspaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Create Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}": {
+      "delete": {
+        "description": "Delete one workspace and its variables.",
+        "operationId": "delete_workspace_api_v1_workspaces__workspace_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Delete Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "get": {
+        "description": "One workspace by id, with its run role setup.",
+        "operationId": "get_workspace_api_v1_workspaces__workspace_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "patch": {
+        "description": "Edit one workspace. The name and the id are not editable.\n\nChanging `run_role_arn` drops the recorded check outcome, so the new role reads\nas unchecked until `run-role/check` says otherwise.",
+        "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Update Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/config-versions": {
+      "get": {
+        "description": "One workspace's config versions, oldest first.",
+        "operationId": "list_config_versions_api_v1_workspaces__workspace_id__config_versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigVersionList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Config Versions",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "description": "Create a config version and return the presigned PUT for its tarball.",
+        "operationId": "create_config_version_api_v1_workspaces__workspace_id__config_versions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigVersionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigVersionUpload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Create Config Version",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/config-versions/{config_version_id}": {
+      "get": {
+        "description": "One config version by id.",
+        "operationId": "get_config_version_api_v1_workspaces__workspace_id__config_versions__config_version_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "config_version_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^cv-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Config Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Config Version",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/run-role/check": {
+      "post": {
+        "description": "Assume the workspace's run role and report whether it answered.\n\nAlways 200 when a role is configured, whether or not it answered: a trust\npolicy that is not there yet is an expected state of the setup rather than a\nrequest error. A workspace with no role at all is a 400 carrying\n`RUN_ROLE_MISSING`.",
+        "operationId": "check_run_role_api_v1_workspaces__workspace_id__run_role_check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRoleCheck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Check Run Role",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/variables": {
+      "get": {
+        "description": "Every variable on one workspace. A sensitive value is never returned.",
+        "operationId": "list_variables_api_v1_workspaces__workspace_id__variables_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariableList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Variables",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/variables/{key}": {
+      "delete": {
+        "description": "Delete one variable.",
+        "operationId": "delete_variable_api_v1_workspaces__workspace_id__variables__key__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Delete Variable",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "get": {
+        "description": "One variable by key. A sensitive value is never returned.",
+        "operationId": "get_variable_api_v1_workspaces__workspace_id__variables__key__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Variable"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Variable",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "put": {
+        "description": "Set one variable. A sensitive value is sealed before it is stored.",
+        "operationId": "put_variable_api_v1_workspaces__workspace_id__variables__key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VariableWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Variable"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Put Variable",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    }
+  }
+}

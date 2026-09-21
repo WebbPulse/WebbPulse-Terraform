@@ -1,0 +1,351 @@
+{
+  "Comment": "One execution per run. The execution input carries run_id, workspace_id, plan_only and run_token, and every state keeps that input on the state path so the apply task still sees the token. Acquires the environment wide semaphore, launches the plan task and waits for the runner to report, waits for a confirmation when the run needs one, launches the apply task, then releases the semaphore and marks the run. A discard arrives as a `RunDiscarded` task failure on the confirmation token, after the API has already written the discarded status, so that error is caught ahead of `States.ALL` and takes a release path that drops the semaphore holder without marking the run. Every other confirmation failure, the `States.Timeout` of a confirmation nobody answered included, still marks the run errored.",
+  "StartAt": "AcquireSemaphore",
+  "QueryLanguage": "JSONPath",
+  "States": {
+    "AcquireSemaphore": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S": "run-semaphore" } },
+        "UpdateExpression": "ADD holders :holder",
+        "ConditionExpression": "attribute_not_exists(holders) OR size(holders) < :cap",
+        "ExpressionAttributeValues": {
+          ":holder": { "SS.$": "States.Array($.run_id)" },
+          ":cap": { "N": "${SemaphoreCap}" }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "IntervalSeconds": 15,
+          "MaxAttempts": 240,
+          "BackoffRate": 1,
+          "MaxDelaySeconds": 60
+        },
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "ResultPath": null,
+      "Next": "Plan",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkErroredWithoutSemaphore"
+        }
+      ]
+    },
+
+    "Plan": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+      "Parameters": {
+        "Cluster": "${ClusterArn}",
+        "TaskDefinition": "${PlanTaskDefinitionArn}",
+        "LaunchType": "FARGATE",
+        "PropagateTags": "TASK_DEFINITION",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": ${SubnetIdsJson},
+            "SecurityGroups": ${SecurityGroupIdsJson},
+            "AssignPublicIp": "ENABLED"
+          }
+        },
+        "Overrides": {
+          "ContainerOverrides": [
+            {
+              "Name": "${PlanContainerName}",
+              "Environment": [
+                { "Name": "RUN_ID", "Value.$": "$.run_id" },
+                { "Name": "WORKSPACE_ID", "Value.$": "$.workspace_id" },
+                { "Name": "PHASE", "Value": "plan" },
+                { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                { "Name": "RUN_TOKEN", "Value.$": "$.run_token" },
+                { "Name": "API_BASE_URL", "Value": "${ApiBaseUrl}" }
+              ]
+            }
+          ]
+        }
+      },
+      "TimeoutSeconds": ${PlanTimeoutSeconds},
+      "HeartbeatSeconds": 600,
+      "ResultPath": "$.plan",
+      "Next": "PlanOutcome",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkErrored"
+        }
+      ]
+    },
+
+    "PlanOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.plan_only",
+          "BooleanEquals": true,
+          "Next": "MarkPlannedAndFinished"
+        },
+        {
+          "And": [
+            { "Variable": "$.plan.changes.add", "NumericEquals": 0 },
+            { "Variable": "$.plan.changes.change", "NumericEquals": 0 },
+            { "Variable": "$.plan.changes.destroy", "NumericEquals": 0 }
+          ],
+          "Next": "MarkPlannedAndFinished"
+        }
+      ],
+      "Default": "AwaitConfirmation"
+    },
+
+    "AwaitConfirmation": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+      "Parameters": {
+        "QueueUrl": "${ConfirmationsQueueUrl}",
+        "MessageBody": {
+          "kind": "run_confirmation_requested",
+          "run_id.$": "$.run_id",
+          "task_token.$": "$$.Task.Token"
+        }
+      },
+      "TimeoutSeconds": ${ConfirmationTimeoutSeconds},
+      "ResultPath": "$.confirmation",
+      "Next": "Apply",
+      "Catch": [
+        {
+          "ErrorEquals": ["RunDiscarded"],
+          "ResultPath": "$.error",
+          "Next": "ReleaseSemaphoreAfterDiscard"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkErrored"
+        }
+      ]
+    },
+
+    "Apply": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+      "Parameters": {
+        "Cluster": "${ClusterArn}",
+        "TaskDefinition": "${ApplyTaskDefinitionArn}",
+        "LaunchType": "FARGATE",
+        "PropagateTags": "TASK_DEFINITION",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": ${SubnetIdsJson},
+            "SecurityGroups": ${SecurityGroupIdsJson},
+            "AssignPublicIp": "ENABLED"
+          }
+        },
+        "Overrides": {
+          "ContainerOverrides": [
+            {
+              "Name": "${ApplyContainerName}",
+              "Environment": [
+                { "Name": "RUN_ID", "Value.$": "$.run_id" },
+                { "Name": "WORKSPACE_ID", "Value.$": "$.workspace_id" },
+                { "Name": "PHASE", "Value": "apply" },
+                { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                { "Name": "RUN_TOKEN", "Value.$": "$.run_token" },
+                { "Name": "API_BASE_URL", "Value": "${ApiBaseUrl}" }
+              ]
+            }
+          ]
+        }
+      },
+      "TimeoutSeconds": ${ApplyTimeoutSeconds},
+      "HeartbeatSeconds": 600,
+      "ResultPath": "$.apply",
+      "Next": "MarkApplied",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkErrored"
+        }
+      ]
+    },
+
+    "MarkApplied": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S.$": "$.run_id" } },
+        "UpdateExpression": "SET #status = :status REMOVE confirm_task_token",
+        "ExpressionAttributeNames": { "#status": "status" },
+        "ExpressionAttributeValues": { ":status": { "S": "applied" } }
+      },
+      "ResultPath": null,
+      "Next": "ReleaseSemaphore"
+    },
+
+    "MarkPlannedAndFinished": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S.$": "$.run_id" } },
+        "UpdateExpression": "SET #status = :status REMOVE confirm_task_token",
+        "ExpressionAttributeNames": { "#status": "status" },
+        "ExpressionAttributeValues": { ":status": { "S": "planned_and_finished" } }
+      },
+      "ResultPath": null,
+      "Next": "ReleaseSemaphore"
+    },
+
+    "MarkErrored": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Comment": "Every failing path but a discard, the confirmation timeout included. The condition keeps this off a run that already reached a terminal status of its own, so a status the API wrote first is never overwritten by the execution unwinding behind it.",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S.$": "$.run_id" } },
+        "UpdateExpression": "SET #status = :status, #error = if_not_exists(#error, :error) REMOVE confirm_task_token",
+        "ConditionExpression": "NOT #status IN (:applied, :planned_and_finished, :errored, :cancelled, :discarded)",
+        "ExpressionAttributeNames": { "#status": "status", "#error": "error" },
+        "ExpressionAttributeValues": {
+          ":status": { "S": "errored" },
+          ":error": { "S.$": "States.Format('The run failed with {}.', $.error.Error)" },
+          ":applied": { "S": "applied" },
+          ":planned_and_finished": { "S": "planned_and_finished" },
+          ":errored": { "S": "errored" },
+          ":cancelled": { "S": "cancelled" },
+          ":discarded": { "S": "discarded" }
+        }
+      },
+      "ResultPath": null,
+      "Next": "ReleaseSemaphoreAfterFailure",
+      "Catch": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "ResultPath": null,
+          "Next": "ReleaseSemaphoreAfterFailure"
+        }
+      ]
+    },
+
+    "MarkErroredWithoutSemaphore": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Comment": "The semaphore was never acquired, so there is no holder to drop. Guarded the same way as `MarkErrored`, because a run cancelled through the API while it waited for a slot is already terminal.",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S.$": "$.run_id" } },
+        "UpdateExpression": "SET #status = :status, #error = if_not_exists(#error, :error)",
+        "ConditionExpression": "NOT #status IN (:applied, :planned_and_finished, :errored, :cancelled, :discarded)",
+        "ExpressionAttributeNames": { "#status": "status", "#error": "error" },
+        "ExpressionAttributeValues": {
+          ":status": { "S": "errored" },
+          ":error": { "S.$": "States.Format('The run failed with {}.', $.error.Error)" },
+          ":applied": { "S": "applied" },
+          ":planned_and_finished": { "S": "planned_and_finished" },
+          ":errored": { "S": "errored" },
+          ":cancelled": { "S": "cancelled" },
+          ":discarded": { "S": "discarded" }
+        }
+      },
+      "ResultPath": null,
+      "Next": "Failed",
+      "Catch": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "ResultPath": null,
+          "Next": "Failed"
+        }
+      ]
+    },
+
+    "ReleaseSemaphore": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S": "run-semaphore" } },
+        "UpdateExpression": "DELETE holders :holder",
+        "ExpressionAttributeValues": {
+          ":holder": { "SS.$": "States.Array($.run_id)" }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
+      "ResultPath": null,
+      "End": true
+    },
+
+    "ReleaseSemaphoreAfterFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S": "run-semaphore" } },
+        "UpdateExpression": "DELETE holders :holder",
+        "ExpressionAttributeValues": {
+          ":holder": { "SS.$": "States.Array($.run_id)" }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
+      "ResultPath": null,
+      "Next": "Failed"
+    },
+
+    "ReleaseSemaphoreAfterDiscard": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S": "run-semaphore" } },
+        "UpdateExpression": "DELETE holders :holder",
+        "ExpressionAttributeValues": {
+          ":holder": { "SS.$": "States.Array($.run_id)" }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
+      "ResultPath": null,
+      "Next": "Discarded"
+    },
+
+    "Discarded": {
+      "Type": "Succeed",
+      "Comment": "A discard is a normal ending, not a failure, so the execution succeeds. The runs table already carries the discarded status, written by the API call that failed the confirmation token, and nothing here rewrites it."
+    },
+
+    "Failed": {
+      "Type": "Fail",
+      "Error": "RunFailed",
+      "Cause": "The run did not complete. Its item on the runs table carries the errored status and the run logs carry the phase output."
+    }
+  }
+}

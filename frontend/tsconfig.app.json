@@ -1,0 +1,9 @@
+{
+  "extends": "@webbpulse/tsconfig/vite-app.json",
+  "compilerOptions": {
+    "incremental": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo"
+  },
+  "include": ["src", "tailwind.config.js"],
+  "exclude": ["node_modules"]
+}

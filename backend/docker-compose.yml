@@ -1,0 +1,68 @@
+x-domain-service: &domain-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+    secrets:
+      - codeartifact_token
+  environment: &domain-environment
+    ENVIRONMENT: development
+    DYNAMODB_ENDPOINT_URL: http://dynamodb-local:8000
+    WORKSPACES_TABLE: webbpulse-terraform-development-workspaces
+    RUNS_TABLE: webbpulse-terraform-development-runs
+    VARIABLES_TABLE: webbpulse-terraform-development-variables
+    CONFIG_VERSIONS_TABLE: webbpulse-terraform-development-config-versions
+    STATE_BUCKET: webbpulse-terraform-development-state
+    ARTIFACTS_BUCKET: webbpulse-terraform-development-artifacts
+    LOG_LEVEL: INFO
+    AWS_ACCESS_KEY_ID: local
+    AWS_SECRET_ACCESS_KEY: local
+    AWS_DEFAULT_REGION: us-west-2
+  depends_on:
+    dynamodb-local:
+      condition: service_started
+  restart: unless-stopped
+  profiles: ["domains"]
+
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: terraform-dynamodb
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/home/dynamodblocal/data"]
+    ports:
+      - "8002:8000"
+    volumes:
+      - terraform_dynamodb:/home/dynamodblocal/data
+    restart: unless-stopped
+
+  workspaces:
+    <<: *domain-service
+    container_name: terraform-workspaces
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOMAIN: workspaces
+      secrets:
+        - codeartifact_token
+    ports:
+      - "8020:8080"
+
+  runs:
+    <<: *domain-service
+    container_name: terraform-runs
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOMAIN: runs
+      secrets:
+        - codeartifact_token
+    ports:
+      - "8021:8080"
+
+secrets:
+  codeartifact_token:
+    environment: CODEARTIFACT_AUTH_TOKEN
+
+volumes:
+  terraform_dynamodb:

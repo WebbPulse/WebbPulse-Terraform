@@ -1,0 +1,62 @@
+name: End-to-end (local)
+
+on:
+  pull_request:
+    branches: [staging, main]
+
+permissions:
+  contents: read
+
+jobs:
+  local:
+    name: Suite (local)
+    permissions:
+      contents: read
+      id-token: write
+      checks: write
+    uses: WebbPulse/.github/.github/workflows/e2e-local.yml@v3
+    with:
+      working-directory: backend
+      install-command: uv lock --upgrade-package webbpulse && uv sync --locked --group e2e
+      pytest-args: "--no-cov -n auto --dist loadgroup"
+      codeartifact-domain: webbpulse
+      frontend-directory: frontend
+      frontend-build-env-json: '{"VITE_API_BASE_URL": "http://127.0.0.1:8000/api/v1"}'
+      backend-start-command: uv run uvicorn app.common.composition.app:app --host 127.0.0.1 --port 8000
+      table-bootstrap-command: >-
+        uv run python scripts/create_local_tables.py --environment local
+        && uv run python scripts/seed_local_user.py e2e-local@e2e.invalid
+      backend-env-json: >-
+        {
+          "ENVIRONMENT": "local",
+          "CORS_ORIGINS": "http://127.0.0.1:4173",
+          "AWS_ACCESS_KEY_ID": "local",
+          "AWS_SECRET_ACCESS_KEY": "local",
+          "AWS_DEFAULT_REGION": "us-west-2",
+          "DYNAMODB_ENDPOINT_URL": "http://127.0.0.1:8001",
+          "WORKSPACES_TABLE": "webbpulse-terraform-local-workspaces",
+          "RUNS_TABLE": "webbpulse-terraform-local-runs",
+          "VARIABLES_TABLE": "webbpulse-terraform-local-variables",
+          "CONFIG_VERSIONS_TABLE": "webbpulse-terraform-local-config-versions",
+          "USERS_TABLE": "webbpulse-terraform-local-users",
+          "IDENTITY_TABLE_PREFIX": "webbpulse-terraform-local",
+          "IDENTITY_ENVIRONMENT": "local",
+          "IDENTITY_SIGNER": "local",
+          "IDENTITY_LOCAL_SIGNER_SEED": "e2e-local-stack-seed",
+          "IDENTITY_SIGNING_KEY_ARNS": "[\"arn:aws:kms:us-west-2:000000000000:key/local\"]",
+          "IDENTITY_ISSUER": "http://127.0.0.1:8000/api/auth",
+          "IDENTITY_AUDIENCE": "webbpulse-terraform-local-api",
+          "IDENTITY_REGISTRATION_ENABLED": "false",
+          "IDENTITY_EPHEMERAL_USERS_ENABLED": "false",
+          "IDENTITY_PASSKEYS_ENABLED": "true",
+          "IDENTITY_PASSKEYS_PASSWORDLESS": "true",
+          "IDENTITY_WEBAUTHN_ORIGINS": "[\"http://127.0.0.1:4173\"]",
+          "IDENTITY_RP_ID": "127.0.0.1",
+          "CONTROL_PLANE_USER_PASSWORD": "e2e-local-stack-password",
+          "E2E_USER_EMAIL": "e2e-local@e2e.invalid",
+          "E2E_USER_PASSWORD": "e2e-local-stack-password",
+          "E2E_JOURNEY_RUN_ROLE_ARN": "arn:aws:iam::000000000000:role/webbpulse-terraform-local-e2e"
+        }
+    secrets:
+      codeartifact-domain-owner: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+      role-to-assume: ${{ vars.CI_AWS_ROLE_ARN }}
