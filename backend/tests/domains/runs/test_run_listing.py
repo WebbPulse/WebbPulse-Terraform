@@ -267,3 +267,31 @@ def test_a_cursor_from_the_other_index_reads_as_no_cursor():
 
     assert runs_service.decode_cursor(recency, index_name=RUNS_BY_RECENCY_INDEX) is not None
     assert runs_service.decode_cursor(recency, index_name=RUNS_BY_WORKSPACE_INDEX) is None
+
+
+@pytest.mark.parametrize("value", [None, 1, False, [], {}, "", "\ud800", "x" * 1025])
+def test_invalid_cursor_values_restart(auth_client, created_run, value):
+    """Untrusted cursor values cannot reach DynamoDB as invalid key types."""
+    cursor = runs_service.encode_cursor({"run_id": value, "collection": "run"})
+    response = auth_client.get(BASE, params={"cursor": cursor})
+    assert response.status_code == 200
+    assert response.json()["items"][0]["run_id"] == created_run["run_id"]
+
+
+def test_another_workspace_cursor_restarts(auth_client, two_workspaces_with_runs):
+    """A valid cursor from another partition never reaches the scoped query."""
+    first, second = two_workspaces_with_runs
+    foreign = auth_client.get(BASE, params={"workspace_id": second["workspace_id"], "limit": 1}).json()
+    params = {"workspace_id": first["workspace_id"], "limit": 1}
+    expected = auth_client.get(BASE, params=params).json()
+    actual = auth_client.get(BASE, params={**params, "cursor": foreign["next_cursor"]})
+    assert actual.status_code == 200
+    assert actual.json() == expected
+
+
+def test_another_collection_cursor_restarts(auth_client, created_run):
+    """A forged partition does not become the query's start key."""
+    cursor = runs_service.encode_cursor({"run_id": created_run["run_id"], "collection": "other"})
+    response = auth_client.get(BASE, params={"cursor": cursor})
+    assert response.status_code == 200
+    assert response.json()["items"][0]["run_id"] == created_run["run_id"]

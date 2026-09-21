@@ -558,9 +558,7 @@ def get_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
 def encode_cursor(key: Mapping[str, Any] | None) -> Optional[str]:
     """A DynamoDB `LastEvaluatedKey` as the opaque string a client pages with.
 
-    Base64 of the JSON key rather than the key itself, so nothing about the index
-    shape leaks into the contract and a client cannot hand-build one that reads a
-    partition it was not given.
+    Encoding is not authentication; the query enforces the requested partition.
     """
     if not key:
         return None
@@ -589,6 +587,11 @@ def decode_cursor(cursor: Optional[str], *, index_name: Optional[str] = None) ->
     except (ValueError, binascii.Error, UnicodeDecodeError):
         return None
     if not isinstance(decoded, dict):
+        return None
+    if any(
+        not isinstance(value, str) or not value or not value.isascii() or len(value) > 1024
+        for value in decoded.values()
+    ):
         return None
     if index_name is not None and set(decoded) != set(_cursor_attributes(index_name)):
         return None
@@ -624,6 +627,7 @@ def list_runs(
         limit=limit,
         cursor=cursor,
         settings=resolved,
+        partition=("workspace_id", workspace_id),
     )
 
 
@@ -654,6 +658,7 @@ def list_all_runs(
         limit=limit,
         cursor=cursor,
         settings=resolved,
+        partition=("collection", RUNS_COLLECTION),
     )
 
 
@@ -664,6 +669,7 @@ def _page_runs(
     limit: int,
     cursor: Optional[str],
     settings: Settings,
+    partition: tuple[str, str],
 ) -> tuple[list[dict[str, Any]], Optional[str]]:
     """One page of runs off `index_name`, newest first, never the semaphore row.
 
@@ -675,6 +681,8 @@ def _page_runs(
     bounded = max(1, min(int(limit), MAX_RUN_PAGE_SIZE))
     repository = _runs(settings)
     start_key = decode_cursor(cursor, index_name=index_name)
+    if start_key is not None and start_key.get(partition[0]) != partition[1]:
+        start_key = None
     collected: list[dict[str, Any]] = []
     next_key: Optional[dict[str, Any]] = None
 

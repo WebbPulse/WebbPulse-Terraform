@@ -31,8 +31,8 @@ ActorKind = Literal["user", "agent", "system"]
 
 `user` is a person through the browser, `agent` a `wpk_` API key acting for the
 person who minted it, and `system` anything the control plane started for itself
-with no principal to name, such as a queued run promoted when the run ahead of it
-finished. The three are kept apart rather than collapsed to a name because a run a
+with no principal to name. Queue promotion preserves the original creator.
+The three are kept apart rather than collapsed to a name because a run a
 person started and a run their key started are different events, and showing a
 person's name against something they did not do is worse than showing nothing.
 """

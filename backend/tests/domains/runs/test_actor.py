@@ -5,8 +5,9 @@ run can be created and the one way a row can arrive without an actor at all.
 """
 
 import boto3
+from webbpulse.identity.claims import AuthorizerClaims
 
-from app.common.core.auth import ALL_SCOPES
+from app.common.core.auth import ALL_SCOPES, claims
 from app.common.db.tables import RUNS, local_table_name
 from app.domains.runs import service as runs_service
 from app.domains.runs.actor import actor_from_claims, actor_from_row
@@ -169,3 +170,59 @@ def test_the_semaphore_row_carries_no_actor(created_run):
     item = stored_run("run-semaphore")
     assert "actor_kind" not in item
     assert "collection" not in item
+
+
+def test_queued_run_keeps_its_creator_on_promotion(created_run, uploaded_config_version):
+    """Starting a queued run must preserve the original principal's attribution."""
+    actor = {"kind": "user", "id": "queue-owner", "display_name": "Queue Owner"}
+    queued = runs_service.create_run(
+        {
+            "workspace_id": created_run["workspace_id"],
+            "config_version_id": uploaded_config_version["config_version_id"],
+        },
+        actor=actor,
+    )
+    assert queued["status"] == "pending"
+    runs_service.finish_run(created_run["run_id"], status="cancelled")
+    promoted = runs_service.get_run(queued["run_id"])
+    assert promoted["status"] == "planning"
+    assert runs_service.render_run(promoted)["actor"] == actor
+
+
+def test_user_route_uses_verified_claims_not_payload(
+    app, auth_client, workspace, uploaded_config_version, state_machine
+):
+    """Payload attribution cannot replace the principal resolved by the auth guard."""
+
+    def verified_user():
+        """Stand in for claims returned by the verified JWT dependency."""
+        return AuthorizerClaims({"sub": "real-user", "display_name": "Real User", "scope": "runs:write"})
+
+    app.dependency_overrides[claims] = verified_user
+    try:
+        response = auth_client.post(
+            BASE,
+            json={
+                "workspace_id": workspace["workspace_id"],
+                "config_version_id": uploaded_config_version["config_version_id"],
+                "actor": {"kind": "user", "id": "forged-user"},
+                "actor_kind": "system",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(claims)
+    assert response.status_code == 201
+    assert response.json()["actor"] == {"kind": "user", "id": "real-user", "display_name": "Real User"}
+
+
+def test_run_token_cannot_create_or_list_runs(runner_client, created_run):
+    """Runner credentials cannot masquerade as an agent on the public run routes."""
+    assert runner_client.get(BASE).status_code == 403
+    assert runner_client.get(BASE, params={"workspace_id": created_run["workspace_id"]}).status_code == 403
+    assert (
+        runner_client.post(
+            BASE,
+            json={"workspace_id": created_run["workspace_id"], "config_version_id": created_run["config_version_id"]},
+        ).status_code
+        == 403
+    )
