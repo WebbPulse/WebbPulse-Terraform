@@ -180,7 +180,7 @@ def pytest_e2e_journeys(env: Any) -> Any:
                 ExpectText("h1", opened),
                 ExpectVisible("section[aria-labelledby='setup-checklist-title']"),
                 ExpectVisible("form[aria-label='Run role']"),
-                ExpectVisible("[role=tablist][aria-label='Workspace sections']"),
+                ExpectVisible("nav[aria-label='Workspace sections']"),
             ],
         ),
     ]
