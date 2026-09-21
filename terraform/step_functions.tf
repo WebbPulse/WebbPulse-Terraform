@@ -11,9 +11,14 @@ variable "apply_timeout_seconds" {
 }
 
 variable "confirmation_timeout_seconds" {
-  description = "Seconds a planned run waits for a confirmation before the execution gives up and marks it errored"
+  description = "Seconds a planned run waits for a confirmation before the execution gives up and marks it errored. Leave it null, the default, and the environment decides: 86400 in production, 7200 in staging, where an unconfirmed run is a forgotten test run and holding a semaphore slot for a day is waste"
   type        = number
-  default     = 86400
+  default     = null
+}
+
+locals {
+  confirmation_timeout_env_seconds = var.environment == "production" ? 86400 : 7200
+  confirmation_timeout_seconds     = coalesce(var.confirmation_timeout_seconds, local.confirmation_timeout_env_seconds)
 }
 
 variable "run_concurrency_cap" {
@@ -48,7 +53,7 @@ module "run_state_machine" {
 
     PlanTimeoutSeconds         = tostring(var.plan_timeout_seconds)
     ApplyTimeoutSeconds        = tostring(var.apply_timeout_seconds)
-    ConfirmationTimeoutSeconds = tostring(var.confirmation_timeout_seconds)
+    ConfirmationTimeoutSeconds = tostring(local.confirmation_timeout_seconds)
   }
 
   policy_statements = [
