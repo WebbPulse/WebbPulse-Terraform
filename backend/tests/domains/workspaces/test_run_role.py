@@ -239,3 +239,81 @@ def test_a_run_role_can_be_attached_after_the_fact(auth_client):
 def test_the_setup_names_every_runner_task_role(workspace):
     """A trust policy naming only one phase's role would break the other phase."""
     assert len(workspace["run_role_setup"]["principal_arns"]) == len(RUNNER_TASK_ROLE_ARNS)
+
+
+def test_the_read_only_check_reports_the_account_it_reached(auth_client, workspace):
+    """The GET answers exactly what the POST answers."""
+    response = auth_client.get(f"{BASE}/{workspace['workspace_id']}/run-role/check")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"connected": True, "account_id": "870550636948", "error": None}
+
+
+def test_the_read_only_check_stamps_nothing(auth_client, workspace):
+    """A provider reading on every plan must not write to the row."""
+    workspace_id = workspace["workspace_id"]
+    assert auth_client.get(f"{BASE}/{workspace_id}/run-role/check").json()["connected"] is True
+
+    stored = auth_client.get(f"{BASE}/{workspace_id}").json()
+    assert stored["run_role_checked_at"] is None
+    assert stored["run_role_account_id"] is None
+
+
+def test_the_read_only_check_leaves_an_earlier_success_alone(auth_client, workspace, refusing_sts):
+    """A read that fails does not clear what the POST recorded."""
+    workspace_id = workspace["workspace_id"]
+    assert auth_client.post(f"{BASE}/{workspace_id}/run-role/check").json()["connected"] is True
+
+    refusing_sts("AccessDenied")
+    assert auth_client.get(f"{BASE}/{workspace_id}/run-role/check").json()["connected"] is False
+
+    stored = auth_client.get(f"{BASE}/{workspace_id}").json()
+    assert stored["run_role_account_id"] == "870550636948"
+    assert stored["run_role_checked_at"]
+
+
+def test_the_read_only_check_is_repeatable(auth_client, workspace):
+    """Same inputs, same answer, no drift between two reads."""
+    workspace_id = workspace["workspace_id"]
+    first = auth_client.get(f"{BASE}/{workspace_id}/run-role/check").json()
+    second = auth_client.get(f"{BASE}/{workspace_id}/run-role/check").json()
+    assert first == second
+
+
+def test_a_refused_read_only_check_names_the_trust_problem(auth_client, workspace, refusing_sts):
+    """The reason travels on the 200 so a plan can show it instead of failing."""
+    refusing_sts("AccessDenied")
+    response = auth_client.get(f"{BASE}/{workspace['workspace_id']}/run-role/check")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["connected"] is False
+    assert body["account_id"] is None
+    assert body["error"] == service.RUN_ROLE_ACCESS_DENIED_MESSAGE
+
+
+def test_a_refused_read_only_check_never_echoes_the_sts_message(auth_client, workspace, refusing_sts):
+    """The ARN the error carried is not handed back to the caller."""
+    refusing_sts("AccessDenied")
+    response = auth_client.get(f"{BASE}/{workspace['workspace_id']}/run-role/check")
+    assert ROLE_ARN not in response.text
+
+
+def test_the_read_only_check_is_400_when_no_role_is_configured(auth_client):
+    """A workspace with nothing to assume is a request error on both routes."""
+    created = _create(auth_client, run_role_arn=None)
+    response = auth_client.get(f"{BASE}/{created['workspace_id']}/run-role/check")
+    assert response.status_code == 400, response.text
+    assert response.json()["error_code"] == "RUN_ROLE_MISSING"
+
+
+def test_the_read_only_check_is_404_for_an_absent_workspace(auth_client):
+    """A well formed id that names nothing is a 404."""
+    response = auth_client.get(f"{BASE}/ws-01JBQ0000000000000000000AA/run-role/check")
+    assert response.status_code == 404
+
+
+def test_the_read_only_check_needs_only_the_read_scope(scoped_client, workspace):
+    """Nothing is written, so a read-only caller may look."""
+    with scoped_client("workspaces:read") as client:
+        response = client.get(f"{BASE}/{workspace['workspace_id']}/run-role/check")
+    assert response.status_code == 200, response.text
+    assert response.json()["connected"] is True

@@ -51,6 +51,17 @@ def _not_found(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
 
 
+def _run_role_missing() -> HTTPException:
+    """The 400 both run role check routes raise when no ARN is configured."""
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "message": "This workspace has no run role ARN yet.",
+            "error_code": RUN_ROLE_MISSING_CODE,
+        },
+    )
+
+
 @router.get(
     "/workspaces",
     response_model=WorkspaceList,
@@ -115,13 +126,41 @@ def update_workspace(payload: WorkspaceUpdate, workspace_id: str = WorkspaceId) 
     return service.render_workspace(updated)
 
 
+@router.get(
+    "/workspaces/{workspace_id}/run-role/check",
+    response_model=RunRoleCheck,
+    dependencies=[Depends(scopes(WORKSPACES_READ))],
+)
+def read_run_role_check(workspace_id: str = WorkspaceId) -> dict[str, Any]:
+    """Assume the workspace's run role and report whether it answered, writing nothing.
+
+    The same probe as the POST, without the record it leaves behind. A caller that
+    only wants to look, such as a Terraform provider reading on every plan and
+    refresh, uses this one so no plan mutates a workspace row. Because nothing is
+    written, the read scope is enough.
+
+    Always 200 when a role is configured, whether or not it answered. A workspace
+    with no role at all is a 400 carrying `RUN_ROLE_MISSING`.
+    """
+    try:
+        return service.probe_run_role(workspace_id)
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except service.RunRoleMissing as error:
+        raise _run_role_missing() from error
+
+
 @router.post(
     "/workspaces/{workspace_id}/run-role/check",
     response_model=RunRoleCheck,
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
 def check_run_role(workspace_id: str = WorkspaceId) -> dict[str, Any]:
-    """Assume the workspace's run role and report whether it answered.
+    """Assume the workspace's run role and record the outcome on the workspace.
+
+    The recorded outcome is what the setup UI shows between visits, so this route
+    keeps its write and its write scope. Use the GET when only the answer is
+    wanted.
 
     Always 200 when a role is configured, whether or not it answered: a trust
     policy that is not there yet is an expected state of the setup rather than a
@@ -133,13 +172,7 @@ def check_run_role(workspace_id: str = WorkspaceId) -> dict[str, Any]:
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     except service.RunRoleMissing as error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "message": "This workspace has no run role ARN yet.",
-                "error_code": RUN_ROLE_MISSING_CODE,
-            },
-        ) from error
+        raise _run_role_missing() from error
 
 
 @router.delete(

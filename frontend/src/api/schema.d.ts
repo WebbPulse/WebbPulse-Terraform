@@ -840,11 +840,27 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Read Run Role Check
+         * @description Assume the workspace's run role and report whether it answered, writing nothing.
+         *
+         *     The same probe as the POST, without the record it leaves behind. A caller that
+         *     only wants to look, such as a Terraform provider reading on every plan and
+         *     refresh, uses this one so no plan mutates a workspace row. Because nothing is
+         *     written, the read scope is enough.
+         *
+         *     Always 200 when a role is configured, whether or not it answered. A workspace
+         *     with no role at all is a 400 carrying `RUN_ROLE_MISSING`.
+         */
+        get: operations["read_run_role_check_api_v1_workspaces__workspace_id__run_role_check_get"];
         put?: never;
         /**
          * Check Run Role
-         * @description Assume the workspace's run role and report whether it answered.
+         * @description Assume the workspace's run role and record the outcome on the workspace.
+         *
+         *     The recorded outcome is what the setup UI shows between visits, so this route
+         *     keeps its write and its write scope. Use the GET when only the answer is
+         *     wanted.
          *
          *     Always 200 when a role is configured, whether or not it answered: a trust
          *     policy that is not there yet is an expected state of the setup rather than a
@@ -3536,6 +3552,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigVersion"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_run_role_check_api_v1_workspaces__workspace_id__run_role_check_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRoleCheck"];
                 };
             };
             /** @description Request validation failed. */
