@@ -46,7 +46,11 @@ def test_plan_with_changes_reports_counts(
     fake_engine: Callable[..., Path],
     tmp_path: Path,
 ) -> None:
-    """A plan with changes exits 2, uploads both artifacts and posts the change counts."""
+    """A plan with changes uploads both artifacts and posts the change counts.
+
+    The engine exits 2 under `-detailed-exitcode`, which is a successful plan
+    with changes, so the posted exit code is 0 and `has_changes` carries it.
+    """
     fake_engine()
     recorder = ApiRecorder()
     transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder)
@@ -58,7 +62,7 @@ def test_plan_with_changes_reports_counts(
     result = recorder.phase_results[0]
     assert result["run_id"] == RUN_ID
     assert result["phase"] == "plan"
-    assert result["exit_code"] == 2
+    assert result["exit_code"] == 0
     assert result["has_changes"] is True
     assert result["changes"] == {"add": 2, "change": 1, "destroy": 2}
 
@@ -88,7 +92,7 @@ def test_plan_runs_in_the_bundles_working_directory(
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 0
-    assert recorder.phase_results[0]["exit_code"] == 2
+    assert recorder.phase_results[0]["exit_code"] == 0
     log = recorder.uploads["/runs/plan.log"].decode()
     assert "tfvars file zz_webbpulse.auto.tfvars.json" in log
 
@@ -182,7 +186,11 @@ def test_engine_failure_is_reported_as_failure(
     fake_engine: Callable[..., Path],
     tmp_path: Path,
 ) -> None:
-    """A non zero plan exit that is not the detailed changes code fails the phase."""
+    """A non zero plan exit that is not the detailed changes code fails the phase.
+
+    Exit 1 is a real terraform failure, so it raises `PlanFailed` and posts no
+    phase result, unlike the 2 that `-detailed-exitcode` uses for changes.
+    """
     fake_engine(plan_exit=1)
     recorder = ApiRecorder()
     transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder)

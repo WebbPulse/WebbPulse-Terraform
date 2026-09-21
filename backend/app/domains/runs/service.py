@@ -69,6 +69,11 @@ ARTIFACT_URL_TTL: Final = 3600
 """One hour on the bundle's presigned URLs. The runner uses them immediately; the
 apply phase re-fetches its bundle rather than reusing the plan phase's."""
 
+PLAN_CHANGES_EXIT: Final = 2
+"""Terraform plans under `-detailed-exitcode`, where 2 means a successful plan
+with changes. The runner reports 0 for it, so this only catches a runner that
+reports the raw code."""
+
 PLAN_CONTENT_TYPE: Final = "application/octet-stream"
 PLAN_JSON_CONTENT_TYPE: Final = "application/json"
 MAX_PLAN_BYTES: Final = 500_000_000
@@ -713,6 +718,10 @@ def record_phase_result(
     successful plan finishes the run when it was `plan_only` or found no changes,
     and otherwise leaves it `awaiting_confirmation` for a human.
 
+    A plan exiting 2 is a successful plan with changes, not a failure, because
+    terraform plans under `-detailed-exitcode`. The runner already reports 0 for
+    it; this keeps a runner that does not from erroring every plan with changes.
+
     Raises:
         RunNotFound: No such run.
         PhaseMismatch: The reported phase is not the one the run is in.
@@ -729,7 +738,8 @@ def record_phase_result(
     exit_code = int(result.get("exit_code", 0))
     error = str(result.get("error", ""))
 
-    if exit_code != 0:
+    failed = exit_code != 0 and not (phase == "plan" and exit_code == PLAN_CHANGES_EXIT)
+    if failed:
         return finish_run(
             run_id,
             "errored",

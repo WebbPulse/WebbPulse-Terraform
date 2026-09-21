@@ -56,7 +56,12 @@ class Clients:
 
 
 def _run_plan(runner: engine.EngineRunner, sink: CloudWatchLogSink) -> tuple[int, Changes, bool, str]:
-    """Init, plan and render the plan JSON, returning the exit code and change counts."""
+    """Init, plan and render the plan JSON, returning the exit code and change counts.
+
+    The plan runs under `-detailed-exitcode`, so it exits 0 with no changes and 2
+    with changes. Both are successful plans, so both return 0 and the change
+    counts alone say whether there were changes. Any other code is `PlanFailed`.
+    """
     init_code = runner.init()
     if init_code != 0:
         raise PhaseFailure("InitFailed", f"init exited {init_code}")
@@ -68,7 +73,7 @@ def _run_plan(runner: engine.EngineRunner, sink: CloudWatchLogSink) -> tuple[int
         raise PhaseFailure("PlanShowFailed", f"show -json exited {show_code}")
     changes, has_changes = engine.parse_changes(plan_json)
     sink.write(f"Plan: {changes.add} to add, {changes.change} to change, {changes.destroy} to destroy.")
-    return plan_code, changes, has_changes, plan_json
+    return 0, changes, has_changes, plan_json
 
 
 def _run_apply(runner: engine.EngineRunner) -> int:
