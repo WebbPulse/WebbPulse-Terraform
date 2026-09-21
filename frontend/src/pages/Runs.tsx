@@ -13,25 +13,19 @@ interface EveryRun {
   workspaceNames: Map<string, string>;
 }
 
-/** Keep history workspace-scoped until the global index backfill is verified. */
+/** Load global history and workspace labels concurrently. */
 async function listEveryRun(signal: AbortSignal): Promise<EveryRun> {
-  const workspaces = await api.listWorkspaces({ signal });
+  const [workspaces, history] = await Promise.all([
+    api.listWorkspaces({ signal }),
+    listRunHistory({}, signal),
+  ]);
   const workspaceNames = new Map(
     workspaces.items.map((workspace) => [
       workspace.workspace_id,
       workspace.name,
     ])
   );
-  const pages = await Promise.all(
-    workspaces.items.map((workspace) =>
-      listRunHistory({ workspace_id: workspace.workspace_id }, signal)
-    )
-  );
-  const items = pages.flatMap((page) => page.items);
-  if (pages.length > 1) {
-    items.sort((left, right) => right.run_id.localeCompare(left.run_id));
-  }
-  return { items, workspaceNames };
+  return { items: history.items, workspaceNames };
 }
 
 /** The runs page. */
