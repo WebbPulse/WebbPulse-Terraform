@@ -8,6 +8,10 @@ Actor data cannot be recovered; this migration only adds `collection = "run"`.
    Verify the actual plan contains the in-place index addition, and explicitly
    verify `by_recency` is `ACTIVE` on the target environment's runs table before
    merging PR68. A green HCP check or table status alone is insufficient.
+   Refresh PR68 from staging after PR71 lands and rerun its required CI so the
+   branch snapshot includes the provisioned index. Never apply the earlier PR68
+   branch configuration after provisioning the index: its infrastructure was
+   deliberately extracted into PR71.
 2. Merge PR68 and verify the runs backend image digest and successful deployment
    match that release. It stamps `collection` on new rows. PR68's frontend changes
    are compatibility only: generated contracts and cursor handling for existing
