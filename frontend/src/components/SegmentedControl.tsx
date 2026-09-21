@@ -59,7 +59,7 @@ export function SegmentedControl<TId extends string>({
       role="tablist"
       aria-label={label}
       onKeyDown={onKeyDown}
-      className={`inline-flex rounded-md border border-surface-700 bg-surface-900 p-0.5 ${className}`}
+      className={`inline-flex rounded-md border border-line bg-raised p-0.5 ${className}`}
     >
       {segments.map((segment) => {
         const selected = segment.id === value;
@@ -74,10 +74,10 @@ export function SegmentedControl<TId extends string>({
             onClick={() => {
               onChange(segment.id);
             }}
-            className={`rounded px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:outline-none ${
+            className={`rounded px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none ${
               selected
-                ? 'bg-surface-700 text-surface-50 shadow-sm'
-                : 'text-surface-300 hover:text-surface-100'
+                ? 'bg-panel text-text-strong shadow-xs'
+                : 'text-text-muted hover:text-text-strong'
             }`}
           >
             {segment.label}

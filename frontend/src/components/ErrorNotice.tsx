@@ -20,12 +20,12 @@ export function ErrorNotice({
   return (
     <p
       role="alert"
-      className={`flex items-start gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200 ${className}`}
+      className={`flex items-start gap-2 rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger ${className}`}
     >
       <svg
         aria-hidden="true"
         viewBox="0 0 16 16"
-        className="mt-0.5 size-4 shrink-0 text-rose-400"
+        className="mt-0.5 size-4 shrink-0 text-danger"
         fill="none"
       >
         <circle

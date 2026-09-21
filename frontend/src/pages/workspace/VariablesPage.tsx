@@ -197,7 +197,7 @@ function VariableTable({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-rose-300 hover:text-rose-200"
+                  className="text-danger hover:underline"
                   onClick={() => {
                     void mutate(variable.key).catch(() => undefined);
                   }}
@@ -346,7 +346,7 @@ function VariableForm({
             onChange={(event) => {
               setSensitive(event.target.checked);
             }}
-            className="size-3.5 accent-brand-500"
+            className="size-3.5 accent-accent"
           />
           Sensitive
         </label>

@@ -92,7 +92,7 @@ function ValueRow({
     <>
       <dt className="text-text-faint sm:py-1">{label}</dt>
       <dd className="flex min-w-0 items-center gap-2">
-        <code className="min-w-0 truncate rounded bg-bg px-1.5 py-1 font-mono text-xs text-text">
+        <code className="min-w-0 truncate rounded border border-line bg-raised px-1.5 py-1 font-mono text-xs text-text">
           {value}
         </code>
         <CopyButton value={value} subject={value} />
@@ -264,7 +264,7 @@ function RoleArnForm({
           Check connection
         </Button>
         {saved ? (
-          <span role="status" className="text-sm text-emerald-300">
+          <span role="status" className="text-sm text-success">
             Saved. Now check the connection.
           </span>
         ) : null}
@@ -335,13 +335,13 @@ function StatusLine({
   children: React.ReactNode;
 }): React.ReactElement {
   const dot = {
-    ok: 'bg-emerald-400',
-    bad: 'bg-rose-400',
-    neutral: 'bg-surface-500',
+    ok: 'bg-success',
+    bad: 'bg-danger',
+    neutral: 'bg-surface-400',
   }[tone];
   const text = {
-    ok: 'text-emerald-200',
-    bad: 'text-rose-200',
+    ok: 'text-success',
+    bad: 'text-danger',
     neutral: 'text-text-muted',
   }[tone];
   return (

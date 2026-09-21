@@ -140,13 +140,13 @@ function WorkspaceHeader({
               data-testid="workspace-status"
               className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
                 ready
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                  : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                  ? 'border-success-line bg-success-soft text-success'
+                  : 'border-warning-line bg-warning-soft text-warning'
               }`}
             >
               <span
                 aria-hidden="true"
-                className={`size-1.5 rounded-full ${ready ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                className={`size-1.5 rounded-full ${ready ? 'bg-success' : 'bg-warning'}`}
               />
               {ready ? 'Ready' : 'Setup incomplete'}
             </span>
@@ -223,7 +223,7 @@ function Fact({
 /** The thin bar between two facts. */
 function Divider(): React.ReactElement {
   return (
-    <span aria-hidden="true" className="text-surface-700">
+    <span aria-hidden="true" className="text-line-strong">
       |
     </span>
   );

@@ -78,7 +78,7 @@ export function Dialog({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-surface-900/70 p-4 pt-[12vh] backdrop-blur-[2px]"
+      className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-surface-900/40 p-4 pt-[12vh] backdrop-blur-[2px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
@@ -91,14 +91,14 @@ export function Dialog({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={description === undefined ? undefined : descriptionId}
-        className="w-full max-w-md rounded-lg border border-surface-700 bg-surface-800 shadow-2xl"
+        className="w-full max-w-md rounded-lg border border-line bg-panel shadow-xl"
       >
-        <div className="border-b border-surface-700 px-5 py-4">
-          <h2 id={titleId} className="text-base font-semibold text-surface-50">
+        <div className="border-b border-line px-5 py-4">
+          <h2 id={titleId} className="text-base font-semibold text-text-strong">
             {title}
           </h2>
           {description === undefined ? null : (
-            <p id={descriptionId} className="mt-1 text-sm text-surface-300">
+            <p id={descriptionId} className="mt-1 text-sm text-text-muted">
               {description}
             </p>
           )}

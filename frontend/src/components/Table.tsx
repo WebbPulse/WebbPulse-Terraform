@@ -18,7 +18,7 @@ export function Table({
 }: TableProps): React.ReactElement {
   return (
     <div
-      className={`overflow-x-auto rounded-lg border border-line ${className}`}
+      className={`overflow-x-auto rounded-lg border border-line bg-panel ${className}`}
     >
       <table aria-label={label} className="w-full text-left text-sm">
         {children}
@@ -36,7 +36,7 @@ export function Th({
   return (
     <th
       scope="col"
-      className={`bg-panel px-3 py-2 text-xs font-medium whitespace-nowrap text-text-faint ${className}`}
+      className={`bg-bg px-3 py-2 text-xs font-medium whitespace-nowrap text-text-muted ${className}`}
       {...rest}
     >
       {children}
@@ -67,7 +67,7 @@ export interface TrProps {
 export function Tr({ children, className = '' }: TrProps): React.ReactElement {
   return (
     <tr
-      className={`border-t border-line transition-colors hover:bg-panel/60 ${className}`}
+      className={`border-t border-line transition-colors hover:bg-raised/60 ${className}`}
     >
       {children}
     </tr>

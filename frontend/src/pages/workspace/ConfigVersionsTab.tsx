@@ -61,7 +61,7 @@ export function ConfigVersionsTab({
       {connected ? null : (
         <p
           role="note"
-          className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+          className="rounded-md border border-warning-line bg-warning-soft px-3 py-2 text-sm text-warning"
         >
           {RUN_ROLE_MISSING_MESSAGE} Runs stay disabled until the connection
           check passes under Settings, AWS account.
@@ -163,13 +163,13 @@ function VersionStatus({
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
         uploaded
-          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-          : 'border-surface-600 bg-surface-800 text-surface-200'
+          ? 'border-success-line bg-success-soft text-success'
+          : 'border-line-strong bg-raised text-text'
       }`}
     >
       <span
         aria-hidden="true"
-        className={`size-1.5 rounded-full ${uploaded ? 'bg-emerald-400' : 'bg-surface-400'}`}
+        className={`size-1.5 rounded-full ${uploaded ? 'bg-success' : 'bg-surface-500'}`}
       />
       {status}
     </span>

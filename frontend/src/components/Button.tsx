@@ -4,8 +4,9 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 import { Spinner } from './Spinner';
 
-/** How a button reads: the primary action, a secondary one, a quiet one, or a destructive one. */
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+/** How a button reads: the primary action, a secondary one, a quiet one, a destructive one, or a quiet one on a dark code block. */
+export type ButtonVariant =
+  'primary' | 'secondary' | 'ghost' | 'danger' | 'inverse';
 
 /** Props for {@link Button}. */
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -20,13 +21,15 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    'bg-brand-600 text-white hover:bg-brand-500 focus-visible:ring-brand-400',
+    'bg-accent text-white shadow-xs hover:bg-accent-hover focus-visible:ring-accent',
   secondary:
-    'border border-surface-600 bg-surface-800 text-surface-100 hover:border-surface-500 hover:bg-surface-700 focus-visible:ring-brand-400',
+    'border border-line-strong bg-panel text-text-strong shadow-xs hover:bg-raised focus-visible:ring-accent',
   ghost:
-    'text-surface-200 hover:bg-surface-800 hover:text-surface-50 focus-visible:ring-brand-400',
+    'text-text hover:bg-raised hover:text-text-strong focus-visible:ring-accent',
   danger:
-    'border border-rose-700/60 bg-rose-950/40 text-rose-200 hover:bg-rose-900/50 focus-visible:ring-rose-400',
+    'border border-danger-line bg-panel text-danger shadow-xs hover:bg-danger-soft focus-visible:ring-danger',
+  inverse:
+    'text-code-muted hover:bg-white/10 hover:text-code-text focus-visible:ring-code-text',
 };
 
 const SIZE_CLASSES = {
@@ -50,7 +53,7 @@ export function Button({
     <button
       type={type}
       disabled={disabled === true || busy}
-      className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-md font-medium whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-900 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}`}
+      className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-md font-medium whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-bg focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}`}
       {...rest}
     >
       {busy ? <Spinner label={busyLabel} className="size-3.5" /> : null}

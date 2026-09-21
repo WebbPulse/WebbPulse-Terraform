@@ -57,7 +57,7 @@ export function OverviewPage(): React.ReactElement {
             </h2>
             <Link
               to={`${base}/runs`}
-              className="text-xs text-brand-300 hover:text-brand-200"
+              className="text-xs text-accent hover:text-accent-hover hover:underline"
             >
               View all runs
             </Link>
@@ -100,7 +100,7 @@ function LatestRunCard({ run }: { run: Run }): React.ReactElement {
         <div className="min-w-0">
           <Link
             to={runPath(run)}
-            className="block truncate text-sm font-medium text-text-strong hover:text-brand-300"
+            className="block truncate text-sm font-medium text-text-strong hover:text-accent hover:underline"
           >
             {runTitle(run)}
           </Link>
@@ -127,7 +127,7 @@ function LatestRunCard({ run }: { run: Run }): React.ReactElement {
       <div className="border-t border-line px-4 py-3">
         <Link
           to={runPath(run)}
-          className="inline-flex h-8 items-center rounded-md border border-line-strong px-3 text-sm text-text-strong hover:bg-raised"
+          className="inline-flex h-8 items-center rounded-md border border-line-strong bg-panel px-3 text-sm text-text-strong shadow-xs hover:bg-raised"
         >
           See details
         </Link>
@@ -216,7 +216,7 @@ function WorkspaceFacts({
           >
             <dt className="text-text-faint">{row.label}</dt>
             <dd className="min-w-0 truncate text-right text-text">
-              <Link to={row.to} className="hover:text-brand-300">
+              <Link to={row.to} className="hover:text-accent hover:underline">
                 {row.value}
               </Link>
             </dd>

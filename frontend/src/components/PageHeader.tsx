@@ -46,12 +46,12 @@ export function PageHeader({
                   ) : (
                     <Link
                       to={crumb.to}
-                      className="rounded hover:text-text-strong"
+                      className="rounded hover:text-accent hover:underline"
                     >
                       {crumb.label}
                     </Link>
                   )}
-                  <span aria-hidden="true" className="text-surface-600">
+                  <span aria-hidden="true" className="text-line-strong">
                     /
                   </span>
                 </li>

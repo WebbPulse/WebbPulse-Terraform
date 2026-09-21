@@ -18,15 +18,15 @@ export function CodeBlock({
 }: CodeBlockProps): React.ReactElement {
   return (
     <div
-      className={`relative rounded-md border border-surface-700 bg-surface-900 ${className}`}
+      className={`relative rounded-md border border-code-line bg-code ${className}`}
     >
       <div className="absolute top-1.5 right-1.5">
-        <CopyButton value={code} subject={subject} />
+        <CopyButton value={code} subject={subject} variant="inverse" />
       </div>
       <pre
         data-testid="code-block"
         data-subject={subject}
-        className="max-h-96 overflow-auto p-3 pr-20 font-mono text-xs leading-relaxed text-surface-200"
+        className="max-h-96 overflow-auto p-3 pr-20 font-mono text-xs leading-relaxed text-code-text"
       >
         {code}
       </pre>

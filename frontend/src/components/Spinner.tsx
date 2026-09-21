@@ -16,7 +16,7 @@ export function Spinner({
     <span
       role="status"
       aria-label={label}
-      className={`inline-block size-5 animate-spin rounded-full border-2 border-surface-500 border-t-brand-400 ${className}`}
+      className={`inline-block size-5 animate-spin rounded-full border-2 border-line-strong border-t-accent ${className}`}
     />
   );
 }

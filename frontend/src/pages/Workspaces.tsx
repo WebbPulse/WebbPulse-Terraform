@@ -181,7 +181,7 @@ function WorkspaceTable({
                 <Td>
                   <Link
                     to={`/workspaces/${workspace.workspace_id}`}
-                    className="font-medium text-text-strong hover:text-brand-300"
+                    className="font-medium text-text-strong hover:text-accent hover:underline"
                   >
                     {workspace.name}
                   </Link>
@@ -228,7 +228,7 @@ function ConnectionCell({
       <span className="inline-flex items-center gap-2 font-mono text-xs text-text">
         <span
           aria-hidden="true"
-          className="inline-block size-2 rounded-full bg-emerald-400"
+          className="inline-block size-2 rounded-full bg-success"
         />
         {workspace.run_role_account_id}
       </span>
@@ -238,7 +238,7 @@ function ConnectionCell({
     <span className="inline-flex items-center gap-2 text-xs text-text-faint">
       <span
         aria-hidden="true"
-        className="inline-block size-2 rounded-full bg-surface-600"
+        className="inline-block size-2 rounded-full bg-surface-400"
       />
       {(workspace.run_role_arn ?? null) === null
         ? 'Not connected'

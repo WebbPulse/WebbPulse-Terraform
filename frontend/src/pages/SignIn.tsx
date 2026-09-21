@@ -47,7 +47,7 @@ export function SignIn(): React.ReactElement {
             WebbPulse Terraform
           </h1>
         </div>
-        <div className="space-y-4 rounded-xl border border-line bg-panel p-6 shadow-xl shadow-black/30">
+        <div className="space-y-4 rounded-lg border border-line bg-panel p-6 shadow-sm">
           <div>
             <h2 className="text-sm font-medium text-text-strong">
               {ticket === null ? 'Sign in' : 'Second factor'}

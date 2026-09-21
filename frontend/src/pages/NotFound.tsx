@@ -11,7 +11,7 @@ export function NotFound(): React.ReactElement {
       <p className="mt-1 text-sm text-text-muted">That page does not exist.</p>
       <Link
         to="/workspaces"
-        className="mt-6 inline-flex h-8 items-center rounded-md border border-line-strong bg-panel px-3 text-sm text-text hover:bg-raised"
+        className="mt-6 inline-flex h-8 items-center rounded-md border border-line-strong bg-panel px-3 text-sm text-text-strong shadow-xs hover:bg-raised"
       >
         Back to workspaces
       </Link>

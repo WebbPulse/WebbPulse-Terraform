@@ -104,15 +104,15 @@ export function RunsPage(): React.ReactElement {
 /** The card for the run on top of the list. */
 function CurrentRunCard({ run }: { run: Run }): React.ReactElement {
   return (
-    <article className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-line border-l-4 border-l-brand-500 bg-panel px-4 py-3">
+    <article className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-line border-l-4 border-l-accent bg-panel px-4 py-3">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="rounded bg-brand-600/20 px-1.5 text-[10px] font-semibold tracking-wide text-brand-300 uppercase">
+          <span className="rounded border border-accent-line bg-accent-soft px-1.5 text-[10px] font-semibold tracking-wide text-accent uppercase">
             Current
           </span>
           <Link
             to={runPath(run)}
-            className="truncate text-sm font-medium text-text-strong hover:text-brand-300"
+            className="truncate text-sm font-medium text-text-strong hover:text-accent hover:underline"
           >
             {runTitle(run)}
           </Link>

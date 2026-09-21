@@ -16,11 +16,11 @@ export interface DisclosureProps {
 }
 
 const DOT_CLASSES: Record<NonNullable<DisclosureProps['tone']>, string> = {
-  neutral: 'bg-surface-500',
-  running: 'bg-brand-400 animate-pulse',
-  attention: 'bg-amber-400',
-  success: 'bg-emerald-400',
-  danger: 'bg-rose-400',
+  neutral: 'bg-surface-400',
+  running: 'bg-running animate-pulse',
+  attention: 'bg-warning',
+  success: 'bg-success',
+  danger: 'bg-danger',
 };
 
 /** A section whose body shows only while open, so a collapsed phase does no work. */
@@ -45,7 +45,7 @@ export function Disclosure({
           aria-expanded={open}
           aria-controls={bodyId}
           onClick={onToggle}
-          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-4 py-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-4 py-3 text-left text-sm hover:bg-raised/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           <svg
             viewBox="0 0 16 16"

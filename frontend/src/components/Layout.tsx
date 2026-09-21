@@ -110,7 +110,7 @@ export function Layout(): React.ReactElement {
       <div className="flex min-h-screen">
         <a
           href="#main"
-          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-brand-600 focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
         >
           Skip to content
         </a>
@@ -207,7 +207,7 @@ export function Mark({
   return (
     <span
       aria-hidden="true"
-      className={`inline-flex size-5 items-center justify-center rounded bg-brand-600 text-[10px] font-bold text-white ${className}`}
+      className={`inline-flex size-5 items-center justify-center rounded bg-accent text-[10px] font-bold text-white ${className}`}
     >
       T
     </span>
