@@ -72,10 +72,13 @@ the token. The runner then:
 6. Streams the engine's combined output line by line to the `<run_id>/<phase>`
    stream in `RUNNER_LOG_GROUP` and to stdout.
 7. Uploads `plan.tfplan` and `plan.json` on a plan phase and the redacted log on
-   both, to `artifacts.plan_put_url`, `artifacts.plan_json_put_url` and
-   `artifacts.log_put_url`, then posts `POST /runs/{RUN_ID}/phase-result` and
-   sends task success with `{exit_code, changes: {add, change, destroy}}` or
-   task failure.
+   both. Each one is uploaded by first posting its exact byte count to
+   `POST /runs/{RUN_ID}/artifact-uploads` as `{artifact, size_bytes}`, then
+   PUTting the bytes to the returned `url` with the returned `headers` sent
+   verbatim. The URL signs `Content-Type` and `Content-Length`, so a body of any
+   other length is refused and nothing may be added to those headers. It then
+   posts `POST /runs/{RUN_ID}/phase-result` and sends task success with
+   `{exit_code, changes: {add, change, destroy}}` or task failure.
 
 The engine comes from the bundle's `engine` field, `terraform` or `tofu`.
 

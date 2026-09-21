@@ -8,9 +8,11 @@ import tarfile
 from pathlib import Path
 
 import boto3
+import httpx
 import pytest
 
 from app import workspace
+from app.api import ApiError, RunnerApi
 from app.credentials import CredentialsError, assume_run_role
 from app.engine import build_environment, parse_changes
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
@@ -22,7 +24,10 @@ from tests.conftest import (
     SECRET_ENVVAR,
     SECRET_TFVAR,
     WORKSPACE_ID,
+    ApiRecorder,
     bundle_payload,
+    make_env,
+    make_transport,
 )
 
 
@@ -225,7 +230,6 @@ def test_bundle_ignores_the_api_only_top_level_fields(run_role_arn: str) -> None
     bundle = Bundle.model_validate(payload)
     assert bundle.engine_version == "1.16.3"
     assert bundle.run_role.duration_seconds == 3600
-    assert bundle.artifacts.log_put_url
 
 
 def test_log_sink_creates_the_stream_and_redacts(aws: None, capsys: pytest.CaptureFixture[str]) -> None:
@@ -331,3 +335,64 @@ def test_assume_role_omits_policy_arns_when_there_are_none() -> None:
     assume_run_role(client, role, "run-01JTEST", "apply")  # type: ignore[arg-type]
     assert "PolicyArns" not in client.request
     assert "Policy" in client.request
+
+
+def test_upload_requests_the_url_for_the_exact_size(aws: None, config_tarball: bytes) -> None:
+    """The client declares the real byte count and PUTs with the returned headers.
+
+    `Content-Length` is inside the presigned URL's signature, so a runner that
+    declared a ceiling and sent a shorter body is refused by S3. Asking per
+    artifact, after the bytes exist, is what makes the PUT match the signature.
+    """
+    recorder = ApiRecorder()
+    api = RunnerApi(make_env("plan"), httpx.Client(transport=make_transport(None, config_tarball, recorder)))
+
+    assert api.upload_text("log", "a transcript") is True
+
+    assert recorder.upload_requests == [{"artifact": "log", "size_bytes": len(b"a transcript")}]
+    headers = recorder.upload_headers["/runs/plan.log"]
+    assert headers["content-type"] == "text/plain"
+    assert headers["content-length"] == str(len(b"a transcript"))
+    assert recorder.uploads["/runs/plan.log"] == b"a transcript"
+
+
+def test_upload_sends_only_the_signed_headers(aws: None, config_tarball: bytes) -> None:
+    """The signed headers go over verbatim, with no content type of the client's own."""
+    recorder = ApiRecorder()
+    api = RunnerApi(make_env("plan"), httpx.Client(transport=make_transport(None, config_tarball, recorder)))
+
+    body = b'{"format_version": "1.2"}'
+    api.upload_artifact("plan_json", body)
+
+    headers = recorder.upload_headers["/runs/plan.json"]
+    assert headers["content-type"] == "application/json"
+    assert headers["content-length"] == str(len(body))
+
+
+def test_upload_of_an_absent_file_is_not_an_error(aws: None, config_tarball: bytes, tmp_path: Path) -> None:
+    """A missing artifact is nothing to send rather than a failure."""
+    recorder = ApiRecorder()
+    api = RunnerApi(make_env("plan"), httpx.Client(transport=make_transport(None, config_tarball, recorder)))
+
+    assert api.upload_file("plan", tmp_path / "never-written.tfplan") is False
+    assert recorder.upload_requests == []
+
+
+def test_a_refused_upload_request_is_an_api_error(aws: None, config_tarball: bytes) -> None:
+    """A rejected mint raises rather than uploading to nowhere."""
+    recorder = ApiRecorder()
+    transport = make_transport(None, config_tarball, recorder, upload_request_status=413)
+    api = RunnerApi(make_env("plan"), httpx.Client(transport=transport))
+
+    with pytest.raises(ApiError, match="413"):
+        api.upload_text("log", "far too many bytes")
+
+
+def test_a_refused_put_is_an_api_error(aws: None, config_tarball: bytes) -> None:
+    """S3 refusing the PUT itself surfaces as an `ApiError` carrying the status."""
+    recorder = ApiRecorder()
+    transport = make_transport(None, config_tarball, recorder, upload_status=403)
+    api = RunnerApi(make_env("plan"), httpx.Client(transport=transport))
+
+    with pytest.raises(ApiError, match="403"):
+        api.upload_text("log", "a transcript")

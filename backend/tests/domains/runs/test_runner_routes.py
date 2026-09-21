@@ -1,4 +1,4 @@
-"""The two routes the runner owns, and the token that gates them.
+"""The three routes the runner owns, and the token that gates them.
 
 The bundle carries decrypted sensitive variables and, on an apply, an
 unrestricted session policy, so the gate is the security boundary of this domain
@@ -127,29 +127,138 @@ def test_the_bundle_carries_decrypted_variables(auth_client, runner_client, crea
     assert body["terraform_variables"]["region"] == "us-west-2"
 
 
-def test_the_bundle_carries_the_artifact_urls(runner_client, created_run):
-    """The runner is handed every artifact URL it uses, in both directions."""
-    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
-    artifacts = body["artifacts"]
-    assert artifacts["plan_put_url"].startswith("https://")
-    assert artifacts["plan_json_put_url"].startswith("https://")
+def test_the_bundle_carries_only_the_read_direction(runner_client, created_run):
+    """The bundle mints the plan download and no upload.
+
+    An upload's URL signs the exact `Content-Length` the client will send, which
+    is unknown when the bundle is built, so a put url here could only be signed
+    for a ceiling and S3 would refuse every real PUT against it.
+    """
+    artifacts = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()["artifacts"]
     assert artifacts["plan_get_url"].startswith("https://")
-    assert artifacts["log_put_url"].startswith("https://")
+    assert set(artifacts) == {"plan_get_url"}
 
 
-def test_the_log_put_url_is_per_phase(auth_client, runner_client, created_run, awaiting_confirmation):
+def test_an_artifact_upload_is_signed_for_the_declared_size(runner_client, created_run):
+    """The route hands back a URL and the headers its signature requires."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": "plan", "size_bytes": 4096},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["url"].startswith("https://")
+    assert f"runs/{created_run['run_id']}/plan.tfplan" in body["url"]
+    assert body["headers"]["Content-Type"] == "application/octet-stream"
+    assert body["headers"]["Content-Length"] == "4096"
+    assert body["expires_in"] == runs_service.ARTIFACT_URL_TTL
+
+
+@pytest.mark.parametrize(
+    ("artifact", "key", "content_type"),
+    [
+        ("plan", "plan.tfplan", "application/octet-stream"),
+        ("plan_json", "plan.json", "application/json"),
+        ("log", "plan.log", "text/plain"),
+    ],
+)
+def test_each_artifact_kind_has_its_own_key_and_type(runner_client, created_run, artifact, key, content_type):
+    """The three kinds sign three different keys and three different content types."""
+    body = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": artifact, "size_bytes": 128},
+    ).json()
+    assert f"runs/{created_run['run_id']}/{key}" in body["url"]
+    assert body["headers"]["Content-Type"] == content_type
+
+
+def test_the_log_upload_key_is_per_phase(auth_client, runner_client, created_run, awaiting_confirmation):
     """A plan and an apply upload to different keys, so neither overwrites the other.
 
     Both transcripts have to survive, because the plan's output is the evidence
-    the apply was confirmed against.
+    the apply was confirmed against. The phase comes from the run's status, so a
+    plan-phase runner cannot ask for the apply key.
     """
-    plan_url = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()["artifacts"]["log_put_url"]
-    assert f"runs/{created_run['run_id']}/plan.log" in plan_url
+    plan = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": "log", "size_bytes": 64},
+    ).json()
+    assert f"runs/{created_run['run_id']}/plan.log" in plan["url"]
 
     run_id = awaiting_confirmation["run_id"]
     auth_client.post(f"{BASE}/{run_id}/confirm")
-    apply_url = runner_client.get(f"{BASE}/{run_id}/bundle").json()["artifacts"]["log_put_url"]
-    assert f"runs/{run_id}/apply.log" in apply_url
+    apply = runner_client.post(
+        f"{BASE}/{run_id}/artifact-uploads",
+        json={"artifact": "log", "size_bytes": 64},
+    ).json()
+    assert f"runs/{run_id}/apply.log" in apply["url"]
+
+
+@pytest.mark.parametrize(
+    ("artifact", "size_bytes"),
+    [("plan", 500_000_001), ("plan_json", 500_000_001), ("log", 50_000_001)],
+)
+def test_an_upload_above_the_ceiling_is_413(runner_client, created_run, artifact, size_bytes):
+    """A size past the artifact's ceiling is refused rather than signed.
+
+    The ceiling is the only bound on what a signed URL can park in the bucket,
+    since S3 enforces the declared length and nothing else.
+    """
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": artifact, "size_bytes": size_bytes},
+    )
+    assert response.status_code == 413
+    assert str(size_bytes) in response.json()["message"]
+
+
+def test_a_zero_size_upload_is_422(runner_client, created_run):
+    """Nothing to upload is not an upload, and `presigned_put` refuses it anyway."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": "plan", "size_bytes": 0},
+    )
+    assert response.status_code == 422
+
+
+def test_an_unknown_artifact_kind_is_422(runner_client, created_run):
+    """Only the three kinds the runner uploads are accepted."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": "state", "size_bytes": 128},
+    )
+    assert response.status_code == 422
+
+
+def test_an_artifact_upload_needs_a_token(client, created_run):
+    """No credential at all is a 401, not a signed URL into the artifacts bucket."""
+    response = client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": "plan", "size_bytes": 128},
+    )
+    assert response.status_code == 401
+
+
+def test_a_human_scope_cannot_mint_an_artifact_upload(auth_client, created_run):
+    """A person's key is not a run token here either.
+
+    A signed PUT over a run's plan key would let a caller replace the plan an
+    apply is about to run, so the gate is the run's own token.
+    """
+    response = auth_client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": "plan", "size_bytes": 128},
+    )
+    assert response.status_code == 401
+
+
+def test_a_token_cannot_mint_an_upload_for_another_run(runner_client):
+    """A token refuses an id that is not its own run, present or not."""
+    response = runner_client.post(
+        f"{BASE}/run-01JBQ0000000000000000000AA/artifact-uploads",
+        json={"artifact": "plan", "size_bytes": 128},
+    )
+    assert response.status_code == 401
 
 
 def test_the_bundle_run_role_binds_the_external_id_to_the_workspace(runner_client, created_run, workspace):

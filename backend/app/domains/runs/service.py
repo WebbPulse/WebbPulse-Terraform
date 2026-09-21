@@ -99,6 +99,10 @@ class ConfigVersionNotReady(Exception):
     """The config version exists but its tarball was never uploaded."""
 
 
+class ArtifactTooLarge(Exception):
+    """The requested upload is above that artifact's byte ceiling."""
+
+
 class StateKmsKeyMissing(Exception):
     """The stack set no state KMS key ARN, so the backend block would be invalid."""
 
@@ -988,57 +992,81 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         },
         "terraform_variables": variables["terraform"],
         "environment_variables": variables["env"],
-        "artifacts": _artifacts(run_id, phase, settings=resolved),
+        "artifacts": _artifacts(run_id, settings=resolved),
     }
 
 
-def _artifacts(run_id: str, phase: Phase, *, settings: Settings) -> dict[str, str]:
-    """Presigned URLs for one run's artifacts, both directions.
+def _artifacts(run_id: str, *, settings: Settings) -> dict[str, str]:
+    """Presigned URLs the runner reads from, for one run.
 
-    The log URL is per phase because a plan and an apply each upload their own
-    redacted transcript and neither should overwrite the other.
+    Only the read direction is minted with the bundle. An upload's URL signs the
+    exact `Content-Length` the client will send, and that is unknown until the
+    artifact exists, so each upload is requested separately by `artifact_upload`.
     """
-    from webbpulse.storage import presigned_get, presigned_put
+    from webbpulse.storage import presigned_get
 
-    region = settings.AWS_REGION_NAME
-    endpoint = settings.s3_endpoint_url
-    bucket = settings.ARTIFACTS_BUCKET
     return {
-        "plan_put_url": presigned_put(
-            bucket,
-            plan_key(run_id),
-            PLAN_CONTENT_TYPE,
-            MAX_PLAN_BYTES,
-            ARTIFACT_URL_TTL,
-            region_name=region,
-            endpoint_url=endpoint,
-        ).url,
-        "plan_json_put_url": presigned_put(
-            bucket,
-            plan_json_key(run_id),
-            PLAN_JSON_CONTENT_TYPE,
-            MAX_PLAN_BYTES,
-            ARTIFACT_URL_TTL,
-            region_name=region,
-            endpoint_url=endpoint,
-        ).url,
         "plan_get_url": presigned_get(
-            bucket,
+            settings.ARTIFACTS_BUCKET,
             plan_key(run_id),
             ARTIFACT_URL_TTL,
-            region_name=region,
-            endpoint_url=endpoint,
-        ).url,
-        "log_put_url": presigned_put(
-            bucket,
-            log_key(run_id, phase),
-            LOG_CONTENT_TYPE,
-            MAX_LOG_BYTES,
-            ARTIFACT_URL_TTL,
-            region_name=region,
-            endpoint_url=endpoint,
+            region_name=settings.AWS_REGION_NAME,
+            endpoint_url=settings.s3_endpoint_url,
         ).url,
     }
+
+
+def artifact_upload(
+    run_id: str,
+    artifact: str,
+    size_bytes: int,
+    *,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Mint the presigned PUT for one of a run's artifacts, at an exact size.
+
+    `presigned_put` signs `Content-Type` and `ContentLength` into the URL, so the
+    caller has to declare the byte count up front and send the returned headers
+    verbatim. Signing a fixed ceiling instead would reject every real upload,
+    since the runner's `Content-Length` is the artifact's own length.
+
+    The log key is per phase, and the phase is derived from the run's status the
+    way the bundle derives it, so a plan-phase runner cannot overwrite an apply's
+    transcript by asking for it.
+
+    Raises:
+        RunNotFound: No such run.
+        ArtifactTooLarge: `size_bytes` is above the artifact's ceiling.
+        ValueError: `artifact` is not one of the three kinds.
+    """
+    from webbpulse.storage import presigned_put
+
+    resolved = settings or get_settings()
+    run = get_run(run_id, settings=resolved)
+    phase = _phase_for_status(str(run.get("status", "")))
+
+    if artifact == "plan":
+        key, content_type, ceiling = plan_key(run_id), PLAN_CONTENT_TYPE, MAX_PLAN_BYTES
+    elif artifact == "plan_json":
+        key, content_type, ceiling = plan_json_key(run_id), PLAN_JSON_CONTENT_TYPE, MAX_PLAN_BYTES
+    elif artifact == "log":
+        key, content_type, ceiling = log_key(run_id, phase), LOG_CONTENT_TYPE, MAX_LOG_BYTES
+    else:
+        raise ValueError(f"{artifact} is not an artifact this run uploads")
+
+    if size_bytes > ceiling:
+        raise ArtifactTooLarge(f"{artifact} is {size_bytes} bytes, above the {ceiling} byte ceiling")
+
+    upload = presigned_put(
+        resolved.ARTIFACTS_BUCKET,
+        key,
+        content_type,
+        size_bytes,
+        ARTIFACT_URL_TTL,
+        region_name=resolved.AWS_REGION_NAME,
+        endpoint_url=resolved.s3_endpoint_url,
+    )
+    return {"url": upload.url, "headers": dict(upload.headers), "expires_in": ARTIFACT_URL_TTL}
 
 
 def render_run(item: dict[str, Any]) -> dict[str, Any]:
@@ -1059,6 +1087,7 @@ __all__ = [
     "CONSUMED_TOKEN_ERRORS",
     "DISCARDABLE_STATUSES",
     "ERROR_MAX_LENGTH",
+    "ArtifactTooLarge",
     "ConfigVersionNotReady",
     "PhaseMismatch",
     "RUN_ID_PREFIX",
@@ -1070,6 +1099,7 @@ __all__ = [
     "StateKmsKeyMissing",
     "TERMINAL_STATUSES",
     "active_run",
+    "artifact_upload",
     "cancel_run",
     "confirm_run",
     "create_run",

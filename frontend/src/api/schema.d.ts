@@ -555,6 +555,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/artifact-uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Artifact Upload
+         * @description Mint the presigned PUT for one of this run's artifacts. Runner only.
+         *
+         *     The size is the caller's, not a ceiling: `Content-Length` is inside the
+         *     signature, so S3 refuses a body of any other length. A runner therefore asks
+         *     once per artifact, after it knows how many bytes it is about to send, and
+         *     sends the returned headers verbatim.
+         *
+         *     The log's key is per phase and the phase comes from the run's status, so a
+         *     plan-phase runner cannot ask for the apply transcript's key.
+         */
+        post: operations["artifact_upload_api_v1_runs__run_id__artifact_uploads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/bundle": {
         parameters: {
             query?: never;
@@ -933,22 +961,47 @@ export interface components {
             items: components["schemas"]["ApiKey"][];
         };
         /**
-         * Artifacts
-         * @description Presigned URLs for one run's artifacts, in both directions.
+         * ArtifactUpload
+         * @description The presigned PUT one artifact goes to.
          *
-         *     A plan phase PUTs the two plan files and an apply phase GETs the binary
-         *     plan; both phases PUT their redacted log. Everything is signed, so the
-         *     runner needs no bucket credentials of its own.
+         *     `headers` is not advisory: every one is inside the signature, so a request
+         *     that omits or changes one is rejected by S3.
+         */
+        ArtifactUpload: {
+            /** Expires In */
+            expires_in: number;
+            /** Headers */
+            headers: {
+                [key: string]: string;
+            };
+            /** Url */
+            url: string;
+        };
+        /**
+         * ArtifactUploadCreate
+         * @description A request for somewhere to upload one of a run's artifacts.
+         */
+        ArtifactUploadCreate: {
+            /**
+             * Artifact
+             * @enum {string}
+             */
+            artifact: "plan" | "plan_json" | "log";
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /**
+         * Artifacts
+         * @description Presigned URLs the runner reads from, for one run.
+         *
+         *     Only the read direction is minted here. An upload's URL signs the exact
+         *     `Content-Length` the client will send, which is not known when the bundle is
+         *     built, so the runner asks for one per artifact through
+         *     `POST /runs/{id}/artifact-uploads` once it knows the byte count.
          */
         Artifacts: {
-            /** Log Put Url */
-            log_put_url: string;
             /** Plan Get Url */
             plan_get_url: string;
-            /** Plan Json Put Url */
-            plan_json_put_url: string;
-            /** Plan Put Url */
-            plan_put_url: string;
         };
         /**
          * BackendConfig
@@ -1185,7 +1238,8 @@ export interface components {
          *     The shape is the runner's `Bundle`: the nested `backend`, `run_role` and
          *     `artifacts` objects are what `runner/app/models.py` validates, and the four
          *     extra top level fields are what the runner ignores for now but the API
-         *     states about the phase it is serving.
+         *     states about the phase it is serving. Uploads are not here: the runner asks
+         *     for each one's presigned PUT by size once it has the bytes.
          *
          *     The only response in the API that carries decrypted variable values, which is
          *     why it is gated on a run token bound to this run rather than on scopes.
@@ -2823,6 +2877,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    artifact_upload_api_v1_runs__run_id__artifact_uploads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactUploadCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactUpload"];
                 };
             };
             /** @description Request validation failed. */

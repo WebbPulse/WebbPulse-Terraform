@@ -14,7 +14,7 @@ app/
     db/            table names and repositories
   domains/
     workspaces/    workspaces, variables, config versions
-    runs/          runs, the runner's bundle and phase results
+    runs/          runs, the runner's bundle, artifact uploads and phase results
       consumers/   the queue consumers and the one route they share
 e2e/               the deployed-stage suite, extending webbpulse.e2e
 tests/
@@ -95,9 +95,18 @@ route guarded by `require_scopes` cannot tell them apart. The scopes are
 
 The runner is separate. Starting a run mints a `wpk_` key scoped `runner`, bound
 to that run and expiring after four hours, and only that token opens
-`GET /runs/{id}/bundle` and `POST /runs/{id}/phase-result`. The bundle carries
-decrypted sensitive variables, so no human scope reaches it, and every terminal
-transition revokes the token.
+`GET /runs/{id}/bundle`, `POST /runs/{id}/artifact-uploads` and
+`POST /runs/{id}/phase-result`. The bundle carries decrypted sensitive
+variables, so no human scope reaches it, and every terminal transition revokes
+the token.
+
+The bundle mints only the plan's read URL. An upload's presigned PUT signs the
+exact `Content-Length` it will receive, which is unknown when the bundle is
+built, so the runner posts each artifact's byte count to
+`POST /runs/{id}/artifact-uploads` as `{artifact, size_bytes}` and gets back
+`{url, headers, expires_in}` to send verbatim. A size above that artifact's
+ceiling is a 413, and the log's key comes from the run's stored phase, so a
+plan-phase runner cannot target the apply transcript.
 
 ## Identity
 

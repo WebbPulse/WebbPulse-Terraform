@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 
-from app.models import Bundle, PhaseResult, RunnerEnv
+from app.models import ArtifactKind, ArtifactUpload, Bundle, PhaseResult, RunnerEnv
 
 DEFAULT_TIMEOUT = httpx.Timeout(30.0, read=120.0)
 
@@ -64,29 +64,50 @@ class RunnerApi:
             raise ApiError(f"download failed: {type(error).__name__}") from error
         return destination
 
-    def upload_file(self, url: str | None, source: Path, content_type: str) -> bool:
-        """Put a file to a presigned URL, reporting whether it was sent."""
-        if not url or not source.exists():
-            return False
+    def request_upload(self, artifact: ArtifactKind, size_bytes: int) -> ArtifactUpload:
+        """Ask the runs domain where one artifact of a known size goes.
+
+        The size has to be the exact byte count: the API signs it as
+        `Content-Length`, so a URL minted for one length authorises no other.
+        """
+        url = f"{self._env.api_base_url}/api/v1/runs/{self._env.run_id}/artifact-uploads"
+        payload = {"artifact": artifact, "size_bytes": size_bytes}
         try:
-            response = self._client.put(url, content=source.read_bytes(), headers={"Content-Type": content_type})
+            response = self._client.post(url, headers=self._headers, json=payload)
         except httpx.HTTPError as error:
-            raise ApiError(f"upload failed: {type(error).__name__}") from error
+            raise ApiError(f"{artifact} upload request failed: {type(error).__name__}") from error
         if response.status_code >= 400:
-            raise ApiError(f"upload returned {response.status_code}")
+            raise ApiError(f"{artifact} upload request returned {response.status_code}")
+        try:
+            return ArtifactUpload.model_validate(response.json())
+        except ValueError as error:
+            raise ApiError(f"{artifact} upload request returned no usable url") from error
+
+    def upload_artifact(self, artifact: ArtifactKind, body: bytes) -> bool:
+        """Request a URL for exactly these bytes and PUT them with its headers.
+
+        The headers come back signed, so they are sent verbatim and nothing is
+        added: a `Content-Length` that differs from the signed one is refused by
+        S3, which is what made a fixed ceiling unusable here.
+        """
+        upload = self.request_upload(artifact, len(body))
+        try:
+            response = self._client.put(upload.url, content=body, headers=upload.headers)
+        except httpx.HTTPError as error:
+            raise ApiError(f"{artifact} upload failed: {type(error).__name__}") from error
+        if response.status_code >= 400:
+            raise ApiError(f"{artifact} upload returned {response.status_code}")
         return True
 
-    def upload_text(self, url: str | None, body: str, content_type: str) -> bool:
-        """Put an in memory document to a presigned URL, reporting whether it was sent."""
-        if not url:
+    def upload_file(self, artifact: ArtifactKind, source: Path) -> bool:
+        """Upload one artifact from disk, reporting whether there was a file to send."""
+        if not source.exists():
             return False
-        try:
-            response = self._client.put(url, content=body.encode(), headers={"Content-Type": content_type})
-        except httpx.HTTPError as error:
-            raise ApiError(f"upload failed: {type(error).__name__}") from error
-        if response.status_code >= 400:
-            raise ApiError(f"upload returned {response.status_code}")
-        return True
+        return self.upload_artifact(artifact, source.read_bytes())
+
+    def upload_text(self, artifact: ArtifactKind, body: str) -> bool:
+        """Upload one artifact held in memory."""
+        return self.upload_artifact(artifact, body.encode())
 
 
 def build_client(transport: httpx.BaseTransport | None = None) -> httpx.Client:

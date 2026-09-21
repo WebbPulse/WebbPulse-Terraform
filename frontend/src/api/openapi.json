@@ -206,31 +206,68 @@
         "title": "ApiKeyList",
         "type": "object"
       },
-      "Artifacts": {
-        "description": "Presigned URLs for one run's artifacts, in both directions.\n\nA plan phase PUTs the two plan files and an apply phase GETs the binary\nplan; both phases PUT their redacted log. Everything is signed, so the\nrunner needs no bucket credentials of its own.",
+      "ArtifactUpload": {
+        "description": "The presigned PUT one artifact goes to.\n\n`headers` is not advisory: every one is inside the signature, so a request\nthat omits or changes one is rejected by S3.",
         "properties": {
-          "log_put_url": {
-            "title": "Log Put Url",
-            "type": "string"
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
           },
-          "plan_get_url": {
-            "title": "Plan Get Url",
-            "type": "string"
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
           },
-          "plan_json_put_url": {
-            "title": "Plan Json Put Url",
-            "type": "string"
-          },
-          "plan_put_url": {
-            "title": "Plan Put Url",
+          "url": {
+            "title": "Url",
             "type": "string"
           }
         },
         "required": [
-          "plan_put_url",
-          "plan_json_put_url",
-          "plan_get_url",
-          "log_put_url"
+          "url",
+          "headers",
+          "expires_in"
+        ],
+        "title": "ArtifactUpload",
+        "type": "object"
+      },
+      "ArtifactUploadCreate": {
+        "description": "A request for somewhere to upload one of a run's artifacts.",
+        "properties": {
+          "artifact": {
+            "enum": [
+              "plan",
+              "plan_json",
+              "log"
+            ],
+            "title": "Artifact",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artifact",
+          "size_bytes"
+        ],
+        "title": "ArtifactUploadCreate",
+        "type": "object"
+      },
+      "Artifacts": {
+        "description": "Presigned URLs the runner reads from, for one run.\n\nOnly the read direction is minted here. An upload's URL signs the exact\n`Content-Length` the client will send, which is not known when the bundle is\nbuilt, so the runner asks for one per artifact through\n`POST /runs/{id}/artifact-uploads` once it knows the byte count.",
+        "properties": {
+          "plan_get_url": {
+            "title": "Plan Get Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan_get_url"
         ],
         "title": "Artifacts",
         "type": "object"
@@ -696,7 +733,7 @@
         "type": "object"
       },
       "RunBundle": {
-        "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `run_role` and\n`artifacts` objects are what `runner/app/models.py` validates, and the four\nextra top level fields are what the runner ignores for now but the API\nstates about the phase it is serving.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
+        "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `run_role` and\n`artifacts` objects are what `runner/app/models.py` validates, and the four\nextra top level fields are what the runner ignores for now but the API\nstates about the phase it is serving. Uploads are not here: the runner asks\nfor each one's presigned PUT by size once it has the bytes.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
         "properties": {
           "artifacts": {
             "$ref": "#/components/schemas/Artifacts"
@@ -2732,6 +2769,59 @@
           }
         },
         "summary": "Get Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/artifact-uploads": {
+      "post": {
+        "description": "Mint the presigned PUT for one of this run's artifacts. Runner only.\n\nThe size is the caller's, not a ceiling: `Content-Length` is inside the\nsignature, so S3 refuses a body of any other length. A runner therefore asks\nonce per artifact, after it knows how many bytes it is about to send, and\nsends the returned headers verbatim.\n\nThe log's key is per phase and the phase comes from the run's status, so a\nplan-phase runner cannot ask for the apply transcript's key.",
+        "operationId": "artifact_upload_api_v1_runs__run_id__artifact_uploads_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactUploadCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactUpload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Artifact Upload",
         "tags": [
           "runs"
         ]

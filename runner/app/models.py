@@ -83,15 +83,35 @@ class RunRole(BaseModel):
     duration_seconds: int = 3600
 
 
+ArtifactKind = Literal["plan", "plan_json", "log"]
+"""The three objects a phase uploads, named as the artifact upload route names them."""
+
+
 class Artifacts(BaseModel):
-    """Presigned URLs the runner reads the plan from and writes its outputs to."""
+    """Presigned URLs the runner reads from.
+
+    Uploads are not here. An upload's URL signs the exact `Content-Length` the
+    runner will send, which the bundle cannot know, so each one is requested
+    from `POST /runs/{id}/artifact-uploads` once the bytes exist.
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    plan_put_url: str | None = None
     plan_get_url: str | None = None
-    plan_json_put_url: str | None = None
-    log_put_url: str | None = None
+
+
+class ArtifactUpload(BaseModel):
+    """Where one artifact goes, and the headers its signature requires.
+
+    Every header is inside the signature, so S3 rejects a PUT that omits or
+    changes one. The runner sends them verbatim and adds nothing.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    expires_in: int = 0
 
 
 class Bundle(BaseModel):
