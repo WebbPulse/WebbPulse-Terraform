@@ -4,7 +4,7 @@ import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
 import { api, type Run } from '../api';
-import { ErrorNotice, PageHeader, RunTable, Spinner } from '../components';
+import { ErrorNotice, PageHeader, RunList, Spinner } from '../components';
 
 /** The runs and the names of the workspaces they belong to. */
 interface EveryRun {
@@ -66,7 +66,7 @@ export function Runs(): React.ReactElement {
           Loading runs
         </div>
       ) : (
-        <RunTable
+        <RunList
           runs={query.data?.items ?? []}
           workspaceNames={query.data?.workspaceNames ?? new Map()}
         />

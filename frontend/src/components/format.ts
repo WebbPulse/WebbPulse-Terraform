@@ -55,3 +55,37 @@ export function formatBytes(bytes: number): string {
 export function shortRunId(runId: string): string {
   return runId.length > 12 ? runId.slice(-8) : runId;
 }
+
+/** A span of milliseconds in coarse words, such as "3 minutes" or "12 seconds". */
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) {
+    return `${String(seconds)} ${seconds === 1 ? 'second' : 'seconds'}`;
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${String(minutes)} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  const hoursPart = `${String(hours)} ${hours === 1 ? 'hour' : 'hours'}`;
+  return rest === 0 ? hoursPart : `${hoursPart} ${String(rest)} min`;
+}
+
+/** The milliseconds between two ISO timestamps, the second defaulting to now. */
+export function elapsedBetween(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined,
+  now: number = Date.now()
+): number | null {
+  if (startIso === null || startIso === undefined) {
+    return null;
+  }
+  const start = new Date(startIso).getTime();
+  if (Number.isNaN(start)) {
+    return null;
+  }
+  const end =
+    endIso === null || endIso === undefined ? now : new Date(endIso).getTime();
+  return Number.isNaN(end) ? null : Math.max(0, end - start);
+}
