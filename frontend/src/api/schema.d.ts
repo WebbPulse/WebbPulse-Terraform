@@ -947,7 +947,7 @@ export interface paths {
         put?: never;
         /**
          * Download State Version
-         * @description Mint a short lived URL for one state version's raw bytes.
+         * @description Mint a short lived URL with workspaces:read and explicit state:download access.
          *
          *     A `POST` rather than a `GET` because it is not a read: it mints a bearer
          *     credential for the most sensitive object the product stores, and that is an
@@ -1791,7 +1791,10 @@ export interface components {
         };
         /**
          * StateVersionList
-         * @description One page of a workspace's state versions, newest first.
+         * @description One page of state versions, newest first. Follow the token even on empty pages.
+         *
+         *     S3 delete markers count toward the page size but are not state versions.
+         *     Malformed cursors or cursors from another workspace return HTTP 400.
          */
         StateVersionList: {
             /** Items */

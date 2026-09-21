@@ -261,7 +261,11 @@ class StateVersionDetail(StateVersion):
 
 
 class StateVersionList(BaseModel):
-    """One page of a workspace's state versions, newest first."""
+    """One page of state versions, newest first. Follow the token even on empty pages.
+
+    S3 delete markers count toward the page size but are not state versions.
+    Malformed cursors or cursors from another workspace return HTTP 400.
+    """
 
     items: list[StateVersion]
     next_page_token: Optional[str] = None

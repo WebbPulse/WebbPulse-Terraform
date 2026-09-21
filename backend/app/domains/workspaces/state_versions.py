@@ -80,6 +80,10 @@ class StateBucketMissing(Exception):
     """The deployment set no state bucket, so there is no history to read."""
 
 
+class InvalidPageToken(Exception):
+    """The cursor is malformed or belongs to a different state key."""
+
+
 def _s3(settings: Settings) -> Any:
     """An S3 client. Imported late so nothing connects at import."""
     import boto3
@@ -144,21 +148,16 @@ def encode_page_token(key_marker: str, version_marker: str) -> str:
 
 
 def decode_page_token(token: str) -> tuple[str, str]:
-    """Read back a token from `encode_page_token`, or treat it as absent.
-
-    A malformed token restarts the listing rather than erroring: it can only ever
-    cost a caller a repeated first page, and the alternative is a 400 on a value
-    the caller never composed.
-    """
+    """Reject malformed cursors instead of silently repeating the first page."""
     try:
-        raw = json.loads(base64.urlsafe_b64decode(token.encode()).decode())
-    except (ValueError, binascii.Error, UnicodeDecodeError):
-        return "", ""
+        raw = json.loads(base64.b64decode(token.encode(), altchars=b"-_", validate=True).decode())
+    except (ValueError, binascii.Error, UnicodeDecodeError, RecursionError) as error:
+        raise InvalidPageToken from error
     if not isinstance(raw, list) or len(raw) != 2:
-        return "", ""
+        raise InvalidPageToken
     first, second = raw
-    if not isinstance(first, str) or not isinstance(second, str):
-        return "", ""
+    if not isinstance(first, str) or not isinstance(second, str) or not first or not second:
+        raise InvalidPageToken
     return first, second
 
 
@@ -210,12 +209,19 @@ def list_state_versions(
     kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": key, "MaxKeys": bounded}
     if page_token:
         key_marker, version_marker = decode_page_token(page_token)
-        if key_marker:
-            kwargs["KeyMarker"] = key_marker
-        if version_marker:
-            kwargs["VersionIdMarker"] = version_marker
+        if key_marker != key:
+            raise InvalidPageToken
+        kwargs["KeyMarker"] = key_marker
+        kwargs["VersionIdMarker"] = version_marker
 
-    response = _s3(resolved).list_object_versions(**kwargs)
+    from botocore.exceptions import ClientError
+
+    try:
+        response = _s3(resolved).list_object_versions(**kwargs)
+    except ClientError as error:
+        if page_token and error.response.get("Error", {}).get("Code") == "InvalidArgument":
+            raise InvalidPageToken from error
+        raise
 
     items = [
         _render(workspace_id, version) for version in response.get("Versions", []) if str(version.get("Key", "")) == key
@@ -225,7 +231,7 @@ def list_state_versions(
     if response.get("IsTruncated"):
         next_key = str(response.get("NextKeyMarker", ""))
         next_version = str(response.get("NextVersionIdMarker", ""))
-        if next_key or next_version:
+        if next_key == key and next_version:
             next_token = encode_page_token(next_key, next_version)
 
     return {"items": items, "next_page_token": next_token}
@@ -251,7 +257,7 @@ def _head(workspace_id: str, state_version_id: str, *, settings: Settings) -> di
     except ClientError as error:
         status = int(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
         code = str(error.response.get("Error", {}).get("Code", ""))
-        if status in (400, 403, 404) or code in ("404", "NoSuchKey", "NotFound", "NoSuchVersion", "InvalidArgument"):
+        if status in (400, 404, 405) or code in ("404", "NoSuchKey", "NotFound", "NoSuchVersion", "InvalidArgument"):
             raise StateVersionNotFound(state_version_id) from error
         raise
 
@@ -267,7 +273,7 @@ def _summary(body: bytes) -> dict[str, Any]:
     """
     try:
         parsed = json.loads(body.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return {"serial": None, "terraform_version": None, "lineage": None}
     if not isinstance(parsed, dict):
         return {"serial": None, "terraform_version": None, "lineage": None}
@@ -276,7 +282,7 @@ def _summary(body: bytes) -> dict[str, Any]:
     terraform_version = parsed.get("terraform_version")
     lineage = parsed.get("lineage")
     return {
-        "serial": int(serial) if isinstance(serial, int) else None,
+        "serial": serial if type(serial) is int else None,
         "terraform_version": str(terraform_version) if isinstance(terraform_version, str) else None,
         "lineage": str(lineage) if isinstance(lineage, str) else None,
     }
@@ -328,9 +334,14 @@ def get_state_version(
                 Key=state_key(workspace_id),
                 VersionId=state_version_id,
             )
-            rendered.update(_summary(obj["Body"].read()))
-        except ClientError:
-            pass
+            with obj["Body"] as body:
+                content = body.read(METADATA_READ_CEILING + 1)
+            if len(content) <= METADATA_READ_CEILING:
+                rendered.update(_summary(content))
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") in ("NoSuchKey", "NoSuchVersion"):
+                raise StateVersionNotFound(state_version_id) from error
+            raise
 
     current = _current_version_id(workspace_id, settings=resolved)
     rendered["is_current"] = current is not None and current == state_version_id
@@ -343,8 +354,10 @@ def _current_version_id(workspace_id: str, *, settings: Settings) -> Optional[st
 
     try:
         head = _s3(settings).head_object(Bucket=_bucket(settings), Key=state_key(workspace_id))
-    except ClientError:
-        return None
+    except ClientError as error:
+        if error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+            return None
+        raise
     version_id = head.get("VersionId")
     return str(version_id) if version_id else None
 
@@ -386,6 +399,7 @@ def state_version_download(
             "Key": state_key(workspace_id),
             "VersionId": state_version_id,
             "ResponseContentType": STATE_CONTENT_TYPE,
+            "ResponseCacheControl": "no-store",
             "ResponseContentDisposition": (f'attachment; filename="{workspace_id}-{state_version_id}.tfstate"'),
         },
         ExpiresIn=DOWNLOAD_EXPIRES_IN,
@@ -405,6 +419,7 @@ __all__ = [
     "DEFAULT_PAGE_SIZE",
     "DOWNLOAD_EXPIRES_IN",
     "MAX_PAGE_SIZE",
+    "InvalidPageToken",
     "StateBucketMissing",
     "StateVersionNotFound",
     "get_state_version",

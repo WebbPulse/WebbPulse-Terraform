@@ -9,12 +9,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from webbpulse.identity.claims import AuthorizerClaims
 
 from ...common.core.auth import (
     CONFIGS_READ,
     CONFIGS_WRITE,
+    STATE_DOWNLOAD,
     VARIABLES_READ,
     VARIABLES_WRITE,
     WORKSPACES_READ,
@@ -81,7 +82,7 @@ def record_state_download(
     workspace_id: str,
     state_version_id: str,
 ) -> None:
-    """Record that a state download URL was handed out, before it is minted.
+    """Record an authorized download attempt before validation and signing.
 
     Written ahead of the signing rather than after it so that a failure between
     the two leaves a line that overstates access rather than one that misses it.
@@ -89,7 +90,7 @@ def record_state_download(
     it would be a second copy of the thing being protected.
     """
     _log.info(
-        "Minted a state version download URL.",
+        "Requested a state version download URL.",
         extra={
             "event": STATE_DOWNLOAD_EVENT,
             "workspace_id": workspace_id,
@@ -409,6 +410,8 @@ def list_state_versions(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="State history is unavailable: no state bucket is configured.",
         ) from error
+    except state_versions.InvalidPageToken as error:
+        raise HTTPException(status_code=400, detail="Invalid state history page token.") from error
 
 
 @router.get(
@@ -437,15 +440,16 @@ def get_state_version(
 @router.post(
     "/workspaces/{workspace_id}/state-versions/{state_version_id}/download",
     response_model=StateVersionDownload,
-    dependencies=[Depends(scopes(WORKSPACES_READ))],
+    dependencies=[Depends(scopes(WORKSPACES_READ, STATE_DOWNLOAD))],
 )
 def download_state_version(
     request: Request,
+    response: Response,
     workspace_id: str = WorkspaceId,
     state_version_id: str = StateVersionId,
     claims: AuthorizerClaims = Depends(auth_claims),
 ) -> dict[str, Any]:
-    """Mint a short lived URL for one state version's raw bytes.
+    """Mint a short lived URL with workspaces:read and explicit state:download access.
 
     A `POST` rather than a `GET` because it is not a read: it mints a bearer
     credential for the most sensitive object the product stores, and that is an
@@ -457,6 +461,7 @@ def download_state_version(
     audit line written after the URL is minted would be missing exactly when it
     matters most.
     """
+    response.headers["Cache-Control"] = "no-store"
     try:
         record_state_download(
             request,

@@ -1569,7 +1569,7 @@
         "type": "object"
       },
       "StateVersionList": {
-        "description": "One page of a workspace's state versions, newest first.",
+        "description": "One page of state versions, newest first. Follow the token even on empty pages.\n\nS3 delete markers count toward the page size but are not state versions.\nMalformed cursors or cursors from another workspace return HTTP 400.",
         "properties": {
           "items": {
             "items": {
@@ -4282,7 +4282,7 @@
     },
     "/api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}/download": {
       "post": {
-        "description": "Mint a short lived URL for one state version's raw bytes.\n\nA `POST` rather than a `GET` because it is not a read: it mints a bearer\ncredential for the most sensitive object the product stores, and that is an\nevent worth being a distinct, non cacheable, non prefetchable call.\n\nThe scope guard runs before this function is entered and the service checks\nthe version belongs to this workspace before it signs anything, so no URL\nexists until both have passed. The handover is recorded first, because an\naudit line written after the URL is minted would be missing exactly when it\nmatters most.",
+        "description": "Mint a short lived URL with workspaces:read and explicit state:download access.\n\nA `POST` rather than a `GET` because it is not a read: it mints a bearer\ncredential for the most sensitive object the product stores, and that is an\nevent worth being a distinct, non cacheable, non prefetchable call.\n\nThe scope guard runs before this function is entered and the service checks\nthe version belongs to this workspace before it signs anything, so no URL\nexists until both have passed. The handover is recorded first, because an\naudit line written after the URL is minted would be missing exactly when it\nmatters most.",
         "operationId": "download_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__download_post",
         "parameters": [
           {
