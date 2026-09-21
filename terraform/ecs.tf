@@ -1,5 +1,5 @@
 locals {
-  runner_image = "${module.registry.repository_urls["runner"]}:${var.runner_image_tag}"
+  runner_image = "${module.registry.repository_urls["runner"]}:${local.runner_image_tag}"
 
   workspace_run_role_arns = [
     "arn:aws:iam::*:role/${local.prefix}-workspace-*",

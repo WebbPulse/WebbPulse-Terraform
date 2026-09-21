@@ -95,10 +95,75 @@ jobs:
     secrets:
       role-to-assume: ${{ needs.resolve-env.outputs.role-arn }}
 
-  report:
-    name: Report the pushed image
+  move-environment-tag:
+    name: Move the environment tag
     needs: [resolve-env, build-image]
     if: needs.build-image.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.name }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ needs.resolve-env.outputs.role-arn }}
+          aws-region: us-west-2
+
+      - name: Point the environment tag at the pushed image
+        env:
+          ENVIRONMENT: ${{ needs.resolve-env.outputs.name }}
+          REPOSITORY: webbpulse-terraform/runner
+          IMAGE_TAG: ${{ needs.build-image.outputs.image-tag }}
+          DIGEST: ${{ needs.build-image.outputs.image-digest }}
+        run: |
+          set -euo pipefail
+          ENV_TAG="$ENVIRONMENT"
+          MANIFEST=$(aws ecr batch-get-image \
+            --repository-name "$REPOSITORY" \
+            --image-ids "imageDigest=$DIGEST" \
+            --query 'images[0].imageManifest' \
+            --output text)
+          if [ -z "$MANIFEST" ] || [ "$MANIFEST" = "None" ]; then
+            echo "Could not read the manifest of ${REPOSITORY}@${DIGEST}."
+            exit 1
+          fi
+          MEDIA_TYPE=$(aws ecr batch-get-image \
+            --repository-name "$REPOSITORY" \
+            --image-ids "imageDigest=$DIGEST" \
+            --query 'images[0].imageManifestMediaType' \
+            --output text)
+          if ! PUT_ERROR=$(aws ecr put-image \
+            --repository-name "$REPOSITORY" \
+            --image-tag "$ENV_TAG" \
+            --image-manifest "$MANIFEST" \
+            --image-manifest-media-type "$MEDIA_TYPE" 2>&1 >/dev/null); then
+            case "$PUT_ERROR" in
+              *ImageAlreadyExistsException*)
+                echo "Tag ${ENV_TAG} already carries this manifest."
+                ;;
+              *)
+                echo "$PUT_ERROR"
+                exit 1
+                ;;
+            esac
+          fi
+          MOVED=$(aws ecr batch-get-image \
+            --repository-name "$REPOSITORY" \
+            --image-ids "imageTag=$ENV_TAG" \
+            --query 'images[0].imageId.imageDigest' \
+            --output text)
+          if [ "$MOVED" != "$DIGEST" ]; then
+            echo "Tag ${ENV_TAG} resolves to ${MOVED}, not the pushed ${DIGEST}."
+            exit 1
+          fi
+          echo "Tag ${ENV_TAG} now resolves to ${DIGEST}."
+
+  report:
+    name: Report the pushed image
+    needs: [resolve-env, build-image, move-environment-tag]
+    if: needs.move-environment-tag.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -128,6 +193,8 @@ jobs:
             echo
             echo "Image: \`${IMAGE}\`"
             echo
-            echo "The task definitions read \`var.runner_image_tag\`, so point it at this"
-            echo "tag and apply to roll the runner forward."
+            echo "The \`${ENVIRONMENT}\` tag now points at this image, and the task"
+            echo "definitions default to that tag, so ECS picks it up at the next task"
+            echo "start with no apply. Set \`runner_image_tag\` only to pin the runner"
+            echo "to a fixed \`sha-\` tag."
           } >> "$GITHUB_STEP_SUMMARY"

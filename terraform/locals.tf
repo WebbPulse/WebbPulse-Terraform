@@ -39,4 +39,7 @@ locals {
   api_key_prefix               = "wpk_"
 
   production_alarms = var.environment == "production"
+
+  runner_image_env_tag = var.environment == "production" ? "production" : "staging"
+  runner_image_tag     = coalesce(var.runner_image_tag, local.runner_image_env_tag)
 }
