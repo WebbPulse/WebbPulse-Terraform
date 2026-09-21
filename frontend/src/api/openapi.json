@@ -651,7 +651,7 @@
         "type": "object"
       },
       "PlanResourceChange": {
-        "description": "One resource's entry in a plan, as the viewer renders it.\n\n`before` and `after` are the planned state on either side, with every value\nthe plan marked sensitive already replaced by a redaction string, so no\nsealed variable or sensitive attribute reaches the browser.",
+        "description": "One resource's entry in a plan, as the viewer renders it.\n\n`before` and `after` are the planned state on either side, with every value\nthe plan marked sensitive already replaced by a redaction string, so no\nsealed variable or sensitive attribute reaches the browser. They carry\nwhatever shape the plan put there rather than an object, because the plan\nformat allows a scalar or a list and a run view that 500s on an unusual\nplan is a worse failure than a loose type.",
         "properties": {
           "action": {
             "enum": [
@@ -675,15 +675,6 @@
             "type": "string"
           },
           "after": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
             "title": "After"
           },
           "after_sensitive": {
@@ -714,15 +705,6 @@
             "title": "After Unknown"
           },
           "before": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
             "title": "Before"
           },
           "before_sensitive": {

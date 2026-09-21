@@ -1250,7 +1250,10 @@ export interface components {
          *
          *     `before` and `after` are the planned state on either side, with every value
          *     the plan marked sensitive already replaced by a redaction string, so no
-         *     sealed variable or sensitive attribute reaches the browser.
+         *     sealed variable or sensitive attribute reaches the browser. They carry
+         *     whatever shape the plan put there rather than an object, because the plan
+         *     format allows a scalar or a list and a run view that 500s on an unusual
+         *     plan is a worse failure than a loose type.
          */
         PlanResourceChange: {
             /**
@@ -1266,9 +1269,7 @@ export interface components {
             /** Address */
             address: string;
             /** After */
-            after?: {
-                [key: string]: unknown;
-            } | null;
+            after?: unknown;
             /** After Sensitive */
             after_sensitive?: {
                 [key: string]: unknown;
@@ -1278,9 +1279,7 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             /** Before */
-            before?: {
-                [key: string]: unknown;
-            } | null;
+            before?: unknown;
             /** Before Sensitive */
             before_sensitive?: {
                 [key: string]: unknown;

@@ -123,7 +123,10 @@ class PlanResourceChange(BaseModel):
 
     `before` and `after` are the planned state on either side, with every value
     the plan marked sensitive already replaced by a redaction string, so no
-    sealed variable or sensitive attribute reaches the browser.
+    sealed variable or sensitive attribute reaches the browser. They carry
+    whatever shape the plan put there rather than an object, because the plan
+    format allows a scalar or a list and a run view that 500s on an unusual
+    plan is a worse failure than a loose type.
     """
 
     address: str
@@ -134,8 +137,8 @@ class PlanResourceChange(BaseModel):
     provider_name: str = ""
     action: PlanAction
     action_reason: str = ""
-    before: Optional[dict[str, Any]] = None
-    after: Optional[dict[str, Any]] = None
+    before: Any = None
+    after: Any = None
     after_unknown: Optional[dict[str, Any]] = None
     replace_paths: list[list[Union[str, int]]] = Field(default_factory=list)
     """The attribute paths that forced a replacement, each a list of steps."""

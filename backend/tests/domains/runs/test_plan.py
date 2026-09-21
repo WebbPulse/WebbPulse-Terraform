@@ -6,6 +6,7 @@ from typing import Any
 import boto3
 
 from app.domains.runs import service as runs_service
+from app.domains.runs.schemas.run import RunPlan
 from tests.conftest import ARTIFACTS_BUCKET, REGION
 
 BASE = "/api/v1/runs"
@@ -233,6 +234,60 @@ def test_a_whole_branch_marked_sensitive_is_redacted():
         },
     )["resource_changes"][0]
     assert entry["after"] == {"secret_string": runs_service.REDACTED}
+
+
+def test_a_non_object_before_survives():
+    """A scalar or list on either side is carried through rather than rejected.
+
+    The plan format does not promise an object there, and a run view that fails
+    on an unusual plan is worse than one that renders whatever was written.
+    """
+    summary = runs_service.summarise_plan(
+        "run-x",
+        {
+            "resource_changes": [
+                resource_change(
+                    "aws_s3_bucket.a",
+                    ["update"],
+                    change={
+                        "actions": ["update"],
+                        "before": "a bare string",
+                        "after": ["one", "two"],
+                    },
+                )
+            ]
+        },
+    )
+    entry = summary["resource_changes"][0]
+    assert entry["before"] == "a bare string"
+    assert entry["after"] == ["one", "two"]
+    assert RunPlan.model_validate(summary).resource_changes[0].before == "a bare string"
+
+
+def test_a_non_object_marked_sensitive_is_still_redacted():
+    """Redaction reaches a scalar and a list, not only an object's keys."""
+    summary = runs_service.summarise_plan(
+        "run-x",
+        {
+            "resource_changes": [
+                resource_change(
+                    "aws_s3_bucket.a",
+                    ["update"],
+                    change={
+                        "actions": ["update"],
+                        "before": "hunter2",
+                        "before_sensitive": True,
+                        "after": ["hunter2", "public"],
+                        "after_sensitive": [True, False],
+                    },
+                )
+            ]
+        },
+    )
+    entry = summary["resource_changes"][0]
+    assert entry["before"] == runs_service.REDACTED
+    assert entry["after"] == [runs_service.REDACTED, "public"]
+    assert "hunter2" not in json.dumps(summary)
 
 
 def test_output_changes_are_summarised():
