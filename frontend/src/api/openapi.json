@@ -3767,8 +3767,52 @@
       }
     },
     "/api/v1/workspaces/{workspace_id}/run-role/check": {
+      "get": {
+        "description": "Assume the workspace's run role and report whether it answered, writing nothing.\n\nThe same probe as the POST, without the record it leaves behind. A caller that\nonly wants to look, such as a Terraform provider reading on every plan and\nrefresh, uses this one so no plan mutates a workspace row. Because nothing is\nwritten, the read scope is enough.\n\nAlways 200 when a role is configured, whether or not it answered. A workspace\nwith no role at all is a 400 carrying `RUN_ROLE_MISSING`.",
+        "operationId": "read_run_role_check_api_v1_workspaces__workspace_id__run_role_check_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRoleCheck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Read Run Role Check",
+        "tags": [
+          "workspaces"
+        ]
+      },
       "post": {
-        "description": "Assume the workspace's run role and report whether it answered.\n\nAlways 200 when a role is configured, whether or not it answered: a trust\npolicy that is not there yet is an expected state of the setup rather than a\nrequest error. A workspace with no role at all is a 400 carrying\n`RUN_ROLE_MISSING`.",
+        "description": "Assume the workspace's run role and record the outcome on the workspace.\n\nThe recorded outcome is what the setup UI shows between visits, so this route\nkeeps its write and its write scope. Use the GET when only the answer is\nwanted.\n\nAlways 200 when a role is configured, whether or not it answered: a trust\npolicy that is not there yet is an expected state of the setup rather than a\nrequest error. A workspace with no role at all is a 400 carrying\n`RUN_ROLE_MISSING`.",
         "operationId": "check_run_role_api_v1_workspaces__workspace_id__run_role_check_post",
         "parameters": [
           {

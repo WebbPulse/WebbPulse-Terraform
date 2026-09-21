@@ -118,14 +118,15 @@ def _sts(settings: Settings) -> Any:
     return boto3.client("sts", region_name=settings.AWS_REGION_NAME or None)
 
 
-def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """Assume the workspace's run role and report whether it answered.
+def probe_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """Assume the workspace's run role and report whether it answered, writing nothing.
 
     Assumes with the workspace id as the external id, the way the runner does, then
     calls GetCallerIdentity on the temporary credentials so the answer names the
     account the role actually lives in rather than the one its ARN claims. The
-    outcome is stamped on the row: the timestamp and the account on a success, both
-    cleared on a failure, so a stale success cannot outlive a broken trust policy.
+    outcome is returned and nothing else: the workspace row is untouched, which is
+    what lets a Terraform provider read this on every plan and refresh without
+    mutating anything.
 
     Neither the credentials nor the STS message reach the return value or the log.
 
@@ -159,10 +160,8 @@ def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> di
             aws_session_token=credentials["SessionToken"],
         ).get_caller_identity()
     except ClientError as error:
-        _record_run_role_check(workspace_id, None, settings=resolved)
         return {"connected": False, "account_id": None, "error": _run_role_error(error)}
     except BotoCoreError:
-        _record_run_role_check(workspace_id, None, settings=resolved)
         return {
             "connected": False,
             "account_id": None,
@@ -170,8 +169,25 @@ def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> di
         }
 
     account_id = str(identity.get("Account", "") or "")
-    _record_run_role_check(workspace_id, account_id, settings=resolved)
     return {"connected": True, "account_id": account_id, "error": None}
+
+
+def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """Probe the workspace's run role and stamp the outcome on the row.
+
+    The probe itself is `probe_run_role`. What this adds is the record the UI reads
+    between visits: the timestamp and the account on a success, both cleared on a
+    failure, so a stale success cannot outlive a broken trust policy.
+
+    Raises:
+        WorkspaceNotFound: No such workspace.
+        RunRoleMissing: The workspace carries no run role ARN.
+    """
+    resolved = settings or get_settings()
+    outcome = probe_run_role(workspace_id, settings=resolved)
+    account_id = outcome["account_id"] if outcome["connected"] else None
+    _record_run_role_check(workspace_id, account_id, settings=resolved)
+    return outcome
 
 
 def _run_role_error(error: Any) -> str:
