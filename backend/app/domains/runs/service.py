@@ -95,6 +95,10 @@ class RunNotFound(Exception):
     """No run with that id."""
 
 
+class PlanNotFound(Exception):
+    """The run exists but has not uploaded its plan JSON yet."""
+
+
 class ConfigVersionNotReady(Exception):
     """The config version exists but its tarball was never uploaded."""
 
@@ -909,6 +913,171 @@ def run_logs(
     }
 
 
+def _s3(settings: Settings) -> Any:
+    """An S3 client. Imported late so nothing connects at import."""
+    import boto3
+
+    return boto3.client(
+        "s3",
+        region_name=settings.AWS_REGION_NAME or None,
+        endpoint_url=settings.s3_endpoint_url,
+    )
+
+
+REDACTED = "(sensitive value)"
+"""What a value the plan marked sensitive is replaced with before it is returned."""
+
+NO_OP_KEPT_BELOW = 500
+"""Below this many resource changes every entry is returned, `no-op` ones included,
+so a small plan renders its unchanged resources the way Terraform's own output can.
+Above it the unchanged ones are dropped, because a plan of tens of thousands of
+resources would otherwise push a payload no viewer can use through the API."""
+
+_REPLACE_ACTIONS: Final = frozenset({("delete", "create"), ("create", "delete")})
+"""The two orderings Terraform writes a replacement as."""
+
+
+def _plan_action(actions: list[Any]) -> str:
+    """Flatten Terraform's action list into one action.
+
+    A replacement arrives as a two element list whose order says whether the
+    provider creates before destroying. Both orders are a `replace` here.
+    """
+    normalised = [str(action) for action in actions]
+    if tuple(normalised) in _REPLACE_ACTIONS:
+        return "replace"
+    if len(normalised) == 1 and normalised[0] in {"create", "update", "delete", "read", "no-op"}:
+        return normalised[0]
+    return "no-op"
+
+
+def _redact(value: Any, sensitive: Any) -> Any:
+    """Replace every part of `value` that `sensitive` marks, recursively.
+
+    `sensitive` mirrors the shape of `value`: `True` redacts the whole branch, a
+    dict marks keys of an object and a list marks elements of a list. Anything
+    else leaves the branch alone, so a shape the plan format does not produce
+    fails open to unredacted rather than to a crash.
+    """
+    if sensitive is True:
+        return REDACTED
+    if isinstance(sensitive, dict) and isinstance(value, dict):
+        return {key: _redact(item, sensitive.get(key)) for key, item in value.items()}
+    if isinstance(sensitive, list) and isinstance(value, list):
+        return [_redact(item, sensitive[index]) if index < len(sensitive) else item for index, item in enumerate(value)]
+    return value
+
+
+def _resource_change(raw: dict[str, Any]) -> dict[str, Any]:
+    """One `resource_changes` entry, flattened and redacted."""
+    change = raw.get("change") or {}
+    before_sensitive = change.get("before_sensitive")
+    after_sensitive = change.get("after_sensitive")
+    return {
+        "address": str(raw.get("address", "")),
+        "module_address": str(raw.get("module_address", "")),
+        "mode": "data" if raw.get("mode") == "data" else "managed",
+        "type": str(raw.get("type", "")),
+        "name": str(raw.get("name", "")),
+        "provider_name": str(raw.get("provider_name", "")),
+        "action": _plan_action(list(change.get("actions") or [])),
+        "action_reason": str(raw.get("action_reason", "")),
+        "before": _redact(change.get("before"), before_sensitive),
+        "after": _redact(change.get("after"), after_sensitive),
+        "after_unknown": change.get("after_unknown"),
+        "replace_paths": list(change.get("replace_paths") or []),
+        "before_sensitive": before_sensitive,
+        "after_sensitive": after_sensitive,
+    }
+
+
+def _output_change(name: str, raw: dict[str, Any]) -> dict[str, Any]:
+    """One `output_changes` entry, flattened and redacted.
+
+    An output's sensitivity is a single flag rather than a shape, so a sensitive
+    output is redacted whole on both sides.
+    """
+    sensitive = bool(raw.get("before_sensitive") or raw.get("after_sensitive"))
+    return {
+        "name": name,
+        "action": _plan_action(list(raw.get("actions") or [])),
+        "before": REDACTED if sensitive else raw.get("before"),
+        "after": REDACTED if sensitive else raw.get("after"),
+        "after_unknown": bool(raw.get("after_unknown", False)),
+        "sensitive": sensitive,
+    }
+
+
+def summarise_plan(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
+    """Project a `terraform show -json` document into the viewer's shape.
+
+    The counts follow Terraform's own summary line: a create adds, an update
+    changes, a delete destroys, and a replacement counts once on each of add and
+    destroy. A read or a no-op counts for nothing.
+    """
+    resource_changes = [_resource_change(raw) for raw in plan.get("resource_changes") or [] if isinstance(raw, dict)]
+
+    add = change = destroy = 0
+    for entry in resource_changes:
+        action = entry["action"]
+        if action == "create":
+            add += 1
+        elif action == "update":
+            change += 1
+        elif action == "delete":
+            destroy += 1
+        elif action == "replace":
+            add += 1
+            destroy += 1
+
+    if len(resource_changes) > NO_OP_KEPT_BELOW:
+        resource_changes = [entry for entry in resource_changes if entry["action"] != "no-op"]
+
+    raw_outputs = plan.get("output_changes") or {}
+    output_changes = [_output_change(str(name), raw) for name, raw in raw_outputs.items() if isinstance(raw, dict)]
+    changed_outputs = [entry for entry in output_changes if entry["action"] != "no-op"]
+
+    return {
+        "run_id": run_id,
+        "terraform_version": str(plan.get("terraform_version", "")),
+        "changes": {"add": add, "change": change, "destroy": destroy},
+        "resource_changes": resource_changes,
+        "output_changes": output_changes,
+        "has_changes": bool(add or change or destroy or changed_outputs),
+    }
+
+
+def run_plan(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """One run's plan, summarised and redacted for the viewer.
+
+    The raw document is parsed and thrown away: it is bounded only by
+    `MAX_PLAN_BYTES` and it carries sensitive values verbatim, so nothing of it
+    is returned beyond the projection `summarise_plan` builds.
+
+    Raises:
+        RunNotFound: No such run.
+        PlanNotFound: The run has not uploaded its plan JSON yet.
+    """
+    from botocore.exceptions import ClientError
+
+    resolved = settings or get_settings()
+    get_run(run_id, settings=resolved)
+
+    try:
+        response = _s3(resolved).get_object(Bucket=resolved.ARTIFACTS_BUCKET, Key=plan_json_key(run_id))
+    except ClientError as error:
+        code = str(error.response.get("Error", {}).get("Code", ""))
+        if code in {"NoSuchKey", "404", "NotFound"}:
+            raise PlanNotFound(run_id) from error
+        raise
+
+    body = response["Body"].read(MAX_PLAN_BYTES)
+    document = json.loads(body)
+    if not isinstance(document, dict):
+        raise PlanNotFound(run_id)
+    return summarise_plan(run_id, document)
+
+
 def _phase_for_status(status: str) -> Phase:
     """Which phase a run in `status` is executing."""
     return "apply" if status == "applying" else "plan"
@@ -1090,6 +1259,7 @@ __all__ = [
     "ArtifactTooLarge",
     "ConfigVersionNotReady",
     "PhaseMismatch",
+    "PlanNotFound",
     "RUN_ID_PREFIX",
     "RUN_TOKEN_TTL",
     "RunNotCancellable",
@@ -1118,8 +1288,10 @@ __all__ = [
     "render_run",
     "run_bundle",
     "run_logs",
+    "run_plan",
     "semaphore_holders",
     "start_run",
     "state_key",
+    "summarise_plan",
     "store_confirm_task_token",
 ]

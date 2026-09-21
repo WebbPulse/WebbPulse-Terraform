@@ -706,6 +706,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Plan
+         * @description A run's plan as structured data: the counts, the resource changes and the outputs.
+         *
+         *     The raw `terraform show -json` document is never returned. Every value the
+         *     plan marked sensitive is redacted before the response is built.
+         */
+        get: operations["run_plan_api_v1_runs__run_id__plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces": {
         parameters: {
             query?: never;
@@ -1192,6 +1215,99 @@ export interface components {
             status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
         };
         /**
+         * PlanOutputChange
+         * @description One root output's change in a plan.
+         *
+         *     A sensitive output carries the redaction string rather than its value, the
+         *     same way a sensitive resource attribute does.
+         */
+        PlanOutputChange: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "create" | "update" | "delete" | "replace" | "read" | "no-op";
+            /** After */
+            after?: unknown;
+            /**
+             * After Unknown
+             * @default false
+             */
+            after_unknown?: boolean;
+            /** Before */
+            before?: unknown;
+            /** Name */
+            name: string;
+            /**
+             * Sensitive
+             * @default false
+             */
+            sensitive?: boolean;
+        };
+        /**
+         * PlanResourceChange
+         * @description One resource's entry in a plan, as the viewer renders it.
+         *
+         *     `before` and `after` are the planned state on either side, with every value
+         *     the plan marked sensitive already replaced by a redaction string, so no
+         *     sealed variable or sensitive attribute reaches the browser.
+         */
+        PlanResourceChange: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "create" | "update" | "delete" | "replace" | "read" | "no-op";
+            /**
+             * Action Reason
+             * @default
+             */
+            action_reason?: string;
+            /** Address */
+            address: string;
+            /** After */
+            after?: {
+                [key: string]: unknown;
+            } | null;
+            /** After Sensitive */
+            after_sensitive?: {
+                [key: string]: unknown;
+            } | boolean | null;
+            /** After Unknown */
+            after_unknown?: {
+                [key: string]: unknown;
+            } | null;
+            /** Before */
+            before?: {
+                [key: string]: unknown;
+            } | null;
+            /** Before Sensitive */
+            before_sensitive?: {
+                [key: string]: unknown;
+            } | boolean | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "managed" | "data";
+            /**
+             * Module Address
+             * @default
+             */
+            module_address?: string;
+            /** Name */
+            name: string;
+            /**
+             * Provider Name
+             * @default
+             */
+            provider_name?: string;
+            /** Replace Paths */
+            replace_paths?: (string | number)[][];
+            /** Type */
+            type: string;
+        };
+        /**
          * Run
          * @description A stored run as the API renders it.
          *
@@ -1374,6 +1490,33 @@ export interface components {
         RunList: {
             /** Items */
             items: components["schemas"]["Run"][];
+        };
+        /**
+         * RunPlan
+         * @description A run's plan as structured data, derived from `terraform show -json`.
+         *
+         *     The raw plan document is never returned: it can reach hundreds of megabytes
+         *     and it carries sensitive values verbatim. This is the summarised, redacted
+         *     projection the run view renders.
+         */
+        RunPlan: {
+            changes: components["schemas"]["RunChanges"];
+            /**
+             * Has Changes
+             * @default false
+             */
+            has_changes?: boolean;
+            /** Output Changes */
+            output_changes?: components["schemas"]["PlanOutputChange"][];
+            /** Resource Changes */
+            resource_changes?: components["schemas"]["PlanResourceChange"][];
+            /** Run Id */
+            run_id: string;
+            /**
+             * Terraform Version
+             * @default
+             */
+            terraform_version?: string;
         };
         /**
          * RunRole
@@ -3108,6 +3251,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PhaseResultAccepted"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    run_plan_api_v1_runs__run_id__plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPlan"];
                 };
             };
             /** @description Request validation failed. */

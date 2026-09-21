@@ -33,6 +33,7 @@ from .schemas.run import (
     RunCreate,
     RunCreated,
     RunList,
+    RunPlan,
 )
 
 router = APIRouter()
@@ -175,6 +176,25 @@ def run_logs(
         return service.run_logs(run_id, "apply" if phase == "apply" else "plan", after)
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
+
+
+@router.get(
+    "/runs/{run_id}/plan",
+    response_model=RunPlan,
+    dependencies=[Depends(scopes(RUNS_READ))],
+)
+def run_plan(run_id: str = RunId) -> dict[str, Any]:
+    """A run's plan as structured data: the counts, the resource changes and the outputs.
+
+    The raw `terraform show -json` document is never returned. Every value the
+    plan marked sensitive is redacted before the response is built.
+    """
+    try:
+        return service.run_plan(run_id)
+    except service.RunNotFound as error:
+        raise _not_found("No such run.") from error
+    except service.PlanNotFound as error:
+        raise _not_found("That run has no plan yet.") from error
 
 
 @router.get(
