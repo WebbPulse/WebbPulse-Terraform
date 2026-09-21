@@ -54,6 +54,11 @@ TERMINAL_STATUSES: Final = frozenset({"applied", "planned_and_finished", "errore
 """A run in one of these is finished, so its token is dead and the next queued run
 on its workspace may start."""
 
+NON_TERMINAL_STATUSES: Final = ACTIVE_STATUSES
+"""The statuses a run may still be finished from, which is every status that is not
+terminal. `finish_run` guards on this so the first ending a run reaches is the one
+that stands and nothing arriving later can relabel it."""
+
 CONFIRMABLE_STATUSES: Final = frozenset({"awaiting_confirmation"})
 """Only a run holding a confirm task token can be confirmed."""
 
@@ -616,9 +621,14 @@ def discard_run(run_id: str, *, settings: Settings | None = None) -> dict[str, A
     token, so failing that token lets the state machine run its own terminal
     path and release the semaphore, which `StopExecution` would skip. That is why
     this sends `SendTaskFailure` rather than stopping the execution, and why this
-    path deliberately does not call `release_semaphore`: `ReleaseSemaphoreAfterFailure`
+    path deliberately does not call `release_semaphore`: `ReleaseSemaphoreAfterDiscard`
     drops the holder on its own, and a second delete here would be harmless but
     would hide the fact that the state machine is the one releasing it.
+
+    The error name is load bearing. `AwaitConfirmation` catches `RunDiscarded`
+    ahead of its `States.ALL` entry and routes it to a release that does not mark
+    the run, so the discarded status written here survives. Any other failure on
+    that wait, a confirmation nobody answered included, still reaches `MarkErrored`.
 
     Raises:
         RunNotFound: No such run.
@@ -652,6 +662,13 @@ def finish_run(
 
     The single exit for every ending, successful or not, so a token cannot outlive
     its run and a workspace cannot deadlock behind a run that errored.
+
+    A terminal status is final. The write is conditional on the run not already
+    being terminal, so whichever ending lands first is the one that sticks and a
+    later writer cannot relabel it. The losing writer gets the stored row back
+    rather than an exception, because it has already done what it was asked to do:
+    the run is finished. Revocation and queue promotion still run, both being
+    idempotent, so a lost race cannot leave a live token or a stalled queue.
     """
     resolved = settings or get_settings()
     updates: dict[str, Any] = {
@@ -666,7 +683,24 @@ def finish_run(
         updates["changes"] = changes
 
     run = get_run(run_id, settings=resolved)
-    updated = _update_run(run_id, updates, settings=resolved)
+    try:
+        updated = _update_run(
+            run_id,
+            updates,
+            settings=resolved,
+            expected_statuses=NON_TERMINAL_STATUSES,
+        )
+    except RunNotFound:
+        updated = get_run(run_id, settings=resolved)
+        _log.info(
+            "A run was already terminal, so its status stands.",
+            extra={
+                "event": "runs.finish.already_terminal",
+                "run_id": run_id,
+                "status": str(updated.get("status", "")),
+                "attempted": status,
+            },
+        )
     _revoke_run_token(run, settings=resolved)
     _promote_queue(str(run["workspace_id"]), settings=resolved)
     return updated
@@ -1266,6 +1300,7 @@ __all__ = [
     "CONSUMED_TOKEN_ERRORS",
     "DISCARDABLE_STATUSES",
     "ERROR_MAX_LENGTH",
+    "NON_TERMINAL_STATUSES",
     "ArtifactTooLarge",
     "ConfigVersionNotReady",
     "PhaseMismatch",
