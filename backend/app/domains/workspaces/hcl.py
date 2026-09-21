@@ -25,8 +25,11 @@ validator cannot hand it something unbounded to scan."""
 _OPENERS: Final = {"(": ")", "[": "]", "{": "}"}
 _CLOSERS: Final = {")": "(", "]": "[", "}": "{"}
 
-_HEREDOC_START: Final = re.compile(r"<<[-~]?([A-Za-z_][A-Za-z0-9_]*)")
-"""An HCL heredoc opener, with the optional indent markers HCL2 allows."""
+_HEREDOC_START: Final = re.compile(r"<<-?([^\W\d][\w-]*)\r?\n")
+"""An HCL heredoc opener with its optional indentation marker."""
+
+_VARIABLE_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+MAX_TEMPLATE_DEPTH: Final = 64
 
 
 class InvalidHcl(ValueError):
@@ -36,6 +39,12 @@ class InvalidHcl(ValueError):
     about the value itself, so it is safe to return from the API for a sensitive
     variable as well as a plain one.
     """
+
+
+def validate_name(key: str) -> None:
+    """Reject names that cannot be emitted as native HCL assignments."""
+    if not _VARIABLE_NAME.fullmatch(key):
+        raise InvalidHcl("An HCL variable name must contain only letters, digits, underscores or hyphens.")
 
 
 def validate(value: str) -> None:
@@ -58,6 +67,7 @@ def validate(value: str) -> None:
     stack: list[str] = []
     index = 0
     length = len(value)
+    has_expression = False
     while index < length:
         character = value[index]
 
@@ -71,6 +81,16 @@ def validate(value: str) -> None:
                 raise InvalidHcl("The HCL expression has an unterminated comment.")
             index = end + 2
             continue
+
+        if not character.isspace():
+            has_expression = True
+        if (
+            character == "="
+            and not stack
+            and (index == 0 or value[index - 1] not in "=!<>")
+            and not value.startswith("==", index)
+        ):
+            raise InvalidHcl("An HCL value must be one expression, not an assignment.")
 
         heredoc = _HEREDOC_START.match(value, index)
         if heredoc is not None:
@@ -91,22 +111,29 @@ def validate(value: str) -> None:
 
     if stack:
         raise InvalidHcl("The HCL expression has unbalanced brackets.")
+    if not has_expression:
+        raise InvalidHcl("An HCL expression cannot contain only comments.")
 
 
-def _skip_quoted(value: str, index: int) -> int:
+def _skip_quoted(value: str, index: int, depth: int = 0) -> int:
     """The index just past a quoted string that began before `index`.
 
     A `${` interpolation inside the string is stepped over as a nested scan, so a
     quote inside it cannot be read as the string's own closing quote.
     """
+    if depth >= MAX_TEMPLATE_DEPTH:
+        raise InvalidHcl("The HCL expression has too many nested templates.")
     length = len(value)
     while index < length:
         character = value[index]
         if character == "\\":
             index += 2
             continue
+        if value.startswith("$${", index) or value.startswith("%%{", index):
+            index += 3
+            continue
         if value.startswith("${", index) or value.startswith("%{", index):
-            index = _skip_interpolation(value, index + 2)
+            index = _skip_interpolation(value, index + 2, depth + 1)
             continue
         if character == '"':
             return index + 1
@@ -114,14 +141,28 @@ def _skip_quoted(value: str, index: int) -> int:
     raise InvalidHcl("The HCL expression has an unterminated string.")
 
 
-def _skip_interpolation(value: str, index: int) -> int:
+def _skip_interpolation(value: str, index: int, template_depth: int) -> int:
     """The index just past a `${...}` or `%{...}` block that began before `index`."""
     length = len(value)
     depth = 1
     while index < length:
         character = value[index]
+        if character == "#" or value.startswith("//", index):
+            newline = value.find("\n", index)
+            index = length if newline == -1 else newline + 1
+            continue
+        if value.startswith("/*", index):
+            end = value.find("*/", index + 2)
+            if end == -1:
+                raise InvalidHcl("The HCL expression has an unterminated comment.")
+            index = end + 2
+            continue
+        heredoc = _HEREDOC_START.match(value, index)
+        if heredoc is not None:
+            index = _skip_heredoc(value, heredoc.end(), heredoc.group(1))
+            continue
         if character == '"':
-            index = _skip_quoted(value, index + 1)
+            index = _skip_quoted(value, index + 1, template_depth)
             continue
         if character == "{":
             depth += 1
@@ -135,10 +176,7 @@ def _skip_interpolation(value: str, index: int) -> int:
 
 def _skip_heredoc(value: str, index: int, marker: str) -> int:
     """The index just past a heredoc body closed by `marker` on its own line."""
-    newline = value.find("\n", index)
-    if newline == -1:
-        raise InvalidHcl("The HCL expression has an unterminated heredoc.")
-    cursor = newline + 1
+    cursor = index
     length = len(value)
     while cursor <= length:
         end = value.find("\n", cursor)
@@ -151,4 +189,4 @@ def _skip_heredoc(value: str, index: int, marker: str) -> int:
     raise InvalidHcl("The HCL expression has an unterminated heredoc.")
 
 
-__all__ = ["MAX_HCL_LENGTH", "InvalidHcl", "validate"]
+__all__ = ["MAX_HCL_LENGTH", "InvalidHcl", "validate", "validate_name"]

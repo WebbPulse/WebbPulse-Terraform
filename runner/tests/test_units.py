@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -446,8 +448,8 @@ def test_hcl_tfvars_are_written_unquoted(tmp_path: Path) -> None:
     assert path is not None
     assert path.name == workspace.HCL_TFVARS_FILENAME
     body = path.read_text()
-    assert 'subnets = ["a", "b"]' in body
-    assert "count = 2" in body
+    assert 'subnets = (\n["a", "b"]\n)' in body
+    assert "count = (\n2\n)" in body
     assert '"["a", "b"]"' not in body
     assert path.stat().st_mode & 0o777 == 0o600
 
@@ -458,7 +460,7 @@ def test_hcl_tfvars_keep_a_multi_line_expression_on_one_assignment(tmp_path: Pat
     path = workspace.write_hcl_tfvars(tmp_path, {"a": expression, "settings": expression})
     assert path is not None
     body = path.read_text()
-    assert f"settings = {expression}" in body
+    assert f"settings = (\n{expression}\n)" in body
     assert body.endswith("\n")
 
 
@@ -497,7 +499,34 @@ def test_prepare_writes_both_variable_files(tmp_path: Path, run_role_arn: str, c
     target = workspace.prepare(root, bundle, archive)
 
     assert (target / workspace.TFVARS_FILENAME).exists()
-    assert 'subnets = ["a", "b"]' in (target / workspace.HCL_TFVARS_FILENAME).read_text()
+    assert 'subnets = (\n["a", "b"]\n)' in (target / workspace.HCL_TFVARS_FILENAME).read_text()
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        '# leading comment\n["a", "b"]',
+        '["a", "b"] // trailing comment',
+        'true ?\n["a"] :\n["b"]',
+        "<<-END-TEXT\n  body\n  END-TEXT",
+        '"$${unfinished"',
+        '"%%{unfinished"',
+    ],
+)
+def test_hcl_file_parses_with_terraform(tmp_path: Path, expression: str) -> None:
+    """The real parser accepts grouped values beside a second assignment."""
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        pytest.skip("Terraform is not installed")
+    path = workspace.write_hcl_tfvars(tmp_path, {"example": expression, "neighbor": "true"})
+    assert path is not None
+    result = subprocess.run(
+        [terraform, "fmt", "-write=false", "-list=false", str(path)],
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0
 
 
 def test_prepare_writes_no_hcl_file_for_a_bundle_without_the_field(

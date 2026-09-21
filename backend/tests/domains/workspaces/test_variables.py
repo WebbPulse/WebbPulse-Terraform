@@ -92,6 +92,14 @@ def test_put_rejects_a_key_starting_with_a_digit(auth_client, workspace):
     assert response.status_code == 422
 
 
+def test_hcl_rejects_dotted_names_without_replacing_existing_values(auth_client, workspace):
+    """An HCL write cannot store a name the runner cannot render."""
+    url = variables_url(workspace["workspace_id"], "dotted.name")
+    assert auth_client.put(url, json={"value": "original"}).status_code == 200
+    assert auth_client.put(url, json={"value": "true", "hcl": True}).status_code == 422
+    assert auth_client.get(url).json()["value"] == "original"
+
+
 def test_sensitive_value_is_not_returned_on_put(auth_client, workspace):
     """The response to setting a sensitive value carries no value."""
     response = auth_client.put(

@@ -434,7 +434,7 @@ def test_an_hcl_variable_reaches_the_engine_as_an_expression(
     directory.mkdir()
     path = workspace.write_hcl_tfvars(directory, written.hcl_variables)
     assert path is not None
-    assert path.read_text() == 'subnets = ["a", "b"]\n'
+    assert path.read_text() == 'subnets = (\n["a", "b"]\n)\n'
 
 
 def test_a_sensitive_hcl_variable_never_reaches_any_log(

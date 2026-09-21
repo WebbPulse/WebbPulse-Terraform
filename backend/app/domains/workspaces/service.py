@@ -400,6 +400,7 @@ def put_variable(
     if is_hcl and category != "terraform":
         raise HclNotAllowed(key)
     if is_hcl:
+        hcl.validate_name(key)
         hcl.validate(value)
 
     item: dict[str, Any] = {

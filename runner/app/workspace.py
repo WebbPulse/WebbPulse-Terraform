@@ -16,8 +16,7 @@ HCL_TFVARS_FILENAME = "zz_webbpulse.auto.tfvars"
 
 _VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 """What an input variable may be named, matched before a name is written into HCL
-unquoted. The API's own key pattern is narrower still, so this is the second of
-two checks rather than the only one."""
+unquoted. HCL writes use the same restriction in the API."""
 
 
 class ConfigError(RuntimeError):
@@ -90,9 +89,8 @@ def write_hcl_tfvars(directory: Path, variables: dict[str, str]) -> Path | None:
     variable a value of the wrong type, which is the corruption this file exists
     to avoid.
 
-    Each assignment is written on its own line and the expression is indented to
-    match, so a multi line expression such as a map or a heredoc stays a single
-    assignment rather than running into the next one.
+    Each expression is grouped on separate lines so leading and trailing comments
+    and multiline expressions remain inside their own assignment.
 
     Terraform loads `.auto.tfvars` and `.auto.tfvars.json` files together in
     lexical order, and a key is never in both files, so the two never contend.
@@ -108,7 +106,7 @@ def write_hcl_tfvars(directory: Path, variables: dict[str, str]) -> Path | None:
     for key in sorted(variables):
         if not _VARIABLE_NAME.fullmatch(key):
             raise ConfigError(f"variable name is not a valid HCL identifier: {key}")
-        lines.append(f"{key} = {variables[key].strip()}")
+        lines.append(f"{key} = (\n{variables[key]}\n)")
     path = directory / HCL_TFVARS_FILENAME
     path.write_text("\n".join(lines) + "\n")
     path.chmod(0o600)

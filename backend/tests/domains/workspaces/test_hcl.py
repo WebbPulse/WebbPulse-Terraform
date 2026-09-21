@@ -35,6 +35,13 @@ from app.domains.workspaces import hcl
         '/* a block comment */ ["a"]',
         '"%{ if true }yes%{ endif }"',
         "merge({ a = 1 }, { b = 2 })",
+        '"$${unfinished"',
+        '"%%{unfinished"',
+        '"${true /* } */}"',
+        '"${true # }\n}"',
+        "<<END-TEXT\ntext\nEND-TEXT",
+        "true == false",
+        "2 >= 1",
     ],
 )
 def test_valid_expressions_are_accepted(expression: str) -> None:
@@ -56,6 +63,9 @@ def test_valid_expressions_are_accepted(expression: str) -> None:
         '["a", "b"}',
         "",
         "   ",
+        "true\nother = false",
+        "# only a comment",
+        "/* only a comment */",
     ],
 )
 def test_impossible_expressions_are_refused(expression: str) -> None:
@@ -75,3 +85,10 @@ def test_the_message_never_carries_the_expression() -> None:
     with pytest.raises(hcl.InvalidHcl) as raised:
         hcl.validate('["super-secret-value"')
     assert "super-secret-value" not in str(raised.value)
+
+
+def test_deep_templates_raise_a_validation_error() -> None:
+    """Nested templates must not exhaust the API worker's call stack."""
+    expression = '"${' * 600 + "true" + '}"' * 600
+    with pytest.raises(hcl.InvalidHcl):
+        hcl.validate(expression)
