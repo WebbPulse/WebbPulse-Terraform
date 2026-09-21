@@ -16,6 +16,11 @@ locals {
           batch_size                      = 1
           maximum_batching_window_seconds = 0
         }
+        run_task_failures = {
+          queue_arn                       = module.run_task_failures.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
       }
     }
   }
@@ -180,7 +185,7 @@ locals {
         Resource = [module.run_state_machine.arn, "${replace(module.run_state_machine.arn, ":stateMachine:", ":execution:")}:*"]
       },
       {
-        Sid      = "ResumeAConfirmedRun"
+        Sid      = "ResolveARunsTaskTokens"
         Effect   = "Allow"
         Action   = ["states:SendTaskSuccess", "states:SendTaskFailure"]
         Resource = ["*"]

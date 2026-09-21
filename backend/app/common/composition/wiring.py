@@ -100,12 +100,14 @@ def _runs_routers() -> "list[APIRouter]":
 
 
 def _runs_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
-    """The confirmations consumer's route, at the adapter's pass-through path.
+    """The consumers' one route, at the adapter's pass-through path.
 
     Unprefixed because a prefix would leave the event source mapping posting to a
-    path the application does not serve, which every confirmation would then fail on.
+    path the application does not serve, which every message would then fail on. One
+    router for every consumer, because the adapter posts every queue invocation to
+    the same pass-through path and `dispatch` routes each record on its `kind`.
     """
-    from app.domains.runs.consumers.confirmations import build_router
+    from app.domains.runs.consumers.dispatch import build_router
 
     return [build_router(settings)]
 

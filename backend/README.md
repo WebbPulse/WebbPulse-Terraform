@@ -15,7 +15,7 @@ app/
   domains/
     workspaces/    workspaces, variables, config versions
     runs/          runs, the runner's bundle and phase results
-      consumers/   the confirmations queue route
+      consumers/   the queue consumers and the one route they share
 e2e/               the deployed-stage suite, extending webbpulse.e2e
 tests/
   common/          the auth chain and every route's scope guard
@@ -192,6 +192,15 @@ Cancelling a run releases the concurrency semaphore itself, because
 prunes holders whose runs are finished or gone, so a stuck semaphore is fixed by
 starting any run.
 
+A phase task that never starts fails its run promptly rather than waiting out the
+Plan or Apply state's six hundred second heartbeat. An EventBridge rule on the
+runner cluster's ECS `Task State Change` events with `stopCode` `TaskFailedToStart`
+feeds `webbpulse-terraform-<env>-run-task-failures`, and
+`app/domains/runs/consumers/task_failures.py` reads the run id and task token back
+out of the task's own container environment overrides and sends `SendTaskFailure`,
+so the execution takes its existing `MarkErrored` and `ReleaseSemaphoreAfterFailure`
+path within seconds.
+
 ## The confirmations queue
 
 A Step Functions DynamoDB integration cannot carry a task token, so the state
@@ -199,9 +208,11 @@ machine sends `{"kind": "run_confirmation_requested", "run_id", "task_token"}`
 to `webbpulse-terraform-<env>-run-confirmations` instead. The runs function
 consumes it through an event source mapping with a batch size of one and
 `ReportBatchItemFailures`, which makes the Lambda Web Adapter post the batch to
-`AWS_LWA_PASS_THROUGH_PATH`. `app/domains/runs/consumers/confirmations.py` mounts
-that route with `webbpulse.events` and stores the token, conditionally on the run
-still awaiting a confirmation.
+`AWS_LWA_PASS_THROUGH_PATH`. The adapter posts every queue invocation to that one
+path, so `app/domains/runs/consumers/dispatch.py` mounts the single route with
+`webbpulse.events` and hands each record to the consumer its `kind` names;
+`confirmations.py` stores the token, conditionally on the run still awaiting a
+confirmation.
 
 The route mounts at the root rather than under `/api/v1`, and the HTTP API never
 lists it, so the only way to reach it is the adapter's pass-through. A record

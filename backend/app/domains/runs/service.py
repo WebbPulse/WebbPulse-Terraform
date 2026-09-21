@@ -73,6 +73,18 @@ PLAN_CONTENT_TYPE: Final = "application/octet-stream"
 PLAN_JSON_CONTENT_TYPE: Final = "application/json"
 MAX_PLAN_BYTES: Final = 500_000_000
 
+CONSUMED_TOKEN_ERRORS: Final = frozenset({"TaskTimedOut", "TaskDoesNotExist"})
+"""Step Functions' two answers for a token that is no longer live.
+
+Both mean the state has already left the wait, by the runner reporting first or by
+the heartbeat expiring, so a failure arriving afterwards has nothing to do."""
+
+ERROR_MAX_LENGTH: Final = 256
+CAUSE_MAX_LENGTH: Final = 32768
+"""What `SendTaskFailure` accepts on `error` and on `cause`. A stopped reason is far
+shorter than either, but truncating here means an unusually long one fails the run
+rather than failing the call that was meant to fail the run."""
+
 LOG_CONTENT_TYPE: Final = "text/plain"
 MAX_LOG_BYTES: Final = 50_000_000
 """A phase transcript is text, so fifty megabytes is far past any real run and
@@ -768,6 +780,80 @@ def store_confirm_task_token(
     )
 
 
+def fail_phase_task(
+    run_id: str,
+    task_token: str,
+    *,
+    error: str,
+    cause: str,
+    settings: Settings | None = None,
+) -> bool:
+    """Fail the phase task token of a run whose Fargate task never started.
+
+    The counterpart of `discard_run` for the phase states rather than the
+    confirmation wait. `Plan` and `Apply` are `ecs:runTask.waitForTaskToken`, so a
+    task that dies before the runner can report leaves the state waiting on a token
+    nobody will ever send, until its six hundred second heartbeat expires. Sending
+    the failure here lets the execution take its own `MarkErrored` and
+    `ReleaseSemaphoreAfterFailure` path at once, which is why this does not touch
+    the run row or the semaphore itself.
+
+    Idempotent by design, because EventBridge delivers at least once and the runner
+    may have reported a result of its own first. A run that already reached a
+    terminal status is left alone, and a token Step Functions has already consumed
+    answers `TaskTimedOut` or `TaskDoesNotExist`, both of which are treated as the
+    work already being done rather than as a failure.
+
+    Args:
+        run_id: The run whose phase task failed to start.
+        task_token: The phase state's task token, as the task's own environment
+            override carried it.
+        error: The `SendTaskFailure` error name.
+        cause: The `SendTaskFailure` cause, which is the ECS stopped reason.
+        settings: Settings override, for the suite.
+
+    Returns:
+        Whether a failure was actually sent.
+
+    Raises:
+        RunNotFound: No such run, so the caller can retry a delivery that raced the
+            run row rather than dropping it.
+    """
+    resolved = settings or get_settings()
+    run = get_run(run_id, settings=resolved)
+    status = str(run.get("status", ""))
+    if status in TERMINAL_STATUSES:
+        _log.info(
+            "A phase task failed to start for a run that already finished; leaving it alone.",
+            extra={"event": "runs.phase_task.already_terminal", "run_id": run_id, "status": status},
+        )
+        return False
+
+    from botocore.exceptions import ClientError
+
+    try:
+        _stepfunctions(resolved).send_task_failure(
+            taskToken=task_token,
+            error=error[:ERROR_MAX_LENGTH],
+            cause=cause[:CAUSE_MAX_LENGTH],
+        )
+    except ClientError as client_error:
+        code = str(client_error.response.get("Error", {}).get("Code", ""))
+        if code in CONSUMED_TOKEN_ERRORS:
+            _log.info(
+                "A phase task's token was already consumed; the execution has moved on.",
+                extra={"event": "runs.phase_task.token_consumed", "run_id": run_id, "code": code},
+            )
+            return False
+        raise
+
+    _log.info(
+        "Failed a phase task token whose Fargate task never started.",
+        extra={"event": "runs.phase_task.failed", "run_id": run_id, "error": error},
+    )
+    return True
+
+
 def run_logs(
     run_id: str,
     phase: Phase,
@@ -968,8 +1054,11 @@ def render_run(item: dict[str, Any]) -> dict[str, Any]:
 __all__ = [
     "ACTIVE_STATUSES",
     "ARTIFACT_URL_TTL",
+    "CAUSE_MAX_LENGTH",
     "CONFIRMABLE_STATUSES",
+    "CONSUMED_TOKEN_ERRORS",
     "DISCARDABLE_STATUSES",
+    "ERROR_MAX_LENGTH",
     "ConfigVersionNotReady",
     "PhaseMismatch",
     "RUN_ID_PREFIX",
@@ -985,6 +1074,7 @@ __all__ = [
     "confirm_run",
     "create_run",
     "discard_run",
+    "fail_phase_task",
     "finish_run",
     "get_run",
     "list_runs",

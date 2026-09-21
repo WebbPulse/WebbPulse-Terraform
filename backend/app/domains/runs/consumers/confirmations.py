@@ -10,6 +10,9 @@ Raising is how a record is retried. The event source mapping runs with a batch
 size of one and `ReportBatchItemFailures`, so a raise returns that one message to
 the queue and, once its receives are exhausted, parks it on the dead letter queue
 rather than dropping the token silently.
+
+The route itself lives in `dispatch`, which owns the adapter's single pass-through
+path and hands this module the records whose `kind` names it.
 """
 
 from __future__ import annotations
@@ -17,9 +20,6 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any, Mapping
-
-from fastapi import APIRouter
-from webbpulse.events import register_stream_consumer
 
 from ....common.composition.settings import Settings
 from .. import service
@@ -103,31 +103,10 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
     )
 
 
-def build_router(settings: Settings | None = None) -> APIRouter:
-    """The consumer's router, mounted at the adapter's pass-through path.
-
-    Unprefixed: the Lambda Web Adapter posts a queue invocation to
-    `AWS_LWA_PASS_THROUGH_PATH`, which is outside `/api/v1`, and the HTTP API
-    never routes it. `settings` is closed over rather than taken as a FastAPI
-    dependency, because the route is registered by the shared package and its
-    signature is not this domain's to extend; passing one in is what lets a test
-    drive the consumer against moto's tables.
-    """
-    router = APIRouter()
-
-    def consume(record: Mapping[str, Any]) -> None:
-        """Handle one record against this domain's settings."""
-        handle_record(record, settings=settings)
-
-    register_stream_consumer(router, consume, log_event="runs.confirmations.batch")
-    return router
-
-
 __all__ = [
     "CONFIRMATION_KIND",
     "STORABLE_STATUSES",
     "MalformedConfirmation",
-    "build_router",
     "handle_record",
     "parse_body",
 ]
