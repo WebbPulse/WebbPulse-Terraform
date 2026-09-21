@@ -187,6 +187,11 @@ A run's phase comes from its stored status, never from the caller, because the
 plan phase gets a read-only IAM session policy and the apply phase an
 unrestricted one.
 
+Cancelling a run releases the concurrency semaphore itself, because
+`StopExecution` skips the state machine's own release states, and creating a run
+prunes holders whose runs are finished or gone, so a stuck semaphore is fixed by
+starting any run.
+
 ## The confirmations queue
 
 A Step Functions DynamoDB integration cannot carry a task token, so the state
