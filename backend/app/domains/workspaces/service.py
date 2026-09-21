@@ -10,7 +10,7 @@ query is what makes the ordinary case a clean 409.
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Any, Callable, Final
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, new_ulid, now_iso
@@ -22,9 +22,40 @@ from ...common.db.tables import (
     CONFIG_VERSIONS_BY_WORKSPACE_INDEX,
     WORKSPACES_BY_NAME_INDEX,
 )
+from ...common.workspaces import reads
+from ...common.workspaces.reads import (
+    CONFIG_VERSION_ID_PREFIX,
+    WORKSPACE_ID_PREFIX,
+    ConfigVersionNotFound,
+    RunRoleMissing,
+    VariableNotFound,
+    WorkspaceNotFound,
+    config_key,
+    config_object_exists,
+    get_variable,
+    get_workspace,
+    list_variables,
+    resolved_variables,
+)
 
-WORKSPACE_ID_PREFIX: Final = "ws-"
-CONFIG_VERSION_ID_PREFIX: Final = "cv-"
+__all__ = [
+    "CONFIG_VERSION_ID_PREFIX",
+    "WORKSPACE_ID_PREFIX",
+    "ConfigVersionNotFound",
+    "RunRoleMissing",
+    "VariableNotFound",
+    "WorkspaceNameTaken",
+    "WorkspaceNotFound",
+    "config_key",
+    "config_object_exists",
+    "get_variable",
+    "get_workspace",
+    "list_variables",
+    "resolved_variables",
+]
+"""The reads this domain shares with the runs function are re-exported from
+`app.common.workspaces.reads`, so this module's public surface and every error
+code raised against it are unchanged."""
 
 CONFIG_CONTENT_TYPE: Final = "application/gzip"
 """The one content type a config tarball may declare, signed into the PUT."""
@@ -47,24 +78,8 @@ RUN_ROLE_ACCESS_DENIED_MESSAGE: Final = "The role does not trust the runner or t
 """What an AccessDenied means in practice, since STS will not say which half failed."""
 
 
-class WorkspaceNotFound(Exception):
-    """No workspace with this id."""
-
-
 class WorkspaceNameTaken(Exception):
     """Another workspace already holds this name."""
-
-
-class ConfigVersionNotFound(Exception):
-    """No config version with this id, or it belongs to another workspace."""
-
-
-class VariableNotFound(Exception):
-    """No variable with this key on this workspace."""
-
-
-class RunRoleMissing(Exception):
-    """The workspace carries no run role, so there is nothing to assume."""
 
 
 def run_role_name(workspace_id: str, *, settings: Settings | None = None) -> str:
@@ -199,15 +214,6 @@ def _record_run_role_check(
     )
 
 
-def config_key(workspace_id: str, config_version_id: str) -> str:
-    """The artifacts bucket key one config tarball occupies.
-
-    The contract fixes this layout, and the runner's presigned GET is minted from
-    the same function, so the two cannot drift.
-    """
-    return f"configs/{workspace_id}/{config_version_id}.tar.gz"
-
-
 def create_workspace(payload: dict[str, Any], *, settings: Settings | None = None) -> dict[str, Any]:
     """Store a new workspace, refusing a name another workspace holds."""
     resolved = settings or get_settings()
@@ -242,15 +248,6 @@ def find_by_name(name: str, *, settings: Settings | None = None) -> dict[str, An
         limit=1,
     )
     return page.items[0] if page.items else None
-
-
-def get_workspace(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """One workspace by id, or `WorkspaceNotFound`."""
-    resolved = settings or get_settings()
-    item = repositories.workspaces(resolved).get({"workspace_id": workspace_id})
-    if item is None:
-        raise WorkspaceNotFound(workspace_id)
-    return item
 
 
 def list_workspaces(*, settings: Settings | None = None) -> list[dict[str, Any]]:
@@ -364,56 +361,11 @@ def put_variable(
     return item
 
 
-def get_variable(
-    workspace_id: str,
-    key: str,
-    *,
-    settings: Settings | None = None,
-) -> dict[str, Any]:
-    """One stored variable row, or `VariableNotFound`."""
-    resolved = settings or get_settings()
-    item = repositories.variables(resolved).get({"workspace_id": workspace_id, "key": key})
-    if item is None:
-        raise VariableNotFound(key)
-    return item
-
-
-def list_variables(workspace_id: str, *, settings: Settings | None = None) -> list[dict[str, Any]]:
-    """Every stored variable row on one workspace, by key."""
-    resolved = settings or get_settings()
-    get_workspace(workspace_id, settings=resolved)
-    return list(repositories.variables(resolved).iter_query(Key("workspace_id").eq(workspace_id)))
-
-
 def delete_variable(workspace_id: str, key: str, *, settings: Settings | None = None) -> None:
     """Delete one variable, or `VariableNotFound`."""
     resolved = settings or get_settings()
     get_variable(workspace_id, key, settings=resolved)
     repositories.variables(resolved).delete({"workspace_id": workspace_id, "key": key})
-
-
-def resolved_variables(
-    workspace_id: str,
-    *,
-    settings: Settings | None = None,
-) -> dict[str, dict[str, str]]:
-    """Every variable on one workspace with its plaintext value, split by category.
-
-    The one place a sealed value is opened, and it feeds the run bundle alone. The
-    return shape is `{"terraform": {...}, "env": {...}}`, which is what the runner
-    needs to build its command line and its process environment.
-    """
-    resolved = settings or get_settings()
-    out: dict[str, dict[str, str]] = {"terraform": {}, "env": {}}
-    for item in list_variables(workspace_id, settings=resolved):
-        key = str(item["key"])
-        category = str(item.get("category", "terraform"))
-        if bool(item.get("sensitive", False)):
-            value = variable_cipher.open_sealed(item, workspace_id=workspace_id, key=key, settings=resolved)
-        else:
-            value = str(item.get("value", ""))
-        out.setdefault(category, {})[key] = value
-    return out
 
 
 def render_variable(item: dict[str, Any]) -> dict[str, Any]:
@@ -478,35 +430,18 @@ def create_config_version(
     return item, upload
 
 
-def _s3(settings: Settings) -> Any:
-    """An S3 client. Imported late so nothing connects at import."""
-    import boto3
+def _uploaded_writer(settings: Settings) -> Callable[[str], None]:
+    """The writer that persists the `uploaded` flip, which only this domain holds.
 
-    return boto3.client(
-        "s3",
-        region_name=settings.AWS_REGION_NAME or None,
-        endpoint_url=settings.s3_endpoint_url,
-    )
-
-
-def config_object_exists(key: str, *, settings: Settings) -> bool:
-    """Whether the config tarball is in the artifacts bucket.
-
-    A HEAD rather than a GET, so deciding that a multi-megabyte tarball arrived
-    costs one metadata call. Any error other than an absent object propagates:
-    a denied HEAD is a broken deployment, and swallowing it would report every
-    uploaded config version as still pending.
+    Handed to the shared read so the read itself stays free of writes: the runs
+    function reaches the same read under a role with no write grant on this table.
     """
-    from botocore.exceptions import ClientError
 
-    try:
-        _s3(settings).head_object(Bucket=settings.ARTIFACTS_BUCKET, Key=key)
-    except ClientError as error:
-        status = int(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
-        if status == 404 or error.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
-            return False
-        raise
-    return True
+    def persist(config_version_id: str) -> None:
+        """Move one config version to `uploaded`."""
+        mark_config_version_uploaded(config_version_id, settings=settings)
+
+    return persist
 
 
 def reconcile_config_version(
@@ -517,30 +452,20 @@ def reconcile_config_version(
 ) -> dict[str, Any]:
     """Move a `pending` row to `uploaded` once its object is in the bucket.
 
-    S3 tells the control plane nothing when a presigned PUT completes, so the row
-    a client uploaded against stays `pending` until something looks. Every read
-    looks, which is what makes the status a caller sees reflect the bucket rather
-    than the moment the URL was minted.
-
-    A row already `uploaded` is returned untouched, so the HEAD is spent only on
-    rows that could still change.
+    The bucket check lives in `app.common.workspaces.reads`, which both functions
+    reach. This wrapper is what adds the write: with `persist` true it hands the
+    shared read this domain's writer, so the flip is stored as well as returned.
 
     With `persist` false the bucket is still consulted and the returned row still
     reads `uploaded`, but nothing is written. That is for the runs function, whose
-    role holds a read only grant on this table by design; the workspaces domain
-    owns the write and persists the flip on its own reads.
+    role holds a read only grant on this table by design.
     """
-    if str(item.get("status", "")) != "pending":
-        return item
-
     resolved = settings or get_settings()
-    key = str(item.get("key", ""))
-    if not key or not config_object_exists(key, settings=resolved):
-        return item
-
-    if persist:
-        mark_config_version_uploaded(str(item["config_version_id"]), settings=resolved)
-    return dict(item) | {"status": "uploaded"}
+    return reads.reconcile_config_version(
+        item,
+        persist=_uploaded_writer(resolved) if persist else None,
+        settings=resolved,
+    )
 
 
 def get_config_version(
@@ -560,10 +485,12 @@ def get_config_version(
     bucket's truth without the write.
     """
     resolved = settings or get_settings()
-    item = repositories.config_versions(resolved).get({"config_version_id": config_version_id})
-    if item is None or str(item.get("workspace_id")) != workspace_id:
-        raise ConfigVersionNotFound(config_version_id)
-    return reconcile_config_version(item, persist=persist, settings=resolved)
+    return reads.get_config_version(
+        workspace_id,
+        config_version_id,
+        persist=_uploaded_writer(resolved) if persist else None,
+        settings=resolved,
+    )
 
 
 def list_config_versions(
