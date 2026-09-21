@@ -151,6 +151,32 @@ export type RunLogLine = Schemas['LogEvent'];
  */
 export type RunLogPage = Schemas['LogPage'];
 
+/**
+ * A run's plan, summarised and redacted for the viewer.
+ *
+ * The raw `terraform show -json` document never crosses the wire: the backend
+ * projects it into this shape and replaces every value the plan marked
+ * sensitive, so no sealed variable reaches the browser.
+ */
+export type RunPlan = Schemas['RunPlan'];
+
+/** One resource's entry in a plan. */
+export type PlanResourceChange = Schemas['PlanResourceChange'];
+
+/** One root output's change in a plan. */
+export type PlanOutputChange = Schemas['PlanOutputChange'];
+
+/**
+ * What one resource or output is doing in the plan.
+ *
+ * Terraform writes a replacement as a two element action list whose order is a
+ * provider detail. The backend collapses both orders to `replace`.
+ */
+export type PlanAction = Schemas['PlanResourceChange']['action'];
+
+/** Whether a change is to a managed resource or to a data source read. */
+export type PlanMode = Schemas['PlanResourceChange']['mode'];
+
 /** The error envelope every failing route renders. */
 export type ErrorResponse = Schemas['ErrorResponse'];
 

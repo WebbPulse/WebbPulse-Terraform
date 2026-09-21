@@ -89,7 +89,8 @@ function ResourceChangeRow({
           {change.type}
           <span className="sr-only">{`, ${actionLabel(change.action)}`}</span>
         </span>
-        {change.action_reason === '' ? null : (
+        {change.action_reason === undefined ||
+        change.action_reason === '' ? null : (
           <span
             data-testid="action-reason"
             className="rounded border border-line-strong px-1.5 py-0.5 text-[10px] text-text-muted"

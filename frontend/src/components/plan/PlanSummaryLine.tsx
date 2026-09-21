@@ -10,8 +10,9 @@ export interface PlanSummaryLineProps {
 
 /** How many resources the plan replaces, which the counts fold into change. */
 function replaceCount(plan: PlanSummaryLineProps['plan']): number {
-  return plan.resource_changes.filter((change) => change.action === 'replace')
-    .length;
+  return (plan.resource_changes ?? []).filter(
+    (change) => change.action === 'replace'
+  ).length;
 }
 
 /**
@@ -41,14 +42,14 @@ export function PlanSummaryLine({
       data-testid="plan-summary-line"
       className={`flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm tabular-nums ${className}`}
     >
-      <Count value={plan.changes.add} word="to add" className="text-add" />
+      <Count value={plan.changes.add ?? 0} word="to add" className="text-add" />
       <Count
-        value={plan.changes.change}
+        value={plan.changes.change ?? 0}
         word="to change"
         className="text-change"
       />
       <Count
-        value={plan.changes.destroy}
+        value={plan.changes.destroy ?? 0}
         word="to destroy"
         className="text-destroy"
       />

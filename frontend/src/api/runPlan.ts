@@ -1,77 +1,99 @@
-/** The structured plan a run produced, as the run page renders it. */
+/**
+ * A run's plan as structured data, for the plan result view.
+ *
+ * Every shape here is an alias into the generated contract, so a backend change
+ * to the plan projection lands as a type error rather than a runtime surprise.
+ * The backend summarises and redacts server side: the raw `terraform show -json`
+ * document never reaches the browser, and every value the plan marked sensitive
+ * arrives already replaced by {@link SENSITIVE_VALUE}.
+ */
 
-import { API_BASE_URL, api } from './client';
+import type { RequestOptions } from '@webbpulse/api-client';
 
-/** What a plan does to one resource. */
-export type PlanAction =
-  'create' | 'update' | 'delete' | 'replace' | 'read' | 'no-op';
+import { api } from './client';
+import type {
+  PlanAction,
+  PlanMode,
+  PlanOutputChange,
+  PlanResourceChange,
+  RunChanges,
+  RunPlan,
+} from './types';
 
-/** One resource the plan touches, with the attributes before and after. */
-export interface PlanResourceChange {
-  address: string;
-  module_address: string;
-  mode: 'managed' | 'data';
-  type: string;
-  name: string;
-  provider_name: string;
-  action: PlanAction;
-  action_reason: string;
-  before: object | null;
-  after: object | null;
-  after_unknown: object | null;
-  replace_paths: (string | number)[][];
-  before_sensitive: unknown;
-  after_sensitive: unknown;
-}
+export type {
+  PlanAction,
+  PlanMode,
+  PlanOutputChange,
+  PlanResourceChange,
+  RunPlan,
+};
 
-/** One output the plan changes. */
-export interface PlanOutputChange {
-  name: string;
-  action: PlanAction;
-  before: unknown;
-  after: unknown;
-  after_unknown: boolean;
-  sensitive: boolean;
-}
+/** What a plan found: resources to add, change and destroy. */
+export type PlanChanges = RunChanges;
 
-/** A run's plan, parsed from the engine's JSON plan. */
-export interface RunPlan {
-  run_id: string;
-  terraform_version: string;
-  changes: { add: number; change: number; destroy: number };
-  resource_changes: PlanResourceChange[];
-  output_changes: PlanOutputChange[];
-  has_changes: boolean;
-}
+/** What the backend substitutes for a value the plan marked sensitive. */
+export const SENSITIVE_VALUE = '(sensitive value)';
 
 /**
- * Reads the structured plan a run produced.
+ * Reads one run's plan.
  *
- * Goes through the shared {@link api} instance so the access token, the
- * refresh on a 401 and the error envelope are the ones every other read uses,
- * and rejects on a non-2xx the same way, which is what the run page's error
- * notice renders.
+ * Rejects with the client's `ApiError`. A 404 covers both a run that does not
+ * exist and a run whose plan has not been uploaded yet, so a caller polling a
+ * run that is still planning should treat it as not ready rather than as a
+ * failure.
  */
 export async function fetchRunPlan(
   runId: string,
-  options: { signal?: AbortSignal } = {}
+  options: RequestOptions = {}
 ): Promise<RunPlan> {
-  const response = await fetch(
-    `${API_BASE_URL}/runs/${encodeURIComponent(runId)}/plan`,
-    {
-      credentials: 'include',
-      headers: authHeaders(),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    }
-  );
-  if (!response.ok) {
-    throw new Error(`The plan could not be read (${String(response.status)}).`);
-  }
-  return (await response.json()) as RunPlan;
+  return api.getRunPlan(runId, options);
 }
 
-/** The bearer header the shared auth client holds, or none while signed out. */
-function authHeaders(): Record<string, string> {
-  const token = api.getAuthClient().getAccessToken();
-  return token === null ? {} : { Authorization: `Bearer ${token}` };
+/** Whether the plan changes anything at all, which is what an empty state reads. */
+export function planHasChanges(plan: RunPlan): boolean {
+  return plan.has_changes === true;
+}
+
+/** The entries a plan actually changes, dropping the unchanged ones. */
+export function changedResources(plan: RunPlan): PlanResourceChange[] {
+  return (plan.resource_changes ?? []).filter(
+    (entry) => entry.action !== 'no-op'
+  );
+}
+
+/** The outputs a plan actually changes, dropping the unchanged ones. */
+export function changedOutputs(plan: RunPlan): PlanOutputChange[] {
+  return (plan.output_changes ?? []).filter(
+    (entry) => entry.action !== 'no-op'
+  );
+}
+
+/** The human label for each action, so a badge and a row agree on wording. */
+const ACTION_LABELS: Record<PlanAction, string> = {
+  create: 'Create',
+  update: 'Update',
+  delete: 'Destroy',
+  replace: 'Replace',
+  read: 'Read',
+  'no-op': 'No changes',
+};
+
+/** The label an action renders as. */
+export function planActionLabel(action: PlanAction): string {
+  return ACTION_LABELS[action];
+}
+
+/** The sign Terraform prefixes a resource line with, per action. */
+const ACTION_SYMBOLS: Record<PlanAction, string> = {
+  create: '+',
+  update: '~',
+  delete: '-',
+  replace: '-/+',
+  read: '<=',
+  'no-op': '',
+};
+
+/** The sign an action renders with, matching Terraform's own plan output. */
+export function planActionSymbol(action: PlanAction): string {
+  return ACTION_SYMBOLS[action];
 }

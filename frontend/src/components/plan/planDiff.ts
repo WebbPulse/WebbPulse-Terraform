@@ -157,7 +157,7 @@ export function attributeDiffs(
   const before = asBag(change.before);
   const after = asBag(change.after);
   const unknown = asBag(change.after_unknown);
-  const forced = replacedKeys(change.replace_paths);
+  const forced = replacedKeys(change.replace_paths ?? []);
   const keys = [
     ...new Set([
       ...Object.keys(before),

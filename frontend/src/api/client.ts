@@ -27,6 +27,7 @@ import type {
   RunLogPage,
   RunLogsQuery,
   RunPhase,
+  RunPlan,
   RunRoleCheck,
   Variable,
   VariableList,
@@ -341,6 +342,24 @@ export class TerraformApi {
     const response = await this.client.post<Run>(
       `/runs/${encodeURIComponent(runId)}/discard`,
       undefined,
+      options
+    );
+    return response.data;
+  }
+
+  /**
+   * Reads one run's plan, summarised and redacted for the viewer.
+   *
+   * A 404 covers both an absent run and a run whose plan JSON has not been
+   * uploaded yet, so a caller polling a run that is still planning treats it as
+   * not ready rather than as a failure.
+   */
+  async getRunPlan(
+    runId: string,
+    options: RequestOptions = {}
+  ): Promise<RunPlan> {
+    const response = await this.client.get<RunPlan>(
+      `/runs/${encodeURIComponent(runId)}/plan`,
       options
     );
     return response.data;

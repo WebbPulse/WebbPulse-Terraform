@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -103,6 +103,80 @@ class LogPage(BaseModel):
     next_after: Optional[str] = None
     """Pass back as `after` to read what arrives next. `None` when the stream
     does not exist yet, which is not the same as an empty page."""
+
+
+PlanAction = Literal["create", "update", "delete", "replace", "read", "no-op"]
+"""One resource or output's change, flattened from Terraform's action list.
+
+Terraform reports a replacement as the two element list `["delete", "create"]`
+or `["create", "delete"]`, depending on whether the provider replaces before or
+after destroying. Both collapse to `replace` here, because the ordering is a
+provider detail the viewer has no use for.
+"""
+
+PlanMode = Literal["managed", "data"]
+"""Whether a change is to a managed resource or to a data source read."""
+
+
+class PlanResourceChange(BaseModel):
+    """One resource's entry in a plan, as the viewer renders it.
+
+    `before` and `after` are the planned state on either side, with every value
+    the plan marked sensitive already replaced by a redaction string, so no
+    sealed variable or sensitive attribute reaches the browser. They carry
+    whatever shape the plan put there rather than an object, because the plan
+    format allows a scalar or a list and a run view that 500s on an unusual
+    plan is a worse failure than a loose type.
+    """
+
+    address: str
+    module_address: str = ""
+    mode: PlanMode
+    type: str
+    name: str
+    provider_name: str = ""
+    action: PlanAction
+    action_reason: str = ""
+    before: Any = None
+    after: Any = None
+    after_unknown: Optional[dict[str, Any]] = None
+    replace_paths: list[list[Union[str, int]]] = Field(default_factory=list)
+    """The attribute paths that forced a replacement, each a list of steps."""
+    before_sensitive: Optional[Union[dict[str, Any], bool]] = None
+    after_sensitive: Optional[Union[dict[str, Any], bool]] = None
+    """Terraform's own sensitivity map, kept so the viewer can mark a field even
+    where the value itself was redacted away."""
+
+
+class PlanOutputChange(BaseModel):
+    """One root output's change in a plan.
+
+    A sensitive output carries the redaction string rather than its value, the
+    same way a sensitive resource attribute does.
+    """
+
+    name: str
+    action: PlanAction
+    before: Any = None
+    after: Any = None
+    after_unknown: bool = False
+    sensitive: bool = False
+
+
+class RunPlan(BaseModel):
+    """A run's plan as structured data, derived from `terraform show -json`.
+
+    The raw plan document is never returned: it can reach hundreds of megabytes
+    and it carries sensitive values verbatim. This is the summarised, redacted
+    projection the run view renders.
+    """
+
+    run_id: str
+    terraform_version: str = ""
+    changes: RunChanges
+    resource_changes: list[PlanResourceChange] = Field(default_factory=list)
+    output_changes: list[PlanOutputChange] = Field(default_factory=list)
+    has_changes: bool = False
 
 
 class BackendConfig(BaseModel):
