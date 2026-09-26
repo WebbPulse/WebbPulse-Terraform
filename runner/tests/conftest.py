@@ -254,6 +254,7 @@ if SUBCOMMAND == "init":
                         print("tfvars line " + line)
     sys.exit({init_exit})
 if SUBCOMMAND == "plan":
+    print("plan arguments " + " ".join(sys.argv[2:]))
     print("Terraform used the selected providers to generate the plan.")
     open("plan.tfplan", "w").write("fake-plan")
     sys.exit({plan_exit})
@@ -261,6 +262,7 @@ if SUBCOMMAND == "show":
     print(json.dumps(json.loads({document!r})))
     sys.exit(0)
 if SUBCOMMAND == "apply":
+    print("apply arguments " + " ".join(sys.argv[2:]))
     print("Apply complete! Resources: 1 added, 0 changed, 0 destroyed.")
     sys.exit({apply_exit})
 print("unexpected subcommand " + SUBCOMMAND, file=sys.stderr)

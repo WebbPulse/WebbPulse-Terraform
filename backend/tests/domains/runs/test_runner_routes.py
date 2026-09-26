@@ -80,6 +80,30 @@ def test_the_bundle_carries_the_engine_and_the_config(runner_client, created_run
     assert body["run_role"]["role_arn"] == workspace["run_role_arn"]
 
 
+def test_the_bundle_says_whether_the_plan_destroys(runner_client, created_run):
+    """An ordinary run's bundle carries `is_destroy` false."""
+    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
+    assert body["is_destroy"] is False
+
+
+def test_a_destroy_runs_bundle_asks_for_a_destroy_plan(
+    app, auth_client, workspace, uploaded_config_version, state_machine
+):
+    """The runner learns to plan `-destroy` from the bundle alone."""
+    created = auth_client.post(
+        BASE,
+        json={
+            "workspace_id": workspace["workspace_id"],
+            "config_version_id": uploaded_config_version["config_version_id"],
+            "is_destroy": True,
+        },
+    ).json()
+    with TestClient(app, headers={"Authorization": f"Bearer {created['run_token']}"}) as runner:
+        body = runner.get(f"{BASE}/{created['run_id']}/bundle").json()
+    assert body["is_destroy"] is True
+    assert body["phase"] == "plan"
+
+
 def test_the_bundle_backend_points_at_the_workspace_state(runner_client, created_run, workspace):
     """The backend points at this workspace's state key under the KMS key.
 

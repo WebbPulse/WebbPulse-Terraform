@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { aRun, aWorkspace } from '../test-helpers/fixtures';
@@ -42,6 +42,27 @@ describe('Runs', () => {
     expect(
       screen.getAllByLabelText('3 to add, 1 to change, 0 to destroy').length
     ).toBeGreaterThan(0);
+  });
+
+  it('marks a destroy run in the list', async () => {
+    apiMock.listRuns.mockResolvedValue({
+      items: [
+        aRun('awaiting_confirmation', { is_destroy: true }),
+        aRun('applied', { run_id: 'run-2' }),
+      ],
+    });
+
+    renderWithAuth(<Runs />, signedInAuthClient());
+
+    const rows = await screen.findAllByRole('listitem');
+    expect(
+      within(rows[0] as HTMLElement).getByTestId('destroy-badge')
+    ).toBeInTheDocument();
+    expect(rows[0]).toHaveTextContent('destroy run');
+    expect(
+      within(rows[1] as HTMLElement).queryByTestId('destroy-badge')
+    ).not.toBeInTheDocument();
+    expect(rows[1]).toHaveTextContent('plan and apply run');
   });
 
   it('says so when there are no runs', async () => {

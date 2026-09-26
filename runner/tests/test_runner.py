@@ -164,6 +164,75 @@ def test_apply_downloads_the_plan_and_succeeds(
     assert any("Apply complete" in message for message in messages)
 
 
+def plan_arguments(stream: str) -> list[str]:
+    """The argument lines the fake engine printed for each plan or apply in one stream."""
+    return [message for message in log_stream_messages(stream) if " arguments " in message]
+
+
+def test_an_ordinary_plan_is_not_a_destroy(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A bundle without `is_destroy` plans without `-destroy`."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    lines = plan_arguments(f"{RUN_ID}/plan")
+    assert len(lines) == 1
+    assert "-destroy" not in lines[0].split()
+
+
+def test_a_destroy_bundle_plans_with_destroy(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A destroy run's plan passes `-destroy` alongside the saved plan flags."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = {**bundle_payload(run_role_arn), "is_destroy": True}
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    lines = plan_arguments(f"{RUN_ID}/plan")
+    assert len(lines) == 1
+    arguments = lines[0].split()
+    assert "-destroy" in arguments
+    assert "-out=plan.tfplan" in arguments
+    assert "-detailed-exitcode" in arguments
+    assert recorder.phase_results[0]["has_changes"] is True
+
+
+def test_a_destroy_apply_applies_the_saved_plan(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A destroy run's apply applies the saved plan with no extra flags."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = {
+        **bundle_payload(run_role_arn, plan_get_url="https://artifacts.example.invalid/runs/plan.tfplan?sig=5"),
+        "is_destroy": True,
+    }
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("apply"), make_clients(transport), tmp_path) == 0
+
+    assert plan_arguments(f"{RUN_ID}/apply") == ["apply arguments -input=false -lock-timeout=120s plan.tfplan"]
+
+
 def test_apply_without_a_plan_url_fails(
     aws: None,
     run_role_arn: str,

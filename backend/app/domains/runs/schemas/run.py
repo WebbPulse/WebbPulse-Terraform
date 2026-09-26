@@ -47,6 +47,9 @@ class RunCreate(BaseModel):
     workspace_id: str = Field(min_length=4, max_length=64)
     config_version_id: str = Field(min_length=4, max_length=64)
     plan_only: bool = False
+    is_destroy: bool = False
+    """Plan the destruction of every resource the workspace manages, as
+    `terraform plan -destroy` does. Applying it removes them from the state."""
     message: str = Field(default="", max_length=1024)
 
 
@@ -71,6 +74,9 @@ class Run(BaseModel):
     config_version_id: str
     status: RunStatus
     plan_only: bool
+    is_destroy: bool = False
+    """Whether the plan destroys every managed resource. `False` on a run created
+    before destroy runs shipped, which is what those runs were."""
     message: str = ""
     created_at: str
     updated_at: Optional[str] = None
@@ -275,9 +281,10 @@ class RunBundle(BaseModel):
     """Everything the runner needs for one phase of one run.
 
     The shape is the runner's `Bundle`: the nested `backend`, `run_role` and
-    `artifacts` objects are what `runner/app/models.py` validates, and the four
-    extra top level fields are what the runner ignores for now but the API
-    states about the phase it is serving. Uploads are not here: the runner asks
+    `artifacts` objects are what `runner/app/models.py` validates, as is
+    `is_destroy`, which selects `plan -destroy`. The other extra top level fields
+    are what the runner ignores for now but the API states about the phase it is
+    serving. Uploads are not here: the runner asks
     for each one's presigned PUT by size once it has the bytes.
 
     The only response in the API that carries decrypted variable values, which is
@@ -288,6 +295,9 @@ class RunBundle(BaseModel):
     workspace_id: str
     phase: Phase
     plan_only: bool
+    is_destroy: bool = False
+    """Whether the plan phase runs `plan -destroy`. The apply phase applies the
+    saved plan either way."""
     engine: Literal["terraform", "tofu"]
     engine_version: str
     working_directory: str

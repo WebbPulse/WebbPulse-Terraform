@@ -18,6 +18,7 @@ import {
 import { fetchRunPlan, type RunPlan } from '../api/runPlan';
 import {
   Button,
+  DestroyBadge,
   ErrorNotice,
   PageHeader,
   PlanView,
@@ -30,6 +31,8 @@ import {
   formatDateTime,
   formatDuration,
   formatRelative,
+  isDestroyRun,
+  runKind,
   shortRunId,
   useNow,
 } from '../components';
@@ -197,6 +200,7 @@ function RunHeader({
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-base font-semibold text-text-strong">{title}</h2>
         <StateBadge state={run.status} />
+        {isDestroyRun(run) ? <DestroyBadge /> : null}
         {run.plan_only ? (
           <span className="rounded-full border border-line-strong px-2 py-0.5 text-[11px] text-text-muted">
             Plan only
@@ -209,7 +213,7 @@ function RunHeader({
         </span>
         <span aria-hidden="true">|</span>
         <span>
-          {run.plan_only ? 'Plan only run' : 'Plan and apply run'} triggered{' '}
+          {runKind(run)} triggered{' '}
           <span title={formatDateTime(run.created_at)}>
             {formatRelative(run.created_at)}
           </span>
@@ -421,7 +425,9 @@ function ConfirmationPanel({
       </h3>
       <p className="max-w-prose text-sm text-text-muted">
         {waiting
-          ? 'Confirm to apply the plan above to your AWS account, or discard it to throw it away.'
+          ? isDestroyRun(run)
+            ? 'Confirm to destroy every resource listed above in your AWS account, or discard the plan to keep them.'
+            : 'Confirm to apply the plan above to your AWS account, or discard it to throw it away.'
           : allowCancel
             ? 'Cancelling stops the phase that is running. Anything already applied stays applied.'
             : 'The plan finished. Confirmation opens once the run is ready for it.'}
@@ -429,7 +435,7 @@ function ConfirmationPanel({
       <div className="flex flex-wrap items-center gap-2">
         {allowConfirm ? (
           <Button
-            variant="primary"
+            variant={isDestroyRun(run) ? 'danger' : 'primary'}
             disabled={busy !== null}
             busy={busy === 'confirm'}
             busyLabel="Working"
@@ -437,7 +443,7 @@ function ConfirmationPanel({
               void act('confirm');
             }}
           >
-            Confirm &amp; apply
+            {isDestroyRun(run) ? 'Confirm & destroy' : 'Confirm & apply'}
           </Button>
         ) : null}
         {allowDiscard ? (

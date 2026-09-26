@@ -1439,6 +1439,11 @@ export interface components {
             /** Finished At */
             finished_at?: string | null;
             /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
+            /**
              * Message
              * @default
              */
@@ -1481,9 +1486,10 @@ export interface components {
          * @description Everything the runner needs for one phase of one run.
          *
          *     The shape is the runner's `Bundle`: the nested `backend`, `run_role` and
-         *     `artifacts` objects are what `runner/app/models.py` validates, and the four
-         *     extra top level fields are what the runner ignores for now but the API
-         *     states about the phase it is serving. Uploads are not here: the runner asks
+         *     `artifacts` objects are what `runner/app/models.py` validates, as is
+         *     `is_destroy`, which selects `plan -destroy`. The other extra top level fields
+         *     are what the runner ignores for now but the API states about the phase it is
+         *     serving. Uploads are not here: the runner asks
          *     for each one's presigned PUT by size once it has the bytes.
          *
          *     The only response in the API that carries decrypted variable values, which is
@@ -1505,6 +1511,11 @@ export interface components {
             environment_variables: {
                 [key: string]: string;
             };
+            /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
             /**
              * Phase
              * @enum {string}
@@ -1553,6 +1564,11 @@ export interface components {
             /** Config Version Id */
             config_version_id: string;
             /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
+            /**
              * Message
              * @default
              */
@@ -1585,6 +1601,11 @@ export interface components {
             execution_arn?: string | null;
             /** Finished At */
             finished_at?: string | null;
+            /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
             /**
              * Message
              * @default

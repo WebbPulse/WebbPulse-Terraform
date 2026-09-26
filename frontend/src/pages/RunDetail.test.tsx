@@ -93,6 +93,48 @@ describe('RunDetail', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('labels a destroy run and asks to confirm the destroy', async () => {
+    apiMock.getRun.mockResolvedValue(
+      aRun('awaiting_confirmation', { is_destroy: true })
+    );
+
+    renderRun();
+
+    expect(
+      await screen.findByRole('button', { name: 'Confirm & destroy' })
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('destroy-badge')).toBeInTheDocument();
+    expect(screen.getByText(/Destroy run triggered/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Confirm & apply' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('withholds confirm from a plan only destroy run', async () => {
+    apiMock.getRun.mockResolvedValue(
+      aRun('planned_and_finished', { is_destroy: true, plan_only: true })
+    );
+
+    renderRun();
+
+    expect(await screen.findByTestId('destroy-badge')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Plan only destroy run triggered/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Confirm & destroy' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows no destroy badge on an ordinary run', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('applied'));
+
+    renderRun();
+
+    await screen.findByTestId('run-state-badge');
+    expect(screen.queryByTestId('destroy-badge')).not.toBeInTheDocument();
+  });
+
   it('offers discard but not cancel on a planned run', async () => {
     apiMock.getRun.mockResolvedValue(aRun('planned'));
 

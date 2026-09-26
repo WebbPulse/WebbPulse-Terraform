@@ -1,4 +1,4 @@
-/** The destruction and deletion page: deleting the workspace record. */
+/** The destruction and deletion page: a destroy plan, then deleting the workspace record. */
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -14,6 +14,7 @@ import {
 } from '../../../components';
 import { useWorkspace } from '../../workspaceContext';
 import { WORKSPACES_KEY } from '../../Workspaces';
+import { DestroyPlanSection } from './DestroyPlanSection';
 
 /** The destruction and deletion page. */
 export function DeletionSettings(): React.ReactElement {
@@ -24,6 +25,7 @@ export function DeletionSettings(): React.ReactElement {
       <h2 className="text-sm font-semibold text-text-strong">
         Destruction and deletion
       </h2>
+      <DestroyPlanSection />
       <section className="space-y-3 rounded-lg border border-danger-line bg-panel p-4">
         <h3 className="text-sm font-medium text-text-strong">
           Delete workspace

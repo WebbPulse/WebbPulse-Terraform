@@ -233,6 +233,7 @@ def test_bundle_ignores_the_api_only_top_level_fields(run_role_arn: str) -> None
     bundle = Bundle.model_validate(payload)
     assert bundle.engine_version == "1.16.3"
     assert bundle.run_role.duration_seconds == 3600
+    assert bundle.is_destroy is False
 
 
 def test_log_sink_creates_the_stream_and_redacts(aws: None, capsys: pytest.CaptureFixture[str]) -> None:

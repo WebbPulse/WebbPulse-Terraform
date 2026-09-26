@@ -55,8 +55,16 @@ class Clients:
         )
 
 
-def _run_plan(runner: engine.EngineRunner, sink: CloudWatchLogSink) -> tuple[int, Changes, bool, str]:
+def _run_plan(
+    runner: engine.EngineRunner,
+    sink: CloudWatchLogSink,
+    *,
+    destroy: bool = False,
+) -> tuple[int, Changes, bool, str]:
     """Init, plan and render the plan JSON, returning the exit code and change counts.
+
+    `destroy` plans the removal of every managed resource, which the apply phase then
+    applies from the saved plan like any other.
 
     The plan runs under `-detailed-exitcode`, so it exits 0 with no changes and 2
     with changes. Both are successful plans, so both return 0 and the change
@@ -65,7 +73,7 @@ def _run_plan(runner: engine.EngineRunner, sink: CloudWatchLogSink) -> tuple[int
     init_code = runner.init()
     if init_code != 0:
         raise PhaseFailure("InitFailed", f"init exited {init_code}")
-    plan_code = runner.plan()
+    plan_code = runner.plan(destroy=destroy)
     if plan_code not in (engine.NO_CHANGES_EXIT, engine.CHANGES_EXIT):
         raise PhaseFailure("PlanFailed", f"plan exited {plan_code}")
     show_code, plan_json = runner.show_plan_json()
@@ -138,7 +146,7 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
         has_changes = False
 
         if env.phase == "plan":
-            exit_code, changes, has_changes, plan_json = _run_plan(runner, sink)
+            exit_code, changes, has_changes, plan_json = _run_plan(runner, sink, destroy=bundle.is_destroy)
             plan_json_path.write_text(plan_json)
             try:
                 api.upload_file("plan", plan_path)

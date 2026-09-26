@@ -840,6 +840,11 @@
             ],
             "title": "Finished At"
           },
+          "is_destroy": {
+            "default": false,
+            "title": "Is Destroy",
+            "type": "boolean"
+          },
           "message": {
             "default": "",
             "title": "Message",
@@ -953,7 +958,7 @@
         "type": "object"
       },
       "RunBundle": {
-        "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `run_role` and\n`artifacts` objects are what `runner/app/models.py` validates, and the four\nextra top level fields are what the runner ignores for now but the API\nstates about the phase it is serving. Uploads are not here: the runner asks\nfor each one's presigned PUT by size once it has the bytes.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
+        "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `run_role` and\n`artifacts` objects are what `runner/app/models.py` validates, as is\n`is_destroy`, which selects `plan -destroy`. The other extra top level fields\nare what the runner ignores for now but the API states about the phase it is\nserving. Uploads are not here: the runner asks\nfor each one's presigned PUT by size once it has the bytes.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
         "properties": {
           "artifacts": {
             "$ref": "#/components/schemas/Artifacts"
@@ -983,6 +988,11 @@
             },
             "title": "Environment Variables",
             "type": "object"
+          },
+          "is_destroy": {
+            "default": false,
+            "title": "Is Destroy",
+            "type": "boolean"
           },
           "phase": {
             "enum": [
@@ -1067,6 +1077,11 @@
             "minLength": 4,
             "title": "Config Version Id",
             "type": "string"
+          },
+          "is_destroy": {
+            "default": false,
+            "title": "Is Destroy",
+            "type": "boolean"
           },
           "message": {
             "default": "",
@@ -1156,6 +1171,11 @@
               }
             ],
             "title": "Finished At"
+          },
+          "is_destroy": {
+            "default": false,
+            "title": "Is Destroy",
+            "type": "boolean"
           },
           "message": {
             "default": "",

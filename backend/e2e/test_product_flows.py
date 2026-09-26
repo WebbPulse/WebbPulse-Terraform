@@ -2,8 +2,9 @@
 
 The shared suite probes every operation in isolation. These flows prove the sequences
 that matter instead: a workspace created with a run role, a config version uploaded to
-the presigned PUT, a plan that reaches `planned`, a confirm that reaches `applied`, and
-the discard and cancel paths that end a run without applying it.
+the presigned PUT, a plan that reaches `planned`, a confirm that reaches `applied`, a
+destroy run that removes what the apply created, and the discard and cancel paths that
+end a run without applying it.
 
 Every workspace is registered with `created_resources` before it is used, so a flow that
 fails part way still hands the cleanup hook something to delete.
@@ -138,14 +139,22 @@ def _require_status(run: dict[str, Any], expected: tuple[str, ...], phase: str) 
     pytest.fail(f"the {phase} did not succeed, expected one of {expected}: {_describe(run)}")
 
 
-def _create_run(api: Any, workspace_id: str, config_version_id: str, *, plan_only: bool) -> str:
-    """Start a run and return its id."""
+def _create_run(
+    api: Any,
+    workspace_id: str,
+    config_version_id: str,
+    *,
+    plan_only: bool,
+    is_destroy: bool = False,
+) -> str:
+    """Start a run, a destroy run when `is_destroy`, and return its id."""
     response = api.post(
         "/api/v1/runs",
         json={
             "workspace_id": workspace_id,
             "config_version_id": config_version_id,
             "plan_only": plan_only,
+            "is_destroy": is_destroy,
             "message": "e2e",
         },
     )
@@ -211,7 +220,12 @@ class TestRunLifecycle:
     """The run lifecycle end to end: plan, confirm, apply, and the paths that do not apply."""
 
     def test_plan_and_apply(self, api: Any, workspace: dict[str, Any]) -> None:
-        """A run plans, confirms and applies, and its logs are readable."""
+        """A run plans, confirms and applies, then a destroy run removes what it applied.
+
+        The destroy is part of the case rather than of cleanup, so the workspace is left
+        managing no resources and a failed destroy fails the case instead of leaving a
+        `random_pet` behind unnoticed.
+        """
         workspace_id = workspace["workspace_id"]
         config_version_id = _upload(api, workspace_id)
         run_id = _create_run(api, workspace_id, config_version_id, plan_only=False)
@@ -231,6 +245,18 @@ class TestRunLifecycle:
 
         apply_logs = api.get(f"/api/v1/runs/{run_id}/logs", params={"phase": "apply"})
         assert apply_logs.status_code == 200, apply_logs.text[:400]
+
+        destroy_id = _create_run(api, workspace_id, config_version_id, plan_only=False, is_destroy=True)
+        destroy_planned = _wait_for(api, destroy_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
+        _require_status(destroy_planned, ("planned", "awaiting_confirmation"), "destroy plan")
+        assert destroy_planned["is_destroy"] is True, _describe(destroy_planned)
+        assert (destroy_planned.get("changes") or {}).get("destroy", 0) >= 1, _describe(destroy_planned)
+
+        destroy_confirmed = api.post(f"/api/v1/runs/{destroy_id}/confirm")
+        assert destroy_confirmed.status_code in (200, 202), destroy_confirmed.text[:400]
+
+        destroyed = _wait_for(api, destroy_id, APPLY_TERMINAL, APPLY_TIMEOUT_SECONDS)
+        _require_status(destroyed, APPLY_SUCCESS, "destroy apply")
 
     def test_plan_only_run_finishes_without_applying(self, api: Any, workspace: dict[str, Any]) -> None:
         """A plan-only run reaches a terminal planned status and never applies."""
