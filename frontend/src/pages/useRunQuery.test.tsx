@@ -14,13 +14,8 @@ import {
 
 vi.mock('../api/client', () => apiClientModuleMock());
 
-const {
-  RUN_POLL_INTERVAL_MS,
-  RUN_READ_DEADLINE_MS,
-  RunReadTimeoutError,
-  useRunQuery,
-  withDeadline,
-} = await import('./useRunQuery');
+const { RUN_POLL_INTERVAL_MS, RUN_READ_DEADLINE_MS, useRunQuery } =
+  await import('./useRunQuery');
 
 const RUN = 'run-01J000000000000000000000';
 
@@ -74,9 +69,15 @@ describe('useRunQuery', () => {
   });
 
   it('abandons a read that never settles and polls again', async () => {
+    let hungSignal: AbortSignal | undefined;
     apiMock.getRun
       .mockImplementationOnce(() => Promise.resolve(aRun('planning')))
-      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockImplementationOnce(
+        (_runId: string, init?: { signal?: AbortSignal }) => {
+          hungSignal = init?.signal;
+          return new Promise(() => undefined);
+        }
+      )
       .mockImplementation(() => Promise.resolve(aRun('applied')));
 
     renderWithAuth(<Probe />, signedInAuthClient());
@@ -90,44 +91,6 @@ describe('useRunQuery', () => {
     await waitFor(() => {
       expect(screen.getByTestId('status')).toHaveTextContent('applied');
     });
-  });
-});
-
-describe('withDeadline', () => {
-  it('rejects and aborts the read once the deadline passes', async () => {
-    vi.useFakeTimers();
-    let seen: AbortSignal | null = null;
-    const pending = withDeadline(
-      (signal) => {
-        seen = signal;
-        return new Promise<never>(() => undefined);
-      },
-      new AbortController().signal,
-      1000
-    );
-    const outcome = pending.catch((error: unknown) => error);
-
-    await vi.advanceTimersByTimeAsync(1000);
-
-    expect(await outcome).toBeInstanceOf(RunReadTimeoutError);
-    expect(seen!.aborted).toBe(true);
-    vi.useRealTimers();
-  });
-
-  it('aborts the read when the caller aborts', () => {
-    const outer = new AbortController();
-    let seen: AbortSignal | null = null;
-    void withDeadline(
-      (signal) => {
-        seen = signal;
-        return new Promise<never>(() => undefined);
-      },
-      outer.signal,
-      1000
-    ).catch(() => undefined);
-
-    outer.abort();
-
-    expect(seen!.aborted).toBe(true);
+    expect(hungSignal?.aborted).toBe(true);
   });
 });

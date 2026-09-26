@@ -20,8 +20,8 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@webbpulse/api-client": ">=0.13.0 <1",
-    "@webbpulse/auth": ">=0.13.0 <1",
+    "@webbpulse/api-client": ">=0.15.0 <1",
+    "@webbpulse/auth": ">=0.16.1 <1",
     "@webbpulse/config": ">=0.13.0 <1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
