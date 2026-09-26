@@ -24,15 +24,16 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `versions.tf` | Terraform and provider constraints, the `cloud {}` block |
 | `providers.tf` | The default provider, `us_east_1` for the CloudFront cert, `dns` and `parent_dns` assume-role aliases |
 | `variables.tf`, `locals.tf`, `data.tf` | Inputs, the derived names, the caller identity |
-| `dynamodb.tf` | The four tables: workspaces, runs, variables, config-versions |
-| `s3.tf` | The state bucket and the artifacts bucket, each with its own KMS key |
+| `dynamodb.tf` | The tables: workspaces, runs, variables, config-versions, users, and vcs-uploads, whose ingest records expire through TTL |
+| `s3.tf` | The state bucket and the artifacts bucket, each with its own KMS key. The artifacts bucket sends EventBridge notifications, and `ingest/` expires after 3 days |
 | `ecr.tf` | `webbpulse-terraform/{workspaces,runs,runner}` |
 | `lambda_domains.tf` | The `workspaces` and `runs` functions, their roles and inline policies |
-| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer |
+| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer. The runner routes and `POST /api/v1/vcs/uploads` carry `authorization_type = "NONE"`, so neither the identity JWT nor the staging gate applies; each verifies its own token in the function |
 | `identity.tf`, `app_secrets.tf` | The identity platform module and the single JSON `app` secret |
 | `vpc.tf`, `ecs.tf`, `runner_logs.tf` | The public-only VPC, the Fargate cluster and the two phase task definitions, the runner log group |
 | `step_functions.tf`, `state_machines/run.asl.json` | The per-run state machine |
 | `sqs.tf` | The run confirmations queue the state machine's task token is sent through |
+| `vcs_ingest.tf` | The EventBridge rule on Object Created under `ingest/` in the artifacts bucket, and the queue it feeds the `runs` function as `config_ingested` messages |
 | `task_failures.tf` | The EventBridge rule on runner tasks that failed to start, and the queue it feeds so a run fails without waiting out its phase heartbeat |
 | `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, the certificates, the staging child zone with its NS delegation, and the alias records |
 | `staging_access_gate.tf` | Staging only, the email gate in front of the site and the API |

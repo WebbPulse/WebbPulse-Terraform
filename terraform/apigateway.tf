@@ -53,6 +53,7 @@ locals {
     "GET /api/v1/runs/{run_id}/bundle"            = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/artifact-uploads" = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/phase-result"     = { integration = "runs", authorization_type = "NONE" }
+    "POST /api/v1/vcs/uploads"                    = { integration = "runs", authorization_type = "NONE" }
   }
 
   product_routes = merge(
