@@ -35,8 +35,6 @@ CONFIGS_WRITE: Final = "configs:write"
 RUNS_READ: Final = "runs:read"
 RUNS_WRITE: Final = "runs:write"
 RUNS_APPLY: Final = "runs:apply"
-STATE_DOWNLOAD: Final = "state:download"
-"""Explicit access to raw state, excluded from ordinary read-only grants."""
 
 RUNNER_SCOPE: Final = "runner"
 """The scope a run token carries. Never granted to a human or an agent key: it
@@ -52,7 +50,6 @@ ALL_SCOPES: Final = (
     RUNS_READ,
     RUNS_WRITE,
     RUNS_APPLY,
-    STATE_DOWNLOAD,
 )
 """Every scope a human or an agent can hold, which is what the contract lists."""
 
@@ -171,7 +168,6 @@ __all__ = [
     "RUNS_READ",
     "RUNS_WRITE",
     "RUN_TOKEN_TENANT",
-    "STATE_DOWNLOAD",
     "VARIABLES_READ",
     "VARIABLES_WRITE",
     "WORKSPACES_READ",

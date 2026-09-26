@@ -26,8 +26,7 @@ import pytest
 from botocore.exceptions import ClientError
 from botocore.response import StreamingBody
 
-from app.common.core.auth import ALL_SCOPES, RUNNER_SCOPE, RUNS_READ, STATE_DOWNLOAD, WORKSPACES_READ
-from app.common.identity.identity_hooks import ADMIN_ROLE, READ_SCOPES, scope_claim_for_roles
+from app.common.core.auth import ALL_SCOPES, RUNNER_SCOPE, RUNS_READ, WORKSPACES_READ
 from app.domains.workspaces import state_versions
 from tests.conftest import REGION, STATE_BUCKET, WORKSPACE_PAYLOAD
 
@@ -119,6 +118,7 @@ def test_list_returns_every_version_newest_first(auth_client, versioned_state):
     assert len(items) == 3
     assert [item["state_version_id"] for item in items] == list(reversed(versioned_state["versions"]))
     assert items[0]["is_current"] is True
+    assert "hunter2" not in response.text
     assert [item["is_current"] for item in items[1:]] == [False, False]
     assert all(item["size_bytes"] > 0 for item in items)
     assert all(item["workspace_id"] == workspace_id for item in items)
@@ -471,15 +471,13 @@ def test_the_scope_is_the_same_one_that_reads_the_workspace():
 @pytest.mark.parametrize(
     "granted",
     [
-        READ_SCOPES,
-        (WORKSPACES_READ,),
-        (STATE_DOWNLOAD,),
+        (RUNS_READ,),
         (RUNNER_SCOPE,),
-        tuple(scope for scope in ALL_SCOPES if scope != STATE_DOWNLOAD),
+        tuple(scope for scope in ALL_SCOPES if scope != WORKSPACES_READ),
     ],
 )
-def test_download_requires_both_explicit_scopes(scoped_client, versioned_state, monkeypatch, granted):
-    """No implicit role or partial scope set grants access to raw state."""
+def test_download_without_workspace_read_touches_nothing(scoped_client, versioned_state, monkeypatch, granted):
+    """Every scope but workspace read is refused before S3 is read or a signer is built."""
     signer = Mock(side_effect=AssertionError("Unauthorized signing"))
     reader = Mock(side_effect=AssertionError("Unauthorized state access"))
     monkeypatch.setattr(state_versions, "_presigner", signer)
@@ -491,17 +489,11 @@ def test_download_requires_both_explicit_scopes(scoped_client, versioned_state, 
     reader.assert_not_called()
 
 
-def test_download_accepts_only_the_two_required_scopes(scoped_client, versioned_state):
-    """An explicitly delegated download works without write or apply permission."""
+def test_download_needs_only_workspace_read(scoped_client, versioned_state):
+    """Workspace read alone mints a download, with no write or apply scope."""
     path = f"/api/v1/workspaces/{versioned_state['workspace_id']}/state-versions/{versioned_state['versions'][0]}"
-    with scoped_client(WORKSPACES_READ, STATE_DOWNLOAD) as caller:
+    with scoped_client(WORKSPACES_READ) as caller:
         assert caller.post(f"{path}/download").status_code == 200
-
-
-def test_download_scope_is_admin_only_by_default():
-    """Ordinary human sessions cannot inherit raw state access through read scopes."""
-    assert STATE_DOWNLOAD not in scope_claim_for_roles([]).split()
-    assert STATE_DOWNLOAD in scope_claim_for_roles([ADMIN_ROLE]).split()
 
 
 @pytest.mark.parametrize("method,suffix", [("GET", ""), ("GET", "/version"), ("POST", "/version/download")])
@@ -623,7 +615,7 @@ def test_storage_rejects_an_invalid_version_cursor(auth_client, workspace, monke
 
 
 def test_scopes_hold_in_the_deployed_workspaces_composition(settings, versioned_state):
-    """The isolated Lambda composition enforces the same raw state boundary."""
+    """The isolated Lambda composition enforces the same workspace read boundary."""
     from fastapi.testclient import TestClient
 
     from app.common.composition.wiring import build_domain_app
@@ -631,8 +623,10 @@ def test_scopes_hold_in_the_deployed_workspaces_composition(settings, versioned_
 
     app = build_domain_app("workspaces", settings=settings)
     path = f"/api/v1/workspaces/{versioned_state['workspace_id']}/state-versions/{versioned_state['versions'][0]}"
-    with TestClient(app, headers={"Authorization": f"Bearer {mint_key(*READ_SCOPES)}"}) as caller:
-        assert caller.get(path).status_code == 200
+    without = tuple(scope for scope in ALL_SCOPES if scope != WORKSPACES_READ)
+    with TestClient(app, headers={"Authorization": f"Bearer {mint_key(*without)}"}) as caller:
+        assert caller.get(path).status_code == 403
         assert caller.post(f"{path}/download").status_code == 403
-    with TestClient(app, headers={"Authorization": f"Bearer {mint_key(WORKSPACES_READ, STATE_DOWNLOAD)}"}) as caller:
+    with TestClient(app, headers={"Authorization": f"Bearer {mint_key(WORKSPACES_READ)}"}) as caller:
+        assert caller.get(path).status_code == 200
         assert caller.post(f"{path}/download").status_code == 200

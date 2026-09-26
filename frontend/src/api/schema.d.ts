@@ -947,7 +947,7 @@ export interface paths {
         put?: never;
         /**
          * Download State Version
-         * @description Mint a short lived URL with workspaces:read and explicit state:download access.
+         * @description Mint a short lived URL for one state version's raw bytes.
          *
          *     A `POST` rather than a `GET` because it is not a read: it mints a bearer
          *     credential for the most sensitive object the product stores, and that is an
