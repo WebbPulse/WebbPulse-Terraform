@@ -238,6 +238,59 @@ describe('RunDetail', () => {
     });
   });
 
+  it('keeps the plan log readable once the run applied', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('applied'));
+
+    renderRun();
+
+    await screen.findByTestId('run-state-badge');
+    await openRawLog();
+    await waitFor(() => {
+      expect(apiMock.getRunLogs).toHaveBeenCalledWith(
+        'run-01J000000000000000000000',
+        { phase: 'apply', after: null }
+      );
+    });
+    await userEvent.click(screen.getByRole('tab', { name: 'Plan log' }));
+    await waitFor(() => {
+      expect(apiMock.getRunLogs).toHaveBeenCalledWith(
+        'run-01J000000000000000000000',
+        { phase: 'plan', after: null }
+      );
+    });
+    expect(screen.getByTestId('run-log-phases')).toHaveAttribute(
+      'data-phase',
+      'plan'
+    );
+  });
+
+  it('offers only the plan log before an apply', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
+
+    renderRun();
+
+    await screen.findByTestId('run-state-badge');
+    await openRawLog();
+    expect(
+      await screen.findByRole('tab', { name: 'Plan log' })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('tab', { name: 'Apply log' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the apply summary under an applied plan', async () => {
+    apiMock.getRun.mockResolvedValue(
+      aRun('applied', { apply_changes: { add: 2, change: 1, destroy: 0 } })
+    );
+
+    renderRun();
+
+    expect(await screen.findByTestId('apply-summary-line')).toHaveTextContent(
+      'Apply complete! Resources: 2 added, 1 changed, 0 destroyed.'
+    );
+  });
+
   it('shows the duration and links the configuration version', async () => {
     apiMock.getRun.mockResolvedValue(aRun('applied'));
 

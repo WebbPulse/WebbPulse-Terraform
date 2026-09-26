@@ -587,7 +587,8 @@ export interface paths {
          *     sends the returned headers verbatim.
          *
          *     The log's key is per phase and the phase comes from the run's status, so a
-         *     plan-phase runner cannot ask for the apply transcript's key.
+         *     plan-phase runner cannot ask for the apply transcript's key. The applied
+         *     outputs are an apply-phase artifact only, and a 422 anywhere else.
          */
         post: operations["artifact_upload_api_v1_runs__run_id__artifact_uploads_post"];
         delete?: never;
@@ -1101,6 +1102,23 @@ export interface components {
             items: components["schemas"]["ApiKey"][];
         };
         /**
+         * AppliedOutput
+         * @description One root output's value after a successful apply.
+         *
+         *     A sensitive output carries the redaction string rather than its value.
+         */
+        AppliedOutput: {
+            /** Name */
+            name: string;
+            /**
+             * Sensitive
+             * @default false
+             */
+            sensitive?: boolean;
+            /** Value */
+            value?: unknown;
+        };
+        /**
          * ArtifactUpload
          * @description The presigned PUT one artifact goes to.
          *
@@ -1126,7 +1144,7 @@ export interface components {
              * Artifact
              * @enum {string}
              */
-            artifact: "plan" | "plan_json" | "log";
+            artifact: "plan" | "plan_json" | "log" | "outputs_json";
             /** Size Bytes */
             size_bytes: number;
         };
@@ -1433,6 +1451,7 @@ export interface components {
          */
         Run: {
             actor?: components["schemas"]["RunActor"] | null;
+            apply_changes?: components["schemas"]["RunChanges"] | null;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
@@ -1596,6 +1615,7 @@ export interface components {
          */
         RunCreated: {
             actor?: components["schemas"]["RunActor"] | null;
+            apply_changes?: components["schemas"]["RunChanges"] | null;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
@@ -1659,6 +1679,8 @@ export interface components {
          *     projection the run view renders.
          */
         RunPlan: {
+            /** Applied Outputs */
+            applied_outputs?: components["schemas"]["AppliedOutput"][] | null;
             changes: components["schemas"]["RunChanges"];
             /**
              * Has Changes

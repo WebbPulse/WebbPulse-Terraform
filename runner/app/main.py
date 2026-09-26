@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import boto3
 import httpx
 
-from app import callback, credentials, engine, workspace
+from app import callback, credentials, engine, install, workspace
 from app.api import ApiError, RunnerApi, build_client
 from app.logs import CloudWatchLogSink, Redactor
 from app.models import Bundle, Changes, PhaseResult, RunnerEnv, RunnerEnvError
@@ -80,19 +81,54 @@ def _run_plan(
     if show_code != 0:
         raise PhaseFailure("PlanShowFailed", f"show -json exited {show_code}")
     changes, has_changes = engine.parse_changes(plan_json)
-    sink.write(f"Plan: {changes.add} to add, {changes.change} to change, {changes.destroy} to destroy.")
     return 0, changes, has_changes, plan_json
 
 
-def _run_apply(runner: engine.EngineRunner) -> int:
-    """Init and apply the saved plan."""
+def _run_apply(runner: engine.EngineRunner, sink: CloudWatchLogSink) -> tuple[int, Changes]:
+    """Init and apply the saved plan, returning the counts the engine says it applied."""
     init_code = runner.init()
     if init_code != 0:
         raise PhaseFailure("InitFailed", f"init exited {init_code}")
     apply_code = runner.apply()
     if apply_code != 0:
         raise PhaseFailure("ApplyFailed", f"apply exited {apply_code}")
-    return apply_code
+    return apply_code, engine.parse_apply_changes(sink.lines) or Changes()
+
+
+def redact_outputs(raw: str) -> str | None:
+    """The `output -json` document with every sensitive value dropped, or None if unreadable.
+
+    Only the name, type and sensitivity of a sensitive output leave the task, so the
+    stored artifact never holds a value the plan itself would have masked.
+    """
+    try:
+        document: object = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(document, dict):
+        return None
+    redacted: dict[str, object] = {}
+    for name, entry in cast(dict[str, object], document).items():
+        if not isinstance(entry, dict):
+            continue
+        output = dict(cast(dict[str, object], entry))
+        if output.get("sensitive") is True:
+            output["value"] = None
+        redacted[name] = output
+    return json.dumps(redacted)
+
+
+def _upload_outputs(runner: engine.EngineRunner, api: RunnerApi, sink: CloudWatchLogSink) -> None:
+    """Best effort upload of the applied outputs; a failure is logged, never raised."""
+    exit_code, raw = runner.output_json()
+    document = redact_outputs(raw) if exit_code == 0 else None
+    if document is None:
+        sink.write("applied outputs unavailable")
+        return
+    try:
+        api.upload_text("outputs_json", document)
+    except ApiError as error:
+        sink.write(f"applied outputs not uploaded: {error}")
 
 
 def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
@@ -136,9 +172,12 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
         )
 
         try:
-            runner = engine.EngineRunner(bundle.engine, engine_directory, environment, sink)
-        except engine.EngineError as error:
-            raise PhaseFailure("EngineMissing", str(error)) from error
+            binary = install.ensure_engine(
+                bundle.engine, bundle.engine_version, directory / "engines", clients.http, sink
+            )
+        except install.InstallError as error:
+            raise PhaseFailure("EngineInstallFailed", str(error)) from error
+        runner = engine.EngineRunner(bundle.engine, engine_directory, environment, sink, binary)
 
         plan_path = engine_directory / engine.PLAN_FILE
         plan_json_path = engine_directory / engine.PLAN_JSON_FILE
@@ -160,7 +199,8 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
                 api.download(bundle.artifacts.plan_get_url, plan_path)
             except ApiError as error:
                 raise PhaseFailure("PlanDownloadFailed", str(error)) from error
-            exit_code = _run_apply(runner)
+            exit_code, changes = _run_apply(runner, sink)
+            _upload_outputs(runner, api, sink)
 
         sink.flush()
         try:

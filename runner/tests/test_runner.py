@@ -20,11 +20,13 @@ from tests.conftest import (
     RUN_TOKEN,
     SECRET_ENVVAR,
     SECRET_HCL_TFVAR,
+    SECRET_OUTPUT,
     SECRET_TFVAR,
     TASK_TOKEN,
     WORKSPACE_ID,
     ApiRecorder,
     bundle_payload,
+    engine_release,
     make_clients,
     make_env,
     make_transport,
@@ -160,8 +162,152 @@ def test_apply_downloads_the_plan_and_succeeds(
     result = recorder.phase_results[0]
     assert result["phase"] == "apply"
     assert result["exit_code"] == 0
+    assert result["changes"] == {"add": 1, "change": 0, "destroy": 0}
     messages = log_stream_messages(f"{RUN_ID}/apply")
     assert any("Apply complete" in message for message in messages)
+
+
+def test_apply_uploads_outputs_without_sensitive_values(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The applied outputs are uploaded with each sensitive value dropped before it leaves."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, plan_get_url="https://artifacts.example.invalid/runs/plan.tfplan?sig=5")
+    clients = make_clients(make_transport(bundle, config_tarball, recorder))
+
+    assert run(make_env("apply"), clients, tmp_path) == 0
+
+    body = recorder.uploads["/runs/outputs.json"]
+    assert SECRET_OUTPUT.encode() not in body
+    outputs = json.loads(body)
+    assert outputs["pet_name"]["value"] == "lucky-horse"
+    assert outputs["secret"] == {"sensitive": True, "type": "string", "value": None}
+    assert all(SECRET_OUTPUT not in message for message in log_stream_messages(f"{RUN_ID}/apply"))
+
+
+def test_a_refused_outputs_upload_does_not_fail_the_apply(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The outputs artifact is best effort, so an API that refuses it still applies."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, plan_get_url="https://artifacts.example.invalid/runs/plan.tfplan?sig=5")
+    transport = make_transport(bundle, config_tarball, recorder, refused_uploads=frozenset({"outputs_json"}))
+
+    assert run(make_env("apply"), make_clients(transport), tmp_path) == 0
+    assert recorder.phase_results[0]["changes"] == {"add": 1, "change": 0, "destroy": 0}
+    assert "/runs/outputs.json" not in recorder.uploads
+    assert any("applied outputs not uploaded" in message for message in log_stream_messages(f"{RUN_ID}/apply"))
+
+
+def test_the_plan_log_carries_no_runner_summary_line(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The engine prints its own plan summary, so the runner adds no second one."""
+    fake_engine()
+    recorder = ApiRecorder()
+    clients = make_clients(make_transport(bundle_payload(run_role_arn), config_tarball, recorder))
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+    messages = log_stream_messages(f"{RUN_ID}/plan")
+    assert not any(message.startswith("Plan: ") for message in messages)
+    assert b"Plan: " not in recorder.uploads["/runs/plan.log"]
+
+
+def test_the_baked_engine_runs_when_it_matches_the_pin(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A pin equal to the baked release downloads nothing."""
+    bin_directory = fake_engine()
+    recorder = ApiRecorder()
+    clients = make_clients(make_transport(bundle_payload(run_role_arn), config_tarball, recorder))
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+    messages = log_stream_messages(f"{RUN_ID}/plan")
+    assert "using terraform 1.16.3" in messages
+    assert not any(message.startswith("installing") for message in messages)
+    assert not (tmp_path / "engines").exists()
+    assert bin_directory.exists()
+
+
+@pytest.mark.parametrize("engine", ["terraform", "tofu"])
+def test_a_pinned_version_is_installed_and_used(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    engine: str,
+) -> None:
+    """A pin the image does not bake is downloaded, verified and run in place of the baked one."""
+    fake_engine()
+    release_directory = fake_engine(version="1.11.0", directory=tmp_path / "release")
+    releases = engine_release(engine, "1.11.0", (release_directory / engine).read_bytes())
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, engine=engine, engine_version="1.11.0")
+    clients = make_clients(make_transport(bundle, config_tarball, recorder, releases=releases))
+
+    assert run(make_env("plan"), clients, tmp_path / "work") == 0
+    messages = log_stream_messages(f"{RUN_ID}/plan")
+    assert f"installing {engine} 1.11.0" in messages
+    assert f"using {engine} 1.11.0" in messages
+    assert (tmp_path / "work" / "engines" / engine / "1.11.0" / engine).exists()
+
+
+def test_a_release_that_fails_its_checksum_is_refused(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An archive whose digest differs from the published SUMS never runs."""
+    fake_engine()
+    releases = engine_release("terraform", "1.11.0", b"tampered", checksum="f" * 64)
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, engine_version="1.11.0")
+    clients = make_clients(make_transport(bundle, config_tarball, recorder, releases=releases))
+
+    assert run(make_env("plan"), clients, tmp_path) == 1
+    assert recorder.phase_results == []
+    assert "EngineInstallFailed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("pin", ["~> 1.11", "latest", "1.11"])
+def test_a_pin_that_is_not_an_exact_version_is_refused(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    pin: str,
+) -> None:
+    """A constraint has nothing to resolve it here, so it fails rather than guessing."""
+    fake_engine()
+    recorder = ApiRecorder()
+    clients = make_clients(make_transport(bundle_payload(run_role_arn, engine_version=pin), config_tarball, recorder))
+
+    assert run(make_env("plan"), clients, tmp_path) == 1
+    assert "is not an exact release version" in capsys.readouterr().err
 
 
 def plan_arguments(stream: str) -> list[str]:

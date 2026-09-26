@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
+import platform
 import tarfile
+import zipfile
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -25,6 +28,7 @@ import httpx  # noqa: E402
 import pytest  # noqa: E402
 from moto import mock_aws  # noqa: E402
 
+from app import install  # noqa: E402
 from app.main import Clients  # noqa: E402
 from app.models import RunnerEnv  # noqa: E402
 
@@ -109,13 +113,25 @@ def nested_config_tarball() -> bytes:
     return build_config_tarball("main.tf", "infra/main.tf")
 
 
-def bundle_payload(run_role_arn: str, *, engine: str = "terraform", plan_get_url: str | None = None) -> dict[str, Any]:
+BAKED_VERSION = "1.16.3"
+"""The version the fake engine on PATH reports, standing in for the image's baked release."""
+
+SECRET_OUTPUT = "sensitive-output-value-uvwxyz0123"
+
+
+def bundle_payload(
+    run_role_arn: str,
+    *,
+    engine: str = "terraform",
+    plan_get_url: str | None = None,
+    engine_version: str = BAKED_VERSION,
+) -> dict[str, Any]:
     """A bundle the runs domain would serve, carrying sensitive variable values."""
     return {
         "run_id": RUN_ID,
         "workspace_id": WORKSPACE_ID,
         "engine": engine,
-        "engine_version": "1.16.3",
+        "engine_version": engine_version,
         "config_url": "https://artifacts.example.invalid/configs/config.tar.gz?sig=1",
         "backend": {
             "bucket": "webbpulse-terraform-staging-state",
@@ -141,6 +157,7 @@ ARTIFACT_OBJECTS: dict[str, tuple[str, str]] = {
     "plan": ("/runs/plan.tfplan", "application/octet-stream"),
     "plan_json": ("/runs/plan.json", "application/json"),
     "log": ("/runs/plan.log", "text/plain"),
+    "outputs_json": ("/runs/outputs.json", "application/json"),
 }
 """The path and signed content type the fake API mints an upload for, per kind."""
 
@@ -165,16 +182,23 @@ def make_transport(
     plan_bytes: bytes = b"fake-plan",
     upload_request_status: int = 200,
     upload_status: int = 200,
+    releases: dict[str, bytes] | None = None,
+    refused_uploads: frozenset[str] = frozenset(),
 ) -> httpx.MockTransport:
     """An httpx transport serving the bundle, the config tarball and the artifact uploads.
 
     The upload route mints a URL that names the declared size, and the PUT handler
     refuses a body whose length does not match it, so a runner that sent the wrong
-    `Content-Length` fails here the way S3 fails it.
+    `Content-Length` fails here the way S3 fails it. `releases` serves engine
+    release files by URL, and `refused_uploads` names artifact kinds whose upload
+    request is refused.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if request.url.host in ("releases.hashicorp.com", "github.com"):
+            served = (releases or {}).get(str(request.url))
+            return httpx.Response(404) if served is None else httpx.Response(200, content=served)
         if path.endswith("/bundle"):
             recorder.bundle_requests += 1
             if bundle_status != 200 or bundle is None:
@@ -183,6 +207,8 @@ def make_transport(
         if path.endswith("/artifact-uploads"):
             payload = json.loads(request.content)
             recorder.upload_requests.append(payload)
+            if str(payload["artifact"]) in refused_uploads:
+                return httpx.Response(422, json={"detail": "unknown artifact"})
             if upload_request_status != 200:
                 return httpx.Response(upload_request_status, json={"detail": "nope"})
             object_path, content_type = ARTIFACT_OBJECTS[str(payload["artifact"])]
@@ -229,6 +255,8 @@ def fake_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[...
         apply_exit: int = 0,
         init_exit: int = 0,
         echo_environment: bool = True,
+        version: str = BAKED_VERSION,
+        directory: Path | None = None,
     ) -> Path:
         document = json.dumps(PLAN_JSON_WITH_CHANGES if plan_json is None else plan_json)
         script = f"""#!/usr/bin/env python3
@@ -236,9 +264,13 @@ import json, os, sys
 
 SUBCOMMAND = sys.argv[1] if len(sys.argv) > 1 else ""
 ECHO = {echo_environment!r}
+VERSION = {version!r}
 
 if SUBCOMMAND == "version":
-    print("Terraform v0.0.0-fake")
+    if sys.argv[2:] == ["-json"]:
+        print(json.dumps({{"terraform_version": VERSION}}))
+    else:
+        print("Terraform v" + VERSION)
     sys.exit(0)
 if SUBCOMMAND == "init":
     print("Initializing the backend...")
@@ -265,17 +297,41 @@ if SUBCOMMAND == "apply":
     print("apply arguments " + " ".join(sys.argv[2:]))
     print("Apply complete! Resources: 1 added, 0 changed, 0 destroyed.")
     sys.exit({apply_exit})
+if SUBCOMMAND == "output":
+    print(json.dumps({{
+        "pet_name": {{"sensitive": False, "type": "string", "value": "lucky-horse"}},
+        "secret": {{"sensitive": True, "type": "string", "value": {SECRET_OUTPUT!r}}},
+    }}))
+    sys.exit(0)
 print("unexpected subcommand " + SUBCOMMAND, file=sys.stderr)
 sys.exit(1)
 """
+        target_directory = directory or bin_directory
+        target_directory.mkdir(parents=True, exist_ok=True)
         for name in ("terraform", "tofu"):
-            target = bin_directory / name
+            target = target_directory / name
             target.write_text(script)
             target.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{bin_directory}{os.pathsep}{os.environ['PATH']}")
-        return bin_directory
+        if directory is None:
+            monkeypatch.setenv("PATH", f"{bin_directory}{os.pathsep}{os.environ['PATH']}")
+        return target_directory
 
     return install
+
+
+def engine_release(engine: str, version: str, binary: bytes, *, checksum: str | None = None) -> dict[str, bytes]:
+    """The archive and SHA256SUMS files one engine release serves, keyed by URL."""
+    architecture = install.ARCHITECTURES[platform.machine().lower()]
+    archive_url, sums_url, archive_name = install.release_urls(
+        "tofu" if engine == "tofu" else "terraform", version, architecture
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr(engine, binary)
+    archive = buffer.getvalue()
+    digest = checksum or hashlib.sha256(archive).hexdigest()
+    sums = f"{'0' * 64}  other_{version}_linux_{architecture}.zip\n{digest}  {archive_name}\n"
+    return {archive_url: archive, sums_url: sums.encode()}
 
 
 def make_env(phase: str = "plan") -> RunnerEnv:

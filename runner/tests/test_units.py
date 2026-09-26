@@ -16,8 +16,10 @@ import pytest
 from app import workspace
 from app.api import ApiError, RunnerApi
 from app.credentials import CredentialsError, assume_run_role
-from app.engine import build_environment, parse_changes
+from app.engine import build_environment, parse_apply_changes, parse_changes
+from app.install import release_urls
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
+from app.main import redact_outputs
 from app.models import BackendConfig, Bundle, Changes, PhaseResult, RunRole, hcl_literal_fragments
 from tests.conftest import (
     LOG_GROUP,
@@ -593,3 +595,47 @@ def test_heredoc_bodies_and_lines_are_masked() -> None:
 def test_fragment_extraction_never_refuses_a_value(expression: str) -> None:
     """Extraction is best effort: a short, dynamic or odd expression still yields itself."""
     assert expression in hcl_literal_fragments(expression)
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        (["Apply complete! Resources: 1 added, 2 changed, 3 destroyed."], Changes(add=1, change=2, destroy=3)),
+        (["Apply complete! Resources: 4 imported, 1 added, 0 changed, 0 destroyed."], Changes(add=1)),
+        (["Destroy complete! Resources: 5 destroyed."], Changes(destroy=5)),
+        (["Apply complete! Resources: 1 added, 0 changed, 0 destroyed.", "noise"], Changes(add=1)),
+        (["no summary here"], None),
+    ],
+)
+def test_apply_counts_come_from_the_engine_summary(lines: list[str], expected: Changes | None) -> None:
+    """The closing summary line is the apply's own record of what it changed."""
+    assert parse_apply_changes(lines) == expected
+
+
+def test_redact_outputs_drops_sensitive_values() -> None:
+    """A sensitive output keeps its name and type but loses its value."""
+    raw = json.dumps(
+        {
+            "name": {"sensitive": False, "type": "string", "value": "plain"},
+            "token": {"sensitive": True, "type": "string", "value": "hidden"},
+        }
+    )
+    redacted = json.loads(redact_outputs(raw) or "{}")
+    assert redacted["name"]["value"] == "plain"
+    assert redacted["token"] == {"sensitive": True, "type": "string", "value": None}
+    assert redact_outputs("not json") is None
+    assert redact_outputs("[]") is None
+
+
+def test_release_urls_follow_each_projects_layout() -> None:
+    """Terraform and OpenTofu publish their archives and sums under different paths."""
+    assert release_urls("terraform", "1.11.0", "arm64") == (
+        "https://releases.hashicorp.com/terraform/1.11.0/terraform_1.11.0_linux_arm64.zip",
+        "https://releases.hashicorp.com/terraform/1.11.0/terraform_1.11.0_SHA256SUMS",
+        "terraform_1.11.0_linux_arm64.zip",
+    )
+    assert release_urls("tofu", "1.9.0", "amd64") == (
+        "https://github.com/opentofu/opentofu/releases/download/v1.9.0/tofu_1.9.0_linux_amd64.zip",
+        "https://github.com/opentofu/opentofu/releases/download/v1.9.0/tofu_1.9.0_SHA256SUMS",
+        "tofu_1.9.0_linux_amd64.zip",
+    )
