@@ -257,6 +257,18 @@ same source cancels that source's pending runs and discards one awaiting
 confirmation; a late older upload starts nothing. A workspace with no run role is
 skipped.
 
+### VCS run reporting
+
+The runs table streams (filtered to `vcs_*` runs) to the runs function, and
+`app/domains/runs/consumers/reports.py` reports each status change through the App
+(`app/domains/runs/reporting.py`): a `webbpulse-terraform/<workspace>` check run
+(external id = run id), a `webbpulse-terraform` aggregate check for the commit, and
+one marker-found comment per pull request. Nothing is stored; everything is found
+again on GitHub. A push reports on the signed commit once the branch contains it,
+a pull request on its unsigned head only once it is a parent of the signed merge
+commit and a commit of that pull request. A held push run is `action_required`.
+Reporting never raises, so it cannot fail or retry a run.
+
 ### HCL variables
 
 A terraform variable can set `hcl`, which makes the runner write its value into a
