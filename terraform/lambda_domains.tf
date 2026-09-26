@@ -31,6 +31,11 @@ locals {
           batch_size                      = 1
           maximum_batching_window_seconds = 0
         }
+        workspace_cleanup = {
+          queue_arn                       = module.workspace_cleanup.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
       }
       stream_sources = {
         vcs_run_reports = {
@@ -165,6 +170,8 @@ module "lambda_domain" {
 
       RUN_STATE_MACHINE_ARN = module.run_state_machine.arn
 
+      WORKSPACE_CLEANUP_QUEUE_URL = module.workspace_cleanup.queue_url
+
       RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
       RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
 
@@ -215,6 +222,12 @@ locals {
         Effect   = "Allow"
         Action   = ["dynamodb:DeleteItem"]
         Resource = [module.dynamodb.table_arns["runs"]]
+      },
+      {
+        Sid      = "QueueADeletedWorkspacesObjectCleanup"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [module.workspace_cleanup.queue_arn]
       },
     ]
     github = [
