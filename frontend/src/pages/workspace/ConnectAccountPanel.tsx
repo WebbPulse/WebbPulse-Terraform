@@ -46,7 +46,11 @@ export interface ConnectAccountPanelProps {
 }
 
 /**
- * AWS quick setup first, the connection state under it, and the manual path
+ * The saved role as a connected card, or the ways to connect one.
+ *
+ * With a role ARN saved the card leads, as HCP Terraform shows a configured
+ * integration, and Change role opens the setup paths. Without one, AWS quick
+ * setup comes first, the connection state under it, and the manual path is
  * folded away for anyone creating the role with their own tooling.
  */
 export function ConnectAccountPanel({
@@ -55,8 +59,41 @@ export function ConnectAccountPanel({
   keys,
 }: ConnectAccountPanelProps): React.ReactElement {
   const { run_role_setup: setup } = workspace;
+  const savedArn = workspace.run_role_arn ?? null;
+  const [changing, setChanging] = useState(savedArn === null);
+  if (savedArn !== null && !changing) {
+    return (
+      <ConnectedRole
+        workspace={workspace}
+        arn={savedArn}
+        runRoleCheck={runRoleCheck}
+        keys={keys}
+        onChange={() => {
+          setChanging(true);
+        }}
+      />
+    );
+  }
   return (
     <div className="space-y-5">
+      {savedArn === null ? null : (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2 text-sm">
+          <span className="min-w-0 text-text-muted">
+            Current role:{' '}
+            <code className="font-mono text-xs break-all text-text">
+              {savedArn}
+            </code>
+          </span>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setChanging(false);
+            }}
+          >
+            Keep the current role
+          </Button>
+        </div>
+      )}
       <p className="max-w-prose text-sm text-text-muted">
         Runs assume an IAM role in your AWS account to read and write your
         infrastructure. Quick setup creates that role with one AWS
@@ -94,6 +131,55 @@ export function ConnectAccountPanel({
         </div>
       </details>
     </div>
+  );
+}
+
+/** The connected state: the account, the role ARN, its live status, and Change role. */
+function ConnectedRole({
+  workspace,
+  arn,
+  runRoleCheck,
+  keys,
+  onChange,
+}: {
+  workspace: Workspace;
+  arn: string;
+  runRoleCheck: RunRoleCheck | null;
+  keys: WorkspaceKeys;
+  onChange: () => void;
+}): React.ReactElement {
+  const accountId = accountIdFromArn(arn);
+  return (
+    <section
+      aria-label="Connected AWS account"
+      data-testid="connected-account"
+      className="rounded-lg border border-line bg-panel"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-text-strong">
+            AWS account{' '}
+            <span className="font-mono">{accountId ?? 'unknown'}</span>
+          </h3>
+          <p className="mt-0.5 text-xs text-text-muted">
+            Runs assume this role to read and write your infrastructure.
+          </p>
+        </div>
+        <Button variant="secondary" onClick={onChange}>
+          Change role
+        </Button>
+      </div>
+      <div className="space-y-4 px-4 py-4">
+        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
+          <ValueRow label="Role ARN" value={arn} />
+        </dl>
+        <ConnectionCheck
+          workspace={workspace}
+          runRoleCheck={runRoleCheck}
+          keys={keys}
+        />
+      </div>
+    </section>
   );
 }
 

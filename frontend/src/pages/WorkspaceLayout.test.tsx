@@ -150,9 +150,10 @@ describe('WorkspaceLayout', () => {
     renderDetail('/workspaces/ws-01J000000000000000000000/settings/general');
 
     await screen.findByRole('form', { name: 'Workspace settings' });
-    const version = screen.getByLabelText('Engine version');
-    await userEvent.clear(version);
-    await userEvent.type(version, '1.12.0');
+    await userEvent.selectOptions(
+      screen.getByLabelText('Engine version'),
+      '1.15.9'
+    );
     await userEvent.click(
       screen.getByRole('button', { name: 'Save settings' })
     );
@@ -162,9 +163,30 @@ describe('WorkspaceLayout', () => {
       {
         description: 'The platform workspace.',
         engine: 'terraform',
-        engine_version: '1.12.0',
+        engine_version: '1.15.9',
         working_directory: 'terraform',
       }
+    );
+  });
+
+  it('keeps a stored version off the list as a typed one', async () => {
+    apiMock.updateWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail('/workspaces/ws-01J000000000000000000000/settings/general');
+
+    await screen.findByRole('form', { name: 'Workspace settings' });
+    expect(screen.getByLabelText('Engine version')).toHaveValue('__other__');
+    const typed = screen.getByLabelText('Specific version');
+    expect(typed).toHaveValue('1.11.0');
+    await userEvent.clear(typed);
+    await userEvent.type(typed, '1.16.4');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save settings' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      expect.objectContaining({ engine_version: '1.16.4' })
     );
   });
 
@@ -1060,10 +1082,57 @@ describe('AWS quick setup', () => {
 
     renderDetail(RUN_ROLE_SETTINGS);
 
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Change role' })
+    );
     const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
     expect(within(setup).getByLabelText('AWS account ID')).toHaveValue(
       '123456789012'
     );
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Keep the current role' })
+    );
+    expect(screen.getByTestId('connected-account')).toBeInTheDocument();
+  });
+
+  it('leads the settings page with the saved role as a connected account', async () => {
+    const arn = aWorkspace().run_role_arn ?? '';
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(connected).toHaveTextContent('AWS account 123456789012');
+    expect(connected).toHaveTextContent(arn);
+    expect(
+      within(connected).getByRole('button', { name: 'Check connection' })
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole('form', { name: 'AWS quick setup' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('asks a repository workspace for a push instead of an upload', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({
+        run_role_arn: aWorkspace().run_role_arn,
+        vcs_repo: 'WebbPulse/infra',
+        tracked_branch: 'staging',
+      })
+    );
+
+    renderDetail();
+
+    const checklist = await screen.findByTestId('setup-checklist');
+    const upload = within(checklist).getByTestId('setup-step-upload');
+    expect(upload).toHaveTextContent('Waiting for configuration');
+    expect(upload).toHaveTextContent(
+      'Push to staging or open a pull request in WebbPulse/infra.'
+    );
+    expect(
+      within(checklist).getByTestId('setup-awaiting-vcs')
+    ).toBeInTheDocument();
+    expect(within(checklist).queryByText(/tar\.gz/)).not.toBeInTheDocument();
   });
 
   it('keeps the manual path behind a disclosure', async () => {

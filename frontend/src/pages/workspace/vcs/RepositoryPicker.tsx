@@ -3,14 +3,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import {
-  ErrorNotice,
-  INPUT_CLASS,
-  Spinner,
-  useIsAdmin,
-} from '../../../components';
+import { ErrorNotice, INPUT_CLASS, useIsAdmin } from '../../../components';
 import {
   useInstalledRepositories,
+  type InstalledRepositories,
   type InstalledRepository,
 } from './useInstalledRepositories';
 import { sameRepository } from './vcsSettings';
@@ -28,8 +24,87 @@ export function RepositoryPicker({
   onChange,
 }: RepositoryPickerProps): React.ReactElement {
   const isAdmin = useIsAdmin();
-  const { data, error, isLoading } = useInstalledRepositories(isAdmin);
+  const source = useInstalledRepositories(isAdmin);
+  return (
+    <RepositoryList
+      isAdmin={isAdmin}
+      source={source}
+      value={value}
+      onChange={onChange}
+    />
+  );
+}
+
+/** Props for {@link RepositoryList}. */
+export interface RepositoryListProps extends RepositoryPickerProps {
+  isAdmin: boolean;
+  /** The installed repositories, read by the caller so it can start the read early. */
+  source: {
+    data: InstalledRepositories | null;
+    error: unknown;
+    isLoading: boolean;
+  };
+}
+
+/** The number of placeholder rows shown while the repositories load. */
+const SKELETON_ROWS = 5;
+
+/** Placeholder rows shaped like the list, labelled for assistive technology. */
+function RepositorySkeleton(): React.ReactElement {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-text-faint">
+        Loading repositories from GitHub
+      </p>
+      <ul
+        role="status"
+        aria-label="Loading repositories"
+        aria-busy="true"
+        className="overflow-hidden rounded-md border border-line bg-panel"
+      >
+        {Array.from({ length: SKELETON_ROWS }, (_, index) => (
+          <li
+            key={index}
+            aria-hidden="true"
+            className="flex items-center justify-between gap-3 border-b border-line px-3 py-2.5 last:border-b-0"
+          >
+            <span className="space-y-1.5">
+              <span
+                className="block h-3 animate-pulse rounded bg-raised"
+                style={{ width: `${String(10 + ((index * 3) % 7))}rem` }}
+              />
+              <span className="block h-2.5 w-24 animate-pulse rounded bg-raised" />
+            </span>
+            <span className="h-4 w-12 animate-pulse rounded bg-raised" />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The chip that says whether a repository is public or private. */
+function VisibilityChip({
+  isPrivate,
+}: {
+  isPrivate: boolean;
+}): React.ReactElement {
+  return (
+    <span className="shrink-0 rounded border border-line bg-raised px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
+      {isPrivate ? 'Private' : 'Public'}
+    </span>
+  );
+}
+
+/** The list itself, given the repositories to show. */
+export function RepositoryList({
+  isAdmin,
+  source,
+  value,
+  onChange,
+}: RepositoryListProps): React.ReactElement {
   const [filter, setFilter] = useState('');
+  const { data, error, isLoading } = source;
 
   if (!isAdmin) {
     return (
@@ -40,7 +115,7 @@ export function RepositoryPicker({
     );
   }
   if (isLoading) {
-    return <Spinner label="Loading repositories" />;
+    return <RepositorySkeleton />;
   }
   if (data === null) {
     return <ErrorNotice error={error} />;
@@ -82,7 +157,7 @@ export function RepositoryPicker({
       <ul
         role="listbox"
         aria-label="Repositories"
-        className="max-h-64 overflow-y-auto rounded-md border border-line bg-panel"
+        className="max-h-80 overflow-y-auto rounded-md border border-line bg-panel"
       >
         {shown.length === 0 ? (
           <li className="px-3 py-2 text-sm text-text-muted">
@@ -106,17 +181,44 @@ export function RepositoryPicker({
                     onChange(repository);
                   }
                 }}
-                className={`flex cursor-pointer items-center justify-between gap-3 border-b border-line px-3 py-2 text-sm last:border-b-0 hover:bg-raised focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-                  selected ? 'bg-raised text-text-strong' : 'text-text'
+                className={`flex cursor-pointer items-center justify-between gap-3 border-b border-l-2 border-b-line px-3 py-2 text-sm last:border-b-0 focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none ${
+                  selected
+                    ? 'border-l-accent bg-accent-soft text-text-strong'
+                    : 'border-l-transparent text-text hover:bg-raised'
                 }`}
               >
-                <span className="font-mono">{repository.full_name}</span>
-                <span className="text-xs text-text-muted">
-                  {repository.private ? 'Private' : 'Public'}
-                  {repository.default_branch
-                    ? ` · ${repository.default_branch}`
-                    : ''}
+                <span className="flex min-w-0 items-center gap-2">
+                  {selected ? (
+                    <svg
+                      viewBox="0 0 16 16"
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 text-accent"
+                      fill="none"
+                    >
+                      <path
+                        d="m3.5 8.5 3 3 6-7"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  ) : null}
+                  <span className="min-w-0">
+                    <span className="block truncate font-mono">
+                      {repository.full_name}
+                    </span>
+                    {repository.default_branch ? (
+                      <span className="block text-xs text-text-faint">
+                        default branch{' '}
+                        <span className="font-mono">
+                          {repository.default_branch}
+                        </span>
+                      </span>
+                    ) : null}
+                  </span>
                 </span>
+                <VisibilityChip isPrivate={repository.private} />
               </li>
             );
           })

@@ -97,16 +97,15 @@ describe('VersionControlSettings', () => {
       await screen.findByRole('option', { name: /WebbPulse\/infra/ })
     );
     const settings = await form();
-    expect(within(settings).getByLabelText('VCS branch')).toHaveValue(
-      'staging'
-    );
+    const branch = within(settings).getByLabelText('VCS branch');
+    expect(branch).toHaveValue('');
+    expect(branch).toHaveAttribute('placeholder', 'staging');
     await userEvent.click(
       within(settings).getByRole('button', { name: 'Connect repository' })
     );
 
     expect(apiMock.updateWorkspace).toHaveBeenCalledWith(WORKSPACE_ID, {
       vcs_repo: 'WebbPulse/infra',
-      tracked_branch: 'staging',
       working_directory: 'terraform',
       file_triggers_enabled: true,
       trigger_patterns: [],
@@ -143,7 +142,6 @@ describe('VersionControlSettings', () => {
     );
 
     expect(apiMock.updateWorkspace).toHaveBeenCalledWith(WORKSPACE_ID, {
-      tracked_branch: 'staging',
       working_directory: 'terraform',
       file_triggers_enabled: false,
       trigger_patterns: [],
@@ -195,15 +193,34 @@ describe('VersionControlSettings', () => {
 
     expect(apiMock.updateWorkspace).toHaveBeenCalledWith(
       WORKSPACE_ID,
-      expect.objectContaining({
-        vcs_repo: 'WebbPulse/WebbPulse-Terraform',
-        tracked_branch: 'main',
-      })
+      expect.objectContaining({ vcs_repo: 'WebbPulse/WebbPulse-Terraform' })
     );
+    expect(apiMock.updateWorkspace.mock.calls[0]?.[1]).not.toHaveProperty(
+      'tracked_branch'
+    );
+  });
+
+  it('shows the connected repository and branch apart, with the branch as a placeholder', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ vcs_repo: 'WebbPulse/infra', tracked_branch: 'staging' })
+    );
+    renderPage();
+
+    const settings = await form();
+    const connected = within(settings).getByTestId('connected-repository');
+    expect(
+      within(connected).getByRole('link', { name: 'WebbPulse/infra' })
+    ).toBeInTheDocument();
+    expect(within(connected).getByText('staging')).toBeInTheDocument();
+    expect(connected).not.toHaveTextContent('WebbPulse/infrastaging');
+    const branch = within(settings).getByLabelText('VCS branch');
+    expect(branch).toHaveValue('');
+    expect(branch).toHaveAttribute('placeholder', 'staging');
   });
 
   it('sends an admin to set up the App when there is none', async () => {
     apiMock.getGitHubApp.mockResolvedValue(noApp());
+    apiMock.listGitHubInstallations.mockResolvedValue({ items: [] });
     renderPage();
 
     const link = await screen.findByRole('link', {
