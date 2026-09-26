@@ -49,6 +49,11 @@ class Settings(BaseServiceSettings):
     """The account rows the identity hooks read and write. Separate from the identity
     module's own ten tables, which the package names from a prefix rather than from
     the environment."""
+    VCS_UPLOADS_TABLE: str = ""
+    """The ingest records a GitHub Actions upload writes, expired by TTL."""
+
+    VCS_OIDC_AUDIENCE: str = "webbpulse-terraform"
+    """The audience a GitHub Actions OIDC token must carry to request an upload."""
 
     GITHUB_TABLE: str = ""
     """The GitHub domain's one table: the App row, one-time states and installations."""

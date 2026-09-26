@@ -156,7 +156,8 @@ agent with a `wpk_` API key that the gate authorizer passes through by prefix an
 `claims_or_api_key` verifies in process. Both render as the same claims object,
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
-runner routes and the anonymous identity documents do not. The scopes are
+runner routes, `POST /vcs/uploads` (a GitHub Actions OIDC token, verified in
+process) and the anonymous identity documents do not. The scopes are
 `workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}`,
 `runs:{read,write,apply}` and `state:download`.
 
@@ -201,6 +202,45 @@ confirmation is sent to the `run-confirmations` SQS queue instead and consumed b
 the runs function through an event source mapping. That route mounts at the root
 rather than under `/api/v1`, and the HTTP API never lists it, so the only way to
 reach it is the Lambda Web Adapter's pass-through path.
+
+### VCS ingest
+
+The VCS bridge's ingest half. A GitHub Actions job running the org
+`terraform-run.yml` calls `POST /api/v1/vcs/uploads` with
+`Authorization: Bearer <GitHub Actions OIDC token>` and
+`{sha, pr_number, base_sha, size_bytes}`. The token is verified against GitHub's
+JWKS for issuer `https://token.actions.githubusercontent.com` and the audience
+`VCS_OIDC_AUDIENCE` (default `webbpulse-terraform`), and it is the only source of
+truth: repository, repository id, event, branch, pull request number (from
+`refs/pull/<n>/merge`) and commit all come from its claims. The body's head and
+base shas are stored marked unverified and decide nothing. There are no per
+repository roles and no repository map: a workspace binds itself with `vcs_repo`,
+and the first upload records the repository id on it, so a rename keeps the
+binding and a new repository under the old name does not inherit it.
+
+The route writes an ingest record to `vcs-uploads` (three day TTL) and answers
+exactly 201 `{upload_id, upload_url, headers, expires_in}`, a presigned PUT to
+`ingest/<upload_id>.tar.gz`. A repository no workspace binds is 404
+`VCS_REPO_NOT_BOUND` before anything is written, an event other than a branch push
+or a pull request is 422 `VCS_EVENT_UNSUPPORTED`, and every error carries a top
+level `error_code`. The upload id is derived from the repository id, the commit,
+the workflow run and its attempt, so a retried request returns the same id and a
+freshly signed URL for the same key and never writes a second record.
+
+S3 Object Created on `ingest/` goes through EventBridge to the
+`vcs-ingest` queue as `config_ingested`, and `app/domains/runs/consumers/ingest.py`
+reads the record by the upload id in the key, never the object's metadata. For
+each bound workspace it applies the branch filter (a push needs `tracked_branch`),
+`speculative_plans` (for pull requests), and `trigger_patterns` as recursive globs
+against `.webbpulse/changed-paths.txt` (empty patterns mean
+`<working_directory>/**`, and a missing list or `*` matches everything). It copies
+the tarball to a config version and creates a run sourced `vcs_push` (normal) or
+`vcs_pr` (plan only) with a `vcs` block and a `vcs` actor. The config version and
+run ids are derived from the upload and the workspace, so a redelivered message or
+a PUT retried into a second S3 event creates nothing new. A newer upload from the
+same source cancels that source's pending runs and discards one awaiting
+confirmation; a late older upload starts nothing. A workspace with no run role is
+skipped.
 
 ### HCL variables
 

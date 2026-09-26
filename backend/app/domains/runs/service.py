@@ -330,6 +330,9 @@ def create_run(
     payload: dict[str, Any],
     *,
     actor: Optional[Mapping[str, Any]],
+    run_id: Optional[str] = None,
+    source: str = "api",
+    vcs: Optional[Mapping[str, Any]] = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Create a run, starting it or queueing it behind the workspace's active one.
@@ -353,6 +356,11 @@ def create_run(
         actor: Who triggered this run, derived from the request's claims by the
             route, or `None` when the claims named no subject, which stores no
             actor rather than inventing one.
+        run_id: The id to store under, for a caller that needs the create to be
+            idempotent. A fresh ULID otherwise. The put is conditional, so a
+            second create with the same id raises `ConditionFailed`.
+        source: What started the run, `api`, `vcs_push` or `vcs_pr`.
+        vcs: The commit a VCS run came from, stored as the run's `vcs` block.
         settings: Overrides the resolved settings, for the suite.
 
     Raises:
@@ -377,7 +385,7 @@ def create_run(
         raise ConfigVersionNotReady(config_version_id)
 
     blocking = active_run(workspace_id, settings=resolved)
-    run_id = f"{RUN_ID_PREFIX}{new_ulid()}"
+    run_id = run_id or f"{RUN_ID_PREFIX}{new_ulid()}"
     timestamp = now_iso()
     item: dict[str, Any] = {
         "run_id": run_id,
@@ -389,9 +397,12 @@ def create_run(
         "is_destroy": bool(payload.get("is_destroy", False)),
         "message": str(payload.get("message", "")),
         "run_role_arn": str(workspace.get("run_role_arn", "")),
+        "source": source,
         "created_at": timestamp,
         "updated_at": timestamp,
     }
+    if vcs is not None:
+        item["vcs"] = {key: value for key, value in vcs.items() if value is not None}
     if actor is not None:
         item["actor"] = dict(actor)
     if blocking is not None:

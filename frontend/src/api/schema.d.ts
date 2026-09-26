@@ -907,6 +907,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/vcs/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Vcs Upload
+         * @description Issue a presigned PUT for a workflow's configuration tarball.
+         *
+         *     The caller sends `Authorization: Bearer <GitHub Actions OIDC token>`. The
+         *     repository, event, branch and pull request number come from its verified
+         *     claims. A retry of the same workflow run attempt returns the same `upload_id`
+         *     with a new URL for the same key.
+         */
+        post: operations["create_vcs_upload_api_v1_vcs_uploads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces": {
         parameters: {
             query?: never;
@@ -1792,6 +1817,12 @@ export interface components {
             queued_behind?: string | null;
             /** Run Id */
             run_id: string;
+            /**
+             * Source
+             * @default api
+             * @enum {string}
+             */
+            source?: "api" | "vcs_push" | "vcs_pr";
             /** Started At */
             started_at?: string | null;
             /**
@@ -1801,6 +1832,7 @@ export interface components {
             status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
             /** Updated At */
             updated_at?: string | null;
+            vcs?: components["schemas"]["RunVcs"] | null;
             /** Workspace Id */
             workspace_id: string;
         };
@@ -1817,7 +1849,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "user" | "agent";
+            kind: "user" | "agent" | "vcs";
         };
         /**
          * RunBundle
@@ -1958,6 +1990,12 @@ export interface components {
             run_id: string;
             /** Run Token */
             run_token?: string | null;
+            /**
+             * Source
+             * @default api
+             * @enum {string}
+             */
+            source?: "api" | "vcs_push" | "vcs_pr";
             /** Started At */
             started_at?: string | null;
             /**
@@ -1967,6 +2005,7 @@ export interface components {
             status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
             /** Updated At */
             updated_at?: string | null;
+            vcs?: components["schemas"]["RunVcs"] | null;
             /** Workspace Id */
             workspace_id: string;
         };
@@ -2086,6 +2125,32 @@ export interface components {
             principal_arns?: string[];
             /** Role Name */
             role_name: string;
+        };
+        /**
+         * RunVcs
+         * @description The commit a VCS run was started from.
+         *
+         *     Everything except `head_sha` and `base_sha` comes from the verified GitHub
+         *     Actions token. Those two are what the workflow reported for a pull request and
+         *     are not verified.
+         */
+        RunVcs: {
+            /** Base Sha */
+            base_sha?: string | null;
+            /** Branch */
+            branch?: string | null;
+            /** Head Sha */
+            head_sha?: string | null;
+            /** Pr Number */
+            pr_number?: number | null;
+            /** Ref */
+            ref: string;
+            /** Repo */
+            repo: string;
+            /** Repository Id */
+            repository_id: string;
+            /** Sha */
+            sha: string;
         };
         /**
          * StateVersion
@@ -2271,6 +2336,45 @@ export interface components {
             value: string;
         };
         /**
+         * VcsUpload
+         * @description Where to PUT the tarball.
+         *
+         *     A retry of the same workflow run attempt gets the same `upload_id` and a freshly
+         *     signed URL for the same key. Every header is inside the signature and has to be
+         *     sent verbatim.
+         */
+        VcsUpload: {
+            /** Expires In */
+            expires_in: number;
+            /** Headers */
+            headers: {
+                [key: string]: string;
+            };
+            /** Upload Id */
+            upload_id: string;
+            /** Upload Url */
+            upload_url: string;
+        };
+        /**
+         * VcsUploadCreate
+         * @description What the workflow reports alongside its GitHub Actions OIDC token.
+         *
+         *     Only `size_bytes` is used as given. The repository, the event, the branch, the
+         *     pull request number and the commit all come from the verified token, and
+         *     `sha` and `base_sha` are recorded on a pull request as the workflow's
+         *     unverified account of its head and base.
+         */
+        VcsUploadCreate: {
+            /** Base Sha */
+            base_sha?: string | null;
+            /** Pr Number */
+            pr_number?: number | null;
+            /** Sha */
+            sha: string;
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /**
          * Workspace
          * @description A stored workspace, with everything the run role setup needs.
          */
@@ -2299,8 +2403,21 @@ export interface components {
             /** Run Role Checked At */
             run_role_checked_at?: string | null;
             run_role_setup: components["schemas"]["RunRoleSetup"];
+            /**
+             * Speculative Plans
+             * @default true
+             */
+            speculative_plans?: boolean;
+            /** Tracked Branch */
+            tracked_branch?: string | null;
+            /** Trigger Patterns */
+            trigger_patterns?: string[];
             /** Updated At */
             updated_at?: string | null;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
+            /** Vcs Repository Id */
+            vcs_repository_id?: string | null;
             /**
              * Working Directory
              * @default
@@ -2331,6 +2448,17 @@ export interface components {
             name: string;
             /** Run Role Arn */
             run_role_arn?: string | null;
+            /**
+             * Speculative Plans
+             * @default true
+             */
+            speculative_plans?: boolean;
+            /** Tracked Branch */
+            tracked_branch?: string | null;
+            /** Trigger Patterns */
+            trigger_patterns?: string[];
+            /** Vcs Repo */
+            vcs_repo?: string | null;
             /**
              * Working Directory
              * @default
@@ -2368,6 +2496,14 @@ export interface components {
             engine_version?: string | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
+            /** Speculative Plans */
+            speculative_plans?: boolean | null;
+            /** Tracked Branch */
+            tracked_branch?: string | null;
+            /** Trigger Patterns */
+            trigger_patterns?: string[] | null;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
             /** Working Directory */
             working_directory?: string | null;
         };
@@ -4180,6 +4316,51 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
+            };
+        };
+    };
+    create_vcs_upload_api_v1_vcs_uploads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VcsUploadCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VcsUpload"];
+                };
+            };
+            /** @description The GitHub Actions OIDC token is missing or did not verify. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No workspace is bound to the repository. `error_code` is `VCS_REPO_NOT_BOUND`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The token is for neither a branch push nor a pull request. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
