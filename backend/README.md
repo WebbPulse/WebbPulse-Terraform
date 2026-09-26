@@ -295,3 +295,40 @@ lists it, so the only way to reach it is the adapter's pass-through. A record
 that cannot be stored is returned as a batch item failure, which retries the
 message and eventually parks it rather than losing a token an execution is
 blocked on.
+
+## GitHub App
+
+`app/domains/github` sets up the environment's one GitHub App from the admin
+page at `/settings/github`. Every route needs the `admin` scope, which only an
+admin session or a key minted with it holds.
+
+**Create.** With no App configured the page offers "Create GitHub App".
+`POST /github/app/manifest` stores a single use state for 30 minutes and returns
+the manifest; the SPA posts it to GitHub as a form. GitHub redirects to the
+manifest's `redirect_url`, `<frontend>/settings/github/created`, which forwards
+the code and state to `POST /github/app/conversions`. That spends the state,
+converts the code with `webbpulse.integrations.github.convert_manifest_code`,
+writes the `GITHUB_*` keys into the `app` secret in one version with
+`SecretStore.set_many`, and stores the slug and App id in the `github` table.
+The manifest has no webhook, so no `GITHUB_WEBHOOK_SECRET` is written.
+
+**Finish setup.** GitHub has no API for an App's logo. The created page links to
+the App's settings, offers `/github-app-logo.png` (512x512 PNG of the mark,
+under GitHub's 1 MB limit) for Display information, then Upload a logo, and
+shows `#4d9fff` (`--color-accent`, dark) to paste into Badge background color,
+which GitHub shows only after the upload. The same step stays on the settings
+page under "Logo and badge colour".
+
+**Install.** `POST /github/install-state` returns
+`https://github.com/apps/<slug>/installations/new?state=`. GitHub returns to the
+manifest's `setup_url`, `<frontend>/settings/github/setup`, which posts the
+installation id to `POST /github/installations`. The state is checked, then the
+installation is read with the App JWT, so an id belonging to another App is
+refused. An `update` redirect carries no state and may only refresh an
+installation already stored.
+
+**Credentials.** `app/common/github/loader.py` reads them from the `app` secret
+with a 60 second TTL, caching a missing App too, so credentials written by the
+conversion reach other warm functions within a minute; the writer invalidates
+its own cache at once. The slug comes from the `github` table first and
+`GITHUB_APP_SLUG` second.

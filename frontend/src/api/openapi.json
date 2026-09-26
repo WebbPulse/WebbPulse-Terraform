@@ -494,6 +494,269 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "GitHubAppStatus": {
+        "description": "Whether this environment's App exists, and what the page may offer next.",
+        "properties": {
+          "app_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Id"
+          },
+          "badge_background": {
+            "title": "Badge Background",
+            "type": "string"
+          },
+          "can_create": {
+            "title": "Can Create",
+            "type": "boolean"
+          },
+          "can_install": {
+            "title": "Can Install",
+            "type": "boolean"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "html_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Html Url"
+          },
+          "logo_path": {
+            "title": "Logo Path",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "owner_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Login"
+          },
+          "settings_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings Url"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          }
+        },
+        "required": [
+          "configured",
+          "can_create",
+          "can_install",
+          "logo_path",
+          "badge_background"
+        ],
+        "title": "GitHubAppStatus",
+        "type": "object"
+      },
+      "InstallStart": {
+        "description": "The GitHub URL that installs the App, carrying a one-time state.",
+        "properties": {
+          "install_url": {
+            "title": "Install Url",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "install_url",
+          "state"
+        ],
+        "title": "InstallStart",
+        "type": "object"
+      },
+      "Installation": {
+        "description": "One installation of the App, as GitHub last confirmed it.",
+        "properties": {
+          "account_avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Avatar Url"
+          },
+          "account_login": {
+            "title": "Account Login",
+            "type": "string"
+          },
+          "account_type": {
+            "title": "Account Type",
+            "type": "string"
+          },
+          "html_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Html Url"
+          },
+          "installation_id": {
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "installed_at": {
+            "title": "Installed At",
+            "type": "string"
+          },
+          "repository_selection": {
+            "title": "Repository Selection",
+            "type": "string"
+          },
+          "suspended": {
+            "title": "Suspended",
+            "type": "boolean"
+          },
+          "suspended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suspended At"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "installation_id",
+          "account_login",
+          "account_type",
+          "repository_selection",
+          "suspended",
+          "installed_at",
+          "updated_at"
+        ],
+        "title": "Installation",
+        "type": "object"
+      },
+      "InstallationCallback": {
+        "description": "The setup callback's query, forwarded by the SPA.",
+        "properties": {
+          "installation_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Installation Id",
+            "type": "integer"
+          },
+          "setup_action": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Setup Action"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_-]{16,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          }
+        },
+        "required": [
+          "installation_id"
+        ],
+        "title": "InstallationCallback",
+        "type": "object"
+      },
+      "InstallationList": {
+        "description": "Every stored installation.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Installation"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "InstallationList",
+        "type": "object"
+      },
       "LogEvent": {
         "description": "One line from the runner's log stream.",
         "properties": {
@@ -553,6 +816,86 @@
           "events"
         ],
         "title": "LogPage",
+        "type": "object"
+      },
+      "ManifestConversionRequest": {
+        "description": "The create callback's query, forwarded by the SPA.",
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Code",
+            "type": "string"
+          },
+          "state": {
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "state"
+        ],
+        "title": "ManifestConversionRequest",
+        "type": "object"
+      },
+      "ManifestStart": {
+        "description": "What the SPA posts to GitHub: the form action and the manifest.",
+        "properties": {
+          "action_url": {
+            "title": "Action Url",
+            "type": "string"
+          },
+          "manifest": {
+            "additionalProperties": true,
+            "title": "Manifest",
+            "type": "object"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_url",
+          "manifest",
+          "state"
+        ],
+        "title": "ManifestStart",
+        "type": "object"
+      },
+      "ManifestStartRequest": {
+        "description": "Where the App is created.",
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 34,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "organization": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organization"
+          }
+        },
+        "title": "ManifestStartRequest",
         "type": "object"
       },
       "PhaseResult": {
@@ -797,6 +1140,74 @@
           "action"
         ],
         "title": "PlanResourceChange",
+        "type": "object"
+      },
+      "Repository": {
+        "description": "One repository an installation covers.",
+        "properties": {
+          "default_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "html_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Html Url"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "private": {
+            "title": "Private",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "full_name",
+          "private"
+        ],
+        "title": "Repository",
+        "type": "object"
+      },
+      "RepositoryList": {
+        "description": "Every repository an installation covers.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Repository"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "RepositoryList",
         "type": "object"
       },
       "Run": {
@@ -3549,6 +3960,354 @@
         "summary": "Revoke Api Key",
         "tags": [
           "workspaces"
+        ]
+      }
+    },
+    "/api/v1/github/app": {
+      "get": {
+        "description": "This environment's App, or the fact that there is none yet.",
+        "operationId": "get_app_api_v1_github_app_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAppStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get App",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/app/conversions": {
+      "post": {
+        "description": "Finish creating the App from the code GitHub redirected back with.",
+        "operationId": "convert_manifest_api_v1_github_app_conversions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestConversionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAppStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Convert Manifest",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/app/manifest": {
+      "post": {
+        "description": "Issue a manifest state; the SPA then posts the manifest to `action_url`.",
+        "operationId": "start_manifest_api_v1_github_app_manifest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestStart"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Start Manifest",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/install-state": {
+      "post": {
+        "description": "Issue an install state and the GitHub URL that carries it.",
+        "operationId": "start_install_api_v1_github_install_state_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallStart"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Start Install",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/installations": {
+      "get": {
+        "description": "Every installation stored here.",
+        "operationId": "list_installations_api_v1_github_installations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Installations",
+        "tags": [
+          "github"
+        ]
+      },
+      "post": {
+        "description": "Store the installation the setup callback named, once GitHub confirms it.",
+        "operationId": "record_installation_api_v1_github_installations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallationCallback"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Installation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Record Installation",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/installations/{installation_id}": {
+      "delete": {
+        "description": "Forget one installation here. It stays installed on GitHub until removed there.",
+        "operationId": "remove_installation_api_v1_github_installations__installation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740992,
+              "title": "Installation Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Remove Installation",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/installations/{installation_id}/refresh": {
+      "post": {
+        "description": "Re-read one installation from GitHub; one GitHub no longer has is dropped.",
+        "operationId": "refresh_installation_api_v1_github_installations__installation_id__refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740992,
+              "title": "Installation Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Installation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Refresh Installation",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/installations/{installation_id}/repositories": {
+      "get": {
+        "description": "Every repository one installation covers, as GitHub lists them now.",
+        "operationId": "list_repositories_api_v1_github_installations__installation_id__repositories_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740992,
+              "title": "Installation Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Repositories",
+        "tags": [
+          "github"
         ]
       }
     },

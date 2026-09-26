@@ -192,3 +192,33 @@ export type RunListQuery = NonNullable<
 export type RunLogsQuery = NonNullable<
   paths['/api/v1/runs/{run_id}/logs']['get']['parameters']['query']
 >;
+
+/** Whether this environment has a GitHub App, and what the settings page may offer. */
+export type GitHubAppStatus = Schemas['GitHubAppStatus'];
+
+/** Where a new App is created: a personal account, or a named organization. */
+export type ManifestStartRequest = Schemas['ManifestStartRequest'];
+
+/** The form action and manifest the SPA posts to GitHub. */
+export type ManifestStart = Schemas['ManifestStart'];
+
+/** The create callback's code and state, forwarded to the API. */
+export type ManifestConversionRequest = Schemas['ManifestConversionRequest'];
+
+/** The App's install URL, carrying a one-time state. */
+export type InstallStart = Schemas['InstallStart'];
+
+/** The setup callback's query, forwarded to the API. */
+export type InstallationCallback = Schemas['InstallationCallback'];
+
+/** One installation of the App, as GitHub last confirmed it. */
+export type Installation = Schemas['Installation'];
+
+/** Every stored installation. */
+export type InstallationList = Schemas['InstallationList'];
+
+/** A repository an installation can reach. */
+export type Repository = Schemas['Repository'];
+
+/** Every repository an installation can reach. */
+export type RepositoryList = Schemas['RepositoryList'];

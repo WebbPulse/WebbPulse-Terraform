@@ -55,6 +55,15 @@ class Settings(BaseServiceSettings):
     VCS_OIDC_AUDIENCE: str = "webbpulse-terraform"
     """The audience a GitHub Actions OIDC token must carry to request an upload."""
 
+    GITHUB_TABLE: str = ""
+    """The GitHub domain's one table: the App row, one-time states and installations."""
+
+    GITHUB_APP_SLUG: str = ""
+    """Fallback App slug. The slug the manifest flow stores in the GitHub table wins."""
+
+    IDENTITY_FRONTEND_BASE_URL: str = ""
+    """The SPA's origin, which the App manifest's callback URLs are built on."""
+
     STATE_BUCKET: str = ""
     ARTIFACTS_BUCKET: str = ""
     RUN_STATE_MACHINE_ARN: str = ""
