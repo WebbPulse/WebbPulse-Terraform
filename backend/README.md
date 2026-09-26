@@ -194,13 +194,18 @@ response carries `run_role_setup` with the runner task roles to trust
 role name, which is `<prefix>-workspace-<ulid>` and has to stay inside the runner's
 AssumeRole grant.
 
-`POST /workspaces/{id}/run-role/check` assumes the role with the workspace id as
-the external id and a fifteen minute session, then calls GetCallerIdentity on the
-temporary credentials. It answers `{connected, account_id, error}` and stamps
-`run_role_checked_at` and `run_role_account_id` on a success, clearing both on a
-failure and on any PATCH that changes the ARN. A workspace with no ARN is a 400
-carrying `RUN_ROLE_MISSING`; creating a run against one is a 409 with the same
-code. The credentials never reach a response or a log.
+`GET /workspaces/{id}/run-role/check` answers whether the runner can assume the
+role, from the runner's own record rather than an STS call: every run stores the
+role ARN it was created with, and the newest run on the current ARN that got past
+the runner's AssumeRole, or failed on it, is the answer. It is `{connected, status,
+account_id, error, run_id, checked_at}` with `status` one of `connected`, `failed`
+or `unverified`, and a role no run has tried yet is `unverified`, so a plan only
+run is the check. The GET writes nothing and needs `workspaces:read`. The POST
+gives the same answer and stamps `run_role_checked_at` and `run_role_account_id`
+on `connected`, clearing both otherwise and on any PATCH that changes the ARN. The
+API holds no `sts:AssumeRole` on run roles, so the trust policy names the runner
+task roles and nothing else. A workspace with no ARN is a 400 carrying
+`RUN_ROLE_MISSING`; creating a run against one is a 409 with the same code.
 
 ## Runs
 

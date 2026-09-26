@@ -1,6 +1,7 @@
 /** The setup checklist's step logic, kept pure so it can be tested on its own. */
 
 import {
+  hasRunRole,
   isActive,
   isConnected,
   type ConfigVersion,
@@ -108,7 +109,7 @@ export function setupSteps(
   runs: readonly Run[]
 ): SetupStep[] {
   const satisfied: Record<SetupStepId, boolean> = {
-    connect: isAccountConnected(workspace, runs),
+    connect: hasRunRole(workspace),
     upload: hasUploadedVersion(versions),
     plan: hasPlannedRun(runs),
   };

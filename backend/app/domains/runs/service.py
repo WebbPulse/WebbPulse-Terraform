@@ -343,6 +343,9 @@ def create_run(
     reconciliation against the bucket must not write the `uploaded` flip back. The
     workspaces domain owns that write and persists it on its own reads.
 
+    The run keeps the role ARN it was created with, so the run role check can tell
+    which role a run's AssumeRole outcome belongs to.
+
     Returns the stored run, carrying `run_token` only when an execution started.
 
     Args:
@@ -385,6 +388,7 @@ def create_run(
         "plan_only": bool(payload.get("plan_only", False)),
         "is_destroy": bool(payload.get("is_destroy", False)),
         "message": str(payload.get("message", "")),
+        "run_role_arn": str(workspace.get("run_role_arn", "")),
         "created_at": timestamp,
         "updated_at": timestamp,
     }

@@ -44,7 +44,8 @@ const STEP_COPY: Record<SetupStepId, { title: string; summary: string }> = {
   },
   plan: {
     title: 'Run a plan',
-    summary: 'A plan only run, to see the runner work end to end.',
+    summary:
+      'A plan only run, which also proves the runner can assume the role.',
   },
 };
 
@@ -312,7 +313,9 @@ function FirstPlan({
             </code>
           </>
         )}{' '}
-        without applying anything.
+        without applying anything. The runner assumes the role first, so a trust
+        policy that is not right fails the run at its start, and Settings, AWS
+        account says what to fix.
       </p>
       <Button
         variant="primary"

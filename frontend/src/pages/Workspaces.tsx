@@ -10,6 +10,7 @@ import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
   api,
+  connectionLabel,
   isConnected,
   type Engine,
   type Workspace,
@@ -236,9 +237,7 @@ function ConnectionCell({
         aria-hidden="true"
         className="inline-block size-2 rounded-full bg-surface-400"
       />
-      {(workspace.run_role_arn ?? null) === null
-        ? 'Not connected'
-        : 'Not checked'}
+      {connectionLabel(workspace)}
     </span>
   );
 }

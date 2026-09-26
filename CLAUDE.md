@@ -179,10 +179,13 @@ transition revokes the token.
 A workspace's run role is optional at create, since its trust policy names the
 workspace id as the external id and so the id has to exist first. Every workspace
 response carries `run_role_setup` (the runner task roles to trust, the external id
-and the derived role name), and `POST /workspaces/{id}/run-role/check` assumes the
-role and reports `{connected, account_id, error}`, stamping
-`run_role_checked_at` and `run_role_account_id`. A run created against a workspace
-with no run role is a 409 carrying `RUN_ROLE_MISSING`.
+and the derived role name). `GET /workspaces/{id}/run-role/check` reports
+`{connected, status, account_id, error, run_id, checked_at}` from the runner's own
+AssumeRole outcome in the newest run on the current ARN, never from an STS call,
+so a role no run has tried is `unverified` and a plan only run is the check. The
+POST gives the same answer and stamps `run_role_checked_at` and
+`run_role_account_id`. The API holds no `sts:AssumeRole` on run roles. A run
+created against a workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`.
 
 ### Runs
 

@@ -5,6 +5,8 @@ import { aFreshWorkspace, aWorkspace } from '../test-helpers/fixtures';
 import {
   ADMINISTRATOR_POLICY_ARN,
   SNIPPET_FORMATS,
+  connectionLabel,
+  hasRunRole,
   isConnected,
   isRunRoleMissing,
   roleNameFromArn,
@@ -118,6 +120,27 @@ describe('isRunRoleMissing', () => {
     });
     expect(isRunRoleMissing(error)).toBe(true);
     expect(isRunRoleMissing(new Error('RUN_ROLE_MISSING'))).toBe(false);
+  });
+});
+
+describe('hasRunRole', () => {
+  it('needs only a saved ARN, which is all a run needs', () => {
+    expect(hasRunRole(aWorkspace())).toBe(true);
+    expect(hasRunRole(aFreshWorkspace())).toBe(false);
+    expect(
+      hasRunRole(aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn }))
+    ).toBe(true);
+  });
+});
+
+describe('connectionLabel', () => {
+  it('tells a missing role apart from one no run has proven', () => {
+    expect(connectionLabel(aFreshWorkspace())).toBe('Not connected');
+    expect(
+      connectionLabel(
+        aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn })
+      )
+    ).toBe('Not verified');
   });
 });
 

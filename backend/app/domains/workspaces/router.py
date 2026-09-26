@@ -24,7 +24,7 @@ from ...common.core.auth import (
 )
 from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
-from . import hcl, service, state_versions
+from . import hcl, run_role_check, service, state_versions
 from .schemas.workspace import (
     ConfigVersion,
     ConfigVersionCreate,
@@ -201,18 +201,22 @@ def update_workspace(payload: WorkspaceUpdate, workspace_id: str = WorkspaceId) 
     dependencies=[Depends(scopes(WORKSPACES_READ))],
 )
 def read_run_role_check(workspace_id: str = WorkspaceId) -> dict[str, Any]:
-    """Assume the workspace's run role and report whether it answered, writing nothing.
+    """Report whether the runner has assumed the workspace's run role, writing nothing.
 
-    The same probe as the POST, without the record it leaves behind. A caller that
-    only wants to look, such as a Terraform provider reading on every plan and
-    refresh, uses this one so no plan mutates a workspace row. Because nothing is
-    written, the read scope is enough.
+    The answer comes from the runner's own record: the newest run created with the
+    current role ARN that got past, or failed on, the runner's AssumeRole. The API
+    never calls STS, so it holds no path into the account the role lives in. A role
+    no run has tried yet reads `unverified`, and a plan only run is the check.
 
-    Always 200 when a role is configured, whether or not it answered. A workspace
-    with no role at all is a 400 carrying `RUN_ROLE_MISSING`.
+    A caller that only wants to look, such as a Terraform provider reading on every
+    plan and refresh, uses this one so no plan mutates a workspace row. Because
+    nothing is written, the read scope is enough.
+
+    Always 200 when a role is configured. A workspace with no role at all is a 400
+    carrying `RUN_ROLE_MISSING`.
     """
     try:
-        return service.probe_run_role(workspace_id)
+        return run_role_check.probe_run_role(workspace_id)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     except service.RunRoleMissing as error:
@@ -225,19 +229,18 @@ def read_run_role_check(workspace_id: str = WorkspaceId) -> dict[str, Any]:
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
 def check_run_role(workspace_id: str = WorkspaceId) -> dict[str, Any]:
-    """Assume the workspace's run role and record the outcome on the workspace.
+    """Read the runner's record for the run role, as the GET does, and stamp it on the workspace.
 
-    The recorded outcome is what the setup UI shows between visits, so this route
-    keeps its write and its write scope. Use the GET when only the answer is
-    wanted.
+    The stamp is what the workspace list shows between visits: the account and the
+    time of the run that proved the role on `connected`, both cleared otherwise, so
+    a stale success cannot outlive a role whose trust broke. Use the GET when only
+    the answer is wanted.
 
-    Always 200 when a role is configured, whether or not it answered: a trust
-    policy that is not there yet is an expected state of the setup rather than a
-    request error. A workspace with no role at all is a 400 carrying
-    `RUN_ROLE_MISSING`.
+    Always 200 when a role is configured. A workspace with no role at all is a 400
+    carrying `RUN_ROLE_MISSING`.
     """
     try:
-        return service.check_run_role(workspace_id)
+        return run_role_check.check_run_role(workspace_id)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     except service.RunRoleMissing as error:

@@ -192,8 +192,23 @@ export class TerraformApi {
   }
 
   /**
-   * Checks that the workspace's run role can be assumed, and persists what it
-   * found on the workspace. Rejects with `RUN_ROLE_MISSING` when no role is set.
+   * Reads whether the runner has assumed the workspace's run role, writing
+   * nothing. Rejects with `RUN_ROLE_MISSING` when no role is set.
+   */
+  async readRunRoleCheck(
+    workspaceId: string,
+    options: RequestOptions = {}
+  ): Promise<RunRoleCheck> {
+    const response = await this.client.get<RunRoleCheck>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/run-role/check`,
+      options
+    );
+    return response.data;
+  }
+
+  /**
+   * The same answer as `readRunRoleCheck`, recorded on the workspace so the
+   * workspace list shows it. Rejects with `RUN_ROLE_MISSING` when no role is set.
    */
   async checkRunRole(
     workspaceId: string,

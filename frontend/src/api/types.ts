@@ -30,16 +30,17 @@ export type WorkspaceCreate = Schemas['WorkspaceCreate'];
  * What a workspace hands a person so they can create its run role.
  *
  * `principal_arns` names every runner task role, one per phase. A trust policy
- * naming only the plan role passes the connection check and then fails at
- * apply, so the snippets name them all.
+ * naming only the plan role passes a plan only run and then fails at apply, so
+ * the snippets name them all.
  */
 export type RunRoleSetup = Schemas['RunRoleSetup'];
 
 /**
- * The outcome of one AssumeRole against a workspace's run role.
+ * Whether the runner can assume a workspace's run role, from its own record.
  *
- * `error` is a sentence for a person rather than the STS code, and no part of
- * the temporary credentials reaches it.
+ * The API never calls STS. `status` is `connected` or `failed` from the newest
+ * run on the current ARN that reached the runner's AssumeRole, and
+ * `unverified` while no run has, so a plan only run is the check.
  */
 export type RunRoleCheck = Schemas['RunRoleCheck'];
 
