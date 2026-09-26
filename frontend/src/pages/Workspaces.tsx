@@ -24,13 +24,12 @@ import {
   Field,
   INPUT_CLASS,
   PageHeader,
+  RelativeTime,
   Spinner,
   Table,
   Td,
   Th,
   Tr,
-  formatDateTime,
-  formatRelative,
 } from '../components';
 
 /** The refetch key the list reads and the create form invalidates. */
@@ -200,13 +199,10 @@ function WorkspaceTable({
                 <Td>
                   <ConnectionCell workspace={workspace} />
                 </Td>
-                <Td
-                  className="text-xs whitespace-nowrap text-text-faint"
-                  title={formatDateTime(
-                    workspace.updated_at ?? workspace.created_at
-                  )}
-                >
-                  {formatRelative(workspace.updated_at ?? workspace.created_at)}
+                <Td className="text-xs whitespace-nowrap text-text-faint">
+                  <RelativeTime
+                    iso={workspace.updated_at ?? workspace.created_at}
+                  />
                 </Td>
               </Tr>
             ))}

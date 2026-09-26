@@ -50,6 +50,30 @@ export function hasPlannedRun(runs: readonly Run[]): boolean {
   return runs.some((run) => PLANNED_STATES.includes(run.status));
 }
 
+/**
+ * Whether the workspace's account is connected, by the check or by a run.
+ *
+ * The check stamps the account id only when it passes, so a failed or missing
+ * check leaves the step undone even after runs have planned through the role.
+ * A run that produced a plan after the last check proves the runner assumed the
+ * saved role, so it satisfies the step on its own.
+ */
+export function isAccountConnected(
+  workspace: Workspace,
+  runs: readonly Run[]
+): boolean {
+  if (isConnected(workspace)) {
+    return true;
+  }
+  if ((workspace.run_role_arn ?? null) === null) {
+    return false;
+  }
+  const checkedAt = workspace.run_role_checked_at ?? null;
+  return hasPlannedRun(
+    checkedAt === null ? runs : runs.filter((run) => run.created_at > checkedAt)
+  );
+}
+
 /** The run still moving, if there is one, so the plan step can point at it. */
 export function activeRun(runs: readonly Run[]): Run | null {
   return runs.find((run) => isActive(run.status)) ?? null;
@@ -84,7 +108,7 @@ export function setupSteps(
   runs: readonly Run[]
 ): SetupStep[] {
   const satisfied: Record<SetupStepId, boolean> = {
-    connect: isConnected(workspace),
+    connect: isAccountConnected(workspace, runs),
     upload: hasUploadedVersion(versions),
     plan: hasPlannedRun(runs),
   };

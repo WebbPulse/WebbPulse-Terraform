@@ -8,6 +8,7 @@ import {
 } from '../../test-helpers/fixtures';
 import {
   activeRun,
+  isAccountConnected,
   isSetupComplete,
   latestUploadedVersion,
   setupSteps,
@@ -58,6 +59,44 @@ describe('setupSteps', () => {
       { id: 'upload', status: 'done' },
       { id: 'plan', status: 'blocked' },
     ]);
+  });
+});
+
+describe('isAccountConnected', () => {
+  const unchecked = aWorkspace({
+    run_role_account_id: null,
+    run_role_checked_at: '2026-09-17T00:05:00Z',
+  });
+  const laterApply = aRun('applied', { created_at: '2026-09-17T00:10:00Z' });
+
+  it('counts a plan that ran through the saved role after the last check', () => {
+    expect(isAccountConnected(unchecked, [laterApply])).toBe(true);
+    expect(
+      isSetupComplete(setupSteps(unchecked, [aConfigVersion()], [laterApply]))
+    ).toBe(true);
+  });
+
+  it('ignores a run from before the last check, unless there was no check', () => {
+    expect(
+      isAccountConnected(unchecked, [
+        aRun('planned', { created_at: '2026-09-16T00:00:00Z' }),
+      ])
+    ).toBe(false);
+    expect(
+      isAccountConnected({ ...unchecked, run_role_checked_at: null }, [
+        aRun('planned', { created_at: '2026-09-16T00:00:00Z' }),
+      ])
+    ).toBe(true);
+  });
+
+  it('needs a saved role and a run that planned', () => {
+    expect(isAccountConnected(unchecked, [])).toBe(false);
+    expect(
+      isAccountConnected(unchecked, [
+        aRun('errored', { created_at: '2026-09-17T00:10:00Z' }),
+      ])
+    ).toBe(false);
+    expect(isAccountConnected(aFreshWorkspace(), [laterApply])).toBe(false);
   });
 });
 

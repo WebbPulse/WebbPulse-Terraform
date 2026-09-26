@@ -6,12 +6,11 @@ import { isActive, isConnected, type Run, type Workspace } from '../../api';
 import {
   Button,
   EmptyState,
+  RelativeTime,
   StateBadge,
   changeSummary,
   elapsedBetween,
-  formatDateTime,
   formatDuration,
-  formatRelative,
   runPath,
   runTitle,
   useNow,
@@ -106,9 +105,7 @@ function LatestRunCard({ run }: { run: Run }): React.ReactElement {
           </Link>
           <p className="mt-0.5 text-xs text-text-faint">
             {run.plan_only ? 'Plan only run' : 'Plan and apply run'} created{' '}
-            <span title={formatDateTime(run.created_at)}>
-              {formatRelative(run.created_at)}
-            </span>
+            <RelativeTime iso={run.created_at} />
           </p>
         </div>
         <StateBadge state={run.status} />
@@ -195,11 +192,7 @@ function WorkspaceFacts({
     },
     {
       label: 'Created',
-      value: (
-        <span title={formatDateTime(workspace.created_at)}>
-          {formatRelative(workspace.created_at)}
-        </span>
-      ),
+      value: <RelativeTime iso={workspace.created_at} />,
       to: `${base}/settings/general`,
     },
   ];

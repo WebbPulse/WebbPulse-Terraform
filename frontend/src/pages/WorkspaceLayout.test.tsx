@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { ApiError } from '@webbpulse/api-client';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -229,16 +229,23 @@ describe('WorkspaceLayout', () => {
       screen.getByLabelText('Configuration tarball'),
       file
     );
+    const listReads = apiMock.listConfigVersions.mock.calls.length;
     fireEvent.submit(
       screen.getByRole('form', { name: 'Upload a configuration version' })
     );
 
-    await screen.findByText('Uploaded.');
+    await screen.findByText('Uploaded config.tar.gz.');
 
     expect(apiMock.createConfigVersion).toHaveBeenCalledWith(
       'ws-01J000000000000000000000',
-      { size_bytes: file.size }
+      { size_bytes: file.size },
+      expect.objectContaining({ signal: expect.any(AbortSignal) as unknown })
     );
+    await waitFor(() => {
+      expect(apiMock.listConfigVersions.mock.calls.length).toBeGreaterThan(
+        listReads
+      );
+    });
     expect(put.mock.calls[0]?.[1]?.headers).toEqual(headers);
     vi.unstubAllGlobals();
   });
@@ -552,5 +559,51 @@ describe('WorkspaceLayout setup checklist', () => {
     expect(
       within(checklist).getByRole('form', { name: 'Upload a configuration' })
     ).toBeInTheDocument();
+  });
+
+  it('opens any checklist step, not only the current one', async () => {
+    apiMock.getWorkspace.mockResolvedValue(aFreshWorkspace());
+    apiMock.listConfigVersions.mockResolvedValue({ items: [] });
+    apiMock.listRuns.mockResolvedValue({ items: [] });
+
+    renderDetail();
+
+    const checklist = await screen.findByTestId('setup-checklist');
+    const upload = within(checklist).getByTestId('setup-step-upload');
+    expect(upload).toHaveAttribute('data-status', 'blocked');
+    const toggle = within(upload).getByRole('button', {
+      name: /^Upload a configuration/,
+    });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(
+      within(upload).getByRole('form', { name: 'Upload a configuration' })
+    ).toBeInTheDocument();
+
+    await userEvent.click(toggle);
+
+    expect(
+      within(upload).queryByRole('form', { name: 'Upload a configuration' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('counts the account step done once a run planned through the saved role', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ run_role_account_id: null, run_role_checked_at: null })
+    );
+    apiMock.listConfigVersions.mockResolvedValue({
+      items: [aConfigVersion()],
+    });
+    apiMock.listRuns.mockResolvedValue({ items: [aRun('applied')] });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-status')).toHaveTextContent('Ready');
+    });
+    expect(screen.queryByTestId('setup-checklist')).not.toBeInTheDocument();
   });
 });

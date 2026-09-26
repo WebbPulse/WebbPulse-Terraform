@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { usePolledQuery } from '@webbpulse/api-client/react';
-import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
   api,
@@ -22,20 +20,20 @@ import {
   ErrorNotice,
   PageHeader,
   PlanView,
+  RelativeTime,
   RunLogViewer,
   RunTimeline,
   Spinner,
   StateBadge,
   Tabs,
   elapsedBetween,
-  formatDateTime,
   formatDuration,
-  formatRelative,
   isDestroyRun,
   runKind,
   shortRunId,
   useNow,
 } from '../components';
+import { useRunQuery } from './useRunQuery';
 import { useOptionalWorkspace } from './workspaceContext';
 
 /** The tabs the run's body switches between. */
@@ -44,17 +42,8 @@ type BodyTab = 'plan' | 'log';
 /** The run page, inside a workspace or on its own. */
 export function RunDetail(): React.ReactElement {
   const { runId = '' } = useParams<{ runId: string }>();
-  const auth = useQueryAuth();
   const inWorkspace = useOptionalWorkspace() !== null;
-  const query = usePolledQuery<Run>(
-    ({ signal }) => api.getRun(runId, { signal }),
-    {
-      intervalMs: 5000,
-      queryKey: `run:${runId}`,
-      auth,
-      enabled: runId !== '',
-    }
-  );
+  const query = useRunQuery(runId);
   const run = query.data;
 
   if (query.isLoading) {
@@ -213,10 +202,7 @@ function RunHeader({
         </span>
         <span aria-hidden="true">|</span>
         <span>
-          {runKind(run)} triggered{' '}
-          <span title={formatDateTime(run.created_at)}>
-            {formatRelative(run.created_at)}
-          </span>
+          {runKind(run)} triggered <RelativeTime iso={run.created_at} />
         </span>
         <span aria-hidden="true">|</span>
         <Link
@@ -245,9 +231,7 @@ function RunFacts({ run }: { run: Run }): React.ReactElement {
         run.started_at === null || run.started_at === undefined ? (
           <span className="text-text-faint">-</span>
         ) : (
-          <span title={formatDateTime(run.started_at)}>
-            {formatRelative(run.started_at)}
-          </span>
+          <RelativeTime iso={run.started_at} />
         ),
     },
     {
@@ -256,9 +240,7 @@ function RunFacts({ run }: { run: Run }): React.ReactElement {
         run.finished_at === null || run.finished_at === undefined ? (
           <span className="text-text-faint">-</span>
         ) : (
-          <span title={formatDateTime(run.finished_at)}>
-            {formatRelative(run.finished_at)}
-          </span>
+          <RelativeTime iso={run.finished_at} />
         ),
     },
   ];

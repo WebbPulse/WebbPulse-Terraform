@@ -16,14 +16,13 @@ import {
   Button,
   EmptyState,
   ErrorNotice,
+  RelativeTime,
   Spinner,
   Table,
   Td,
   Th,
   Tr,
   formatBytes,
-  formatDateTime,
-  formatRelative,
   runPath,
 } from '../../components';
 import { UploadConfigForm } from './UploadConfigForm';
@@ -127,11 +126,8 @@ function ConfigVersionTable({
             <Td className="font-mono text-xs text-text-muted">
               {formatBytes(version.size_bytes)}
             </Td>
-            <Td
-              className="text-xs whitespace-nowrap text-text-faint"
-              title={formatDateTime(version.created_at)}
-            >
-              {formatRelative(version.created_at)}
+            <Td className="text-xs whitespace-nowrap text-text-faint">
+              <RelativeTime iso={version.created_at} />
             </Td>
             <Td className="text-right">
               {version.status === 'uploaded' ? (
@@ -201,7 +197,7 @@ function StartRunButtons({
         config_version_id: configVersionId,
         plan_only: planOnly,
       });
-      invalidateQueries([runsKey]);
+      invalidateQueries(runsKey);
       void navigate(runPath({ run_id: run.run_id, workspace_id: workspaceId }));
     } catch (thrown) {
       setError(

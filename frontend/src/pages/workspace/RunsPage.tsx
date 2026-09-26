@@ -6,13 +6,12 @@ import { Link } from 'react-router-dom';
 import { isActive, runGroup, type Run, type RunGroup } from '../../api';
 import {
   ErrorNotice,
+  RelativeTime,
   RunList,
   Spinner,
   StateBadge,
   Tabs,
   changeSummary,
-  formatDateTime,
-  formatRelative,
   runPath,
   runTitle,
 } from '../../components';
@@ -104,7 +103,7 @@ export function RunsPage(): React.ReactElement {
 /** The card for the run on top of the list. */
 function CurrentRunCard({ run }: { run: Run }): React.ReactElement {
   return (
-    <article className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-line border-l-4 border-l-accent bg-panel px-4 py-3">
+    <article className="relative flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-line border-l-4 border-l-accent bg-panel px-4 py-3">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="rounded border border-accent-line bg-accent-soft px-1.5 text-[10px] font-semibold tracking-wide text-accent uppercase">
@@ -112,7 +111,7 @@ function CurrentRunCard({ run }: { run: Run }): React.ReactElement {
           </span>
           <Link
             to={runPath(run)}
-            className="truncate text-sm font-medium text-text-strong hover:text-accent hover:underline"
+            className="truncate text-sm font-medium text-text-strong after:absolute after:inset-0 hover:text-accent hover:underline focus-visible:outline-none focus-visible:after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-accent"
           >
             {runTitle(run)}
           </Link>
@@ -126,11 +125,8 @@ function CurrentRunCard({ run }: { run: Run }): React.ReactElement {
         </p>
       </div>
       <StateBadge state={run.status} />
-      <span
-        className="text-xs whitespace-nowrap text-text-faint"
-        title={formatDateTime(run.created_at)}
-      >
-        {formatRelative(run.created_at)}
+      <span className="text-xs whitespace-nowrap text-text-faint">
+        <RelativeTime iso={run.created_at} />
       </span>
     </article>
   );

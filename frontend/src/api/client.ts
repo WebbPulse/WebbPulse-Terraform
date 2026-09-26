@@ -423,12 +423,23 @@ export async function uploadConfigTarball(
   options: { fetch?: typeof globalThis.fetch; signal?: AbortSignal } = {}
 ): Promise<void> {
   const doFetch = options.fetch ?? globalThis.fetch;
-  const response = await doFetch(upload.upload_url, {
-    method: 'PUT',
-    body: file,
-    headers: upload.headers,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
+  let response: Response;
+  try {
+    response = await doFetch(upload.upload_url, {
+      method: 'PUT',
+      body: file,
+      headers: upload.headers,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch (thrown) {
+    if (options.signal?.aborted === true) {
+      throw thrown;
+    }
+    throw new Error(
+      'The configuration tarball could not be sent to storage. Check the connection and try again.',
+      { cause: thrown }
+    );
+  }
   if (!response.ok) {
     throw new Error(
       `Uploading the configuration tarball failed with ${String(response.status)}.`

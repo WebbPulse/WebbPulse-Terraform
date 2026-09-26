@@ -56,6 +56,8 @@ export {
   RequireGuest,
   type RequireAuthProps,
 } from './RequireAuth';
+export { RelativeTime, type RelativeTimeProps } from './RelativeTime';
+export { RELATIVE_TIME_TICK_MS, useClock } from './useClock';
 export { RunLogViewer, type RunLogViewerProps } from './RunLogViewer';
 export { RailGroupLabel, RailLink, type RailLinkProps } from './RailLink';
 export { RunList, type RunListProps } from './RunList';
