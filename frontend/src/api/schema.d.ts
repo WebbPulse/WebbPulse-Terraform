@@ -1558,6 +1558,8 @@ export interface components {
             installation_id: string;
             /** Installed At */
             installed_at: string;
+            /** Repository Count */
+            repository_count?: number | null;
             /** Repository Selection */
             repository_selection: string;
             /** Suspended */

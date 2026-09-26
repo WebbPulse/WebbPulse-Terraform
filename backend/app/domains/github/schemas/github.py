@@ -86,6 +86,8 @@ class Installation(BaseModel):
     account_avatar_url: Optional[str] = None
     repository_selection: str
     """`all` or `selected`."""
+    repository_count: Optional[int] = None
+    """How many repositories a `selected` installation covers, as last counted."""
     html_url: Optional[str] = None
     """The installation's configuration page on GitHub."""
     suspended: bool
