@@ -14,7 +14,8 @@ domain, runs Terraform or OpenTofu, and reports back through the task token.
 | `app/api.py` | bundle fetch, presigned artifact transfers, phase result post |
 | `app/workspace.py` | config tarball unpack, the S3 backend override, the two tfvars files |
 | `app/credentials.py` | assuming the per workspace run role with the phase session policy |
-| `app/engine.py` | the engine subprocess, its environment and plan JSON parsing |
+| `app/engine.py` | the engine subprocess, its environment, plan JSON and apply summary parsing |
+| `app/install.py` | installing the workspace's pinned engine version when the image bakes another |
 | `app/logs.py` | redaction and the CloudWatch Logs sink |
 | `app/callback.py` | `SendTaskSuccess` and `SendTaskFailure` |
 | `app/main.py` | the `python -m app.main` entrypoint |
@@ -78,11 +79,16 @@ the token. The runner then:
    `plan -out plan.tfplan -detailed-exitcode` plus `show -json`
    for the plan phase, with `-destroy` added when the bundle's `is_destroy` is
    set, or downloads `plan.tfplan` and runs `apply plan.tfplan` for the apply
-   phase, which applies a destroy plan the same way.
+   phase, which applies a destroy plan the same way. The engine prints its own
+   `Plan:` summary, so the runner adds none. An apply reads its counts from the
+   engine's closing `Apply complete!` or `Destroy complete!` line and then runs
+   `output -json`, captured rather than logged.
 6. Streams the engine's combined output line by line to the `<run_id>/<phase>`
    stream in `RUNNER_LOG_GROUP` and to stdout.
 7. Uploads `plan.tfplan` and `plan.json` on a plan phase and the redacted log on
-   both. Each one is uploaded by first posting its exact byte count to
+   both. An apply also uploads `outputs_json`, the applied outputs with every
+   sensitive value set to null before it leaves the task. That upload is best
+   effort: a failure is logged and the apply still succeeds. Each one is uploaded by first posting its exact byte count to
    `POST /runs/{RUN_ID}/artifact-uploads` as `{artifact, size_bytes}`, then
    PUTting the bytes to the returned `url` with the returned `headers` sent
    verbatim. The URL signs `Content-Type` and `Content-Length`, so a body of any
@@ -90,7 +96,15 @@ the token. The runner then:
    posts `POST /runs/{RUN_ID}/phase-result` and sends task success with
    `{exit_code, changes: {add, change, destroy}}` or task failure.
 
-The engine comes from the bundle's `engine` field, `terraform` or `tofu`.
+The engine comes from the bundle's `engine` field, `terraform` or `tofu`, and its
+version from `engine_version`. An empty pin, or one equal to the release the image
+bakes (read from `version -json`), runs the baked binary. Any other pin must be an
+exact release such as `1.11.0`: the runner downloads that release's linux zip and
+`SHA256SUMS` from `releases.hashicorp.com` or the OpenTofu GitHub releases, checks
+the archive against the listed sum, unpacks it into the run's temporary directory
+and runs it from there. A constraint, a missing release or a checksum mismatch
+fails the phase as `EngineInstallFailed`. The SUMS file's GPG signature is not
+checked, so the download trusts TLS and the publisher's SUMS file.
 
 ## Logging
 

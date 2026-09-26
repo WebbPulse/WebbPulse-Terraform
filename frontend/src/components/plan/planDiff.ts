@@ -149,7 +149,9 @@ function replacedKeys(paths: (string | number)[][]): Set<string> {
  * Keys are taken from before, after and `after_unknown` together, so an
  * attribute that only exists on one side is still listed. A `delete` is read
  * as removing every attribute, and a `create` as adding every one, which is
- * how the engine's own output reads them.
+ * how the engine's own output reads them. An attribute that is null or absent
+ * on both sides and not unknown is left out, the way the engine and HCP
+ * Terraform leave out the unset arguments of a create.
  */
 export function attributeDiffs(
   change: PlanResourceChange
@@ -166,7 +168,7 @@ export function attributeDiffs(
     ]),
   ].sort((left, right) => left.localeCompare(right));
 
-  return keys.map((key) => {
+  return keys.flatMap((key) => {
     const hasBefore = key in before;
     const hasAfter = key in after;
     const afterUnknown = isUnknownAt(change.after_unknown, key);
@@ -175,6 +177,11 @@ export function attributeDiffs(
       isSensitiveAt(change.after_sensitive, key);
     const beforeValue = before[key];
     const afterValue = after[key];
+    const absentBefore = !hasBefore || beforeValue === null;
+    const absentAfter = !hasAfter || afterValue === null;
+    if (absentBefore && absentAfter && !afterUnknown) {
+      return [];
+    }
 
     let kind: AttributeKind;
     if (afterUnknown && !hasAfter) {
@@ -189,15 +196,17 @@ export function attributeDiffs(
       kind = 'changed';
     }
 
-    return {
-      key,
-      kind,
-      before: beforeValue,
-      after: afterValue,
-      afterUnknown,
-      sensitive,
-      forcesReplacement: forced.has(key),
-    };
+    return [
+      {
+        key,
+        kind,
+        before: beforeValue,
+        after: afterValue,
+        afterUnknown,
+        sensitive,
+        forcesReplacement: forced.has(key),
+      },
+    ];
   });
 }
 

@@ -158,6 +158,29 @@ def test_a_successful_apply_applies_the_run(auth_client, awaiting_confirmation):
     assert updated["finished_at"]
 
 
+def test_an_apply_keeps_the_plan_counts_and_records_its_own(auth_client, awaiting_confirmation):
+    """The apply's counts land beside the plan's rather than over them."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    runs_service.record_phase_result(
+        run_id,
+        {"phase": "apply", "exit_code": 0, "changes": {"add": 1, "change": 0, "destroy": 0}, "error": ""},
+    )
+    body = auth_client.get(f"{BASE}/{run_id}").json()
+    assert body["changes"] == {"add": 2, "change": 1, "destroy": 0}
+    assert body["apply_changes"] == {"add": 1, "change": 0, "destroy": 0}
+
+
+def test_a_failed_apply_keeps_the_plan_counts(auth_client, awaiting_confirmation):
+    """An apply failure reports empty counts, which must not erase what the plan found."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    runs_service.record_phase_result(run_id, {"phase": "apply", "exit_code": 1, "changes": {}, "error": "boom"})
+    stored = stored_run(run_id)
+    assert stored["changes"] == {"add": 2, "change": 1, "destroy": 0}
+    assert "apply_changes" not in stored
+
+
 def test_a_failed_apply_errors_the_run(auth_client, awaiting_confirmation):
     """A failed apply errors rather than applying."""
     run_id = awaiting_confirmation["run_id"]

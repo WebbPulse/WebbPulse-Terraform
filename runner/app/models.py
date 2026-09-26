@@ -112,8 +112,8 @@ class RunRole(BaseModel):
     duration_seconds: int = 3600
 
 
-ArtifactKind = Literal["plan", "plan_json", "log"]
-"""The three objects a phase uploads, named as the artifact upload route names them."""
+ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
+"""The objects a phase uploads, named as the artifact upload route names them."""
 
 
 class Artifacts(BaseModel):
@@ -190,7 +190,7 @@ class Bundle(BaseModel):
 
 
 class Changes(BaseModel):
-    """Resource counts parsed from the plan JSON."""
+    """Resource counts, from the plan JSON for a plan and the engine summary for an apply."""
 
     model_config = ConfigDict(frozen=True)
 

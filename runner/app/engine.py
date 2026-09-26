@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,6 +16,14 @@ PLAN_FILE = "plan.tfplan"
 PLAN_JSON_FILE = "plan.json"
 NO_CHANGES_EXIT = 0
 CHANGES_EXIT = 2
+
+APPLY_SUMMARY = re.compile(
+    r"^(?:Apply|Destroy) complete! Resources:"
+    r"(?:\s*(?P<imported>\d+) imported,)?"
+    r"(?:\s*(?P<add>\d+) added,)?"
+    r"(?:\s*(?P<change>\d+) changed,)?"
+    r"\s*(?P<destroy>\d+) destroyed\."
+)
 
 BASE_ENVIRONMENT = {
     "TF_IN_AUTOMATION": "1",
@@ -46,8 +55,9 @@ class EngineRunner:
         directory: Path,
         environment: dict[str, str],
         sink: LogSink,
+        binary: str | None = None,
     ) -> None:
-        self._binary = resolve_binary(engine)
+        self._binary = binary or resolve_binary(engine)
         self._engine = engine
         self._directory = directory
         self._environment = environment
@@ -109,6 +119,10 @@ class EngineRunner:
         """Apply a saved plan file."""
         exit_code, _ = self.run(["apply", "-input=false", "-lock-timeout=120s", PLAN_FILE])
         return exit_code
+
+    def output_json(self) -> tuple[int, str]:
+        """Read the root module outputs as JSON, captured rather than logged."""
+        return self.run(["output", "-json"], capture=True)
 
 
 def build_environment(
@@ -178,3 +192,19 @@ def parse_changes(plan_json: str) -> tuple[Changes, bool]:
             destroy += 1
     counts = Changes(add=add, change=change, destroy=destroy)
     return counts, bool(add or change or destroy)
+
+
+def parse_apply_changes(lines: Sequence[str]) -> Changes | None:
+    """Counts from the engine's closing `Apply complete!` or `Destroy complete!` line.
+
+    The last matching line wins, and None means the engine printed no summary.
+    """
+    for line in reversed(lines):
+        match = APPLY_SUMMARY.match(line.strip())
+        if match is not None:
+            return Changes(
+                add=int(match.group("add") or 0),
+                change=int(match.group("change") or 0),
+                destroy=int(match.group("destroy")),
+            )
+    return None

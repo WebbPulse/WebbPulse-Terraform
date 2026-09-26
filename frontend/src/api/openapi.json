@@ -206,6 +206,28 @@
         "title": "ApiKeyList",
         "type": "object"
       },
+      "AppliedOutput": {
+        "description": "One root output's value after a successful apply.\n\nA sensitive output carries the redaction string rather than its value.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "AppliedOutput",
+        "type": "object"
+      },
       "ArtifactUpload": {
         "description": "The presigned PUT one artifact goes to.\n\n`headers` is not advisory: every one is inside the signature, so a request\nthat omits or changes one is rejected by S3.",
         "properties": {
@@ -240,7 +262,8 @@
             "enum": [
               "plan",
               "plan_json",
-              "log"
+              "log",
+              "outputs_json"
             ],
             "title": "Artifact",
             "type": "string"
@@ -789,6 +812,16 @@
               }
             ]
           },
+          "apply_changes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunChanges"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "changes": {
             "anyOf": [
               {
@@ -1121,6 +1154,16 @@
               }
             ]
           },
+          "apply_changes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunChanges"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "changes": {
             "anyOf": [
               {
@@ -1297,6 +1340,20 @@
       "RunPlan": {
         "description": "A run's plan as structured data, derived from `terraform show -json`.\n\nThe raw plan document is never returned: it can reach hundreds of megabytes\nand it carries sensitive values verbatim. This is the summarised, redacted\nprojection the run view renders.",
         "properties": {
+          "applied_outputs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AppliedOutput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Outputs"
+          },
           "changes": {
             "$ref": "#/components/schemas/RunChanges"
           },
@@ -3305,7 +3362,7 @@
     },
     "/api/v1/runs/{run_id}/artifact-uploads": {
       "post": {
-        "description": "Mint the presigned PUT for one of this run's artifacts. Runner only.\n\nThe size is the caller's, not a ceiling: `Content-Length` is inside the\nsignature, so S3 refuses a body of any other length. A runner therefore asks\nonce per artifact, after it knows how many bytes it is about to send, and\nsends the returned headers verbatim.\n\nThe log's key is per phase and the phase comes from the run's status, so a\nplan-phase runner cannot ask for the apply transcript's key.",
+        "description": "Mint the presigned PUT for one of this run's artifacts. Runner only.\n\nThe size is the caller's, not a ceiling: `Content-Length` is inside the\nsignature, so S3 refuses a body of any other length. A runner therefore asks\nonce per artifact, after it knows how many bytes it is about to send, and\nsends the returned headers verbatim.\n\nThe log's key is per phase and the phase comes from the run's status, so a\nplan-phase runner cannot ask for the apply transcript's key. The applied\noutputs are an apply-phase artifact only, and a 422 anywhere else.",
         "operationId": "artifact_upload_api_v1_runs__run_id__artifact_uploads_post",
         "parameters": [
           {

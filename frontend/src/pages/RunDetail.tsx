@@ -5,7 +5,6 @@ import { Link, useParams } from 'react-router-dom';
 
 import {
   api,
-  applyPhaseStatus,
   canCancel,
   canConfirm,
   canDiscard,
@@ -21,7 +20,7 @@ import {
   PageHeader,
   PlanView,
   RelativeTime,
-  RunLogViewer,
+  RunLogs,
   RunTimeline,
   Spinner,
   StateBadge,
@@ -110,8 +109,6 @@ function RunBody({
 }): React.ReactElement {
   const [tab, setTab] = useState<BodyTab>('plan');
   const plan = planPhaseStatus(run);
-  const apply = applyPhaseStatus(run);
-  const logPhase = apply === null || apply === 'pending' ? 'plan' : 'apply';
 
   return (
     <div className="space-y-5">
@@ -145,11 +142,7 @@ function RunBody({
           {tab === 'plan' ? (
             <PlanPanel run={run} planStatus={plan} />
           ) : (
-            <RunLogViewer
-              runId={run.run_id}
-              phase={logPhase}
-              live={isActive(run.status)}
-            />
+            <RunLogs run={run} />
           )}
           <ConfirmationPanel run={run} onDone={onChanged} />
         </div>
@@ -277,6 +270,7 @@ function PlanPanel({
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const ready = planStatus === 'finished';
+  const applied = run.status === 'applied';
   const runId = run.run_id;
 
   useEffect(() => {
@@ -303,7 +297,7 @@ function PlanPanel({
     return () => {
       controller.abort();
     };
-  }, [runId, ready]);
+  }, [runId, ready, applied]);
 
   if (!ready) {
     return (
@@ -338,7 +332,13 @@ function PlanPanel({
       </div>
     );
   }
-  return <PlanView plan={plan} />;
+  return (
+    <PlanView
+      plan={plan}
+      applyChanges={run.apply_changes}
+      isDestroy={run.is_destroy}
+    />
+  );
 }
 
 /**

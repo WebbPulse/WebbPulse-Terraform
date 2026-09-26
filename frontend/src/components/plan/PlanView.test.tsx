@@ -182,6 +182,62 @@ describe('PlanView', () => {
     expect(outputs).toHaveTextContent('(known after apply)');
   });
 
+  it('shows the apply summary once the run applied', () => {
+    render(
+      <PlanView
+        plan={aRunPlan()}
+        applyChanges={{ add: 1, change: 0, destroy: 0 }}
+      />
+    );
+
+    expect(screen.getByTestId('apply-summary-line')).toHaveTextContent(
+      'Apply complete! Resources: 1 added, 0 changed, 0 destroyed.'
+    );
+  });
+
+  it('names a destroy run in the apply summary', () => {
+    render(
+      <PlanView
+        plan={aRunPlan()}
+        applyChanges={{ add: 0, change: 0, destroy: 2 }}
+        isDestroy
+      />
+    );
+
+    expect(screen.getByTestId('apply-summary-line')).toHaveTextContent(
+      'Destroy complete! Resources: 0 added, 0 changed, 2 destroyed.'
+    );
+  });
+
+  it('shows no apply summary before an apply', () => {
+    render(<PlanView plan={aRunPlan()} applyChanges={null} />);
+
+    expect(screen.queryByTestId('apply-summary-line')).not.toBeInTheDocument();
+  });
+
+  it('fills applied output values and keeps sensitive ones hidden', () => {
+    render(
+      <PlanView
+        plan={aRunPlan({
+          applied_outputs: [
+            { name: 'endpoint', value: 'db.example.com', sensitive: false },
+            {
+              name: 'database_password',
+              value: '(sensitive value)',
+              sensitive: true,
+            },
+          ],
+        })}
+      />
+    );
+
+    const outputs = screen.getByTestId('output-changes');
+    expect(outputs).toHaveTextContent('"db.example.com"');
+    expect(outputs).not.toHaveTextContent('(known after apply)');
+    const password = outputs.querySelector('[data-output="database_password"]');
+    expect(password).toHaveTextContent('(sensitive value)');
+  });
+
   it('leaves the outputs out when a plan changes none', () => {
     render(<PlanView plan={aRunPlan({ output_changes: [] })} />);
 
