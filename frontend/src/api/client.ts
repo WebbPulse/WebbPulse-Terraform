@@ -282,19 +282,29 @@ export class TerraformApi {
   }
 
   /**
-   * Lists one workspace's runs.
+   * Lists runs, newest first, in one workspace or across every workspace.
    *
-   * The workspace is required, not a filter: the backend queries the runs table
-   * by its workspace index and answers 404 for a workspace that does not exist,
-   * so there is no environment wide listing to ask for.
+   * Naming a workspace returns all of its runs and answers 404 for a workspace
+   * that does not exist. Omitting it returns one page of every workspace's runs;
+   * `limit` and `cursor` apply only then, with `next_cursor` continuing the list.
    */
   async listRuns(
-    query: RunListQuery,
+    query: RunListQuery = {},
     options: RequestOptions = {}
   ): Promise<RunList> {
+    const scope: Record<string, string | number> = {};
+    if (query.workspace_id !== undefined && query.workspace_id !== null) {
+      scope['workspace_id'] = query.workspace_id;
+    }
+    if (query.limit !== undefined && query.limit !== null) {
+      scope['limit'] = query.limit;
+    }
+    if (query.cursor !== undefined && query.cursor !== null) {
+      scope['cursor'] = query.cursor;
+    }
     const response = await this.client.get<RunList>('/runs', {
       ...options,
-      query: { ...options.query, workspace_id: query.workspace_id },
+      query: { ...options.query, ...scope },
     });
     return response.data;
   }

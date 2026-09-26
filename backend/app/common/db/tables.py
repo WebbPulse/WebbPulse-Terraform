@@ -21,6 +21,18 @@ WORKSPACES_BY_NAME_INDEX: Final = "by_name"
 RUNS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 """The GSI listing one workspace's runs, newest last by `created_at`."""
 
+RUNS_BY_RECENCY_INDEX: Final = "by_recency"
+"""The GSI listing every workspace's runs together, newest last by `run_id`.
+
+Partitioned on the constant `collection` attribute, since a cross-workspace list has
+no natural key to group on and run volume sits far under one partition's ceiling.
+`run_id` is a ULID, so it orders by creation time on its own.
+"""
+
+RUNS_COLLECTION: Final = "run"
+"""The one value `collection` holds. Stamped on every run row at create and never
+on the semaphore row, so the reserved row stays out of `by_recency`."""
+
 CONFIG_VERSIONS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 """The GSI listing one workspace's config versions, newest last by `created_at`."""
 
@@ -57,6 +69,7 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
             {"AttributeName": "run_id", "AttributeType": "S"},
             {"AttributeName": "workspace_id", "AttributeType": "S"},
             {"AttributeName": "created_at", "AttributeType": "S"},
+            {"AttributeName": "collection", "AttributeType": "S"},
         ],
         "GlobalSecondaryIndexes": [
             {
@@ -66,7 +79,15 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
                     {"AttributeName": "created_at", "KeyType": "RANGE"},
                 ],
                 "Projection": {"ProjectionType": "ALL"},
-            }
+            },
+            {
+                "IndexName": RUNS_BY_RECENCY_INDEX,
+                "KeySchema": [
+                    {"AttributeName": "collection", "KeyType": "HASH"},
+                    {"AttributeName": "run_id", "KeyType": "RANGE"},
+                ],
+                "Projection": {"ProjectionType": "ALL"},
+            },
         ],
     },
     VARIABLES: {

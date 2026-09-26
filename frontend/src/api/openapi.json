@@ -779,6 +779,16 @@
       "Run": {
         "description": "A stored run as the API renders it.\n\nThe task tokens and the run token hash are stored on the row and never in\nthis model: a caller who could read a confirm task token could confirm a run\nit was not allowed to confirm.",
         "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunActor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "changes": {
             "anyOf": [
               {
@@ -906,6 +916,40 @@
           "created_at"
         ],
         "title": "Run",
+        "type": "object"
+      },
+      "RunActor": {
+        "description": "Who triggered a run, snapshotted from the creating request's claims.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "user",
+              "agent"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "RunActor",
         "type": "object"
       },
       "RunBundle": {
@@ -1052,6 +1096,16 @@
       "RunCreated": {
         "description": "A newly created run. Carries the run token only when the run started.\n\nA queued run has no execution and so no token: the token is minted when the\nstate machine starts, which is when the run ahead of it finishes.",
         "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunActor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "changes": {
             "anyOf": [
               {
@@ -1193,7 +1247,7 @@
         "type": "object"
       },
       "RunList": {
-        "description": "One workspace's runs, newest first.",
+        "description": "A list of runs, newest first.\n\nOne workspace's runs in full when the request named a workspace, otherwise a\npage of every workspace's runs continued through `next_cursor`.",
         "properties": {
           "items": {
             "items": {
@@ -1201,6 +1255,17 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
           }
         },
         "required": [
@@ -2872,19 +2937,61 @@
     },
     "/api/v1/runs": {
       "get": {
-        "description": "One workspace's runs, newest first. The workspace is required.",
+        "description": "Runs, newest first, in one workspace or across every workspace.\n\nNaming `workspace_id` returns that workspace's runs in full and 404s for a\nworkspace that does not exist, unchanged. Omitting it returns a page of every\nworkspace's runs off the recency index; pass `next_cursor` back as `cursor`\nto continue. `limit` and `cursor` page only the cross-workspace list, so they\nare refused alongside a workspace rather than ignored.\n\nBoth modes need exactly `runs:read`, the only check the per-workspace list\nhas ever made: there is no per-workspace ACL, so the cross-workspace list\nreturns nothing the caller could not list one workspace at a time.",
         "operationId": "list_runs_api_v1_runs_get",
         "parameters": [
           {
             "in": "query",
             "name": "workspace_id",
-            "required": true,
+            "required": false,
             "schema": {
-              "maxLength": 64,
-              "minLength": 4,
-              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
-              "title": "Workspace Id",
-              "type": "string"
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 4,
+                  "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 200,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -2916,7 +3023,7 @@
         ]
       },
       "post": {
-        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.",
+        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.\n\nThe actor is taken from the verified claims here, because this request is the\nonly moment the triggering principal is known.",
         "operationId": "create_run_api_v1_runs_post",
         "requestBody": {
           "content": {

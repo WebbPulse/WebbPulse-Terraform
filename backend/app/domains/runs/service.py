@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Final, Optional
+from typing import Any, Final, Mapping, Optional
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, Repository, new_ulid, now_iso
@@ -33,7 +33,12 @@ from webbpulse.dynamodb import ConditionFailed, Repository, new_ulid, now_iso
 from ...common.composition.settings import Settings, get_settings
 from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store
 from ...common.db import repositories
-from ...common.db.tables import RUNS_BY_WORKSPACE_INDEX, SEMAPHORE_RUN_ID
+from ...common.db.tables import (
+    RUNS_BY_RECENCY_INDEX,
+    RUNS_BY_WORKSPACE_INDEX,
+    RUNS_COLLECTION,
+    SEMAPHORE_RUN_ID,
+)
 from ...common.workspaces import reads as workspace_reads
 from . import session_policy
 from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
@@ -41,6 +46,12 @@ from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
 _log = logging.getLogger(__name__)
 
 RUN_ID_PREFIX: Final = "run-"
+
+DEFAULT_RUN_PAGE_SIZE: Final = 50
+"""How many runs a cross-workspace page holds when the caller names no limit."""
+
+MAX_RUN_PAGE_SIZE: Final = 200
+"""The largest cross-workspace page a caller may ask for."""
 
 EXECUTING_STATUSES: Final = frozenset({"planning", "planned", "awaiting_confirmation", "applying"})
 """A run in one of these has an execution and may hold the state lock. `planned` is
@@ -308,7 +319,12 @@ def _queued_runs(workspace_id: str, *, settings: Settings) -> list[dict[str, Any
     return items
 
 
-def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> dict[str, Any]:
+def create_run(
+    payload: dict[str, Any],
+    *,
+    actor: Optional[Mapping[str, Any]],
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """Create a run, starting it or queueing it behind the workspace's active one.
 
     Validates the workspace and the config version before writing anything, so a
@@ -321,6 +337,13 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
     workspaces domain owns that write and persists it on its own reads.
 
     Returns the stored run, carrying `run_token` only when an execution started.
+
+    Args:
+        payload: The validated create body.
+        actor: Who triggered this run, derived from the request's claims by the
+            route, or `None` when the claims named no subject, which stores no
+            actor rather than inventing one.
+        settings: Overrides the resolved settings, for the suite.
 
     Raises:
         WorkspaceNotFound: No such workspace.
@@ -350,12 +373,15 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
         "run_id": run_id,
         "workspace_id": workspace_id,
         "config_version_id": config_version_id,
+        "collection": RUNS_COLLECTION,
         "status": "pending",
         "plan_only": bool(payload.get("plan_only", False)),
         "message": str(payload.get("message", "")),
         "created_at": timestamp,
         "updated_at": timestamp,
     }
+    if actor is not None:
+        item["actor"] = dict(actor)
     if blocking is not None:
         item["queued_behind"] = str(blocking["run_id"])
 
@@ -540,6 +566,35 @@ def list_runs(workspace_id: str, *, settings: Settings | None = None) -> list[di
         )
         if _is_run_row(item)
     ]
+
+
+def list_all_runs(
+    *,
+    limit: int = DEFAULT_RUN_PAGE_SIZE,
+    cursor: Optional[str] = None,
+    settings: Settings | None = None,
+) -> tuple[list[dict[str, Any]], Optional[str]]:
+    """One page of every workspace's runs, newest first, off `by_recency`.
+
+    The cursor is the `run_id` of the last run on the previous page. The partition
+    is fixed here and never read from the cursor, so a cursor can only position a
+    read inside this list.
+
+    Returns:
+        The page's runs and the cursor continuing it, `None` on the last page.
+    """
+    resolved = settings or get_settings()
+    start_key = None if cursor is None else {"collection": RUNS_COLLECTION, "run_id": cursor}
+    page = _runs(resolved).query(
+        Key("collection").eq(RUNS_COLLECTION),
+        index_name=RUNS_BY_RECENCY_INDEX,
+        limit=limit,
+        start_key=start_key,
+        ascending=False,
+    )
+    items = [dict(item) for item in page.items if _is_run_row(item)]
+    last = page.last_evaluated_key
+    return items, None if last is None else str(last["run_id"])
 
 
 def confirm_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
@@ -1285,9 +1340,10 @@ def render_run(item: dict[str, Any]) -> dict[str, Any]:
     """Strip the stored-only fields a run row carries.
 
     The task tokens and the token hash never leave the service: a caller holding a
-    confirm task token could confirm a run it has no scope for.
+    confirm task token could confirm a run it has no scope for. `collection` is the
+    constant `by_recency` partition key and says nothing to a caller.
     """
-    hidden = {"confirm_task_token", "run_token_hash"}
+    hidden = {"confirm_task_token", "run_token_hash", "collection"}
     return {field: value for field, value in item.items() if field not in hidden}
 
 
@@ -1297,8 +1353,10 @@ __all__ = [
     "CAUSE_MAX_LENGTH",
     "CONFIRMABLE_STATUSES",
     "CONSUMED_TOKEN_ERRORS",
+    "DEFAULT_RUN_PAGE_SIZE",
     "DISCARDABLE_STATUSES",
     "ERROR_MAX_LENGTH",
+    "MAX_RUN_PAGE_SIZE",
     "NON_TERMINAL_STATUSES",
     "ArtifactTooLarge",
     "ConfigVersionNotReady",
@@ -1321,6 +1379,7 @@ __all__ = [
     "fail_phase_task",
     "finish_run",
     "get_run",
+    "list_all_runs",
     "list_runs",
     "log_key",
     "log_stream_name",

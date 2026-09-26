@@ -26,6 +26,20 @@ Phase = Literal["plan", "apply"]
 RUN_ROLE_DURATION_SECONDS = 3600
 """One hour on the assumed run role, matching the plan timeout plus headroom."""
 
+ActorKind = Literal["user", "agent"]
+"""How a run was triggered: `user` is a person's JWT, `agent` a `wpk_` API key
+acting for the person who minted it."""
+
+
+class RunActor(BaseModel):
+    """Who triggered a run, snapshotted from the creating request's claims."""
+
+    kind: ActorKind
+    id: str
+    """The principal's `sub`: the user for `user`, the minting user for `agent`."""
+    display_name: Optional[str] = None
+    """What to render, absent when the credential carried no name."""
+
 
 class RunCreate(BaseModel):
     """A new run against one workspace and one config version."""
@@ -67,14 +81,24 @@ class Run(BaseModel):
     changes: Optional[RunChanges] = None
     error: Optional[str] = None
     execution_arn: Optional[str] = None
+    actor: Optional[RunActor] = None
+    """Who triggered this run. `None` on a run created before attribution shipped,
+    since that was never recorded and cannot be recovered."""
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class RunList(BaseModel):
-    """One workspace's runs, newest first."""
+    """A list of runs, newest first.
+
+    One workspace's runs in full when the request named a workspace, otherwise a
+    page of every workspace's runs continued through `next_cursor`.
+    """
 
     items: list[Run]
+    next_cursor: Optional[str] = None
+    """Pass back as `cursor` to read the next page. `None` on the last page and
+    always on a single workspace's list."""
 
 
 class RunCreated(Run):

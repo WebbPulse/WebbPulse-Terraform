@@ -513,7 +513,17 @@ export interface paths {
         };
         /**
          * List Runs
-         * @description One workspace's runs, newest first. The workspace is required.
+         * @description Runs, newest first, in one workspace or across every workspace.
+         *
+         *     Naming `workspace_id` returns that workspace's runs in full and 404s for a
+         *     workspace that does not exist, unchanged. Omitting it returns a page of every
+         *     workspace's runs off the recency index; pass `next_cursor` back as `cursor`
+         *     to continue. `limit` and `cursor` page only the cross-workspace list, so they
+         *     are refused alongside a workspace rather than ignored.
+         *
+         *     Both modes need exactly `runs:read`, the only check the per-workspace list
+         *     has ever made: there is no per-workspace ACL, so the cross-workspace list
+         *     returns nothing the caller could not list one workspace at a time.
          */
         get: operations["list_runs_api_v1_runs_get"];
         put?: never;
@@ -527,6 +537,9 @@ export interface paths {
          *
          *     A workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the
          *     runner would have nothing to assume.
+         *
+         *     The actor is taken from the verified claims here, because this request is the
+         *     only moment the triggering principal is known.
          */
         post: operations["create_run_api_v1_runs_post"];
         delete?: never;
@@ -1339,6 +1352,7 @@ export interface components {
          *     it was not allowed to confirm.
          */
         Run: {
+            actor?: components["schemas"]["RunActor"] | null;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
@@ -1372,6 +1386,21 @@ export interface components {
             updated_at?: string | null;
             /** Workspace Id */
             workspace_id: string;
+        };
+        /**
+         * RunActor
+         * @description Who triggered a run, snapshotted from the creating request's claims.
+         */
+        RunActor: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "agent";
         };
         /**
          * RunBundle
@@ -1470,6 +1499,7 @@ export interface components {
          *     state machine starts, which is when the run ahead of it finishes.
          */
         RunCreated: {
+            actor?: components["schemas"]["RunActor"] | null;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
@@ -1508,11 +1538,16 @@ export interface components {
         };
         /**
          * RunList
-         * @description One workspace's runs, newest first.
+         * @description A list of runs, newest first.
+         *
+         *     One workspace's runs in full when the request named a workspace, otherwise a
+         *     page of every workspace's runs continued through `next_cursor`.
          */
         RunList: {
             /** Items */
             items: components["schemas"]["Run"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /**
          * RunPlan
@@ -2982,8 +3017,10 @@ export interface operations {
     };
     list_runs_api_v1_runs_get: {
         parameters: {
-            query: {
-                workspace_id: string;
+            query?: {
+                workspace_id?: string | null;
+                limit?: number | null;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
