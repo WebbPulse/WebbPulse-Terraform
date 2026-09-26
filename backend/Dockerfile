@@ -39,13 +39,13 @@ FROM ${BASE_IMAGE} AS runtime
 
 ARG DOMAIN
 RUN test -n "${DOMAIN}" || { \
-        echo "DOMAIN build arg is required: one of workspaces, runs." >&2; \
+        echo "DOMAIN build arg is required: one of workspaces, runs, github." >&2; \
         echo "  docker buildx build --build-arg DOMAIN=workspaces ..." >&2; \
         exit 1; \
     }; \
     case "${DOMAIN}" in \
-        workspaces|runs) ;; \
-        *) echo "DOMAIN=${DOMAIN} is not a domain. Expected one of workspaces, runs." >&2; exit 1 ;; \
+        workspaces|runs|github) ;; \
+        *) echo "DOMAIN=${DOMAIN} is not a domain. Expected one of workspaces, runs, github." >&2; exit 1 ;; \
     esac
 
 COPY --from=builder /opt/venv /opt/venv

@@ -113,6 +113,13 @@ def _runs_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
     return [build_router(settings)]
 
 
+def _github_routers() -> "list[APIRouter]":
+    """Import and return the GitHub domain's routers."""
+    from app.domains.github.router import router
+
+    return [router]
+
+
 DOMAINS: Final[dict[str, Domain]] = {
     "workspaces": Domain(
         name="workspaces",
@@ -127,6 +134,12 @@ DOMAINS: Final[dict[str, Domain]] = {
         load_routers=_runs_routers,
         load_unprefixed_routers=_runs_unprefixed_routers,
         router_tags=("runs",),
+    ),
+    "github": Domain(
+        name="github",
+        title="WebbPulse Terraform GitHub",
+        load_routers=_github_routers,
+        router_tags=("github",),
     ),
 }
 

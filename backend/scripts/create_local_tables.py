@@ -1,10 +1,11 @@
 """Create every DynamoDB table against a local DynamoDB.
 
-No product table carries a TTL attribute: a workspace, a variable, a config version,
-a run and a user are all deleted deliberately or kept, so there is nothing to
-expire. The identity module's own tables, several of which do expire, are created by
-Terraform in a deployed environment and by this script locally, so a local stack can
-sign a user in without a deploy.
+The one product table with a TTL attribute is the GitHub table, whose one-time states
+expire. The spec leaves TTL to Terraform, since the service checks `expires_at` on
+every read and a local stack never lives long enough to need the sweep. The identity
+module's own tables, several of which do expire, are created by Terraform in a
+deployed environment and by this script locally, so a local stack can sign a user in
+without a deploy.
 """
 
 import argparse

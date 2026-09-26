@@ -47,6 +47,15 @@ export function createApiMock(): ApiMock {
     'cancelRun',
     'discardRun',
     'getRunLogs',
+    'getGitHubApp',
+    'startGitHubManifest',
+    'convertGitHubManifest',
+    'startGitHubInstall',
+    'recordGitHubInstallation',
+    'listGitHubInstallations',
+    'refreshGitHubInstallation',
+    'removeGitHubInstallation',
+    'listGitHubRepositories',
   ];
   const mock = {} as Record<string, Mock>;
   for (const name of names) {

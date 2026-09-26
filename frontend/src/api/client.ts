@@ -19,6 +19,15 @@ import type {
   ConfigVersionCreate,
   ConfigVersionList,
   ConfigVersionUpload,
+  GitHubAppStatus,
+  Installation,
+  InstallationCallback,
+  InstallationList,
+  InstallStart,
+  ManifestConversionRequest,
+  ManifestStart,
+  ManifestStartRequest,
+  RepositoryList,
   Run,
   RunCreate,
   RunCreated,
@@ -424,6 +433,116 @@ export class TerraformApi {
             : { after: query.after }),
         },
       }
+    );
+    return response.data;
+  }
+
+  /** Reads whether this environment has a GitHub App. Admin only. */
+  async getGitHubApp(options: RequestOptions = {}): Promise<GitHubAppStatus> {
+    const response = await this.client.get<GitHubAppStatus>(
+      '/github/app',
+      options
+    );
+    return response.data;
+  }
+
+  /**
+   * Issues a one-time state and the manifest to post to GitHub. Rejects with
+   * `GITHUB_APP_ALREADY_CONFIGURED` when an App exists.
+   */
+  async startGitHubManifest(
+    body: ManifestStartRequest = {},
+    options: RequestOptions = {}
+  ): Promise<ManifestStart> {
+    const response = await this.client.post<ManifestStart>(
+      '/github/app/manifest',
+      body,
+      options
+    );
+    return response.data;
+  }
+
+  /** Exchanges the create callback's code, storing the App's credentials. */
+  async convertGitHubManifest(
+    body: ManifestConversionRequest,
+    options: RequestOptions = {}
+  ): Promise<GitHubAppStatus> {
+    const response = await this.client.post<GitHubAppStatus>(
+      '/github/app/conversions',
+      body,
+      options
+    );
+    return response.data;
+  }
+
+  /** Issues a one-time state and the App's install URL. */
+  async startGitHubInstall(
+    options: RequestOptions = {}
+  ): Promise<InstallStart> {
+    const response = await this.client.post<InstallStart>(
+      '/github/install-state',
+      undefined,
+      options
+    );
+    return response.data;
+  }
+
+  /** Records the installation the setup callback named, once GitHub confirms it. */
+  async recordGitHubInstallation(
+    body: InstallationCallback,
+    options: RequestOptions = {}
+  ): Promise<Installation> {
+    const response = await this.client.post<Installation>(
+      '/github/installations',
+      body,
+      options
+    );
+    return response.data;
+  }
+
+  /** Lists the stored installations. */
+  async listGitHubInstallations(
+    options: RequestOptions = {}
+  ): Promise<InstallationList> {
+    const response = await this.client.get<InstallationList>(
+      '/github/installations',
+      options
+    );
+    return response.data;
+  }
+
+  /** Re-reads one installation from GitHub, dropping it when GitHub no longer has it. */
+  async refreshGitHubInstallation(
+    installationId: string,
+    options: RequestOptions = {}
+  ): Promise<Installation> {
+    const response = await this.client.post<Installation>(
+      `/github/installations/${encodeURIComponent(installationId)}/refresh`,
+      undefined,
+      options
+    );
+    return response.data;
+  }
+
+  /** Forgets one installation here. It stays installed on GitHub. */
+  async removeGitHubInstallation(
+    installationId: string,
+    options: RequestOptions = {}
+  ): Promise<void> {
+    await this.client.delete(
+      `/github/installations/${encodeURIComponent(installationId)}`,
+      options
+    );
+  }
+
+  /** Lists the repositories one installation can reach. */
+  async listGitHubRepositories(
+    installationId: string,
+    options: RequestOptions = {}
+  ): Promise<RepositoryList> {
+    const response = await this.client.get<RepositoryList>(
+      `/github/installations/${encodeURIComponent(installationId)}/repositories`,
+      options
     );
     return response.data;
   }

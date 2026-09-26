@@ -15,6 +15,7 @@ from app.common.composition.wiring import DOMAIN_NAMES, DOMAINS, build_domain_ap
 DOMAIN_MODULES = {
     "workspaces": "app.domains.workspaces.entrypoint",
     "runs": "app.domains.runs.entrypoint",
+    "github": "app.domains.github.entrypoint",
 }
 
 
@@ -29,9 +30,9 @@ def paths_of(app) -> set[str]:
     return set(schema["paths"])
 
 
-def test_the_map_carries_both_domains():
-    """The contract's two domains are the ones wired."""
-    assert set(DOMAIN_NAMES) == {"workspaces", "runs"}
+def test_the_map_carries_every_domain():
+    """The contract's domains are the ones wired."""
+    assert set(DOMAIN_NAMES) == {"workspaces", "runs", "github"}
 
 
 @pytest.mark.parametrize("name", sorted(DOMAIN_MODULES))
@@ -62,13 +63,16 @@ def test_a_domain_app_serves_health(name, settings):
 
 @pytest.mark.parametrize("name", sorted(DOMAIN_MODULES))
 def test_a_domain_app_serves_only_its_own_routes(name, settings):
-    """One function carries its domain's routes and not the other's."""
+    """One function carries its domain's routes and none of any other's."""
     served = paths_of(build_domain_app(name, settings=settings))
-    other = next(item for item in DOMAIN_NAMES if item != name)
-    other_paths = paths_of(build_domain_app(other, settings=settings))
+    theirs: set[str] = set()
+    for other in DOMAIN_NAMES:
+        if other != name:
+            theirs |= {
+                path for path in paths_of(build_domain_app(other, settings=settings)) if path.startswith("/api/v1")
+            }
 
     own = {path for path in served if path.startswith("/api/v1")}
-    theirs = {path for path in other_paths if path.startswith("/api/v1")}
     assert own
     assert not own & theirs
 
