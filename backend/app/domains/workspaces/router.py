@@ -24,13 +24,15 @@ from ...common.core.auth import (
 )
 from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
-from . import hcl, run_role_check, service, state_versions
+from . import hcl, quick_setup, run_role_check, service, state_versions
 from .schemas.workspace import (
     ConfigVersion,
     ConfigVersionCreate,
     ConfigVersionList,
     ConfigVersionUpload,
     RunRoleCheck,
+    RunRoleQuickSetup,
+    RunRoleQuickSetupCreate,
     StateVersionDetail,
     StateVersionDownload,
     StateVersionList,
@@ -245,6 +247,34 @@ def check_run_role(workspace_id: str = WorkspaceId) -> dict[str, Any]:
         raise _not_found("No such workspace.") from error
     except service.RunRoleMissing as error:
         raise _run_role_missing() from error
+
+
+@router.post(
+    "/workspaces/{workspace_id}/run-role/quick-setup",
+    response_model=RunRoleQuickSetup,
+    dependencies=[Depends(scopes(WORKSPACES_WRITE))],
+)
+def start_run_role_quick_setup(payload: RunRoleQuickSetupCreate, workspace_id: str = WorkspaceId) -> dict[str, Any]:
+    """Save the run role ARN for an account and return an AWS CloudFormation quick create link.
+
+    The role name is derived from the workspace, so the account id is all the ARN
+    needs: it is saved here and nothing has to be copied back from AWS. The link
+    opens a stack whose template trusts only the runner task roles with this
+    workspace id as the external id. It embeds a template URL that expires after
+    `expires_in` seconds, so ask for a fresh link rather than storing one. Calling
+    again with the same account keeps the saved ARN and its check outcome.
+
+    A deployment with no runner task roles or no artifacts bucket answers 503.
+    """
+    try:
+        return quick_setup.start_quick_setup(workspace_id, payload.account_id, payload.permissions)
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except quick_setup.QuickSetupUnavailable as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AWS quick setup is not available in this environment.",
+        ) from error
 
 
 @router.delete(

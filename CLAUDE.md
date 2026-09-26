@@ -188,6 +188,12 @@ POST gives the same answer and stamps `run_role_checked_at` and
 `run_role_account_id`. The API holds no `sts:AssumeRole` on run roles. A run
 created against a workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`.
 
+`POST /workspaces/{id}/run-role/quick-setup` takes an account id, saves the
+derived ARN and returns an AWS CloudFormation quick create link. The template
+(`app/domains/workspaces/quick_setup.py`) trusts only the runner task roles with
+the workspace id as the external id, and is stored content addressed under
+`templates/run-role/` in the artifacts bucket, served by presigned GET.
+
 ### Runs
 
 Runs are serial per workspace. A run created while another is active is stored

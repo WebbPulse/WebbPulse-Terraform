@@ -180,6 +180,46 @@ class RunRoleCheck(BaseModel):
     """When that run reached its verdict."""
 
 
+RunRolePermissions = Literal["administrator", "power_user", "read_only", "none"]
+"""The AWS managed policy the quick setup stack attaches: AdministratorAccess,
+PowerUserAccess, ReadOnlyAccess, or none so a narrower policy can be attached by hand."""
+
+
+class RunRoleQuickSetupCreate(BaseModel):
+    """Start AWS quick setup for one workspace."""
+
+    account_id: str = Field(pattern=r"^\d{12}$")
+    """The twelve digit AWS account the role is created in."""
+    permissions: RunRolePermissions = "administrator"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_separators(cls, data: Any) -> Any:
+        """Accept the account id as the AWS console prints it, with dashes or spaces."""
+        if isinstance(data, dict) and isinstance(data.get("account_id"), str):
+            account_id: str = data["account_id"]
+            return {**data, "account_id": account_id.replace("-", "").replace(" ", "")}
+        return data
+
+
+class RunRoleQuickSetup(BaseModel):
+    """The quick create link for a workspace's run role, whose ARN is now saved."""
+
+    account_id: str
+    role_arn: str
+    """The ARN saved on the workspace, which the stack's role will carry."""
+    role_name: str
+    stack_name: str
+    region: str
+    """The region the CloudFormation console opens in. The role itself is global."""
+    permissions_policy_arn: Optional[str] = None
+    """The managed policy the stack attaches, or `None` when none was chosen."""
+    console_url: str
+    """The AWS CloudFormation quick create link. It embeds a presigned template URL."""
+    expires_in: int
+    """Seconds the embedded template URL stays readable, so the link must be used soon."""
+
+
 class VariableWrite(BaseModel):
     """A variable value being set. A sensitive value is never returned again."""
 
