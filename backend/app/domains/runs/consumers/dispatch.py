@@ -9,7 +9,8 @@ either consumer directly.
 Routing is on the body's `kind`, the field the state machine already stamps on a
 confirmation and the EventBridge rule's input transformer stamps on a task stop. An
 unknown or missing kind raises, so an unrecognised message parks on its queue's dead
-letter queue rather than being silently acknowledged.
+letter queue rather than being silently acknowledged. A record from the runs table's
+stream has no body at all, and goes to the reports consumer by its `eventSource`.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from fastapi import APIRouter
 from webbpulse.events import register_stream_consumer
 
 from ....common.composition.settings import Settings
-from . import confirmations, ingest, task_failures
+from . import confirmations, ingest, reports, task_failures
 
 _log = logging.getLogger(__name__)
 
@@ -66,12 +67,15 @@ HANDLERS: dict[str, Handler] = {
 
 
 def route_record(record: Mapping[str, Any], *, settings: Settings | None = None) -> None:
-    """Hand one record to the consumer its `kind` names.
+    """Hand one record to the consumer its `kind` names, or a stream record to reports.
 
     Raises:
         UnknownRecordKind: The body names no consumer, so the record is retried and
             eventually parked rather than acknowledged unhandled.
     """
+    if reports.is_stream_record(record):
+        reports.handle_record(record, settings=settings)
+        return
     kind = _kind(record)
     handler = HANDLERS.get(kind)
     if handler is None:

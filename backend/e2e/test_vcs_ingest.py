@@ -44,7 +44,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _mint_token() -> str:
+def mint_token() -> str:
     """A GitHub Actions OIDC token for the configured audience. Never printed."""
     audience = os.environ.get(AUDIENCE_VARIABLE, "").strip() or DEFAULT_AUDIENCE
     response = httpx.get(
@@ -57,13 +57,13 @@ def _mint_token() -> str:
     return str(response.json()["value"])
 
 
-def _unverified_claims(token: str) -> dict[str, Any]:
+def unverified_claims(token: str) -> dict[str, Any]:
     """The token's payload, read only to shape the workspace; the server verifies it."""
     payload = token.split(".")[1]
     return dict(json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))))
 
 
-def _tarball(directory: str) -> bytes:
+def config_tarball(directory: str) -> bytes:
     """A configuration declaring nothing under `directory`, with its changed paths list."""
     contents = {
         f"{directory}/main.tf": "terraform {}\n",
@@ -82,8 +82,8 @@ def _tarball(directory: str) -> bytes:
 @pytest.mark.e2e_writes
 def test_an_upload_starts_a_vcs_run(api: Any, e2e_env: Any, workspace: dict[str, Any]) -> None:
     """A bound workspace gets a run sourced from the upload, carrying the token's commit."""
-    token = _mint_token()
-    claims = _unverified_claims(token)
+    token = mint_token()
+    claims = unverified_claims(token)
     event = str(claims.get("event_name", ""))
     if event not in SUPPORTED_EVENTS:
         pytest.skip(f"the job's {event} event starts no VCS run")
@@ -98,7 +98,7 @@ def test_an_upload_starts_a_vcs_run(api: Any, e2e_env: Any, workspace: dict[str,
         pytest.skip("the stage's GitHub App is not installed on this repository")
     assert updated.status_code == 200, updated.text[:400]
 
-    data = _tarball(directory)
+    data = config_tarball(directory)
     requested = httpx.post(
         f"{e2e_env.api_base_url.rstrip('/')}/api/v1/vcs/uploads",
         json={"sha": claims["sha"], "pr_number": None, "base_sha": None, "size_bytes": len(data)},
