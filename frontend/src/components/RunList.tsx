@@ -14,6 +14,7 @@ import {
   runPath,
   runTitle,
 } from './runText';
+import { RunSourceLine } from './RunSourceLine';
 import { StateBadge } from './StateBadge';
 
 /** Props for {@link RunList}. */
@@ -68,6 +69,12 @@ export function RunList({
                 </span>
                 <span aria-hidden="true">|</span>
                 <span>{runKind(run).toLowerCase()}</span>
+                {run.vcs === undefined || run.vcs === null ? null : (
+                  <>
+                    <span aria-hidden="true">|</span>
+                    <RunSourceLine run={run} raised />
+                  </>
+                )}
                 {workspaceNames === undefined ? null : (
                   <>
                     <span aria-hidden="true">|</span>

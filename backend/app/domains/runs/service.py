@@ -620,13 +620,34 @@ def list_all_runs(
     return items, None if last is None else str(last["run_id"])
 
 
-def confirm_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+def decision(action: str, actor: Optional[Mapping[str, Any]], comment: str) -> dict[str, Any]:
+    """The record of who confirmed or discarded a run, when, and what they said.
+
+    Stored once on the run as `decision`, which the run page's timeline renders the
+    way HCP Terraform shows a confirmation or discard with its comment.
+    """
+    recorded: dict[str, Any] = {"action": action, "at": now_iso()}
+    if actor is not None:
+        recorded["actor"] = dict(actor)
+    if comment.strip():
+        recorded["comment"] = comment.strip()
+    return recorded
+
+
+def confirm_run(
+    run_id: str,
+    *,
+    actor: Optional[Mapping[str, Any]] = None,
+    comment: str = "",
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """Confirm a planned run, releasing the state machine's confirmation wait.
 
     The status moves first, conditionally, and `SendTaskSuccess` follows. Doing it
     in that order means a duplicate confirm loses the conditional write and never
     reaches Step Functions, which would otherwise reject the second token anyway
-    but only after the caller was told it succeeded.
+    but only after the caller was told it succeeded. The decision, with its actor
+    and optional comment, is written in the same conditional update.
 
     Raises:
         RunNotFound: No such run.
@@ -643,7 +664,7 @@ def confirm_run(run_id: str, *, settings: Settings | None = None) -> dict[str, A
     try:
         updated = _update_run(
             run_id,
-            {"status": "applying", "confirm_task_token": None},
+            {"status": "applying", "confirm_task_token": None, "decision": decision("confirmed", actor, comment)},
             settings=resolved,
             expected_statuses=frozenset(CONFIRMABLE_STATUSES),
         )
@@ -691,7 +712,13 @@ def cancel_run(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     return finish_run(run_id, "cancelled", settings=resolved)
 
 
-def discard_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+def discard_run(
+    run_id: str,
+    *,
+    actor: Optional[Mapping[str, Any]] = None,
+    comment: str = "",
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """Discard a planned run, ending its execution through a task failure.
 
     A discard is not a cancel. The execution is waiting on the confirmation task
@@ -724,7 +751,7 @@ def discard_run(run_id: str, *, settings: Settings | None = None) -> dict[str, A
             cause=f"Discarded through the API for {run_id}.",
         )
 
-    return finish_run(run_id, "discarded", settings=resolved)
+    return finish_run(run_id, "discarded", extra={"decision": decision("discarded", actor, comment)}, settings=resolved)
 
 
 def finish_run(
@@ -734,9 +761,13 @@ def finish_run(
     error: str = "",
     changes: dict[str, int] | None = None,
     apply_changes: dict[str, int] | None = None,
+    extra: Mapping[str, Any] | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Move a run to a terminal status, revoke its token and promote its queue.
+
+    `extra` holds further fields written in the same conditional update, such as a
+    discard's decision, so they land only on the ending that stands.
 
     The single exit for every ending, successful or not, so a token cannot outlive
     its run and a workspace cannot deadlock behind a run that errored.
@@ -761,6 +792,8 @@ def finish_run(
         updates["changes"] = changes
     if apply_changes is not None:
         updates["apply_changes"] = apply_changes
+    if extra:
+        updates.update(extra)
 
     run = get_run(run_id, settings=resolved)
     try:
@@ -1413,6 +1446,30 @@ def artifact_upload(
     return {"url": upload.url, "headers": dict(upload.headers), "expires_in": ARTIFACT_URL_TTL}
 
 
+COMMIT_MESSAGE_MAX_LENGTH: Final = 4096
+"""Longer commit messages are cut here. The run page shows the first line."""
+
+
+def record_commit_message(run_id: str, message: str, *, settings: Settings | None = None) -> None:
+    """Store a VCS run's commit message on its `vcs` block, once reporting read it.
+
+    The upload carries no message, so the report reads it through the App and
+    records it here for the run pages. The status is untouched, so the stream
+    record this write makes is dropped by the reports consumer.
+    """
+    resolved = settings or get_settings()
+    try:
+        _runs(resolved).update(
+            {"run_id": run_id},
+            update_expression="SET #vcs.#message = :message",
+            expression_values={":message": message[:COMMIT_MESSAGE_MAX_LENGTH]},
+            expression_names={"#vcs": "vcs", "#message": "commit_message"},
+            condition=Attr("vcs").exists(),
+        )
+    except ConditionFailed:
+        return
+
+
 def render_run(item: dict[str, Any]) -> dict[str, Any]:
     """Strip the stored-only fields a run row carries.
 
@@ -1428,6 +1485,7 @@ __all__ = [
     "ACTIVE_STATUSES",
     "ARTIFACT_URL_TTL",
     "CAUSE_MAX_LENGTH",
+    "COMMIT_MESSAGE_MAX_LENGTH",
     "CONFIRMABLE_STATUSES",
     "CONSUMED_TOKEN_ERRORS",
     "DEFAULT_RUN_PAGE_SIZE",
@@ -1451,6 +1509,8 @@ __all__ = [
     "artifact_upload",
     "cancel_run",
     "confirm_run",
+    "decision",
+    "record_commit_message",
     "create_run",
     "discard_run",
     "fail_phase_task",

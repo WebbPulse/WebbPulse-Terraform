@@ -383,3 +383,51 @@ def test_a_plan_only_destroy_run_never_applies(auth_client, workspace, uploaded_
     run = _destroy_run(auth_client, workspace, uploaded_config_version, plan_only=True)
     updated = runs_service.record_phase_result(run["run_id"], DESTROY_PLAN)
     assert updated["status"] == "planned_and_finished"
+
+
+def test_confirm_records_the_decision_with_its_comment(auth_client, awaiting_confirmation):
+    """The confirming actor and the comment are kept on the run for the timeline."""
+    run_id = awaiting_confirmation["run_id"]
+    response = auth_client.post(f"{BASE}/{run_id}/confirm", json={"comment": "  Ship it  "})
+    assert response.status_code == 200, response.text
+    decision = response.json()["decision"]
+    assert decision["action"] == "confirmed"
+    assert decision["comment"] == "Ship it"
+    assert decision["actor"]["id"] == "user-test"
+    assert decision["at"]
+    assert auth_client.get(f"{BASE}/{run_id}").json()["decision"] == decision
+
+
+def test_confirm_without_a_body_records_no_comment(auth_client, awaiting_confirmation):
+    """An empty body still confirms, and the decision carries no comment."""
+    run_id = awaiting_confirmation["run_id"]
+    response = auth_client.post(f"{BASE}/{run_id}/confirm")
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"]["action"] == "confirmed"
+    assert response.json()["decision"]["comment"] is None
+
+
+def test_discard_records_the_decision_with_its_comment(auth_client, awaiting_confirmation):
+    """The discarding actor and the comment are kept on the discarded run."""
+    run_id = awaiting_confirmation["run_id"]
+    response = auth_client.post(f"{BASE}/{run_id}/discard", json={"comment": "Wrong branch"})
+    assert response.status_code == 200, response.text
+    decision = response.json()["decision"]
+    assert (decision["action"], decision["comment"]) == ("discarded", "Wrong branch")
+    assert stored_run(run_id)["decision"]["actor"]["id"] == "user-test"
+
+
+def test_a_losing_confirm_leaves_the_first_decision(auth_client, awaiting_confirmation):
+    """A second confirm is refused and cannot overwrite the recorded decision."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm", json={"comment": "first"})
+    assert auth_client.post(f"{BASE}/{run_id}/confirm", json={"comment": "second"}).status_code == 409
+    assert stored_run(run_id)["decision"]["comment"] == "first"
+
+
+def test_an_overlong_comment_is_422(auth_client, awaiting_confirmation):
+    """Comments are capped, and the run is left awaiting confirmation."""
+    run_id = awaiting_confirmation["run_id"]
+    response = auth_client.post(f"{BASE}/{run_id}/confirm", json={"comment": "x" * 2001})
+    assert response.status_code == 422
+    assert stored_run(run_id)["status"] == "awaiting_confirmation"

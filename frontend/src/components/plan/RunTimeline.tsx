@@ -1,6 +1,7 @@
 /** The vertical list of stages a run passes through. */
 
-import type { Run } from '../../api';
+import type { Run, RunDecision } from '../../api';
+import { RelativeTime } from '../RelativeTime';
 import { runStages, type StageStatus } from './runTimeline';
 
 /** Props for {@link RunTimeline}. */
@@ -52,6 +53,13 @@ export function RunTimeline({
   className = '',
 }: RunTimelineProps): React.ReactElement {
   const stages = runStages(run);
+  const decision = run.decision ?? null;
+  const decisionStage =
+    decision === null
+      ? null
+      : (stages.find((stage) => stage.id === 'awaiting_confirmation')?.id ??
+        stages[stages.length - 1]?.id ??
+        null);
   return (
     <ol
       aria-label="Run progress"
@@ -91,14 +99,54 @@ export function RunTimeline({
                 />
               )}
             </div>
-            <span className={`pb-4 text-sm ${classes.label}`}>
-              {stage.label}
-              <span className="sr-only">{`, ${statusWords(stage.status)}`}</span>
-            </span>
+            <div className="min-w-0 pb-4">
+              <span className={`text-sm ${classes.label}`}>
+                {stage.label}
+                <span className="sr-only">{`, ${statusWords(stage.status)}`}</span>
+              </span>
+              {decision !== null && stage.id === decisionStage ? (
+                <DecisionNote decision={decision} />
+              ) : null}
+            </div>
           </li>
         );
       })}
     </ol>
+  );
+}
+
+/** Who confirmed or discarded the plan, when, and the comment they left. */
+function DecisionNote({
+  decision,
+}: {
+  decision: RunDecision;
+}): React.ReactElement {
+  const actor = decision.actor;
+  const who =
+    actor === undefined || actor === null
+      ? 'someone'
+      : actor.display_name !== undefined &&
+          actor.display_name !== null &&
+          actor.display_name !== ''
+        ? actor.display_name
+        : actor.id;
+  const comment = decision.comment ?? '';
+  return (
+    <div data-testid="run-decision" className="mt-1 space-y-1 text-xs">
+      <p className="text-text-muted">
+        {decision.action === 'confirmed' ? 'Confirmed' : 'Discarded'} by{' '}
+        <span className="font-medium text-text">{who}</span>{' '}
+        <RelativeTime iso={decision.at} />
+      </p>
+      {comment === '' ? null : (
+        <p
+          data-testid="run-decision-comment"
+          className="rounded-md border border-line bg-raised px-2 py-1.5 break-words whitespace-pre-wrap text-text"
+        >
+          {comment}
+        </p>
+      )}
+    </div>
   );
 }
 

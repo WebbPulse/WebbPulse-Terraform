@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from webbpulse.identity.claims import AuthorizerClaims
 
 from ...common.core.auth import (
@@ -35,6 +35,7 @@ from .schemas.run import (
     RunBundle,
     RunCreate,
     RunCreated,
+    RunDecisionRequest,
     RunList,
     RunPlan,
 )
@@ -160,10 +161,18 @@ def get_run(run_id: str = RunId) -> dict[str, Any]:
     response_model=Run,
     dependencies=[Depends(scopes(RUNS_APPLY))],
 )
-def confirm_run(run_id: str = RunId) -> dict[str, Any]:
-    """Apply a planned run. Needs `runs:apply`, not `runs:write`."""
+def confirm_run(
+    run_id: str = RunId,
+    payload: Optional[RunDecisionRequest] = Body(default=None),
+    current: AuthorizerClaims = Depends(claims),
+) -> dict[str, Any]:
+    """Apply a planned run. Needs `runs:apply`, not `runs:write`.
+
+    The body is optional; its comment is kept on the run with the confirming actor.
+    """
+    comment = payload.comment if payload is not None else ""
     try:
-        return service.render_run(service.confirm_run(run_id))
+        return service.render_run(service.confirm_run(run_id, actor=actor_from_claims(current), comment=comment))
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
     except service.RunNotConfirmable as error:
@@ -190,10 +199,18 @@ def cancel_run(run_id: str = RunId) -> dict[str, Any]:
     response_model=Run,
     dependencies=[Depends(scopes(RUNS_WRITE))],
 )
-def discard_run(run_id: str = RunId) -> dict[str, Any]:
-    """Drop a plan that was never applied, ending its execution cleanly."""
+def discard_run(
+    run_id: str = RunId,
+    payload: Optional[RunDecisionRequest] = Body(default=None),
+    current: AuthorizerClaims = Depends(claims),
+) -> dict[str, Any]:
+    """Drop a plan that was never applied, ending its execution cleanly.
+
+    The body is optional; its comment is kept on the run with the discarding actor.
+    """
+    comment = payload.comment if payload is not None else ""
     try:
-        return service.render_run(service.discard_run(run_id))
+        return service.render_run(service.discard_run(run_id, actor=actor_from_claims(current), comment=comment))
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
     except service.RunNotDiscardable as error:

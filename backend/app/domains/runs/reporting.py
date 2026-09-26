@@ -7,7 +7,13 @@ a pull request gets one comment, found again by a hidden marker and edited in pl
 
 Nothing is stored for any of it. The check runs are found through GitHub by name and
 by `external_id`, which is the run id, and the comment by its marker, so a report can
-be retried or replayed from any point and lands on the same objects.
+be retried or replayed from any point and lands on the same objects. The one thing
+reporting writes back is the commit's message, read through the App on the first
+report, because the upload does not carry it and the run pages show it.
+
+A held run's check completes as `action_required`. Once the run is confirmed the same
+check run is patched back to `in_progress`, so the commit keeps one check per
+workspace; if GitHub refuses to reopen it, a new check run of the same name follows.
 
 The commit a report lands on is checked through the App first. A push reports on the
 token's signed commit once the branch is confirmed to contain it. A pull request
@@ -38,6 +44,7 @@ from webbpulse.integrations.github import (
     GitHubAppClient,
     GitHubError,
     GitHubNotConfigured,
+    GitHubUnprocessable,
 )
 
 from ...common.composition.settings import Settings, get_settings
@@ -268,6 +275,20 @@ def find_check_run(reader: GitHubReader, sha: str, name: str, external_id: str |
     return max(found) if found else None
 
 
+def reopen_check_run(reader: GitHubReader, check_run_id: int, state: CheckState, fields: Mapping[str, Any]) -> bool:
+    """Patch a completed check run back to showing progress. Returns whether it took.
+
+    GitHub's update endpoint takes any status, and a status without a conclusion is
+    what clears one, but its documentation does not promise a completed run
+    reopens, so the answer is read back rather than assumed.
+    """
+    try:
+        updated = reader.client.update_check_run(reader.repository, check_run_id, status=state.status, **fields)
+    except GitHubUnprocessable:
+        return False
+    return updated.status == state.status and updated.conclusion is None
+
+
 def upsert_check_run(
     reader: GitHubReader,
     sha: str,
@@ -280,13 +301,11 @@ def upsert_check_run(
 ) -> None:
     """Create the named check run on `sha`, or update the one already there.
 
-    A completed check that has to show progress again, a held run that was confirmed,
-    is replaced by a new one of the same name rather than reopened, and the newest of
-    a name is always the one that is found and shown.
+    A completed check that has to show progress again, a held run that was
+    confirmed, is reopened in place. Only when GitHub will not reopen it is a new
+    one of the same name created, and the newest of a name is always the one found.
     """
     existing = find_check_run(reader, sha, name, external_id)
-    if existing is not None and existing[1] == "completed" and state.status != "completed":
-        existing = None
     fields: dict[str, Any] = {
         "conclusion": state.conclusion,
         "output": output,
@@ -294,6 +313,14 @@ def upsert_check_run(
         "external_id": external_id,
         "installation_id": reader.installation,
     }
+    if existing is not None and existing[1] == "completed" and state.status != "completed":
+        if reopen_check_run(reader, existing[0], state, fields):
+            return
+        _log.info(
+            "GitHub did not reopen a completed check run, so a new one follows it.",
+            extra={"event": "runs.report.check_replaced", "check_run_id": existing[0], "name": name},
+        )
+        existing = None
     if existing is None:
         reader.client.create_check_run(reader.repository, name=name, head_sha=sha, status=state.status, **fields)
     else:
@@ -337,6 +364,27 @@ def sibling_runs(run: Mapping[str, Any], *, by_pull_request: bool, settings: Set
             newest["workspace_name"] = str(workspace.get("name", workspace["workspace_id"]))
             found.append(newest)
     return sorted(found, key=lambda item: item["workspace_name"])
+
+
+def with_current(siblings: list[dict[str, Any]], run: Mapping[str, Any], workspace_name: str) -> list[dict[str, Any]]:
+    """The sibling runs with this run's current state in its workspace's place.
+
+    The siblings are read off a secondary index, which trails the table, so the run
+    being reported can come back a status behind or be missing altogether. The run
+    in hand is the newest word on itself, so it replaces its workspace's entry
+    unless that entry is a newer run.
+    """
+    workspace_id = str(run["workspace_id"])
+    run_id = str(run["run_id"])
+    kept = [
+        item
+        for item in siblings
+        if str(item.get("workspace_id")) != workspace_id or str(item.get("run_id", "")) > run_id
+    ]
+    if any(str(item.get("workspace_id")) == workspace_id for item in kept):
+        return kept
+    kept.append(dict(run) | {"workspace_name": workspace_name})
+    return sorted(kept, key=lambda item: item["workspace_name"])
 
 
 def aggregate_state(runs: Iterable[Mapping[str, Any]]) -> CheckState:
@@ -398,14 +446,33 @@ def upsert_comment(reader: GitHubReader, number: int, body: str) -> None:
         reader.client.create_issue_comment(reader.repository, number, body, installation_id=reader.installation)
 
 
+def record_message(reader: GitHubReader, run: Mapping[str, Any], sha: str, *, settings: Settings) -> None:
+    """Read the reported commit's message and keep it on the run, once.
+
+    Best effort: a commit GitHub will not answer for leaves the run without a
+    message rather than stopping the report.
+    """
+    if (run.get("vcs") or {}).get("commit_message"):
+        return
+    try:
+        commit = reader.get(f"/commits/{sha}")
+    except GitHubError:
+        return
+    message = str(((commit or {}).get("commit") or {}).get("message") or "").strip()
+    if message:
+        service.record_commit_message(str(run["run_id"]), message, settings=settings)
+
+
 def publish(reader: GitHubReader, run: Mapping[str, Any], *, settings: Settings) -> str:
     """Report one run: its own check, the commit's aggregate and the pull request comment.
 
     Returns the commit the reports landed on.
     """
     sha = verified_commit(reader, run)
+    record_message(reader, run, sha, settings=settings)
     workspace = workspace_reads.get_workspace(str(run["workspace_id"]), settings=settings)
-    name = f"{CHECK_NAME}/{workspace.get('name', run['workspace_id'])}"
+    workspace_name = str(workspace.get("name", run["workspace_id"]))
+    name = f"{CHECK_NAME}/{workspace_name}"
     state = check_state(run)
     url = run_url(settings, run)
     summary = counts_line(run)
@@ -421,7 +488,7 @@ def publish(reader: GitHubReader, run: Mapping[str, Any], *, settings: Settings)
         external_id=str(run["run_id"]),
     )
 
-    siblings = sibling_runs(run, by_pull_request=False, settings=settings)
+    siblings = with_current(sibling_runs(run, by_pull_request=False, settings=settings), run, workspace_name)
     overall = aggregate_state(siblings)
     upsert_check_run(
         reader,
@@ -435,13 +502,19 @@ def publish(reader: GitHubReader, run: Mapping[str, Any], *, settings: Settings)
 
     if str(run.get("source")) == SOURCE_PR:
         number = int((run.get("vcs") or {})["pr_number"])
-        latest = sibling_runs(run, by_pull_request=True, settings=settings)
+        latest = with_current(sibling_runs(run, by_pull_request=True, settings=settings), run, workspace_name)
         upsert_comment(reader, number, comment_body(latest, sha, settings))
     return sha
 
 
-def report_run(run_id: str, *, settings: Settings | None = None) -> bool:
+def report_run(run_id: str, *, image: Mapping[str, Any] | None = None, settings: Settings | None = None) -> bool:
     """Report one VCS run to GitHub. Never raises; returns whether anything was posted.
+
+    `image` is the run as a stream record wrote it. Reporting that rather than a
+    fresh read is what lets every transition show: a run inserted `pending` and
+    started a moment later would otherwise be read as `planning` twice, and its
+    check would never show queued. A stream delivers one item's records in order,
+    so the image is never older than one already reported.
 
     A reporting fault is logged and dropped, so a GitHub outage or a missing App can
     never hold up, retry or fail a run.
@@ -449,7 +522,7 @@ def report_run(run_id: str, *, settings: Settings | None = None) -> bool:
     resolved = settings or get_settings()
     extra: dict[str, Any] = {"run_id": run_id}
     try:
-        run = service.get_run(run_id, settings=resolved)
+        run = dict(image) if image is not None else service.get_run(run_id, settings=resolved)
         vcs = run.get("vcs") or {}
         if str(run.get("source")) not in (SOURCE_PUSH, SOURCE_PR) or not vcs.get("repo"):
             return False
@@ -489,8 +562,11 @@ __all__ = [
     "counts_line",
     "http_client",
     "publish",
+    "record_message",
+    "reopen_check_run",
     "report_run",
     "run_url",
     "sibling_runs",
     "verified_commit",
+    "with_current",
 ]

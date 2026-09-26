@@ -142,6 +142,12 @@ export type RunChanges = Schemas['RunChanges'];
 /** A run as the API returns it. */
 export type Run = Schemas['Run'];
 
+/** Who confirmed or discarded a run's plan, when, and their comment. */
+export type RunDecision = Schemas['RunDecision'];
+
+/** The commit a VCS run was started from. */
+export type RunVcs = Schemas['RunVcs'];
+
 /**
  * A newly created run.
  *

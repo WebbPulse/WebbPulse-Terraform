@@ -377,11 +377,15 @@ export class TerraformApi {
     return response.data;
   }
 
-  /** Confirms a planned run, which starts its apply. */
-  async confirmRun(runId: string, options: RequestOptions = {}): Promise<Run> {
+  /** Confirms a planned run, which starts its apply, with an optional comment kept on the run. */
+  async confirmRun(
+    runId: string,
+    comment = '',
+    options: RequestOptions = {}
+  ): Promise<Run> {
     const response = await this.client.post<Run>(
       `/runs/${encodeURIComponent(runId)}/confirm`,
-      undefined,
+      comment.trim() === '' ? undefined : { comment },
       options
     );
     return response.data;
@@ -397,11 +401,15 @@ export class TerraformApi {
     return response.data;
   }
 
-  /** Discards a plan nobody will apply. */
-  async discardRun(runId: string, options: RequestOptions = {}): Promise<Run> {
+  /** Discards a plan nobody will apply, with an optional comment kept on the run. */
+  async discardRun(
+    runId: string,
+    comment = '',
+    options: RequestOptions = {}
+  ): Promise<Run> {
     const response = await this.client.post<Run>(
       `/runs/${encodeURIComponent(runId)}/discard`,
-      undefined,
+      comment.trim() === '' ? undefined : { comment },
       options
     );
     return response.data;

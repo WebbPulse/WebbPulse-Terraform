@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
@@ -13,7 +13,7 @@ import {
   apiMock,
   resetApiMock,
 } from '../test-helpers/apiMock';
-import type { RunState } from '../api';
+import type { Run, RunState } from '../api';
 
 vi.mock('../api/client', () => apiClientModuleMock());
 
@@ -24,6 +24,28 @@ vi.mock('../api/runPlan', () => ({
 }));
 
 const { RunDetail } = await import('./RunDetail');
+
+/** A run a push or a pull request started through the GitHub App. */
+function aVcsRun(
+  status: RunState,
+  vcs: Partial<NonNullable<Run['vcs']>> = {},
+  overrides: Partial<Run> = {}
+): Run {
+  return aRun(status, {
+    message: '',
+    source: vcs.pr_number === undefined ? 'vcs_push' : 'vcs_pr',
+    vcs: {
+      repo: 'WebbPulse/infra',
+      repository_id: '42',
+      ref: 'refs/heads/staging',
+      branch: 'staging',
+      sha: 'abcdef1234567890abcdef1234567890abcdef12',
+      commit_message: 'Add the logs bucket\n\nLonger body.',
+      ...vcs,
+    },
+    ...overrides,
+  });
+}
 
 /** Switches the body to the raw log tab. */
 async function openRawLog(): Promise<void> {
@@ -360,5 +382,203 @@ describe('RunDetail', () => {
       'The plan is running'
     );
     expect(fetchRunPlan).not.toHaveBeenCalled();
+  });
+
+  it('asks for an optional comment before confirming, in an in-app dialog', async () => {
+    const nativeConfirm = vi.spyOn(window, 'confirm');
+    apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
+    apiMock.confirmRun.mockResolvedValue(aRun('applying'));
+
+    renderRun();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Confirm & apply' })
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Confirm & apply' });
+    expect(apiMock.confirmRun).not.toHaveBeenCalled();
+    await userEvent.type(
+      within(dialog).getByLabelText('Comment'),
+      'Reviewed with the team.'
+    );
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Confirm plan' })
+    );
+
+    await waitFor(() => {
+      expect(apiMock.confirmRun).toHaveBeenCalledWith(
+        'run-01J000000000000000000000',
+        'Reviewed with the team.'
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    nativeConfirm.mockRestore();
+  });
+
+  it('closes the confirm dialog without confirming', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
+
+    renderRun();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Confirm & apply' })
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Confirm & apply' });
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Cancel' })
+    );
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(apiMock.confirmRun).not.toHaveBeenCalled();
+  });
+
+  it('discards through a dialog with an optional comment', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
+    apiMock.discardRun.mockResolvedValue(aRun('discarded'));
+
+    renderRun();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Discard run' })
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Discard run' });
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Discard run' })
+    );
+
+    await waitFor(() => {
+      expect(apiMock.discardRun).toHaveBeenCalledWith(
+        'run-01J000000000000000000000',
+        ''
+      );
+    });
+  });
+
+  it('keeps the dialog open with the error when the confirm is refused', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
+    apiMock.confirmRun.mockRejectedValue(new Error('The run moved on.'));
+
+    renderRun();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Confirm & apply' })
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Confirm & apply' });
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Confirm plan' })
+    );
+
+    expect(
+      await within(dialog).findByText('The run moved on.')
+    ).toBeInTheDocument();
+  });
+
+  it('shows who confirmed the plan and their comment in the timeline', async () => {
+    apiMock.getRun.mockResolvedValue(
+      aRun('applying', {
+        decision: {
+          action: 'confirmed',
+          at: '2026-09-17T00:05:00Z',
+          actor: { kind: 'user', id: 'user-1', display_name: 'Tyler Webb' },
+          comment: 'Reviewed with the team.',
+        },
+      })
+    );
+
+    renderRun();
+
+    const note = await screen.findByTestId('run-decision');
+    expect(note).toHaveTextContent('Confirmed by Tyler Webb');
+    expect(
+      within(screen.getByTestId('run-timeline')).getByTestId(
+        'run-decision-comment'
+      )
+    ).toHaveTextContent('Reviewed with the team.');
+  });
+
+  it('shows a discard without a comment', async () => {
+    apiMock.getRun.mockResolvedValue(
+      aRun('discarded', {
+        decision: {
+          action: 'discarded',
+          at: '2026-09-17T00:05:00Z',
+          actor: { kind: 'user', id: 'user-1' },
+          comment: null,
+        },
+      })
+    );
+
+    renderRun();
+
+    expect(await screen.findByTestId('run-decision')).toHaveTextContent(
+      'Discarded by user-1'
+    );
+    expect(
+      screen.queryByTestId('run-decision-comment')
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the trigger, the commit and its message for a push run', async () => {
+    apiMock.getRun.mockResolvedValue(aVcsRun('applied'));
+
+    renderRun();
+
+    const source = await screen.findByTestId('run-source');
+    expect(source).toHaveTextContent(
+      'Triggered via GitHub from a push to staging'
+    );
+    expect(
+      within(source).getByRole('link', { name: 'Commit abcdef1 on GitHub' })
+    ).toHaveAttribute(
+      'href',
+      'https://github.com/WebbPulse/infra/commit/abcdef1234567890abcdef1234567890abcdef12'
+    );
+    expect(within(source).queryByText(/PR #/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Add the logs bucket' })
+    ).toBeInTheDocument();
+  });
+
+  it('links the pull request and its head commit for a pull request run', async () => {
+    apiMock.getRun.mockResolvedValue(
+      aVcsRun(
+        'planned_and_finished',
+        {
+          pr_number: 91,
+          ref: 'refs/pull/91/merge',
+          branch: null,
+          sha: 'merge00000000000000000000000000000000000',
+          head_sha: '1234567aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+        { message: 'Queued from CI' }
+      )
+    );
+
+    renderRun();
+
+    const source = await screen.findByTestId('run-source');
+    expect(source).toHaveTextContent(
+      'Triggered via GitHub from pull request #91'
+    );
+    expect(
+      within(source).getByRole('link', { name: 'PR #91' })
+    ).toHaveAttribute('href', 'https://github.com/WebbPulse/infra/pull/91');
+    expect(
+      within(source).getByRole('link', { name: 'Commit 1234567 on GitHub' })
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('run-commit-message')).toHaveTextContent(
+      'Add the logs bucket'
+    );
+  });
+
+  it('shows no source line for a run started by hand', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('applied'));
+
+    renderRun();
+
+    await screen.findByTestId('run-state-badge');
+    expect(screen.queryByTestId('run-source')).not.toBeInTheDocument();
   });
 });
