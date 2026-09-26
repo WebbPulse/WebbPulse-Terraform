@@ -1082,10 +1082,57 @@ describe('AWS quick setup', () => {
 
     renderDetail(RUN_ROLE_SETTINGS);
 
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Change role' })
+    );
     const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
     expect(within(setup).getByLabelText('AWS account ID')).toHaveValue(
       '123456789012'
     );
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Keep the current role' })
+    );
+    expect(screen.getByTestId('connected-account')).toBeInTheDocument();
+  });
+
+  it('leads the settings page with the saved role as a connected account', async () => {
+    const arn = aWorkspace().run_role_arn ?? '';
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(connected).toHaveTextContent('AWS account 123456789012');
+    expect(connected).toHaveTextContent(arn);
+    expect(
+      within(connected).getByRole('button', { name: 'Check connection' })
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole('form', { name: 'AWS quick setup' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('asks a repository workspace for a push instead of an upload', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({
+        run_role_arn: aWorkspace().run_role_arn,
+        vcs_repo: 'WebbPulse/infra',
+        tracked_branch: 'staging',
+      })
+    );
+
+    renderDetail();
+
+    const checklist = await screen.findByTestId('setup-checklist');
+    const upload = within(checklist).getByTestId('setup-step-upload');
+    expect(upload).toHaveTextContent('Waiting for configuration');
+    expect(upload).toHaveTextContent(
+      'Push to staging or open a pull request in WebbPulse/infra.'
+    );
+    expect(
+      within(checklist).getByTestId('setup-awaiting-vcs')
+    ).toBeInTheDocument();
+    expect(within(checklist).queryByText(/tar\.gz/)).not.toBeInTheDocument();
   });
 
   it('keeps the manual path behind a disclosure', async () => {

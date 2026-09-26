@@ -244,7 +244,9 @@ describe('NewWorkspace', () => {
     await userEvent.click(
       screen.getByRole('button', { name: /Advanced options/ })
     );
-    expect(screen.getByLabelText('VCS branch')).toHaveValue('staging');
+    const branch = screen.getByLabelText('VCS branch');
+    expect(branch).toHaveValue('');
+    expect(branch).toHaveAttribute('placeholder', 'staging');
     await userEvent.type(
       screen.getByLabelText('Working directory'),
       'examples/first-run'
@@ -258,7 +260,6 @@ describe('NewWorkspace', () => {
       engine: 'terraform',
       engine_version: '1.16.3',
       vcs_repo: 'WebbPulse/infra',
-      tracked_branch: 'staging',
       working_directory: 'examples/first-run',
       file_triggers_enabled: true,
       trigger_patterns: [],
@@ -328,6 +329,12 @@ describe('NewWorkspace', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(currentStep()).toHaveTextContent('Connect to a repository');
+    expect(
+      screen.getByRole('option', { name: /WebbPulse\/infra/ })
+    ).toHaveAttribute('aria-selected', 'true');
+    expect(
+      screen.getByRole('option', { name: /WebbPulse\/site/ })
+    ).toHaveAttribute('aria-selected', 'false');
 
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(currentStep()).toHaveTextContent('Choose your workflow');

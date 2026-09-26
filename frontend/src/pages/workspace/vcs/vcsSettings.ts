@@ -14,10 +14,16 @@ export interface VcsSettings {
   speculativePlans: boolean;
 }
 
-/** The settings a workspace holds, as the form edits them. */
+/**
+ * The settings a workspace holds, as the form edits them.
+ *
+ * The branch starts empty, with the stored branch shown as its placeholder, so
+ * typing never appends to a prefilled value and an empty field keeps the
+ * branch the workspace already tracks.
+ */
 export function vcsSettingsOf(workspace: Workspace): VcsSettings {
   return {
-    branch: workspace.tracked_branch ?? '',
+    branch: '',
     workingDirectory: workspace.working_directory ?? '',
     triggerMode: workspace.file_triggers_enabled === false ? 'always' : 'paths',
     patterns: (workspace.trigger_patterns ?? []).join('\n'),

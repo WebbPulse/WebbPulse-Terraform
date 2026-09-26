@@ -125,7 +125,11 @@ function SettingsForm({
       />
       <Field
         label="Working directory"
-        hint="Relative to the root of the uploaded archive."
+        hint={
+          workspace.vcs_repo
+            ? 'Relative to the root of the repository.'
+            : 'Relative to the root of the uploaded archive.'
+        }
       >
         {(control) => (
           <input

@@ -181,22 +181,42 @@ export function RepositoryList({
                     onChange(repository);
                   }
                 }}
-                className={`flex cursor-pointer items-center justify-between gap-3 border-b border-line px-3 py-2 text-sm last:border-b-0 hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none ${
-                  selected ? 'bg-raised text-text-strong' : 'text-text'
+                className={`flex cursor-pointer items-center justify-between gap-3 border-b border-l-2 border-b-line px-3 py-2 text-sm last:border-b-0 focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none ${
+                  selected
+                    ? 'border-l-accent bg-accent-soft text-text-strong'
+                    : 'border-l-transparent text-text hover:bg-raised'
                 }`}
               >
-                <span className="min-w-0">
-                  <span className="block truncate font-mono">
-                    {repository.full_name}
-                  </span>
-                  {repository.default_branch ? (
-                    <span className="block text-xs text-text-faint">
-                      default branch{' '}
-                      <span className="font-mono">
-                        {repository.default_branch}
-                      </span>
-                    </span>
+                <span className="flex min-w-0 items-center gap-2">
+                  {selected ? (
+                    <svg
+                      viewBox="0 0 16 16"
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 text-accent"
+                      fill="none"
+                    >
+                      <path
+                        d="m3.5 8.5 3 3 6-7"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
                   ) : null}
+                  <span className="min-w-0">
+                    <span className="block truncate font-mono">
+                      {repository.full_name}
+                    </span>
+                    {repository.default_branch ? (
+                      <span className="block text-xs text-text-faint">
+                        default branch{' '}
+                        <span className="font-mono">
+                          {repository.default_branch}
+                        </span>
+                      </span>
+                    ) : null}
+                  </span>
                 </span>
                 <VisibilityChip isPrivate={repository.private} />
               </li>

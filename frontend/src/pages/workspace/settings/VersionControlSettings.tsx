@@ -69,12 +69,7 @@ function VersionControlForm({
     setRepository(picked.full_name);
     setDefaultBranch(picked.default_branch ?? null);
     setSaved(null);
-    if (!sameRepository(picked.full_name, connected)) {
-      setSettings((current) => ({
-        ...current,
-        branch: picked.default_branch ?? '',
-      }));
-    }
+    setSettings((current) => ({ ...current, branch: '' }));
   };
 
   const submit = async (): Promise<void> => {
@@ -117,24 +112,35 @@ function VersionControlForm({
         }}
       >
         <div className="space-y-2 text-sm">
-          <span className="text-text-muted">Repository</span>
+          {connected !== null && !choosing ? null : (
+            <span className="text-text-muted">Repository</span>
+          )}
           {connected !== null && !choosing ? (
-            <div className="flex items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2">
-              <span>
-                <a
-                  href={`https://github.com/${connected}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-mono text-text-strong hover:text-accent hover:underline"
-                >
-                  {connected}
-                </a>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2">
+              <dl
+                data-testid="connected-repository"
+                className="grid min-w-0 grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1"
+              >
+                <dt className="text-xs text-text-faint">Repository</dt>
+                <dd className="min-w-0 truncate">
+                  <a
+                    href={`https://github.com/${connected}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono text-text-strong hover:text-accent hover:underline"
+                  >
+                    {connected}
+                  </a>
+                </dd>
                 {workspace.tracked_branch ? (
-                  <span className="ml-2 font-mono text-xs text-text-muted">
-                    {workspace.tracked_branch}
-                  </span>
+                  <>
+                    <dt className="text-xs text-text-faint">Branch</dt>
+                    <dd className="font-mono text-xs text-text">
+                      {workspace.tracked_branch}
+                    </dd>
+                  </>
                 ) : null}
-              </span>
+              </dl>
               <span className="flex gap-2">
                 <Button
                   variant="secondary"
@@ -172,6 +178,11 @@ function VersionControlForm({
                 setSaved(null);
               }}
               defaultBranch={defaultBranch}
+              currentBranch={
+                sameRepository(repository, connected)
+                  ? (workspace.tracked_branch ?? null)
+                  : null
+              }
             />
             <ErrorNotice error={save.error} />
             <div className="flex items-center gap-3">

@@ -88,7 +88,7 @@ export function NewWorkspace(): React.ReactElement {
 
   const chooseRepository = (picked: InstalledRepository): void => {
     setRepository(picked);
-    setVcs((current) => ({ ...current, branch: picked.default_branch ?? '' }));
+    setVcs((current) => ({ ...current, branch: '' }));
     if (!nameEdited) {
       setName(nameFromRepository(picked.name));
     }

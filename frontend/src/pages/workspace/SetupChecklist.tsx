@@ -35,7 +35,7 @@ export interface SetupChecklistProps {
   keys: WorkspaceKeys;
 }
 
-/** What each step is called and what it asks for. */
+/** What each step is called and what it asks for, on the CLI and API workflows. */
 const STEP_COPY: Record<SetupStepId, { title: string; summary: string }> = {
   connect: {
     title: 'Connect an AWS account',
@@ -51,6 +51,39 @@ const STEP_COPY: Record<SetupStepId, { title: string; summary: string }> = {
       'A plan only run, which also proves the runner can assume the role.',
   },
 };
+
+/**
+ * The copy for one step of a workspace.
+ *
+ * A workspace connected to a repository gets its configuration from GitHub
+ * Actions, so it waits for a push or a pull request, as HCP Terraform does,
+ * rather than asking for an archive.
+ */
+function stepCopy(
+  id: SetupStepId,
+  workspace: Workspace
+): { title: string; summary: string } {
+  const repository = workspace.vcs_repo ?? null;
+  if (repository === null) {
+    return STEP_COPY[id];
+  }
+  if (id === 'upload') {
+    return {
+      title: 'Waiting for configuration',
+      summary: workspace.tracked_branch
+        ? `Push to ${workspace.tracked_branch} or open a pull request in ${repository}.`
+        : `Push to the tracked branch or open a pull request in ${repository}.`,
+    };
+  }
+  if (id === 'plan') {
+    return {
+      title: 'Run a plan',
+      summary:
+        'The first push starts a run and a pull request a plan only one, which also proves the runner can assume the role.',
+    };
+  }
+  return STEP_COPY[id];
+}
 
 /**
  * The checklist. Render it only while some step is not done.
@@ -127,12 +160,12 @@ export function SetupChecklist({
                             : 'text-text-strong'
                         }`}
                       >
-                        {STEP_COPY[step.id].title}
+                        {stepCopy(step.id, workspace).title}
                       </span>
                       <span className="block text-xs text-text-faint">
                         {step.status === 'done'
                           ? 'Done'
-                          : STEP_COPY[step.id].summary}
+                          : stepCopy(step.id, workspace).summary}
                       </span>
                     </span>
                     <svg
@@ -235,7 +268,9 @@ function StepBody({
         />
       );
     case 'upload':
-      return (
+      return workspace.vcs_repo ? (
+        <AwaitingRepository workspace={workspace} />
+      ) : (
         <UploadConfigForm
           workspaceId={workspace.workspace_id}
           queryKey={keys.versions}
@@ -254,6 +289,48 @@ function StepBody({
         />
       );
   }
+}
+
+/** What a workspace connected to a repository waits for before its first run. */
+function AwaitingRepository({
+  workspace,
+}: {
+  workspace: Workspace;
+}): React.ReactElement {
+  const repository = workspace.vcs_repo ?? '';
+  const branch = workspace.tracked_branch ?? null;
+  return (
+    <div data-testid="setup-awaiting-vcs" className="space-y-2 text-sm">
+      <p className="text-text-muted">
+        Configuration arrives from{' '}
+        <a
+          href={`https://github.com/${repository}`}
+          target="_blank"
+          rel="noreferrer"
+          className="font-mono text-accent underline-offset-2 hover:underline"
+        >
+          {repository}
+        </a>
+        . Push to{' '}
+        {branch === null ? (
+          'the tracked branch'
+        ) : (
+          <code className="font-mono text-text">{branch}</code>
+        )}{' '}
+        to start a run, or open a pull request against it for a plan only run.
+      </p>
+      <p className="text-xs text-text-faint">
+        The repository&apos;s GitHub Actions workflow uploads the configuration,
+        and this step completes when it lands.{' '}
+        <Link
+          to={`/workspaces/${workspace.workspace_id}/settings/version-control`}
+          className="text-accent underline-offset-2 hover:underline"
+        >
+          Version control settings
+        </Link>
+      </p>
+    </div>
+  );
 }
 
 /** The button that starts the first plan only run, or the link to the one running. */

@@ -11,6 +11,23 @@ export interface VcsFieldsProps {
   onChange: (value: VcsSettings) => void;
   /** The repository's default branch, shown as the branch placeholder. */
   defaultBranch: string | null;
+  /** The branch the workspace already tracks, which an empty field keeps. */
+  currentBranch?: string | null;
+}
+
+/** What an empty branch field means, said beside it. */
+function branchHint(
+  defaultBranch: string | null,
+  currentBranch: string | null
+): string {
+  const lead = 'Pushes to this branch start runs.';
+  if (currentBranch) {
+    return `${lead} Leave empty to keep ${currentBranch}.`;
+  }
+  if (defaultBranch) {
+    return `${lead} Leave empty for the default branch, ${defaultBranch}.`;
+  }
+  return `${lead} Leave empty for the repository's default branch.`;
 }
 
 /** The fields under a picked repository. */
@@ -18,6 +35,7 @@ export function VcsFields({
   value,
   onChange,
   defaultBranch,
+  currentBranch = null,
 }: VcsFieldsProps): React.ReactElement {
   const set = (patch: Partial<VcsSettings>): void => {
     onChange({ ...value, ...patch });
@@ -29,19 +47,12 @@ export function VcsFields({
     .replace(/\/+$/, '');
   return (
     <div className="space-y-4">
-      <Field
-        label="VCS branch"
-        hint={
-          defaultBranch
-            ? `Pushes to this branch start runs. Leave empty for the default branch, ${defaultBranch}.`
-            : "Pushes to this branch start runs. Leave empty for the repository's default branch."
-        }
-      >
+      <Field label="VCS branch" hint={branchHint(defaultBranch, currentBranch)}>
         {(control) => (
           <input
             {...control}
             value={value.branch}
-            placeholder={defaultBranch ?? 'default branch'}
+            placeholder={currentBranch ?? defaultBranch ?? 'default branch'}
             onChange={(event) => {
               set({ branch: event.target.value });
             }}
