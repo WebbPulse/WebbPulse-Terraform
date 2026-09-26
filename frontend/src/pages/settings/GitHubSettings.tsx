@@ -12,7 +12,6 @@ import {
   type GitHubAppStatus,
   type Installation,
   type InstallationList,
-  type RepositoryList,
 } from '../../api';
 import {
   Button,
@@ -23,14 +22,17 @@ import {
   INPUT_CLASS,
   PageHeader,
   RelativeTime,
-  Spinner,
   Table,
   Td,
   Th,
   Tr,
 } from '../../components';
+import { Collapsible } from './Collapsible';
 import { FinishSetup } from './FinishSetup';
 import { goTo, postManifest } from './githubNavigation';
+import { repositoryAccess } from './repositoryAccess';
+import { RepositoryListing } from './RepositoryListing';
+import { RowsSkeleton, SectionSkeleton } from './Skeleton';
 
 /** The refetch key for the App status. */
 export const GITHUB_APP_KEY = 'github-app';
@@ -38,8 +40,14 @@ export const GITHUB_APP_KEY = 'github-app';
 /** The refetch key for the installations list. */
 export const GITHUB_INSTALLATIONS_KEY = 'github-installations';
 
-/** The page's crumbs. */
-const CRUMBS = [{ label: 'Settings' }, { label: 'GitHub' }] as const;
+/** The page's crumbs, the page itself left to the title. */
+const CRUMBS = [{ label: 'Settings' }] as const;
+
+/** The organization the create form starts with. */
+const DEFAULT_ORGANIZATION = 'WebbPulse';
+
+/** Who owns a new App: an organization, or the signed-in GitHub account. */
+type Owner = 'organization' | 'personal';
 
 /** The GitHub settings page. */
 export function GitHubSettings(): React.ReactElement {
@@ -60,9 +68,9 @@ export function GitHubSettings(): React.ReactElement {
       <ErrorNotice error={app.error} />
       {app.isLoading || status === null ? (
         app.isLoading ? (
-          <div className="flex items-center gap-2 text-sm text-text-faint">
-            <Spinner label="Loading GitHub settings" className="size-4" />
-            Loading GitHub settings
+          <div className="space-y-6">
+            <SectionSkeleton label="Loading GitHub settings" lines={2} />
+            <SectionSkeleton label="Loading installations" lines={3} />
           </div>
         ) : null
       ) : status.configured ? (
@@ -110,16 +118,19 @@ function Section({
 
 /** The create step, shown while no App is configured. */
 function CreateApp({ app }: { app: GitHubAppStatus }): React.ReactElement {
-  const [organization, setOrganization] = useState('');
+  const [owner, setOwner] = useState<Owner>('organization');
+  const [organization, setOrganization] = useState(DEFAULT_ORGANIZATION);
   const { mutate, isMutating, error } = useMutationWithRefetch(
-    (org: string) =>
-      api.startGitHubManifest(org === '' ? {} : { organization: org }),
+    (org: string | null) =>
+      api.startGitHubManifest(org === null ? {} : { organization: org }),
     GITHUB_APP_KEY
   );
 
   const submit = async (): Promise<void> => {
     try {
-      const start = await mutate(organization.trim());
+      const start = await mutate(
+        owner === 'organization' ? organization.trim() : null
+      );
       postManifest(start.action_url, start.manifest);
     } catch {
       return;
@@ -140,24 +151,45 @@ function CreateApp({ app }: { app: GitHubAppStatus }): React.ReactElement {
             void submit();
           }}
         >
-          <Field
-            label="Organization"
-            hint="Leave empty to create the App on your personal account."
-          >
-            {(control) => (
-              <input
-                {...control}
-                value={organization}
-                placeholder="WebbPulse"
-                pattern="[A-Za-z0-9][A-Za-z0-9\-]*"
-                title="An organization login: letters, digits and hyphens."
-                onChange={(event) => {
-                  setOrganization(event.target.value);
-                }}
-                className={`${INPUT_CLASS} max-w-xs`}
-              />
-            )}
-          </Field>
+          <fieldset className="space-y-2 text-sm">
+            <legend className="text-text-muted">Owner</legend>
+            <OwnerOption
+              value="organization"
+              current={owner}
+              onChange={setOwner}
+              label="Organization"
+              hint="Recommended. The organization owns the App, so it outlives any one person's account."
+            />
+            <OwnerOption
+              value="personal"
+              current={owner}
+              onChange={setOwner}
+              label="Personal account"
+              hint="The App belongs to the GitHub account you are signed in to."
+            />
+          </fieldset>
+          {owner === 'organization' ? (
+            <Field
+              label="Organization name"
+              hint="You need to be an owner of this organization on GitHub."
+            >
+              {(control) => (
+                <input
+                  {...control}
+                  value={organization}
+                  required
+                  pattern="[A-Za-z0-9][A-Za-z0-9\-]*"
+                  title="An organization login: letters, digits and hyphens."
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => {
+                    setOrganization(event.target.value);
+                  }}
+                  className={`${INPUT_CLASS} max-w-xs font-mono`}
+                />
+              )}
+            </Field>
+          ) : null}
           <ErrorNotice error={error} />
           <Button
             type="submit"
@@ -177,8 +209,50 @@ function CreateApp({ app }: { app: GitHubAppStatus }): React.ReactElement {
   );
 }
 
+/** One owner choice: a radio with its label and a line under it. */
+function OwnerOption({
+  value,
+  current,
+  onChange,
+  label,
+  hint,
+}: {
+  value: Owner;
+  current: Owner;
+  onChange: (owner: Owner) => void;
+  label: string;
+  hint: string;
+}): React.ReactElement {
+  const checked = value === current;
+  return (
+    <label
+      className={`flex max-w-md cursor-pointer gap-3 rounded-md border px-3 py-2 transition-colors ${
+        checked
+          ? 'border-accent bg-raised/40'
+          : 'border-line hover:bg-raised/40'
+      }`}
+    >
+      <input
+        type="radio"
+        name="owner"
+        value={value}
+        checked={checked}
+        onChange={() => {
+          onChange(value);
+        }}
+        className="mt-0.5 accent-accent"
+      />
+      <span>
+        <span className="block text-text-strong">{label}</span>
+        <span className="block text-xs text-text-faint">{hint}</span>
+      </span>
+    </label>
+  );
+}
+
 /** The configured App, with its links and the logo step. */
 function AppSummary({ app }: { app: GitHubAppStatus }): React.ReactElement {
+  const [logoOpen, setLogoOpen] = useState(false);
   return (
     <Section
       title={app.name ?? app.slug ?? 'GitHub App'}
@@ -232,14 +306,15 @@ function AppSummary({ app }: { app: GitHubAppStatus }): React.ReactElement {
           </dd>
         </div>
       </dl>
-      <details className="group rounded-md border border-line px-3 py-2">
-        <summary className="cursor-pointer text-sm text-text">
-          Logo and badge colour
-        </summary>
-        <div className="pt-3">
-          <FinishSetup app={app} />
-        </div>
-      </details>
+      <Collapsible
+        title="Logo and badge colour"
+        open={logoOpen}
+        onToggle={() => {
+          setLogoOpen(!logoOpen);
+        }}
+      >
+        <FinishSetup app={app} />
+      </Collapsible>
     </Section>
   );
 }
@@ -300,10 +375,7 @@ function Installations({ app }: { app: GitHubAppStatus }): React.ReactElement {
       )}
       <ErrorNotice error={install.error ?? refresh.error ?? query.error} />
       {query.isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-text-faint">
-          <Spinner label="Loading installations" className="size-4" />
-          Loading installations
-        </div>
+        <RowsSkeleton label="Loading installations" rows={2} />
       ) : items.length === 0 ? (
         <EmptyState
           title="Not installed anywhere yet."
@@ -334,10 +406,8 @@ function Installations({ app }: { app: GitHubAppStatus }): React.ReactElement {
                       {item.account_type}
                     </p>
                   </Td>
-                  <Td className="text-text-muted">
-                    {item.repository_selection === 'all'
-                      ? 'All repositories'
-                      : 'Selected repositories'}
+                  <Td className="whitespace-nowrap text-text-muted">
+                    {repositoryAccess(item)}
                   </Td>
                   <Td>
                     {item.suspended ? (
@@ -442,7 +512,7 @@ function Installations({ app }: { app: GitHubAppStatus }): React.ReactElement {
   );
 }
 
-/** A button that shows one installation's repositories, loading them only once opened. */
+/** One installation's repositories behind a disclosure, loaded only once opened. */
 function RepositoriesToggle({
   installation,
 }: {
@@ -450,84 +520,15 @@ function RepositoriesToggle({
 }): React.ReactElement {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-md border border-line px-3 py-2">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => {
-          setOpen(!open);
-        }}
-        className="w-full text-left text-sm text-text hover:text-text-strong"
-      >
-        Repositories in {installation.account_login}
-      </button>
-      {open ? (
-        <RepositoryListing installationId={installation.installation_id} />
-      ) : null}
-    </div>
-  );
-}
-
-/** The repositories one installation reaches, read only. */
-function RepositoryListing({
-  installationId,
-}: {
-  installationId: string;
-}): React.ReactElement {
-  const auth = useQueryAuth();
-  const query = usePolledQuery<RepositoryList>(
-    ({ signal }) => api.listGitHubRepositories(installationId, { signal }),
-    {
-      intervalMs: 300_000,
-      queryKey: `github-repositories-${installationId}`,
-      auth,
-    }
-  );
-  if (query.isLoading) {
-    return (
-      <div className="flex items-center gap-2 py-2 text-sm text-text-faint">
-        <Spinner label="Loading repositories" className="size-4" />
-        Loading repositories
-      </div>
-    );
-  }
-  if (query.error !== null && query.error !== undefined) {
-    return <ErrorNotice error={query.error} className="mt-2" />;
-  }
-  const items = query.data?.items ?? [];
-  if (items.length === 0) {
-    return (
-      <p className="py-2 text-sm text-text-faint">
-        This installation reaches no repositories.
-      </p>
-    );
-  }
-  return (
-    <ul
-      aria-label={`Repositories for installation ${installationId}`}
-      className="mt-2 divide-y divide-line rounded-md border border-line"
+    <Collapsible
+      title={`Repositories in ${installation.account_login}`}
+      summary={repositoryAccess(installation)}
+      open={open}
+      onToggle={() => {
+        setOpen(!open);
+      }}
     >
-      {items.map((repo) => (
-        <li
-          key={repo.id}
-          className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
-        >
-          <a
-            href={repo.html_url ?? `https://github.com/${repo.full_name}`}
-            target="_blank"
-            rel="noreferrer"
-            className="truncate font-mono text-text hover:text-accent hover:underline"
-          >
-            {repo.full_name}
-          </a>
-          <span className="shrink-0 text-xs text-text-faint">
-            {repo.private ? 'Private' : 'Public'}
-            {(repo.default_branch ?? '') === ''
-              ? ''
-              : ` · ${repo.default_branch ?? ''}`}
-          </span>
-        </li>
-      ))}
-    </ul>
+      <RepositoryListing installationId={installation.installation_id} />
+    </Collapsible>
   );
 }

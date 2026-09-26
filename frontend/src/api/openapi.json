@@ -665,6 +665,17 @@
             "title": "Installed At",
             "type": "string"
           },
+          "repository_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repository Count"
+          },
           "repository_selection": {
             "title": "Repository Selection",
             "type": "string"

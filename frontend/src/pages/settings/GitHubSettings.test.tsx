@@ -53,8 +53,10 @@ describe('GitHubSettings', () => {
     const form = await screen.findByRole('form', {
       name: 'Create a GitHub App',
     });
-    await userEvent.type(
-      within(form).getByLabelText(/Organization/),
+    expect(
+      within(form).getByRole('radio', { name: /^Organization/ })
+    ).toBeChecked();
+    expect(within(form).getByLabelText('Organization name')).toHaveValue(
       'WebbPulse'
     );
     await userEvent.click(
@@ -71,7 +73,7 @@ describe('GitHubSettings', () => {
     expect(apiMock.listGitHubInstallations).not.toHaveBeenCalled();
   });
 
-  it('creates on the personal account when no organization is named', async () => {
+  it('creates on the personal account only when that is chosen', async () => {
     apiMock.getGitHubApp.mockResolvedValue(noApp());
     apiMock.startGitHubManifest.mockResolvedValue({
       action_url: 'https://github.com/settings/apps/new?state=s1',
@@ -82,9 +84,58 @@ describe('GitHubSettings', () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Create GitHub App' })
+      await screen.findByRole('radio', { name: /^Personal account/ })
+    );
+    expect(
+      screen.queryByLabelText('Organization name')
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Create GitHub App' })
     );
     expect(apiMock.startGitHubManifest).toHaveBeenCalledWith({});
+  });
+
+  it('requires an organization name, and creates under the one typed', async () => {
+    apiMock.getGitHubApp.mockResolvedValue(noApp());
+    apiMock.startGitHubManifest.mockResolvedValue({
+      action_url:
+        'https://github.com/organizations/Acme/settings/apps/new?state=s1',
+      manifest: {},
+      state: 's1',
+    });
+
+    renderPage();
+
+    const input = await screen.findByLabelText('Organization name');
+    expect(input).toBeRequired();
+    await userEvent.clear(input);
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Create GitHub App' })
+    );
+    expect(apiMock.startGitHubManifest).not.toHaveBeenCalled();
+    await userEvent.type(input, 'Acme');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Create GitHub App' })
+    );
+    expect(apiMock.startGitHubManifest).toHaveBeenCalledWith({
+      organization: 'Acme',
+    });
+  });
+
+  it('shows skeletons while the App status loads', async () => {
+    apiMock.getGitHubApp.mockReturnValue(new Promise(() => undefined));
+
+    renderPage();
+
+    expect(
+      await screen.findByRole('status', { name: 'Loading GitHub settings' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'Breadcrumb' })
+    ).toHaveTextContent(/^Settings$/);
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'GitHub' })
+    ).toBeInTheDocument();
   });
 
   it('shows the refusal a non admin gets', async () => {
@@ -190,10 +241,46 @@ describe('GitHubSettings', () => {
     expect(apiMock.removeGitHubInstallation).toHaveBeenCalledWith('77');
   });
 
+  it('counts selected repositories when GitHub reported them', async () => {
+    apiMock.getGitHubApp.mockResolvedValue(anApp());
+    apiMock.listGitHubInstallations.mockResolvedValue({
+      items: [
+        anInstallation({ repository_count: 1 }),
+        anInstallation({
+          installation_id: '78',
+          account_login: 'tyler',
+          repository_selection: 'all',
+        }),
+      ],
+    });
+
+    renderPage();
+
+    const table = await screen.findByRole('table', { name: 'Installations' });
+    expect(within(table).getByText('1 selected')).toBeInTheDocument();
+    expect(within(table).getByText('All repositories')).toBeInTheDocument();
+  });
+
+  it('opens the logo steps from a disclosure', async () => {
+    apiMock.getGitHubApp.mockResolvedValue(anApp());
+    apiMock.listGitHubInstallations.mockResolvedValue({ items: [] });
+
+    renderPage();
+
+    const toggle = await screen.findByRole('button', {
+      name: 'Logo and badge colour',
+    });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Upload the logo')).not.toBeInTheDocument();
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Upload the logo')).toBeInTheDocument();
+  });
+
   it("loads an installation's repositories only when opened", async () => {
     apiMock.getGitHubApp.mockResolvedValue(anApp());
     apiMock.listGitHubInstallations.mockResolvedValue({
-      items: [anInstallation()],
+      items: [anInstallation({ repository_count: 1 })],
     });
     apiMock.listGitHubRepositories.mockResolvedValue({
       items: [
@@ -211,10 +298,13 @@ describe('GitHubSettings', () => {
     renderPage();
 
     const toggle = await screen.findByRole('button', {
-      name: 'Repositories in WebbPulse',
+      name: /^Repositories in WebbPulse/,
     });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveTextContent('1 selected');
     expect(apiMock.listGitHubRepositories).not.toHaveBeenCalled();
     await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
     const list = await screen.findByRole('list', {
       name: 'Repositories for installation 77',
@@ -224,5 +314,22 @@ describe('GitHubSettings', () => {
     ).toHaveAttribute('href', 'https://github.com/WebbPulse/infra');
     expect(within(list).getByText(/Private/)).toBeInTheDocument();
     expect(apiMock.listGitHubRepositories.mock.calls[0]?.[0]).toBe('77');
+  });
+
+  it('says so when an installation reaches no repositories', async () => {
+    apiMock.getGitHubApp.mockResolvedValue(anApp());
+    apiMock.listGitHubInstallations.mockResolvedValue({
+      items: [anInstallation()],
+    });
+    apiMock.listGitHubRepositories.mockResolvedValue({ items: [] });
+
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: /^Repositories in WebbPulse/ })
+    );
+    expect(
+      await screen.findByText('This installation reaches no repositories.')
+    ).toBeInTheDocument();
   });
 });

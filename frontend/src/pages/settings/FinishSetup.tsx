@@ -62,8 +62,11 @@ export function FinishSetup({ app }: FinishSetupProps): React.ReactElement {
             Set the badge background
           </p>
           <p className="text-text-muted">
-            After the upload GitHub shows Badge background color. Set it to this
-            value and save.
+            After the upload GitHub shows Badge background color beside the
+            logo. Paste this value into it and click outside the field. GitHub
+            saves the colour on its own once the field loses focus. The nearby
+            Save button belongs to a different form, so there is no need to
+            press it.
           </p>
           <div className="flex items-center gap-2">
             <span

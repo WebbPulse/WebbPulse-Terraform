@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, urlparse
 
+import httpx
+
 from app.common.db import repositories
 from app.domains.github import service
 from tests.domains.github.conftest import SLUG, installation_body
@@ -156,6 +158,47 @@ def test_refresh_rereads_the_installation(auth_client, configure_app, github):
     assert body["account_login"] == "Renamed"
 
 
+def test_a_selected_installation_stores_its_repository_count(auth_client, configure_app, github):
+    """Install and refresh count what a `selected` installation reaches."""
+    configure_app()
+    github.installations[77] = installation_body(77)
+    github.repositories[77] = [{"id": 1, "name": "infra", "full_name": "WebbPulse/infra", "private": True}]
+    assert install(auth_client)["repository_count"] == 1
+    github.repositories[77].append({"id": 2, "name": "site", "full_name": "WebbPulse/site", "private": False})
+    assert auth_client.post("/api/v1/github/installations/77/refresh").json()["repository_count"] == 2
+    listed = auth_client.get("/api/v1/github/installations").json()["items"]
+    assert listed[0]["repository_count"] == 2
+
+
+def test_an_all_installation_is_not_counted(auth_client, configure_app, github):
+    """`all` needs no count, so the repositories are not listed."""
+    configure_app()
+    github.installations[77] = {**installation_body(77), "repository_selection": "all"}
+    assert install(auth_client)["repository_count"] is None
+    assert not [r for r in github.requests if r.url.path == "/installation/repositories"]
+
+
+def test_a_failed_count_keeps_the_last_one(auth_client, configure_app, github, monkeypatch):
+    """GitHub failing the listing does not fail the refresh."""
+    configure_app()
+    github.installations[77] = installation_body(77)
+    github.repositories[77] = [{"id": 1, "name": "infra", "full_name": "WebbPulse/infra", "private": True}]
+    install(auth_client)
+    github.repositories[77].append({"id": 2, "name": "site", "full_name": "WebbPulse/site", "private": False})
+    original = github.handle
+
+    def failing_listing(request):
+        """Fail only the repository listing."""
+        if request.url.path == "/installation/repositories":
+            return httpx.Response(500, json={"message": "failed"})
+        return original(request)
+
+    monkeypatch.setattr(github, "handle", failing_listing)
+    response = auth_client.post("/api/v1/github/installations/77/refresh")
+    assert response.status_code == 200
+    assert response.json()["repository_count"] == 1
+
+
 def test_remove_forgets_the_installation(auth_client, configure_app, github):
     """Removing only forgets the row; GitHub is not called."""
     configure_app()
@@ -195,6 +238,7 @@ def test_the_repositories_are_paged_to_the_end(auth_client, configure_app, githu
         for index in range(1, 151)
     ]
     install(auth_client)
+    github.requests.clear()
     response = auth_client.get("/api/v1/github/installations/77/repositories")
     assert response.status_code == 200
     items = response.json()["items"]

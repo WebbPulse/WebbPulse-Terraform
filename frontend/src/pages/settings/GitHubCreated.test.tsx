@@ -1,8 +1,8 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Route, Routes } from 'react-router-dom';
+import { Route, Routes, useLocation } from 'react-router-dom';
 
 import {
   renderWithAuth,
@@ -21,12 +21,28 @@ vi.mock('./githubNavigation', () => ({ postManifest: vi.fn(), goTo: vi.fn() }));
 const navigation = await import('./githubNavigation');
 const { GitHubCreated } = await import('./GitHubCreated');
 
+/** Shows the router's current URL, so a test can see the query was cleared. */
+function LocationProbe(): React.ReactElement {
+  const location = useLocation();
+  return (
+    <span data-testid="location">{location.pathname + location.search}</span>
+  );
+}
+
 /** Mounts the create callback at `url`, in strict mode as development runs it. */
 function renderAt(url: string): void {
   renderWithAuth(
     <StrictMode>
       <Routes>
-        <Route path="/settings/github/created" element={<GitHubCreated />} />
+        <Route
+          path="/settings/github/created"
+          element={
+            <>
+              <GitHubCreated />
+              <LocationProbe />
+            </>
+          }
+        />
       </Routes>
     </StrictMode>,
     signedInAuthClient(),
@@ -53,6 +69,14 @@ describe('GitHubCreated', () => {
       code: 'c1',
       state: 's1',
     });
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent(
+        /^\/settings\/github\/created$/
+      );
+    });
+    const created = screen.getByRole('region', { name: 'App created' });
+    expect(created).toHaveTextContent('webbpulse-terraform-staging');
+    expect(created).toHaveTextContent('App ID424242');
     expect(
       screen.getByRole('link', { name: 'Open App settings' })
     ).toHaveAttribute('href', anApp().settings_url);
@@ -95,6 +119,11 @@ describe('GitHubCreated', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'GitHub did not accept that code.'
     );
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent(
+        /^\/settings\/github\/created$/
+      );
+    });
     expect(
       screen.getByRole('link', { name: 'Back to GitHub settings' })
     ).toBeInTheDocument();

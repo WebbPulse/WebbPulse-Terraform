@@ -26,6 +26,7 @@ from webbpulse.integrations.github import (
     AppInstallation,
     GitHubAppClient,
     GitHubAppSettings,
+    GitHubError,
     GitHubNotConfigured,
     GitHubNotFound,
     convert_manifest_code,
@@ -319,7 +320,33 @@ def start_install(*, actor: str | None, settings: Settings | None = None) -> dic
     return {"install_url": install_url, "state": state}
 
 
-def _installation_row(installation: AppInstallation, existing: dict[str, Any] | None) -> dict[str, Any]:
+def _repository_count(
+    client: GitHubAppClient,
+    installation: AppInstallation,
+    existing: dict[str, Any] | None,
+) -> int | None:
+    """How many repositories a `selected` installation covers, `None` for `all`.
+
+    A failed count keeps the last one stored rather than failing the confirmation.
+    """
+    if installation.repository_selection != "selected":
+        return None
+    try:
+        return len(client.list_installation_repositories(installation.id))
+    except GitHubError:
+        logger.warning(
+            "Could not count an installation's repositories",
+            extra={"event": "github.installation.count_failed", "installation_id": installation.id},
+        )
+        previous = (existing or {}).get("repository_count")
+        return None if previous is None else int(previous)
+
+
+def _installation_row(
+    installation: AppInstallation,
+    existing: dict[str, Any] | None,
+    repository_count: int | None,
+) -> dict[str, Any]:
     """The stored shape of an installation GitHub has just confirmed."""
     now = _now().isoformat()
     return {
@@ -330,6 +357,7 @@ def _installation_row(installation: AppInstallation, existing: dict[str, Any] | 
         "account_type": installation.account_type,
         "account_avatar_url": installation.account_avatar_url,
         "repository_selection": installation.repository_selection,
+        "repository_count": repository_count,
         "html_url": installation.html_url,
         "suspended": installation.suspended_at is not None,
         "suspended_at": installation.suspended_at.isoformat() if installation.suspended_at else None,
@@ -367,7 +395,8 @@ def record_installation(
         raise InvalidState
     with _app_client(resolved) as client:
         installation = client.get_app_installation(installation_id)
-    row = _installation_row(installation, existing)
+        count = _repository_count(client, installation, existing)
+    row = _installation_row(installation, existing, count)
     table.put(row)
     return render_installation(row)
 
@@ -382,6 +411,7 @@ def render_installation(row: dict[str, Any]) -> dict[str, Any]:
             "account_type",
             "account_avatar_url",
             "repository_selection",
+            "repository_count",
             "html_url",
             "suspended",
             "suspended_at",
@@ -408,10 +438,11 @@ def refresh_installation(installation_id: int, settings: Settings | None = None)
     try:
         with _app_client(resolved) as client:
             installation = client.get_app_installation(installation_id)
+            count = _repository_count(client, installation, existing)
     except GitHubNotFound:
         table.delete(_installation_key(installation_id))
         raise InstallationNotFound from None
-    row = _installation_row(installation, existing)
+    row = _installation_row(installation, existing, count)
     table.put(row)
     return render_installation(row)
 

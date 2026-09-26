@@ -1,7 +1,7 @@
 /** Where GitHub returns after creating the App: store its credentials, then finish setup. */
 
 import { useCallback } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useMutationWithRefetch } from '@webbpulse/api-client/react';
 
 import { api, type GitHubAppStatus } from '../../api';
@@ -10,6 +10,7 @@ import { FinishSetup } from './FinishSetup';
 import { GITHUB_APP_KEY } from './GitHubSettings';
 import { goTo } from './githubNavigation';
 import { useCallbackOnce } from './useCallbackOnce';
+import { useClearQueryWhen, useInitialParams } from './useCallbackParams';
 
 /** The page's crumbs. */
 const CRUMBS = [
@@ -19,7 +20,7 @@ const CRUMBS = [
 
 /** The create callback page. */
 export function GitHubCreated(): React.ReactElement {
-  const [params] = useSearchParams();
+  const params = useInitialParams();
   const code = params.get('code') ?? '';
   const state = params.get('state') ?? '';
   const run = useCallback(
@@ -30,6 +31,7 @@ export function GitHubCreated(): React.ReactElement {
     [code, state]
   );
   const result = useCallbackOnce<GitHubAppStatus>(run);
+  useClearQueryWhen(!result.isLoading);
 
   return (
     <div className="space-y-6">
@@ -89,6 +91,20 @@ function Created({ app }: { app: GitHubAppStatus }): React.ReactElement {
           Two manual steps give it the WebbPulse Terraform logo, then install it
           on the repositories it should reach.
         </p>
+        <dl className="flex flex-wrap gap-x-6 gap-y-1 pt-1 text-sm">
+          <div className="flex gap-2">
+            <dt className="text-text-faint">Slug</dt>
+            <dd className="font-mono text-text-strong">
+              {app.slug ?? 'Not set'}
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="text-text-faint">App ID</dt>
+            <dd className="font-mono text-text-strong">
+              {app.app_id ?? 'Unknown'}
+            </dd>
+          </div>
+        </dl>
       </section>
       <section
         aria-label="Logo and badge"
