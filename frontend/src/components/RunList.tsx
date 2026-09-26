@@ -4,7 +4,8 @@ import { Link } from 'react-router-dom';
 
 import { runGroup, type Run } from '../api';
 import { EmptyState } from './EmptyState';
-import { formatDateTime, formatRelative, shortRunId } from './format';
+import { shortRunId } from './format';
+import { RelativeTime } from './RelativeTime';
 import { DestroyBadge } from './DestroyBadge';
 import {
   changeSummary,
@@ -45,17 +46,17 @@ export function RunList({
             key={run.run_id}
             data-run-id={run.run_id}
             data-needs-action={needsAction}
-            className={`flex flex-wrap items-center gap-x-4 gap-y-2 border-l-2 px-4 py-3 ${
+            className={`relative flex flex-wrap items-center gap-x-4 gap-y-2 border-l-2 px-4 py-3 ${
               needsAction
                 ? 'border-l-warning bg-warning-soft/30'
-                : 'border-l-transparent'
+                : 'border-l-transparent hover:bg-raised/60'
             }`}
           >
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
                 <Link
                   to={runPath(run)}
-                  className="block truncate text-sm font-medium text-text-strong hover:text-accent hover:underline"
+                  className="block truncate text-sm font-medium text-text-strong after:absolute after:inset-0 hover:text-accent hover:underline focus-visible:outline-none focus-visible:after:rounded-md focus-visible:after:ring-2 focus-visible:after:ring-accent"
                 >
                   {runTitle(run)}
                 </Link>
@@ -72,7 +73,7 @@ export function RunList({
                     <span aria-hidden="true">|</span>
                     <Link
                       to={`/workspaces/${run.workspace_id}`}
-                      className="hover:text-accent hover:underline"
+                      className="relative z-10 hover:text-accent hover:underline"
                     >
                       {workspaceNames.get(run.workspace_id) ?? run.workspace_id}
                     </Link>
@@ -84,11 +85,8 @@ export function RunList({
             </div>
             <div className="flex items-center gap-3">
               <StateBadge state={run.status} />
-              <span
-                className="text-xs whitespace-nowrap text-text-faint"
-                title={formatDateTime(run.created_at)}
-              >
-                {formatRelative(run.created_at)}
+              <span className="text-xs whitespace-nowrap text-text-faint">
+                <RelativeTime iso={run.created_at} />
               </span>
             </div>
           </li>

@@ -48,7 +48,13 @@ const STEP_COPY: Record<SetupStepId, { title: string; summary: string }> = {
   },
 };
 
-/** The checklist. Render it only while some step is not done. */
+/**
+ * The checklist. Render it only while some step is not done.
+ *
+ * The current step opens on its own, and any step can be opened or closed by
+ * hand whatever its status, the way the hosted product lets a step be read
+ * ahead of the one before it.
+ */
 export function SetupChecklist({
   workspace,
   steps,
@@ -56,6 +62,9 @@ export function SetupChecklist({
   runs,
   keys,
 }: SetupChecklistProps): React.ReactElement {
+  const [expanded, setExpanded] = useState<
+    Partial<Record<SetupStepId, boolean>>
+  >({});
   const doneCount = steps.filter((step) => step.status === 'done').length;
   return (
     <section
@@ -80,43 +89,80 @@ export function SetupChecklist({
         </span>
       </div>
       <ol className="divide-y divide-line">
-        {steps.map((step, index) => (
-          <li
-            key={step.id}
-            data-testid={`setup-step-${step.id}`}
-            data-status={step.status}
-            className="px-4 py-3"
-          >
-            <div className="flex items-start gap-3">
-              <StepMarker index={index} status={step.status} />
-              <div className="min-w-0 flex-1">
-                <p
-                  className={`text-sm font-medium ${
-                    step.status === 'blocked'
-                      ? 'text-text-faint'
-                      : 'text-text-strong'
-                  }`}
-                >
-                  {STEP_COPY[step.id].title}
-                </p>
-                <p className="text-xs text-text-faint">
-                  {step.status === 'done' ? 'Done' : STEP_COPY[step.id].summary}
-                </p>
-                {step.status === 'current' ? (
-                  <div className="mt-4">
-                    <StepBody
-                      id={step.id}
-                      workspace={workspace}
-                      versions={versions}
-                      runs={runs}
-                      keys={keys}
-                    />
-                  </div>
-                ) : null}
+        {steps.map((step, index) => {
+          const open = expanded[step.id] ?? step.status === 'current';
+          const bodyId = `setup-step-${step.id}-body`;
+          return (
+            <li
+              key={step.id}
+              data-testid={`setup-step-${step.id}`}
+              data-status={step.status}
+              className="px-4 py-3"
+            >
+              <div className="flex items-start gap-3">
+                <StepMarker index={index} status={step.status} />
+                <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    aria-controls={bodyId}
+                    onClick={() => {
+                      setExpanded((current) => ({
+                        ...current,
+                        [step.id]: !open,
+                      }));
+                    }}
+                    className="flex w-full items-start justify-between gap-3 rounded-md text-left focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+                  >
+                    <span className="min-w-0">
+                      <span
+                        className={`block text-sm font-medium ${
+                          step.status === 'blocked'
+                            ? 'text-text-muted'
+                            : 'text-text-strong'
+                        }`}
+                      >
+                        {STEP_COPY[step.id].title}
+                      </span>
+                      <span className="block text-xs text-text-faint">
+                        {step.status === 'done'
+                          ? 'Done'
+                          : STEP_COPY[step.id].summary}
+                      </span>
+                    </span>
+                    <svg
+                      viewBox="0 0 16 16"
+                      className={`mt-0.5 size-4 shrink-0 text-text-faint transition-transform ${
+                        open ? 'rotate-180' : ''
+                      }`}
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="m4 6 4 4 4-4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  {open ? (
+                    <div id={bodyId} className="mt-4">
+                      <StepBody
+                        id={step.id}
+                        workspace={workspace}
+                        versions={versions}
+                        runs={runs}
+                        keys={keys}
+                      />
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
@@ -157,7 +203,7 @@ function StepMarker({
   );
 }
 
-/** The interactive part of the current step. */
+/** The interactive part of an open step. */
 function StepBody({
   id,
   workspace,
@@ -241,7 +287,7 @@ function FirstPlan({
         config_version_id: version.config_version_id,
         plan_only: true,
       });
-      invalidateQueries([runsKey]);
+      invalidateQueries(runsKey);
       void navigate(
         runPath({ run_id: run.run_id, workspace_id: workspace.workspace_id })
       );

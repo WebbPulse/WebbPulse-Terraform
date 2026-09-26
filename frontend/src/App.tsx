@@ -51,14 +51,16 @@ export function AppRoutes(): React.ReactElement {
  *
  * `AuthProvider` is given the API's own auth client, so the session the guards
  * read is the one the API client refreshes through rather than a second copy
- * with its own token. `ThemeProvider` sits outside it, because the theme is a
+ * with its own token. The router commits each navigation synchronously rather
+ * inside a transition, so the page on screen always follows the address bar even
+ * while polled pages keep rendering. `ThemeProvider` sits outside it, because the theme is a
  * property of the browser rather than of the session and should survive a sign
  * out.
  */
 export function App(): React.ReactElement {
   return (
     <ThemeProvider>
-      <BrowserRouter>
+      <BrowserRouter useTransitions={false}>
         <AuthProvider client={api.getAuthClient() as unknown as AnyAuthClient}>
           <AppRoutes />
         </AuthProvider>

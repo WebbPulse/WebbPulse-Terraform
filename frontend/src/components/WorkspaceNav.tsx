@@ -25,7 +25,7 @@ const SECTIONS: readonly { path: string; label: string; end?: boolean }[] = [
   { path: '', label: 'Overview', end: true },
   { path: 'runs', label: 'Runs' },
   { path: 'variables', label: 'Variables' },
-  { path: 'settings', label: 'Settings' },
+  { path: 'settings/general', label: 'Settings' },
   { path: 'configuration-versions', label: 'Configuration versions' },
 ];
 

@@ -17,9 +17,8 @@ import {
   CopyButton,
   ErrorNotice,
   PageHeader,
+  RelativeTime,
   Spinner,
-  formatDateTime,
-  formatRelative,
   useWorkspaceNav,
 } from '../components';
 import { NewRunDialog } from './workspace/NewRunDialog';
@@ -197,7 +196,7 @@ function WorkspaceHeader({
         </Fact>
         <Divider />
         <Fact label="Updated">
-          <span title={formatDateTime(updated)}>{formatRelative(updated)}</span>
+          <RelativeTime iso={updated} />
         </Fact>
       </dl>
     </div>
