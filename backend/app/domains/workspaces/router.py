@@ -20,7 +20,7 @@ from ...common.core.auth import (
     scopes,
 )
 from ...common.core.variable_cipher import MasterKeyUnavailable
-from . import service
+from . import hcl, service
 from .schemas.workspace import (
     ConfigVersion,
     ConfigVersionCreate,
@@ -230,11 +230,29 @@ def put_variable(
     workspace_id: str = WorkspaceId,
     key: str = VariableKey,
 ) -> dict[str, Any]:
-    """Set one variable. A sensitive value is sealed before it is stored."""
+    """Set one variable. A sensitive value is sealed before it is stored.
+
+    A broken HCL expression and an `env` variable marked HCL are both refused
+    here, so neither is stored to fail on every later run.
+    """
     try:
         stored = service.put_variable(workspace_id, key, payload.model_dump())
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
+    except service.HclNotAllowed as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "An env variable cannot be HCL: an environment variable is a string to "
+                "the process, so there is nothing to parse the expression. Set hcl to "
+                "false, or set category to terraform."
+            ),
+        ) from error
+    except hcl.InvalidHcl as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"The value is not a usable HCL expression. {error}",
+        ) from error
     except MasterKeyUnavailable as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

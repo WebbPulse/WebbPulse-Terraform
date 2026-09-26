@@ -88,11 +88,21 @@ def resolved_variables(
     """Every variable on one workspace with its plaintext value, split by category.
 
     The one place a sealed value is opened, and it feeds the run bundle alone. The
-    return shape is `{"terraform": {...}, "env": {...}}`, which is what the runner
-    needs to build its command line and its process environment.
+    return shape is `{"terraform": {...}, "env": {...}, "hcl": {...}}`. The first
+    two are what the runner needs to build its variable file and its process
+    environment; `hcl` holds the terraform variables whose value is an HCL
+    expression rather than a literal, under the same keys, so the runner can put
+    each one in the file the engine parses it from.
+
+    A key never appears in both `terraform` and `hcl`: an HCL variable is routed
+    to `hcl` alone, so a runner that ignored the new bucket would drop it rather
+    than pass the raw expression off as a literal string.
+
+    A row written before the flag existed carries no `hcl` attribute and reads as
+    a literal, which is what it has always been.
     """
     resolved = settings or get_settings()
-    out: dict[str, dict[str, str]] = {"terraform": {}, "env": {}}
+    out: dict[str, dict[str, str]] = {"terraform": {}, "env": {}, "hcl": {}}
     for item in list_variables(workspace_id, settings=resolved):
         key = str(item["key"])
         category = str(item.get("category", "terraform"))
@@ -100,6 +110,9 @@ def resolved_variables(
             value = variable_cipher.open_sealed(item, workspace_id=workspace_id, key=key, settings=resolved)
         else:
             value = str(item.get("value", ""))
+        if category == "terraform" and bool(item.get("hcl", False)):
+            out["hcl"][key] = value
+            continue
         out.setdefault(category, {})[key] = value
     return out
 

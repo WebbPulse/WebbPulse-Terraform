@@ -246,6 +246,7 @@ function VariableForm({
       api.putVariable(workspaceId, key, {
         value,
         category,
+        hcl: category === 'terraform' && editing?.hcl === true,
         sensitive,
         description,
       }),

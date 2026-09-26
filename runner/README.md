@@ -12,7 +12,7 @@ domain, runs Terraform or OpenTofu, and reports back through the task token.
 | `versions.env` | the pinned engine versions and their per architecture SHA256 sums |
 | `app/models.py` | the runner environment and the bundle the runs domain serves |
 | `app/api.py` | bundle fetch, presigned artifact transfers, phase result post |
-| `app/workspace.py` | config tarball unpack, the S3 backend override, the tfvars file |
+| `app/workspace.py` | config tarball unpack, the S3 backend override, the two tfvars files |
 | `app/credentials.py` | assuming the per workspace run role with the phase session policy |
 | `app/engine.py` | the engine subprocess, its environment and plan JSON parsing |
 | `app/logs.py` | redaction and the CloudWatch Logs sink |
@@ -53,7 +53,7 @@ the token. The runner then:
 1. `GET {API_BASE_URL}/api/v1/runs/{RUN_ID}/bundle` with the run token as
    bearer, validating the response as `Bundle`: `run_id`, `workspace_id`,
    `engine`, `engine_version`, `config_url`, the nested `backend`, `run_role`
-   and `artifacts`, `working_directory` and the two variable maps. The backend
+   and `artifacts`, `working_directory` and the three variable maps. The backend
    also sends `phase` and `plan_only`, which the model ignores: the phase comes
    from `PHASE`.
 2. Downloads and unpacks the config tarball, refusing members that escape the
@@ -61,8 +61,17 @@ the token. The runner then:
    value, one climbing out with `..`, or one the configuration does not carry
    fails the task before the engine runs. Empty means the tarball root.
 3. Writes the S3 backend override with `use_lockfile = true` and the terraform
-   variables as an auto loaded `*.auto.tfvars.json`, both into the working
-   directory, since neither is loaded from a parent.
+   variables into the working directory, since neither is loaded from a parent.
+   The variables go to two auto loaded files. Literal values go to
+   `zz_webbpulse.auto.tfvars.json`, where JSON decoding makes every value what it
+   says it is, so a value carrying quotes, braces or `${` cannot be reinterpreted.
+   Values the workspace marked HCL go to `zz_webbpulse.auto.tfvars`, the native
+   form, written as `key = (\n<value>\n)` so the engine parses each one and the
+   value stays inside its own parenthesis, which the backend's write time check
+   guarantees it cannot close. That is the only way a `list` or `map` typed input variable can be given a
+   value: quoting `["a", "b"]` into the JSON file would hand a `list(string)`
+   variable an eight character string instead. A key is in one file or the other,
+   never both, so the two auto loaded files never contend.
 4. Assumes the bundle's run role with the workspace id as the external id and the
    phase session policy, and exports only those credentials to the engine.
 5. Runs the engine from the working directory: `init`, then
@@ -86,7 +95,9 @@ The engine comes from the bundle's `engine` field, `terraform` or `tofu`.
 
 Every line passes through `app.logs.Redactor` before it reaches CloudWatch Logs,
 stdout or the uploaded log artifact. The run token, the task token, the assumed
-role credentials, the external id and every environment and terraform variable
-value are registered as sensitive. The engine's environment is built without the
+role credentials, the external id and every environment, terraform and HCL variable
+value are registered as sensitive, and an HCL value's string and heredoc
+literals are registered on their own too, since the engine can print a member
+without the rest of the expression. The engine's environment is built without the
 runner's own tokens and without the task role's container credentials, so a
 provider that dumps its environment cannot leak them.

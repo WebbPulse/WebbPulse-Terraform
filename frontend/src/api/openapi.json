@@ -1404,6 +1404,11 @@
             "title": "Description",
             "type": "string"
           },
+          "hcl": {
+            "default": false,
+            "title": "Hcl",
+            "type": "boolean"
+          },
           "key": {
             "title": "Key",
             "type": "string"
@@ -1482,6 +1487,11 @@
             "default": "",
             "title": "Description",
             "type": "string"
+          },
+          "hcl": {
+            "default": false,
+            "title": "Hcl",
+            "type": "boolean"
           },
           "sensitive": {
             "default": false,
@@ -4009,7 +4019,7 @@
         ]
       },
       "put": {
-        "description": "Set one variable. A sensitive value is sealed before it is stored.",
+        "description": "Set one variable. A sensitive value is sealed before it is stored.\n\nA broken HCL expression and an `env` variable marked HCL are both refused\nhere, so neither is stored to fail on every later run.",
         "operationId": "put_variable_api_v1_workspaces__workspace_id__variables__key__put",
         "parameters": [
           {
