@@ -18,7 +18,7 @@ from app.api import ApiError, RunnerApi
 from app.credentials import CredentialsError, assume_run_role
 from app.engine import build_environment, parse_changes
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
-from app.models import BackendConfig, Bundle, Changes, PhaseResult, RunRole
+from app.models import BackendConfig, Bundle, Changes, PhaseResult, RunRole, hcl_literal_fragments
 from tests.conftest import (
     LOG_GROUP,
     PLAN_JSON_NO_CHANGES,
@@ -557,3 +557,38 @@ def test_bundle_sensitive_values_cover_hcl_variables(run_role_arn: str) -> None:
 
     redactor = Redactor(bundle.sensitive_values())
     assert SECRET_TFVAR not in redactor.scrub(f'subnets = ["{SECRET_TFVAR}"]')
+
+
+def test_a_sensitive_hcl_member_is_masked_when_printed_alone(run_role_arn: str) -> None:
+    """The engine prints a list member or map value on its own line, so each is masked."""
+    payload = bundle_payload(run_role_arn) | {
+        "hcl_variables": {"secrets": f'{{ token = "{SECRET_TFVAR}", other = "second-secret" }}'}
+    }
+    redactor = Redactor(Bundle.model_validate(payload).sensitive_values())
+    assert SECRET_TFVAR not in redactor.scrub(f'      + token = "{SECRET_TFVAR}"')
+    assert "second-secret" not in redactor.scrub("second-secret")
+
+
+def test_escaped_quoted_literals_are_masked_as_the_engine_prints_them() -> None:
+    """A string with escapes is registered both raw and decoded."""
+    fragments = hcl_literal_fragments('["tab\\there", "quote\\"d"]')
+    assert "tab\\there" in fragments
+    assert "tab\there" in fragments
+    assert 'quote"d' in fragments
+
+
+def test_heredoc_bodies_and_lines_are_masked() -> None:
+    """A heredoc body is registered whole and line by line, trimmed of indentation."""
+    fragments = hcl_literal_fragments("<<-EOT\n  first-line\n  second-line\n  EOT")
+    assert "first-line" in fragments
+    assert "second-line" in fragments
+    assert "  first-line\n  second-line" in fragments
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["1", "true", '"${var.x}"', '"\\u12"', "<<EOT\nno end", '"unterminated', '"\\', "<<-\n"],
+)
+def test_fragment_extraction_never_refuses_a_value(expression: str) -> None:
+    """Extraction is best effort: a short, dynamic or odd expression still yields itself."""
+    assert expression in hcl_literal_fragments(expression)
