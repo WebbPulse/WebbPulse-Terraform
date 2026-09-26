@@ -892,6 +892,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{workspace_id}/state-versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List State Versions
+         * @description One page of a workspace's state history, newest first.
+         *
+         *     Guarded by the same scope as reading the workspace itself, so state history
+         *     is reachable by exactly the callers that can already see the workspace and by
+         *     no one else. A workspace that has never run answers an empty page.
+         */
+        get: operations["list_state_versions_api_v1_workspaces__workspace_id__state_versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get State Version
+         * @description One state version's metadata. Never its resources or its outputs.
+         */
+        get: operations["get_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Download State Version
+         * @description Mint a short lived URL with workspaces:read and explicit state:download access.
+         *
+         *     A `POST` rather than a `GET` because it is not a read: it mints a bearer
+         *     credential for the most sensitive object the product stores, and that is an
+         *     event worth being a distinct, non cacheable, non prefetchable call.
+         *
+         *     The scope guard runs before this function is entered and the service checks
+         *     the version belongs to this workspace before it signs anything, so no URL
+         *     exists until both have passed. The handover is recorded first, because an
+         *     audit line written after the URL is minted would be missing exactly when it
+         *     matters most.
+         */
+        post: operations["download_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__download_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{workspace_id}/variables": {
         parameters: {
             query?: never;
@@ -1639,6 +1713,94 @@ export interface components {
             principal_arns?: string[];
             /** Role Name */
             role_name: string;
+        };
+        /**
+         * StateVersion
+         * @description One version of a workspace's Terraform state, as the API renders it.
+         *
+         *     A state body holds every resource attribute and every output in plaintext,
+         *     routinely including passwords and private keys, so nothing derived from those
+         *     appears here. The fields are the ones that describe the version rather than
+         *     what is inside it, and the body is reachable only through the separate
+         *     download route.
+         */
+        StateVersion: {
+            /** Created At */
+            created_at: string;
+            /** Is Current */
+            is_current: boolean;
+            /** Size Bytes */
+            size_bytes: number;
+            /** State Version Id */
+            state_version_id: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
+         * StateVersionDetail
+         * @description One state version with the three fields that only the state body carries.
+         *
+         *     `serial`, `terraform_version` and `lineage` are read out of the object
+         *     because Terraform writes state through its own backend and the control plane
+         *     never gets to stamp them as S3 metadata. They are the only things lifted out
+         *     of the body; no resource attribute and no output is ever read into a
+         *     response. Each is optional because a body that cannot be parsed still has
+         *     describable metadata.
+         */
+        StateVersionDetail: {
+            /** Created At */
+            created_at: string;
+            /** Is Current */
+            is_current: boolean;
+            /** Lineage */
+            lineage?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Serial */
+            serial?: number | null;
+            /** Size Bytes */
+            size_bytes: number;
+            /** State Version Id */
+            state_version_id: string;
+            /** Terraform Version */
+            terraform_version?: string | null;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
+         * StateVersionDownload
+         * @description A short lived URL for one state version's raw bytes.
+         *
+         *     The URL is a bearer credential for exactly one object version: it names the
+         *     bucket, the key and the version inside its signature, so it cannot be steered
+         *     at another workspace's state. It is minted only after the caller's scope and
+         *     the version's ownership have both been checked, and it expires in
+         *     `expires_in` seconds.
+         */
+        StateVersionDownload: {
+            /** Download Url */
+            download_url: string;
+            /** Expires In */
+            expires_in: number;
+            /** Size Bytes */
+            size_bytes: number;
+            /** State Version Id */
+            state_version_id: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
+         * StateVersionList
+         * @description One page of state versions, newest first. Follow the token even on empty pages.
+         *
+         *     S3 delete markers count toward the page size but are not state versions.
+         *     Malformed cursors or cursors from another workspace return HTTP 400.
+         */
+        StateVersionList: {
+            /** Items */
+            items: components["schemas"]["StateVersion"][];
+            /** Next Page Token */
+            next_page_token?: string | null;
         };
         /**
          * ValidationErrorDetail
@@ -3675,6 +3837,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRoleCheck"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_state_versions_api_v1_workspaces__workspace_id__state_versions_get: {
+        parameters: {
+            query?: {
+                page_size?: number;
+                page_token?: string | null;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StateVersionList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                state_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StateVersionDetail"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    download_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                state_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StateVersionDownload"];
                 };
             };
             /** @description Request validation failed. */
