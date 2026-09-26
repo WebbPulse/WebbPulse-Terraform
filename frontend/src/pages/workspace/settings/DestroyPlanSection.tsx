@@ -101,7 +101,7 @@ function DestroyForm({
         is_destroy: true,
         message: 'Destroy plan queued from settings',
       });
-      invalidateQueries([keys.runs]);
+      invalidateQueries(keys.runs);
       void navigate(runPath({ run_id: run.run_id, workspace_id: workspaceId }));
     } catch (thrown) {
       setError(

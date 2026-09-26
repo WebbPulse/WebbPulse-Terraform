@@ -102,7 +102,7 @@ function DeleteForm({
     setError(null);
     try {
       await api.deleteWorkspace(workspaceId, { force: forcing });
-      invalidateQueries([WORKSPACES_KEY]);
+      invalidateQueries(WORKSPACES_KEY);
       void navigate('/workspaces', { replace: true });
     } catch (thrown) {
       setBusy(false);
