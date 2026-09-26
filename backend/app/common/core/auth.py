@@ -37,6 +37,9 @@ RUNS_WRITE: Final = "runs:write"
 RUNS_APPLY: Final = "runs:apply"
 STATE_DOWNLOAD: Final = "state:download"
 """Explicit access to raw state, excluded from ordinary read-only grants."""
+ADMIN: Final = "admin"
+"""Operator settings such as the GitHub App. It does not end in `:read`, so only an
+admin holds it, and a key carries it only when an admin minted it."""
 
 RUNNER_SCOPE: Final = "runner"
 """The scope a run token carries. Never granted to a human or an agent key: it
@@ -53,6 +56,7 @@ ALL_SCOPES: Final = (
     RUNS_WRITE,
     RUNS_APPLY,
     STATE_DOWNLOAD,
+    ADMIN,
 )
 """Every scope a human or an agent can hold, which is what the contract lists."""
 
@@ -163,6 +167,7 @@ def require_run_token() -> Any:
 
 
 __all__ = [
+    "ADMIN",
     "ALL_SCOPES",
     "CONFIGS_READ",
     "CONFIGS_WRITE",

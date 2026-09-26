@@ -85,3 +85,4 @@ export {
   useWorkspaceNav,
   type WorkspaceNavState,
 } from './workspaceNavContext';
+export { rolesFromToken, useIsAdmin } from './useIsAdmin';

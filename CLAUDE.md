@@ -59,7 +59,7 @@ uv run uvicorn app.common.composition.app:app --reload --port 8000
 ```
 
 One `backend/Dockerfile` builds one image per domain, selected by the `DOMAIN`
-build argument (`workspaces` or `runs`). The base image lives in the Artifacts
+build argument (`workspaces`, `runs` or `github`). The base image lives in the Artifacts
 account, so log in to that ECR first, and the build reads the CodeArtifact token
 as a Docker secret:
 
@@ -140,7 +140,7 @@ mounts under `/api/v1`.
 ### The domain registry
 
 `app/common/composition/wiring.py` is the only place a domain is declared. The
-`DOMAINS` map carries `workspaces` and `runs`. Adding one is a package under
+`DOMAINS` map carries `workspaces`, `runs` and `github`. Adding one is a package under
 `app/domains/`, one entry in the map, a two line entrypoint and the matching
 Terraform entry. Loaders are lazy, so importing the registry imports no endpoint
 module and each image carries only its own code.

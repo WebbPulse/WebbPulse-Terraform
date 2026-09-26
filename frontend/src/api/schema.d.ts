@@ -504,6 +504,170 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/github/app": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App
+         * @description This environment's App, or the fact that there is none yet.
+         */
+        get: operations["get_app_api_v1_github_app_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/app/conversions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Convert Manifest
+         * @description Finish creating the App from the code GitHub redirected back with.
+         */
+        post: operations["convert_manifest_api_v1_github_app_conversions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/app/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Manifest
+         * @description Issue a manifest state; the SPA then posts the manifest to `action_url`.
+         */
+        post: operations["start_manifest_api_v1_github_app_manifest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/install-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Install
+         * @description Issue an install state and the GitHub URL that carries it.
+         */
+        post: operations["start_install_api_v1_github_install_state_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Installations
+         * @description Every installation stored here.
+         */
+        get: operations["list_installations_api_v1_github_installations_get"];
+        put?: never;
+        /**
+         * Record Installation
+         * @description Store the installation the setup callback named, once GitHub confirms it.
+         */
+        post: operations["record_installation_api_v1_github_installations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations/{installation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Installation
+         * @description Forget one installation here. It stays installed on GitHub until removed there.
+         */
+        delete: operations["remove_installation_api_v1_github_installations__installation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations/{installation_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Installation
+         * @description Re-read one installation from GitHub; one GitHub no longer has is dropped.
+         */
+        post: operations["refresh_installation_api_v1_github_installations__installation_id__refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations/{installation_id}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Repositories
+         * @description Every repository one installation covers, as GitHub lists them now.
+         */
+        get: operations["list_repositories_api_v1_github_installations__installation_id__repositories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -1284,6 +1448,92 @@ export interface components {
             success?: boolean;
         };
         /**
+         * GitHubAppStatus
+         * @description Whether this environment's App exists, and what the page may offer next.
+         */
+        GitHubAppStatus: {
+            /** App Id */
+            app_id?: string | null;
+            /** Badge Background */
+            badge_background: string;
+            /** Can Create */
+            can_create: boolean;
+            /** Can Install */
+            can_install: boolean;
+            /** Configured */
+            configured: boolean;
+            /** Created At */
+            created_at?: string | null;
+            /** Html Url */
+            html_url?: string | null;
+            /** Logo Path */
+            logo_path: string;
+            /** Name */
+            name?: string | null;
+            /** Owner Login */
+            owner_login?: string | null;
+            /** Settings Url */
+            settings_url?: string | null;
+            /** Slug */
+            slug?: string | null;
+        };
+        /**
+         * InstallStart
+         * @description The GitHub URL that installs the App, carrying a one-time state.
+         */
+        InstallStart: {
+            /** Install Url */
+            install_url: string;
+            /** State */
+            state: string;
+        };
+        /**
+         * Installation
+         * @description One installation of the App, as GitHub last confirmed it.
+         */
+        Installation: {
+            /** Account Avatar Url */
+            account_avatar_url?: string | null;
+            /** Account Login */
+            account_login: string;
+            /** Account Type */
+            account_type: string;
+            /** Html Url */
+            html_url?: string | null;
+            /** Installation Id */
+            installation_id: string;
+            /** Installed At */
+            installed_at: string;
+            /** Repository Selection */
+            repository_selection: string;
+            /** Suspended */
+            suspended: boolean;
+            /** Suspended At */
+            suspended_at?: string | null;
+            /** Updated At */
+            updated_at: string;
+        };
+        /**
+         * InstallationCallback
+         * @description The setup callback's query, forwarded by the SPA.
+         */
+        InstallationCallback: {
+            /** Installation Id */
+            installation_id: number;
+            /** Setup Action */
+            setup_action?: string | null;
+            /** State */
+            state?: string | null;
+        };
+        /**
+         * InstallationList
+         * @description Every stored installation.
+         */
+        InstallationList: {
+            /** Items */
+            items: components["schemas"]["Installation"][];
+        };
+        /**
          * LogEvent
          * @description One line from the runner's log stream.
          */
@@ -1309,6 +1559,40 @@ export interface components {
             phase: "plan" | "apply";
             /** Run Id */
             run_id: string;
+        };
+        /**
+         * ManifestConversionRequest
+         * @description The create callback's query, forwarded by the SPA.
+         */
+        ManifestConversionRequest: {
+            /** Code */
+            code: string;
+            /** State */
+            state: string;
+        };
+        /**
+         * ManifestStart
+         * @description What the SPA posts to GitHub: the form action and the manifest.
+         */
+        ManifestStart: {
+            /** Action Url */
+            action_url: string;
+            /** Manifest */
+            manifest: {
+                [key: string]: unknown;
+            };
+            /** State */
+            state: string;
+        };
+        /**
+         * ManifestStartRequest
+         * @description Where the App is created.
+         */
+        ManifestStartRequest: {
+            /** Name */
+            name?: string | null;
+            /** Organization */
+            organization?: string | null;
         };
         /**
          * PhaseResult
@@ -1443,6 +1727,32 @@ export interface components {
             replace_paths?: (string | number)[][];
             /** Type */
             type: string;
+        };
+        /**
+         * Repository
+         * @description One repository an installation covers.
+         */
+        Repository: {
+            /** Default Branch */
+            default_branch?: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Html Url */
+            html_url?: string | null;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Private */
+            private: boolean;
+        };
+        /**
+         * RepositoryList
+         * @description Every repository an installation covers.
+         */
+        RepositoryList: {
+            /** Items */
+            items: components["schemas"]["Repository"][];
         };
         /**
          * Run
@@ -3227,6 +3537,283 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiKey"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_app_api_v1_github_app_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppStatus"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    convert_manifest_api_v1_github_app_conversions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManifestConversionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppStatus"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_manifest_api_v1_github_app_manifest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManifestStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManifestStart"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_install_api_v1_github_install_state_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallStart"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_installations_api_v1_github_installations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    record_installation_api_v1_github_installations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallationCallback"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Installation"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    remove_installation_api_v1_github_installations__installation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installation_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    refresh_installation_api_v1_github_installations__installation_id__refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installation_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Installation"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_repositories_api_v1_github_installations__installation_id__repositories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installation_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryList"];
                 };
             };
             /** @description Request validation failed. */

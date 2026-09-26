@@ -9,6 +9,7 @@ import { BrandMark, Wordmark } from './Brand';
 import { Button } from './Button';
 import { RailGroupLabel, RailLink } from './RailLink';
 import { WorkspaceNav } from './WorkspaceNav';
+import { useIsAdmin } from './useIsAdmin';
 import { WorkspaceNavContext } from './workspaceNavContext';
 
 /** The sections in the rail, in order. */
@@ -77,6 +78,49 @@ const SECTIONS: readonly {
   },
 ];
 
+/** The admin only sections under global settings. */
+const SETTINGS_SECTIONS: readonly {
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+}[] = [
+  {
+    to: '/settings/github',
+    label: 'GitHub',
+    icon: (
+      <svg viewBox="0 0 16 16" className="size-4" fill="none">
+        <circle
+          cx="4.5"
+          cy="3.5"
+          r="1.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        <circle
+          cx="4.5"
+          cy="12.5"
+          r="1.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        <circle
+          cx="11.5"
+          cy="5.5"
+          r="1.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        <path
+          d="M4.5 5v6M11.5 7c0 2.5-3 2.5-7 4"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
+];
+
 /** The email on the session, if the user record carries one. */
 function emailOf(user: unknown): string | null {
   if (typeof user === 'object' && user !== null && 'email' in user) {
@@ -96,6 +140,8 @@ export function Layout(): React.ReactElement {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
   const email = emailOf(user);
+  const isAdmin = useIsAdmin();
+  const sections = isAdmin ? [...SECTIONS, ...SETTINGS_SECTIONS] : SECTIONS;
   const workspaceMatch = useMatch('/workspaces/:workspaceId/*');
   const workspaceId = workspaceMatch?.params.workspaceId ?? null;
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
@@ -127,6 +173,14 @@ export function Layout(): React.ReactElement {
               {SECTIONS.map((section) => (
                 <RailLink key={section.to} {...section} />
               ))}
+              {isAdmin ? (
+                <>
+                  <RailGroupLabel className="pt-4">Settings</RailGroupLabel>
+                  {SETTINGS_SECTIONS.map((section) => (
+                    <RailLink key={section.to} {...section} />
+                  ))}
+                </>
+              ) : null}
             </nav>
           ) : (
             <WorkspaceNav workspaceId={workspaceId} name={workspaceName} />
@@ -157,7 +211,7 @@ export function Layout(): React.ReactElement {
             <div className="flex h-12 items-center justify-between gap-3 px-4">
               <Wordmark short />
               <nav aria-label="Primary" className="flex items-center gap-1">
-                {SECTIONS.map((section) => (
+                {sections.map((section) => (
                   <RailLink key={section.to} {...section} compact />
                 ))}
                 <ThemeToggle />

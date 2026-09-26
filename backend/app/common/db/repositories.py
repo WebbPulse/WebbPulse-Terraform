@@ -11,7 +11,7 @@ from __future__ import annotations
 from webbpulse.dynamodb import Repository
 
 from ..composition.settings import Settings, get_settings
-from .tables import CONFIG_VERSIONS, RUNS, USERS, VARIABLES, WORKSPACES, local_table_name
+from .tables import CONFIG_VERSIONS, GITHUB, RUNS, USERS, VARIABLES, WORKSPACES, local_table_name
 
 
 def _repository(logical_name: str, physical_name: str, settings: Settings) -> Repository:
@@ -72,6 +72,12 @@ def users(settings: Settings | None = None) -> Repository:
     return _repository(USERS, _name(resolved.USERS_TABLE, USERS, resolved), resolved)
 
 
+def github(settings: Settings | None = None) -> Repository:
+    """The GitHub domain's table."""
+    resolved = settings or get_settings()
+    return _repository(GITHUB, _name(resolved.GITHUB_TABLE, GITHUB, resolved), resolved)
+
+
 def physical_names(settings: Settings | None = None) -> dict[str, str]:
     """Every logical table paired with the physical name this environment uses."""
     resolved = settings or get_settings()
@@ -81,4 +87,5 @@ def physical_names(settings: Settings | None = None) -> dict[str, str]:
         VARIABLES: _name(resolved.VARIABLES_TABLE, VARIABLES, resolved),
         CONFIG_VERSIONS: _name(resolved.CONFIG_VERSIONS_TABLE, CONFIG_VERSIONS, resolved),
         USERS: _name(resolved.USERS_TABLE, USERS, resolved),
+        GITHUB: _name(resolved.GITHUB_TABLE, GITHUB, resolved),
     }
