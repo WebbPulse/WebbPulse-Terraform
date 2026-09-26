@@ -76,6 +76,23 @@ variable "bootstrap_image_tag" {
   }
 }
 
+variable "domain_image_tags" {
+  description = "Per domain image tags that override bootstrap_image_tag at create time, keyed by domain name. A domain declared with its own image tag, today only github, is left out of the function map until it has an entry here, because its ECR repository holds no image until the first deploy after the apply that creates it. image_uri is ignored after create, so deploys own it."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for tag in values(var.domain_image_tags) : can(regex("^sha-[0-9a-f]{40}$", tag))])
+    error_message = "Every domain_image_tags value must be sha- followed by a full 40 character commit sha, which is the tag the container image build pushes."
+  }
+}
+
+variable "github_app_slug" {
+  description = "Fallback slug of the operator owned GitHub App, passed to the Lambdas as GITHUB_APP_SLUG. The slug the manifest flow stores in the github table wins over it, so leave it empty unless an App was created outside that flow."
+  type        = string
+  default     = ""
+}
+
 variable "runner_image_tag" {
   description = "Pin the plan and apply task definitions to one runner image tag, for example sha-<commit>. Leave it null, the default, and the task definitions follow the environment tag that Deploy Runner moves on every deploy, which is the normal path. Set it only to hold the runner on a known image; unlike a Lambda image this is not under ignore_changes, so a task definition revision follows this value."
   type        = string

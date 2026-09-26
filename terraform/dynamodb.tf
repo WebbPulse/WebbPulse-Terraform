@@ -56,6 +56,16 @@ locals {
         { name = "email_lower-index", hash_key = "email_lower", projection_type = "ALL" },
       ]
     }
+
+    github = {
+      hash_key      = "pk"
+      range_key     = "sk"
+      ttl_attribute = "expires_at"
+      attributes = [
+        { name = "pk", type = "S" },
+        { name = "sk", type = "S" },
+      ]
+    }
   }
 }
 

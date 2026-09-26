@@ -79,13 +79,19 @@ module "identity" {
 }
 
 locals {
-  identity_additional_table_grants = local.domain_functions_enabled ? {
+  identity_additional_table_grants = local.domain_functions_enabled ? merge({
     runs = {
       role_name = module.lambda_domain["runs"].role_id
       tables    = ["api-keys"]
       actions   = local.dynamodb_write_actions
     }
-  } : {}
+    }, contains(keys(local.lambda_domains), "github") ? {
+    github = {
+      role_name = module.lambda_domain["github"].role_id
+      tables    = ["api-keys"]
+      actions   = concat(local.dynamodb_read_actions, ["dynamodb:UpdateItem"])
+    }
+  } : {}) : {}
 }
 
 output "identity_api_keys_table_name" {

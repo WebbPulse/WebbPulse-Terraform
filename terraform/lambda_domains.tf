@@ -4,12 +4,16 @@ locals {
       memory            = 512
       tables            = ["workspaces", "variables", "config-versions", "users"]
       read_tables       = ["runs"]
+      buckets           = true
+      own_image_tag     = false
       sqs_event_sources = {}
     }
     runs = {
-      memory      = 512
-      tables      = ["runs"]
-      read_tables = ["workspaces", "variables", "config-versions"]
+      memory        = 512
+      tables        = ["runs"]
+      read_tables   = ["workspaces", "variables", "config-versions"]
+      buckets       = true
+      own_image_tag = false
       sqs_event_sources = {
         run_confirmations = {
           queue_arn                       = module.run_confirmations.queue_arn
@@ -23,11 +27,22 @@ locals {
         }
       }
     }
+    github = {
+      memory            = 256
+      tables            = ["github"]
+      read_tables       = []
+      buckets           = false
+      own_image_tag     = true
+      sqs_event_sources = {}
+    }
   }
 
   domain_functions_enabled = var.bootstrap_image_tag != ""
 
-  lambda_domains = local.domain_functions_enabled ? local.lambda_domains_declared : {}
+  lambda_domains = local.domain_functions_enabled ? {
+    for name, domain in local.lambda_domains_declared : name => domain
+    if !domain.own_image_tag || lookup(var.domain_image_tags, name, "") != ""
+  } : {}
 
   dynamodb_write_actions = [
     "dynamodb:GetItem",
@@ -99,7 +114,7 @@ module "lambda_domain" {
   sqs_event_sources = each.value.sqs_event_sources
 
   code = {
-    image_uri = "${module.registry.repository_urls[each.key]}:${var.bootstrap_image_tag}"
+    image_uri = "${module.registry.repository_urls[each.key]}:${lookup(var.domain_image_tags, each.key, var.bootstrap_image_tag)}"
   }
 
   environment_variables = merge(
@@ -115,6 +130,9 @@ module "lambda_domain" {
       VARIABLES_TABLE       = module.dynamodb.table_names["variables"]
       CONFIG_VERSIONS_TABLE = module.dynamodb.table_names["config-versions"]
       USERS_TABLE           = module.dynamodb.table_names["users"]
+      GITHUB_TABLE          = module.dynamodb.table_names["github"]
+
+      GITHUB_APP_SLUG = var.github_app_slug
 
       IDENTITY_TABLE_PREFIX = local.prefix
 
@@ -177,6 +195,14 @@ locals {
         Resource = [module.dynamodb.table_arns["runs"]]
       },
     ]
+    github = [
+      {
+        Sid      = "WriteTheGitHubAppCredentialsFromTheManifestFlow"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:PutSecretValue"]
+        Resource = [module.app_secrets.arns["app"]]
+      },
+    ]
     runs = [
       {
         Sid      = "StartAndStopRunExecutions"
@@ -228,16 +254,18 @@ resource "aws_iam_role_policy" "lambda_domain" {
           Action   = local.dynamodb_write_actions
           Resource = local.lambda_domain_write_arns[each.key]
         },
+      ],
+      length(local.lambda_domain_read_arns[each.key]) > 0 ? [
         {
           Sid      = "ReadSharedTables"
           Effect   = "Allow"
           Action   = local.dynamodb_read_actions
           Resource = local.lambda_domain_read_arns[each.key]
         },
-        module.app_secrets.read_policy_statement,
-      ],
-      local.bucket_statements["State"],
-      local.bucket_statements["Artifacts"],
+      ] : [],
+      [module.app_secrets.read_policy_statement],
+      each.value.buckets ? local.bucket_statements["State"] : [],
+      each.value.buckets ? local.bucket_statements["Artifacts"] : [],
       local.lambda_domain_extra_statements[each.key],
     )
   })

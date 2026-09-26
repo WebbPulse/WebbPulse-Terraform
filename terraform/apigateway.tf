@@ -55,12 +55,25 @@ locals {
     "POST /api/v1/runs/{run_id}/phase-result"     = { integration = "runs", authorization_type = "NONE" }
   }
 
+  github_routes = contains(keys(local.lambda_domains), "github") ? {
+    "GET /api/v1/github/app"                                          = { integration = "github" }
+    "POST /api/v1/github/app/manifest"                                = { integration = "github" }
+    "POST /api/v1/github/app/conversions"                             = { integration = "github" }
+    "POST /api/v1/github/install-state"                               = { integration = "github" }
+    "POST /api/v1/github/installations"                               = { integration = "github" }
+    "GET /api/v1/github/installations"                                = { integration = "github" }
+    "POST /api/v1/github/installations/{installation_id}/refresh"     = { integration = "github" }
+    "DELETE /api/v1/github/installations/{installation_id}"           = { integration = "github" }
+    "GET /api/v1/github/installations/{installation_id}/repositories" = { integration = "github" }
+  } : {}
+
   product_routes = merge(
     { for key, route in local.workspaces_routes : key => merge(route, { require_identity_jwt = true }) },
     {
       for key, route in local.runs_routes :
       key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
     },
+    { for key, route in local.github_routes : key => merge(route, { require_identity_jwt = true }) },
   )
 
   auth_anonymous_routes = {

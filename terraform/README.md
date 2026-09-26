@@ -72,6 +72,33 @@ The tag is read only when a function is created. It can expire out of ECR,
 which keeps three tagged images, without affecting a running function, so
 refresh it to a tag that still exists before any apply that recreates one.
 
+### A domain added later
+
+A domain added after an account is bootstrapped, today `github`, is declared
+with `own_image_tag = true`. Its ECR repository is new, so it holds no image and
+`bootstrap_image_tag` cannot seed it. The domain stays out of the function map
+until `var.domain_image_tags` names a tag for it.
+
+| Run | `domain_image_tags` | What happens |
+| --- | --- | --- |
+| 1 | `{}` | The domain's ECR repository and table, and the deploy role's push grant on the repository |
+| between | n/a | Merge the backend to `staging`. `deploy-backend` pushes `sha-<head sha>` to the new repository and skips the missing function |
+| 2 | `{ github = "sha-<head sha>" }` | The function, its integration, routes, runtime policy and identity grant |
+
+Set it as an HCL workspace variable. It is read only at create time, like
+`bootstrap_image_tag`.
+
+## GitHub App
+
+Each environment has one operator owned GitHub App, created from the GitHub
+settings page through the App manifest flow. The `github` function writes the
+App's `GITHUB_*` keys into the `app` secret with a read, merge and put, which is
+why that secret sets `json_preserve_unmanaged` and why the `github` role alone
+holds `secretsmanager:PutSecretValue` on it. Terraform declares none of those
+keys, so an apply never removes them. The App slug and id are stored in the
+`github` table; `var.github_app_slug` is only the fallback passed as
+`GITHUB_APP_SLUG`.
+
 ## Transaction Search
 
 Both domain functions export OTLP spans, and X-Ray rejects the export with a 400
@@ -103,6 +130,7 @@ Everything else takes its default.
 | `environment` | `staging` or `production` |
 | `staging_profile` | `none`, `reduced` or `full` |
 | `bootstrap_image_tag` | `""` on run 1, then `sha-<head sha>`; see the bootstrap sequence |
+| `domain_image_tags` | `{}` until a later domain's first image is pushed, then `{ github = "sha-<head sha>" }`; see A domain added later |
 | `runner_image_tag` | The runner image tag the task definitions point at. Unlike a Lambda image it is not ignored, so a revision follows it |
 | `route53_zone_id`, `route53_write_role_arn` | The parent zone and the role that writes into it, both required when `staging_profile` is `full` |
 | `staging_access_gate`, `staging_access_users` | Staging only: put the site and API behind the email gate, and who may sign in |
