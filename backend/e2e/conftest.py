@@ -130,9 +130,10 @@ def pytest_e2e_journeys(env: Any) -> Any:
     a row one journey creates is neither ordered before nor even visible to the other.
 
     The locators are roles and accessible names rather than structure, so restyling the
-    shell or the table does not break them. The create form lives in a dialog behind the
-    "New workspace" button, and creating a workspace navigates straight to its detail
-    page, which is where the run role ARN is now saved through the setup checklist.
+    shell or the table does not break them. The "New workspace" link opens the stepped
+    `/workspaces/new` page, where the CLI-driven workflow tile goes straight to the
+    settings form, and creating a workspace navigates to its detail page, which is where
+    the run role ARN is saved through the setup checklist.
 
     The names are resolved here from the run's own prefix rather than left as `{run_id}`,
     because only `Fill`, `ExpectText` and `ExpectUrl` expand that placeholder: a `Click`
@@ -148,12 +149,14 @@ def pytest_e2e_journeys(env: Any) -> Any:
     opened = f"{prefix}ui-opened"
 
     def create(name: str) -> list[Any]:
-        """The steps that open the dialog and create a workspace called `name`."""
+        """The steps that walk the stepped new workspace page to create `name`."""
         return [
             Goto("/workspaces"),
-            Click("button:has-text('New workspace')"),
+            Click("a:has-text('New workspace')"),
+            ExpectUrl(r"/workspaces/new"),
+            Click("button:has-text('CLI-driven workflow')"),
             ExpectVisible("form[aria-label='Create a workspace']"),
-            Fill('form[aria-label="Create a workspace"] >> internal:label="Name"i', name),
+            Fill('form[aria-label="Create a workspace"] >> internal:label="Workspace name"i', name),
             Record({"kind": "workspace-name", "name": name}),
             Click("form[aria-label='Create a workspace'] button:has-text('Create workspace')"),
             ExpectUrl(r"/workspaces/ws-"),
