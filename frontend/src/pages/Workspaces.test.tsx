@@ -1,16 +1,12 @@
-import { screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
 import { aFreshWorkspace, aWorkspace } from '../test-helpers/fixtures';
 import {
-  jsonResponse,
   renderWithAuth,
   signedInAuthClient,
-  stubAuthClient,
 } from '../test-helpers/renderWithAuth';
-import { anApp, anInstallation } from './settings/fixtures';
 import {
   apiClientModuleMock,
   apiMock,
@@ -31,12 +27,6 @@ function renderList(): void {
     signedInAuthClient(),
     ['/workspaces']
   );
-}
-
-/** Opens the create dialog and returns its form. */
-async function openCreateForm(): Promise<HTMLElement> {
-  await userEvent.click(screen.getByRole('button', { name: 'New workspace' }));
-  return screen.getByRole('form', { name: 'Create a workspace' });
 }
 
 describe('Workspaces', () => {
@@ -99,88 +89,36 @@ describe('Workspaces', () => {
     expect(screen.getByText('Not verified')).toBeInTheDocument();
   });
 
-  it('says so when there are no workspaces', async () => {
+  it('says so once when there are no workspaces', async () => {
     apiMock.listWorkspaces.mockResolvedValue({ items: [] });
 
     renderList();
 
     expect(await screen.findByText('No workspaces yet.')).toBeInTheDocument();
-  });
-
-  it('keeps the create form behind the New workspace button', async () => {
-    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
-
-    renderList();
-
-    await screen.findByText('No workspaces yet.');
     expect(
-      screen.queryByRole('form', { name: 'Create a workspace' })
+      screen.getAllByText(
+        'Connect a repository, or upload configuration from the CLI or the API.'
+      )
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole('link', { name: 'Create the first workspace' })
+    ).toHaveAttribute('href', '/workspaces/new');
+  });
+
+  it('links New workspace to the create page rather than opening a dialog', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
+
+    renderList();
+
+    await screen.findByText('No workspaces yet.');
+    expect(screen.getByRole('link', { name: 'New workspace' })).toHaveAttribute(
+      'href',
+      '/workspaces/new'
+    );
+    expect(
+      screen.queryByRole('button', { name: 'New workspace' })
     ).not.toBeInTheDocument();
-
-    const form = await openCreateForm();
-
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(within(form).getByLabelText('Name')).toHaveFocus();
-    expect(within(form).queryByLabelText(/role/i)).not.toBeInTheDocument();
-  });
-
-  it('creates a workspace from its name alone and opens it', async () => {
-    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
-    apiMock.createWorkspace.mockResolvedValue(aFreshWorkspace());
-
-    renderList();
-
-    await screen.findByText('No workspaces yet.');
-    const form = await openCreateForm();
-    await userEvent.type(within(form).getByLabelText('Name'), 'platform');
-    await userEvent.click(
-      within(form).getByRole('button', { name: 'Create workspace' })
-    );
-
-    expect(apiMock.createWorkspace).toHaveBeenCalledWith({
-      name: 'platform',
-      engine: 'terraform',
-      engine_version: '1.11.0',
-    });
-    expect(await screen.findByText('Detail page')).toBeInTheDocument();
-  });
-
-  it('sends a description when one is given', async () => {
-    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
-    apiMock.createWorkspace.mockResolvedValue(aFreshWorkspace());
-
-    renderList();
-
-    await screen.findByText('No workspaces yet.');
-    const form = await openCreateForm();
-    await userEvent.type(within(form).getByLabelText('Name'), 'platform');
-    await userEvent.type(
-      within(form).getByLabelText('Description'),
-      'The platform workspace.'
-    );
-    await userEvent.click(
-      within(form).getByRole('button', { name: 'Create workspace' })
-    );
-
-    expect(apiMock.createWorkspace).toHaveBeenCalledWith({
-      name: 'platform',
-      engine: 'terraform',
-      engine_version: '1.11.0',
-      description: 'The platform workspace.',
-    });
-  });
-
-  it('closes the dialog on Escape without creating anything', async () => {
-    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
-
-    renderList();
-
-    await screen.findByText('No workspaces yet.');
-    await openCreateForm();
-    await userEvent.keyboard('{Escape}');
-
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(apiMock.createWorkspace).not.toHaveBeenCalled();
   });
 
   it('surfaces a failed read without losing the create action', async () => {
@@ -193,89 +131,9 @@ describe('Workspaces', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Missing the read scope.'
     );
-    expect(
-      screen.getByRole('button', { name: 'New workspace' })
-    ).toBeInTheDocument();
-  });
-
-  it('offers the three workflows, CLI-driven by default', async () => {
-    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
-    renderList();
-
-    await screen.findByText('No workspaces yet.');
-    const form = await openCreateForm();
-    expect(
-      within(form).getByLabelText('Version control workflow')
-    ).not.toBeChecked();
-    expect(within(form).getByLabelText('CLI-driven workflow')).toBeChecked();
-    expect(
-      within(form).getByLabelText('API-driven workflow')
-    ).not.toBeChecked();
-  });
-
-  it('creates a version control workspace from a picked repository', async () => {
-    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
-    apiMock.createWorkspace.mockResolvedValue(aFreshWorkspace());
-    apiMock.getGitHubApp.mockResolvedValue(anApp());
-    apiMock.listGitHubInstallations.mockResolvedValue({
-      items: [anInstallation()],
-    });
-    apiMock.listGitHubRepositories.mockResolvedValue({
-      items: [
-        {
-          id: 1,
-          name: 'infra',
-          full_name: 'WebbPulse/infra',
-          private: true,
-          default_branch: 'staging',
-        },
-      ],
-    });
-    renderWithAuth(
-      <Routes>
-        <Route path="/workspaces" element={<Workspaces />} />
-        <Route path="/workspaces/:workspaceId" element={<p>Detail page</p>} />
-      </Routes>,
-      stubAuthClient({
-        fetch: () =>
-          Promise.resolve(
-            jsonResponse({ access_token: 'test-token', expires_in: 3600 })
-          ),
-        user: { email: 'admin@webbpulse.com', is_admin: true },
-      }),
-      ['/workspaces']
+    expect(screen.getByRole('link', { name: 'New workspace' })).toHaveAttribute(
+      'href',
+      '/workspaces/new'
     );
-
-    await screen.findByText('No workspaces yet.');
-    const form = await openCreateForm();
-    await userEvent.click(
-      within(form).getByLabelText('Version control workflow')
-    );
-    await userEvent.type(within(form).getByLabelText('Name'), 'platform');
-    const create = within(form).getByRole('button', {
-      name: 'Create workspace',
-    });
-    expect(create).toBeDisabled();
-    await userEvent.click(
-      await within(form).findByRole('option', { name: /WebbPulse\/infra/ })
-    );
-    await userEvent.type(
-      within(form).getByLabelText('Working directory'),
-      'examples/first-run'
-    );
-    await userEvent.click(create);
-
-    expect(apiMock.createWorkspace).toHaveBeenCalledWith({
-      name: 'platform',
-      engine: 'terraform',
-      engine_version: '1.11.0',
-      vcs_repo: 'WebbPulse/infra',
-      tracked_branch: 'staging',
-      working_directory: 'examples/first-run',
-      file_triggers_enabled: true,
-      trigger_patterns: [],
-      speculative_plans: true,
-    });
-    expect(await screen.findByText('Detail page')).toBeInTheDocument();
   });
 });

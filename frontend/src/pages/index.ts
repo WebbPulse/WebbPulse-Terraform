@@ -1,3 +1,4 @@
+export { NewWorkspace } from './NewWorkspace';
 export { NotFound } from './NotFound';
 export { RunDetail } from './RunDetail';
 export { Runs } from './Runs';

@@ -5,6 +5,7 @@ export {
   type WordmarkProps,
 } from './Brand';
 export { Button, type ButtonProps, type ButtonVariant } from './Button';
+export { buttonClass } from './buttonClass';
 export { CodeBlock, type CodeBlockProps } from './CodeBlock';
 export { CopyButton, type CopyButtonProps } from './CopyButton';
 export { DestroyBadge, type DestroyBadgeProps } from './DestroyBadge';

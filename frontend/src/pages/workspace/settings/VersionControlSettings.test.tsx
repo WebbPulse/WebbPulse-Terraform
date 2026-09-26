@@ -204,6 +204,7 @@ describe('VersionControlSettings', () => {
 
   it('sends an admin to set up the App when there is none', async () => {
     apiMock.getGitHubApp.mockResolvedValue(noApp());
+    apiMock.listGitHubInstallations.mockResolvedValue({ items: [] });
     renderPage();
 
     const link = await screen.findByRole('link', {

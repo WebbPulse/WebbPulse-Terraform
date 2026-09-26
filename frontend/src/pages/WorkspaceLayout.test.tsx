@@ -150,9 +150,10 @@ describe('WorkspaceLayout', () => {
     renderDetail('/workspaces/ws-01J000000000000000000000/settings/general');
 
     await screen.findByRole('form', { name: 'Workspace settings' });
-    const version = screen.getByLabelText('Engine version');
-    await userEvent.clear(version);
-    await userEvent.type(version, '1.12.0');
+    await userEvent.selectOptions(
+      screen.getByLabelText('Engine version'),
+      '1.15.9'
+    );
     await userEvent.click(
       screen.getByRole('button', { name: 'Save settings' })
     );
@@ -162,9 +163,30 @@ describe('WorkspaceLayout', () => {
       {
         description: 'The platform workspace.',
         engine: 'terraform',
-        engine_version: '1.12.0',
+        engine_version: '1.15.9',
         working_directory: 'terraform',
       }
+    );
+  });
+
+  it('keeps a stored version off the list as a typed one', async () => {
+    apiMock.updateWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail('/workspaces/ws-01J000000000000000000000/settings/general');
+
+    await screen.findByRole('form', { name: 'Workspace settings' });
+    expect(screen.getByLabelText('Engine version')).toHaveValue('__other__');
+    const typed = screen.getByLabelText('Specific version');
+    expect(typed).toHaveValue('1.11.0');
+    await userEvent.clear(typed);
+    await userEvent.type(typed, '1.16.4');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save settings' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      expect.objectContaining({ engine_version: '1.16.4' })
     );
   });
 

@@ -9,6 +9,7 @@ import {
   GitHubCreated,
   GitHubSettings,
   GitHubSetup,
+  NewWorkspace,
   NotFound,
   RunDetail,
   Runs,
@@ -40,6 +41,7 @@ export function AppRoutes(): React.ReactElement {
       >
         <Route path="/" element={<Navigate to="/workspaces" replace />} />
         <Route path="/workspaces" element={<Workspaces />} />
+        <Route path="/workspaces/new" element={<NewWorkspace />} />
         {workspaceRoutes()}
         <Route path="/runs" element={<Runs />} />
         <Route path="/runs/:runId" element={<RunDetail />} />

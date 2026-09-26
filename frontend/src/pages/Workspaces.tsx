@@ -1,29 +1,22 @@
-/** The workspaces list, with the dialog that creates one. */
+/** The workspaces list, with the way to create one. */
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import {
-  useMutationWithRefetch,
-  usePolledQuery,
-} from '@webbpulse/api-client/react';
+import { Link } from 'react-router-dom';
+import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
   accountStatus,
   accountStatusLabel,
   api,
-  type Engine,
   type Workspace,
-  type WorkspaceCreate,
   type WorkspaceList,
 } from '../api';
 import {
-  Button,
-  Dialog,
   EmptyState,
   ErrorNotice,
-  Field,
   INPUT_CLASS,
+  buttonClass,
   PageHeader,
   RelativeTime,
   Spinner,
@@ -33,30 +26,12 @@ import {
   Tr,
 } from '../components';
 import { useRunRoleCheck } from './useRunRoleCheck';
-import { RepositoryPicker } from './workspace/vcs/RepositoryPicker';
-import { VcsFields } from './workspace/vcs/VcsFields';
-import {
-  EMPTY_VCS_SETTINGS,
-  WORKFLOWS,
-  createBody,
-  type VcsSettings,
-  type Workflow,
-} from './workspace/vcs/vcsSettings';
-
 /** The refetch key the list reads and the create form invalidates. */
 export const WORKSPACES_KEY = 'workspaces';
 
-/** The engines a workspace can be created with. */
-const ENGINES: readonly Engine[] = ['terraform', 'tofu'];
-
-/** The engine version a new workspace starts on. */
-const DEFAULT_ENGINE_VERSION = '1.11.0';
-
-/** The workspaces list and its create dialog. */
+/** The workspaces list. */
 export function Workspaces(): React.ReactElement {
   const auth = useQueryAuth();
-  const navigate = useNavigate();
-  const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState('');
   const query = usePolledQuery<WorkspaceList>(
     ({ signal }) => api.listWorkspaces({ signal }),
@@ -74,14 +49,9 @@ export function Workspaces(): React.ReactElement {
           ) : null
         }
         actions={
-          <Button
-            variant="primary"
-            onClick={() => {
-              setCreating(true);
-            }}
-          >
+          <Link to="/workspaces/new" className={buttonClass('primary')}>
             New workspace
-          </Button>
+          </Link>
         }
       />
       <ErrorNotice error={query.error} />
@@ -95,29 +65,8 @@ export function Workspaces(): React.ReactElement {
           workspaces={query.data?.items ?? []}
           filter={filter}
           onFilter={setFilter}
-          onCreate={() => {
-            setCreating(true);
-          }}
         />
       )}
-      <Dialog
-        open={creating}
-        onClose={() => {
-          setCreating(false);
-        }}
-        title="New workspace"
-        description="Pick how runs start and name it. Connecting an AWS account comes next, on the workspace page."
-      >
-        <CreateWorkspaceForm
-          onCancel={() => {
-            setCreating(false);
-          }}
-          onCreated={(workspace) => {
-            setCreating(false);
-            void navigate(`/workspaces/${workspace.workspace_id}`);
-          }}
-        />
-      </Dialog>
     </div>
   );
 }
@@ -127,22 +76,20 @@ function WorkspaceTable({
   workspaces,
   filter,
   onFilter,
-  onCreate,
 }: {
   workspaces: Workspace[];
   filter: string;
   onFilter: (value: string) => void;
-  onCreate: () => void;
 }): React.ReactElement {
   if (workspaces.length === 0) {
     return (
       <EmptyState
         title="No workspaces yet."
-        hint="A workspace holds one root module, its variables and its runs."
+        hint="Connect a repository, or upload configuration from the CLI or the API."
         action={
-          <Button variant="primary" onClick={onCreate}>
+          <Link to="/workspaces/new" className={buttonClass('primary')}>
             Create the first workspace
-          </Button>
+          </Link>
         }
       />
     );
@@ -266,207 +213,5 @@ function ConnectionCell({
       />
       {accountStatusLabel(status)}
     </span>
-  );
-}
-
-/** The form that creates a workspace: its workflow, name and engine. */
-function CreateWorkspaceForm({
-  onCancel,
-  onCreated,
-}: {
-  onCancel: () => void;
-  onCreated: (workspace: Workspace) => void;
-}): React.ReactElement {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [engine, setEngine] = useState<Engine>('terraform');
-  const [engineVersion, setEngineVersion] = useState(DEFAULT_ENGINE_VERSION);
-  const [workflow, setWorkflow] = useState<Workflow>('cli');
-  const [repository, setRepository] = useState<string | null>(null);
-  const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
-  const [vcs, setVcs] = useState<VcsSettings>(EMPTY_VCS_SETTINGS);
-  const needsRepository = workflow === 'vcs' && repository === null;
-  const { mutate, isMutating, error } = useMutationWithRefetch(
-    (body: WorkspaceCreate) => api.createWorkspace(body),
-    WORKSPACES_KEY
-  );
-
-  const submit = async (): Promise<void> => {
-    if (needsRepository) {
-      return;
-    }
-    const base: WorkspaceCreate = {
-      name: name.trim(),
-      engine,
-      engine_version: engineVersion.trim(),
-    };
-    if (description.trim() !== '') {
-      base.description = description.trim();
-    }
-    try {
-      onCreated(await mutate(createBody(base, workflow, repository, vcs)));
-    } catch {
-      return;
-    }
-  };
-
-  return (
-    <form
-      aria-label="Create a workspace"
-      className="space-y-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void submit();
-      }}
-    >
-      <Field
-        label="Name"
-        hint="Letters, digits, dots, underscores and hyphens."
-      >
-        {(control) => (
-          <input
-            {...control}
-            required
-            autoFocus
-            value={name}
-            pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"
-            title="Letters, digits, dots, underscores and hyphens, starting with a letter or digit."
-            onChange={(event) => {
-              setName(event.target.value);
-            }}
-            className={INPUT_CLASS}
-          />
-        )}
-      </Field>
-      <Field label="Description">
-        {(control) => (
-          <input
-            {...control}
-            value={description}
-            onChange={(event) => {
-              setDescription(event.target.value);
-            }}
-            className={INPUT_CLASS}
-          />
-        )}
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Engine">
-          {(control) => (
-            <select
-              {...control}
-              value={engine}
-              onChange={(event) => {
-                setEngine(event.target.value as Engine);
-              }}
-              className={INPUT_CLASS}
-            >
-              {ENGINES.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          )}
-        </Field>
-        <Field label="Engine version">
-          {(control) => (
-            <input
-              {...control}
-              required
-              value={engineVersion}
-              onChange={(event) => {
-                setEngineVersion(event.target.value);
-              }}
-              className={`${INPUT_CLASS} font-mono`}
-            />
-          )}
-        </Field>
-      </div>
-      <fieldset className="space-y-2 text-sm">
-        <legend className="text-text-muted">Workflow</legend>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {WORKFLOWS.map((item) => (
-            <label
-              key={item.id}
-              className={`flex cursor-pointer flex-col gap-1 rounded-md border p-3 transition-colors hover:border-surface-400 has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-accent ${
-                workflow === item.id
-                  ? 'border-accent bg-raised'
-                  : 'border-line-strong bg-panel'
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="workflow"
-                  value={item.id}
-                  aria-label={item.label}
-                  aria-describedby={`workflow-${item.id}-description`}
-                  checked={workflow === item.id}
-                  onChange={() => {
-                    setWorkflow(item.id);
-                  }}
-                  className="accent-accent"
-                />
-                <span className="font-medium text-text-strong">
-                  {item.label}
-                </span>
-              </span>
-              <span
-                id={`workflow-${item.id}-description`}
-                className="text-xs text-text-muted"
-              >
-                {item.description}
-              </span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      {workflow === 'vcs' ? (
-        <div className="space-y-4 border-t border-line pt-4">
-          <div className="space-y-2 text-sm">
-            <span className="text-text-muted">Repository</span>
-            <RepositoryPicker
-              value={repository}
-              onChange={(picked) => {
-                setRepository(picked.full_name);
-                setDefaultBranch(picked.default_branch ?? null);
-                setVcs((current) => ({
-                  ...current,
-                  branch: picked.default_branch ?? '',
-                }));
-              }}
-            />
-            {repository !== null ? (
-              <p className="text-xs text-text-muted">
-                Selected <span className="font-mono">{repository}</span>.
-              </p>
-            ) : null}
-          </div>
-          {repository !== null ? (
-            <VcsFields
-              value={vcs}
-              onChange={setVcs}
-              defaultBranch={defaultBranch}
-            />
-          ) : null}
-        </div>
-      ) : null}
-      <ErrorNotice error={error} />
-      <div className="flex justify-end gap-2 pt-1">
-        <Button variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          variant="primary"
-          busy={isMutating}
-          busyLabel="Creating the workspace"
-          disabled={needsRepository}
-        >
-          Create workspace
-        </Button>
-      </div>
-    </form>
   );
 }
