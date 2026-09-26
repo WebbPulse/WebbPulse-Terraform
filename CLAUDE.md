@@ -157,8 +157,16 @@ agent with a `wpk_` API key that the gate authorizer passes through by prefix an
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
 runner routes and the anonymous identity documents do not. The scopes are
-`workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}` and
-`runs:{read,write,apply}`.
+`workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}`,
+`runs:{read,write,apply}` and `state:download`.
+
+State history and metadata require `workspaces:read`. Raw state downloads also
+require `state:download`, granted to admin sessions and explicitly delegated agent
+keys, never ordinary read-only sessions. Existing keys need that scope granted
+through a newly minted key. Download URLs expire after 60 seconds, pin one S3
+version, and return `Cache-Control: no-store` on both the API and S3 responses.
+History cursors are bound to the workspace's state key and invalid ones return 400; clients
+must follow `next_page_token` even on an empty page caused by delete markers.
 
 The runner is separate. Starting a run mints a `wpk_` key scoped `runner`, bound
 to that run and expiring after four hours, and only that token opens
