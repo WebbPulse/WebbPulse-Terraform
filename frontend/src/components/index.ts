@@ -63,12 +63,16 @@ export { RunLogs, type RunLogsProps } from './RunLogs';
 export { RunLogViewer, type RunLogViewerProps } from './RunLogViewer';
 export { RailGroupLabel, RailLink, type RailLinkProps } from './RailLink';
 export { RunList, type RunListProps } from './RunList';
+export { RunSourceLine, type RunSourceLineProps } from './RunSourceLine';
 export {
   changeSummary,
+  commitHeadline,
   isDestroyRun,
   runKind,
   runPath,
+  runSource,
   runTitle,
+  type RunSource,
 } from './runText';
 export {
   SegmentedControl,

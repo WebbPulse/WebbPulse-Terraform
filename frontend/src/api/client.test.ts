@@ -94,6 +94,17 @@ describe('TerraformApi workspaces', () => {
     expect(transport.requests[0]?.body).toBeUndefined();
   });
 
+  it('sends a confirm or discard comment as the body', async () => {
+    const { api, transport } = apiOver({
+      'POST /api/v1/runs/run-1/confirm': { body: aRun('applying') },
+      'POST /api/v1/runs/run-1/discard': { body: aRun('discarded') },
+    });
+    await api.confirmRun('run-1', 'Reviewed.');
+    await api.discardRun('run-1', '  ');
+    expect(transport.requests[0]?.body).toEqual({ comment: 'Reviewed.' });
+    expect(transport.requests[1]?.body).toBeUndefined();
+  });
+
   it('starts quick setup with the account and policy in the body', async () => {
     const answer = {
       account_id: '123456789012',

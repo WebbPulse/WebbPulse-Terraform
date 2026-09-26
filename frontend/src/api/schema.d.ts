@@ -816,6 +816,8 @@ export interface paths {
         /**
          * Confirm Run
          * @description Apply a planned run. Needs `runs:apply`, not `runs:write`.
+         *
+         *     The body is optional; its comment is kept on the run with the confirming actor.
          */
         post: operations["confirm_run_api_v1_runs__run_id__confirm_post"];
         delete?: never;
@@ -836,6 +838,8 @@ export interface paths {
         /**
          * Discard Run
          * @description Drop a plan that was never applied, ending its execution cleanly.
+         *
+         *     The body is optional; its comment is kept on the run with the discarding actor.
          */
         post: operations["discard_run_api_v1_runs__run_id__discard_post"];
         delete?: never;
@@ -1834,6 +1838,7 @@ export interface components {
             config_version_id: string;
             /** Created At */
             created_at: string;
+            decision?: components["schemas"]["RunDecision"] | null;
             /** Error */
             error?: string | null;
             /** Execution Arn */
@@ -2005,6 +2010,7 @@ export interface components {
             config_version_id: string;
             /** Created At */
             created_at: string;
+            decision?: components["schemas"]["RunDecision"] | null;
             /** Error */
             error?: string | null;
             /** Execution Arn */
@@ -2047,6 +2053,33 @@ export interface components {
             vcs?: components["schemas"]["RunVcs"] | null;
             /** Workspace Id */
             workspace_id: string;
+        };
+        /**
+         * RunDecision
+         * @description Who confirmed or discarded a run's plan, when, and the comment they left.
+         */
+        RunDecision: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "confirmed" | "discarded";
+            actor?: components["schemas"]["RunActor"] | null;
+            /** At */
+            at: string;
+            /** Comment */
+            comment?: string | null;
+        };
+        /**
+         * RunDecisionRequest
+         * @description The optional body of a confirm or a discard: a comment kept on the run.
+         */
+        RunDecisionRequest: {
+            /**
+             * Comment
+             * @default
+             */
+            comment?: string;
         };
         /**
          * RunList
@@ -2214,6 +2247,8 @@ export interface components {
             base_sha?: string | null;
             /** Branch */
             branch?: string | null;
+            /** Commit Message */
+            commit_message?: string | null;
             /** Head Sha */
             head_sha?: string | null;
             /** Pr Number */
@@ -4255,7 +4290,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RunDecisionRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -4286,7 +4325,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RunDecisionRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

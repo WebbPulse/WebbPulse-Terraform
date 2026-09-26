@@ -1262,6 +1262,16 @@
             "title": "Created At",
             "type": "string"
           },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "error": {
             "anyOf": [
               {
@@ -1625,6 +1635,16 @@
             "title": "Created At",
             "type": "string"
           },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "error": {
             "anyOf": [
               {
@@ -1770,6 +1790,63 @@
           "created_at"
         ],
         "title": "RunCreated",
+        "type": "object"
+      },
+      "RunDecision": {
+        "description": "Who confirmed or discarded a run's plan, when, and the comment they left.",
+        "properties": {
+          "action": {
+            "enum": [
+              "confirmed",
+              "discarded"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunActor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          }
+        },
+        "required": [
+          "action",
+          "at"
+        ],
+        "title": "RunDecision",
+        "type": "object"
+      },
+      "RunDecisionRequest": {
+        "description": "The optional body of a confirm or a discard: a comment kept on the run.",
+        "properties": {
+          "comment": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Comment",
+            "type": "string"
+          }
+        },
+        "title": "RunDecisionRequest",
         "type": "object"
       },
       "RunList": {
@@ -2100,6 +2177,17 @@
               }
             ],
             "title": "Branch"
+          },
+          "commit_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Message"
           },
           "head_sha": {
             "anyOf": [
@@ -4753,7 +4841,7 @@
     },
     "/api/v1/runs/{run_id}/confirm": {
       "post": {
-        "description": "Apply a planned run. Needs `runs:apply`, not `runs:write`.",
+        "description": "Apply a planned run. Needs `runs:apply`, not `runs:write`.\n\nThe body is optional; its comment is kept on the run with the confirming actor.",
         "operationId": "confirm_run_api_v1_runs__run_id__confirm_post",
         "parameters": [
           {
@@ -4769,6 +4857,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RunDecisionRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -4799,7 +4904,7 @@
     },
     "/api/v1/runs/{run_id}/discard": {
       "post": {
-        "description": "Drop a plan that was never applied, ending its execution cleanly.",
+        "description": "Drop a plan that was never applied, ending its execution cleanly.\n\nThe body is optional; its comment is kept on the run with the discarding actor.",
         "operationId": "discard_run_api_v1_runs__run_id__discard_post",
         "parameters": [
           {
@@ -4815,6 +4920,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RunDecisionRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {

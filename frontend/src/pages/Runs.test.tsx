@@ -72,4 +72,43 @@ describe('Runs', () => {
 
     expect(await screen.findByText('No runs yet.')).toBeInTheDocument();
   });
+
+  it('shows the trigger, the short sha and the pull request of a VCS run', async () => {
+    apiMock.listRuns.mockResolvedValue({
+      items: [
+        aRun('planned_and_finished', {
+          message: '',
+          source: 'vcs_pr',
+          vcs: {
+            repo: 'WebbPulse/infra',
+            repository_id: '42',
+            ref: 'refs/pull/91/merge',
+            sha: 'merge00000000000000000000000000000000000',
+            head_sha: '1234567aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            pr_number: 91,
+            commit_message: 'Add the logs bucket',
+          },
+        }),
+      ],
+    });
+
+    renderWithAuth(<Runs />, signedInAuthClient());
+
+    const source = await screen.findByTestId('run-source');
+    expect(source).toHaveTextContent(
+      'Triggered via GitHub from pull request #91'
+    );
+    expect(
+      within(source).getByRole('link', { name: 'Commit 1234567 on GitHub' })
+    ).toHaveAttribute(
+      'href',
+      'https://github.com/WebbPulse/infra/commit/1234567aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    );
+    expect(
+      within(source).getByRole('link', { name: 'PR #91' })
+    ).toHaveAttribute('href', 'https://github.com/WebbPulse/infra/pull/91');
+    expect(
+      screen.getByRole('link', { name: 'Add the logs bucket' })
+    ).toBeInTheDocument();
+  });
 });

@@ -1,6 +1,6 @@
 /** The run page: its header, its progress, its plan and its raw logs. */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import {
@@ -16,19 +16,25 @@ import { fetchRunPlan, type RunPlan } from '../api/runPlan';
 import {
   Button,
   DestroyBadge,
+  Dialog,
   ErrorNotice,
+  Field,
+  INPUT_CLASS,
   PageHeader,
   PlanView,
   RelativeTime,
   RunLogs,
+  RunSourceLine,
   RunTimeline,
   Spinner,
   StateBadge,
   Tabs,
+  commitHeadline,
   elapsedBetween,
   formatDuration,
   isDestroyRun,
   runKind,
+  runTitle,
   shortRunId,
   useNow,
 } from '../components';
@@ -159,10 +165,8 @@ function RunHeader({
   run: Run;
   inWorkspace: boolean;
 }): React.ReactElement {
-  const title =
-    run.message === undefined || run.message === ''
-      ? `Run ${shortRunId(run.run_id)}`
-      : run.message;
+  const title = runTitle(run);
+  const headline = commitHeadline(run);
   return (
     <div className="space-y-2 border-b border-line pb-4">
       {inWorkspace ? (
@@ -189,6 +193,15 @@ function RunHeader({
           </span>
         ) : null}
       </div>
+      {headline === null || headline === title ? null : (
+        <p
+          data-testid="run-commit-message"
+          className="truncate text-sm text-text-muted"
+          title={run.vcs?.commit_message ?? undefined}
+        >
+          {headline}
+        </p>
+      )}
       <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-text-faint">
         <span className="font-mono" title={run.run_id}>
           #{shortRunId(run.run_id)}
@@ -197,6 +210,12 @@ function RunHeader({
         <span>
           {runKind(run)} triggered <RelativeTime iso={run.created_at} />
         </span>
+        {run.vcs === undefined || run.vcs === null ? null : (
+          <>
+            <span aria-hidden="true">|</span>
+            <RunSourceLine run={run} />
+          </>
+        )}
         <span aria-hidden="true">|</span>
         <Link
           to={`/workspaces/${run.workspace_id}/configuration-versions`}
@@ -341,11 +360,15 @@ function PlanPanel({
   );
 }
 
+/** A decision that asks for a comment before it is sent. */
+type Decision = 'confirm' | 'discard';
+
 /**
  * Confirm and apply, or discard, below the plan.
  *
  * Cancel lives here too while a phase is running, so every decision about the
- * run is in one place, under what it is a decision about.
+ * run is in one place, under what it is a decision about. Confirm and discard
+ * open a dialog with an optional comment, as the hosted product does.
  */
 function ConfirmationPanel({
   run,
@@ -354,10 +377,12 @@ function ConfirmationPanel({
   run: Run;
   onDone: () => void;
 }): React.ReactElement | null {
-  const [busy, setBusy] = useState<'confirm' | 'cancel' | 'discard' | null>(
-    null
-  );
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [asking, setAsking] = useState<Decision | null>(null);
+  const closeDialog = useCallback(() => {
+    setAsking(null);
+  }, []);
 
   const allowConfirm = canConfirm(run);
   const allowDiscard = canDiscard(run);
@@ -367,28 +392,21 @@ function ConfirmationPanel({
     return null;
   }
 
-  const act = async (
-    action: 'confirm' | 'cancel' | 'discard'
-  ): Promise<void> => {
-    setBusy(action);
+  const cancel = async (): Promise<void> => {
+    setBusy(true);
     setError(null);
     try {
-      if (action === 'confirm') {
-        await api.confirmRun(run.run_id);
-      } else if (action === 'cancel') {
-        await api.cancelRun(run.run_id);
-      } else {
-        await api.discardRun(run.run_id);
-      }
+      await api.cancelRun(run.run_id);
       onDone();
     } catch (thrown) {
       setError(thrown);
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
   const waiting = run.status === 'awaiting_confirmation';
+  const destroy = isDestroyRun(run);
 
   return (
     <section
@@ -407,7 +425,7 @@ function ConfirmationPanel({
       </h3>
       <p className="max-w-prose text-sm text-text-muted">
         {waiting
-          ? isDestroyRun(run)
+          ? destroy
             ? 'Confirm to destroy every resource listed above in your AWS account, or discard the plan to keep them.'
             : 'Confirm to apply the plan above to your AWS account, or discard it to throw it away.'
           : allowCancel
@@ -417,24 +435,20 @@ function ConfirmationPanel({
       <div className="flex flex-wrap items-center gap-2">
         {allowConfirm ? (
           <Button
-            variant={isDestroyRun(run) ? 'danger' : 'primary'}
-            disabled={busy !== null}
-            busy={busy === 'confirm'}
-            busyLabel="Working"
+            variant={destroy ? 'danger' : 'primary'}
+            disabled={busy}
             onClick={() => {
-              void act('confirm');
+              setAsking('confirm');
             }}
           >
-            {isDestroyRun(run) ? 'Confirm & destroy' : 'Confirm & apply'}
+            {destroy ? 'Confirm & destroy' : 'Confirm & apply'}
           </Button>
         ) : null}
         {allowDiscard ? (
           <Button
-            disabled={busy !== null}
-            busy={busy === 'discard'}
-            busyLabel="Working"
+            disabled={busy}
             onClick={() => {
-              void act('discard');
+              setAsking('discard');
             }}
           >
             Discard run
@@ -443,11 +457,11 @@ function ConfirmationPanel({
         {allowCancel ? (
           <Button
             variant="danger"
-            disabled={busy !== null}
-            busy={busy === 'cancel'}
+            disabled={busy}
+            busy={busy}
             busyLabel="Working"
             onClick={() => {
-              void act('cancel');
+              void cancel();
             }}
           >
             Cancel run
@@ -455,6 +469,143 @@ function ConfirmationPanel({
         ) : null}
       </div>
       <ErrorNotice error={error} />
+      {asking === null ? null : (
+        <DecisionDialog
+          run={run}
+          decision={asking}
+          onClose={closeDialog}
+          onDone={() => {
+            setAsking(null);
+            onDone();
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+/** The words each decision dialog uses. */
+function decisionWords(
+  decision: Decision,
+  destroy: boolean
+): { title: string; description: string; submit: string; busy: string } {
+  if (decision === 'discard') {
+    return {
+      title: 'Discard run',
+      description:
+        'The plan is thrown away and nothing is applied. The workspace moves on to its next run.',
+      submit: 'Discard run',
+      busy: 'Discarding the run',
+    };
+  }
+  return destroy
+    ? {
+        title: 'Confirm & destroy',
+        description:
+          'Every resource in the plan is destroyed in your AWS account. This cannot be undone.',
+        submit: 'Confirm destroy',
+        busy: 'Confirming the destroy',
+      }
+    : {
+        title: 'Confirm & apply',
+        description:
+          'The plan is applied to your AWS account as it stands on this page.',
+        submit: 'Confirm plan',
+        busy: 'Confirming the plan',
+      };
+}
+
+/** The confirm or discard dialog, with an optional comment kept on the run. */
+function DecisionDialog({
+  run,
+  decision,
+  onClose,
+  onDone,
+}: {
+  run: Run;
+  decision: Decision;
+  onClose: () => void;
+  onDone: () => void;
+}): React.ReactElement {
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const destroy = isDestroyRun(run);
+  const words = decisionWords(decision, destroy);
+  const close = useCallback(() => {
+    if (!busy) {
+      onClose();
+    }
+  }, [busy, onClose]);
+
+  const submit = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (decision === 'confirm') {
+        await api.confirmRun(run.run_id, comment);
+      } else {
+        await api.discardRun(run.run_id, comment);
+      }
+      onDone();
+    } catch (thrown) {
+      setError(thrown);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open
+      onClose={close}
+      title={words.title}
+      description={words.description}
+    >
+      <form
+        className="space-y-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <Field
+          label="Comment"
+          hint="Optional. Kept on the run beside who made the decision."
+        >
+          {(control) => (
+            <textarea
+              {...control}
+              rows={3}
+              maxLength={2000}
+              value={comment}
+              onChange={(event) => {
+                setComment(event.target.value);
+              }}
+              className={`${INPUT_CLASS} h-auto py-1.5`}
+            />
+          )}
+        </Field>
+        <ErrorNotice error={error} />
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant={
+              decision === 'confirm'
+                ? destroy
+                  ? 'danger'
+                  : 'primary'
+                : 'danger'
+            }
+            busy={busy}
+            busyLabel={words.busy}
+          >
+            {words.submit}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }

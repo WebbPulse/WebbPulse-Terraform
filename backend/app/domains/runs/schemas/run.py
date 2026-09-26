@@ -53,6 +53,9 @@ class RunVcs(BaseModel):
     pr_number: Optional[int] = None
     head_sha: Optional[str] = None
     base_sha: Optional[str] = None
+    commit_message: Optional[str] = None
+    """The reported commit's message, read through the GitHub App when the run is
+    first reported. `None` until then, and when no App is configured."""
 
 
 class RunActor(BaseModel):
@@ -63,6 +66,25 @@ class RunActor(BaseModel):
     """The principal's `sub`: the user for `user`, the minting user for `agent`."""
     display_name: Optional[str] = None
     """What to render, absent when the credential carried no name."""
+
+
+DecisionAction = Literal["confirmed", "discarded"]
+"""What a person decided about a plan awaiting confirmation."""
+
+
+class RunDecisionRequest(BaseModel):
+    """The optional body of a confirm or a discard: a comment kept on the run."""
+
+    comment: str = Field(default="", max_length=2000)
+
+
+class RunDecision(BaseModel):
+    """Who confirmed or discarded a run's plan, when, and the comment they left."""
+
+    action: DecisionAction
+    at: str
+    actor: Optional[RunActor] = None
+    comment: Optional[str] = None
 
 
 class RunCreate(BaseModel):
@@ -122,6 +144,8 @@ class Run(BaseModel):
     """What started the run. A run created before VCS ingest reads as `api`."""
     vcs: Optional[RunVcs] = None
     """The commit a VCS run came from. `None` on an API run."""
+    decision: Optional[RunDecision] = None
+    """The confirmation or discard of the plan, `None` until someone decides."""
 
     model_config = ConfigDict(from_attributes=True)
 
