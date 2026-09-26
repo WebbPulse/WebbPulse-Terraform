@@ -11,7 +11,7 @@ def test_backfill_is_bounded_resumable_and_idempotent(auth_client, created_run):
     """Dry runs only count; resumed writes index old rows and preserve actor null."""
     table = boto3.resource("dynamodb", region_name=REGION).Table(local_table_name(RUNS, ENVIRONMENT))
     original = table.get_item(Key={"run_id": created_run["run_id"]}).get("Item", {})
-    legacy = {key: value for key, value in original.items() if key != "collection" and not key.startswith("actor_")}
+    legacy = {key: value for key, value in original.items() if key not in ("collection", "actor")}
     table.put_item(Item=legacy)
     assert auth_client.get("/api/v1/runs").json()["items"] == []
     dry = backfill(table)

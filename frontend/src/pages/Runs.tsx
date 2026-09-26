@@ -4,7 +4,6 @@ import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
 import { api, type Run } from '../api';
-import { listRunHistory } from '../api/runHistory';
 import { ErrorNotice, PageHeader, RunList, Spinner } from '../components';
 
 /** The runs and the names of the workspaces they belong to. */
@@ -13,7 +12,18 @@ interface EveryRun {
   workspaceNames: Map<string, string>;
 }
 
-/** Keep history workspace-scoped until the global index backfill is verified. */
+/**
+ * Every run in the environment, newest first.
+ *
+ * The API lists runs one workspace at a time: `GET /runs` takes a required
+ * `workspace_id` because the table is queried by its workspace index. So this
+ * page reads the workspaces first and merges their runs, rather than asking for
+ * an environment wide listing the backend does not serve.
+ *
+ * Each page already arrives newest first, so the merge is a stable interleave
+ * on the run id, which is a ULID and so orders by creation time. A stable sort
+ * leaves one workspace's runs in the order the API returned them.
+ */
 async function listEveryRun(signal: AbortSignal): Promise<EveryRun> {
   const workspaces = await api.listWorkspaces({ signal });
   const workspaceNames = new Map(
@@ -24,7 +34,7 @@ async function listEveryRun(signal: AbortSignal): Promise<EveryRun> {
   );
   const pages = await Promise.all(
     workspaces.items.map((workspace) =>
-      listRunHistory({ workspace_id: workspace.workspace_id }, signal)
+      api.listRuns({ workspace_id: workspace.workspace_id }, { signal })
     )
   );
   const items = pages.flatMap((page) => page.items);

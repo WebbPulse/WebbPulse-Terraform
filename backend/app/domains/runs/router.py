@@ -9,9 +9,10 @@ bundle carries decrypted variables and no human scope should open it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from webbpulse.identity.claims import AuthorizerClaims
 
 from ...common.core.auth import (
     RUNS_APPLY,
@@ -24,9 +25,6 @@ from ...common.core.auth import (
 from ...common.workspaces import reads as workspace_reads
 from . import service
 from .actor import actor_from_claims
-
-if TYPE_CHECKING:  # pragma: no cover
-    from webbpulse.identity.claims import AuthorizerClaims
 from .schemas.run import (
     ArtifactUpload,
     ArtifactUploadCreate,
@@ -43,15 +41,14 @@ from .schemas.run import (
 
 router = APIRouter()
 
-RunId = Path(min_length=4, max_length=64, pattern=r"^run-[0-9A-HJKMNP-TV-Z]{26}$")
+RUN_ID_PATTERN = r"^run-[0-9A-HJKMNP-TV-Z]{26}$"
+RunId = Path(min_length=4, max_length=64, pattern=RUN_ID_PATTERN)
 WorkspaceIdQuery = Query(
     default=None,
     min_length=4,
     max_length=64,
     pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$",
 )
-"""Optional: naming a workspace scopes the list to it, omitting it lists every
-workspace's runs together. Both modes are the same authorization, `runs:read`."""
 
 
 def _not_found(message: str) -> HTTPException:
@@ -77,7 +74,7 @@ RUN_ROLE_MISSING_CODE = "RUN_ROLE_MISSING"
 )
 def create_run(
     payload: RunCreate,
-    current: "AuthorizerClaims" = Depends(claims),
+    current: AuthorizerClaims = Depends(claims),
 ) -> dict[str, Any]:
     """Queue or start a run.
 
@@ -88,10 +85,8 @@ def create_run(
     A workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the
     runner would have nothing to assume.
 
-    The claims are resolved here rather than in the service because this request is
-    the only moment the triggering principal exists: nothing written later could
-    recover it. `actor_from_claims` never raises, so a credential that names no
-    subject records a `system` actor instead of failing the create.
+    The actor is taken from the verified claims here, because this request is the
+    only moment the triggering principal is known.
     """
     try:
         created = service.create_run(payload.model_dump(), actor=actor_from_claims(current))
@@ -116,38 +111,35 @@ def create_run(
 )
 def list_runs(
     workspace_id: Optional[str] = WorkspaceIdQuery,
-    limit: int = Query(default=service.DEFAULT_RUN_PAGE_SIZE, ge=1, le=service.MAX_RUN_PAGE_SIZE),
-    cursor: Optional[str] = Query(default=None, max_length=2048),
+    limit: Optional[int] = Query(default=None, ge=1, le=service.MAX_RUN_PAGE_SIZE),
+    cursor: Optional[str] = Query(default=None, pattern=RUN_ID_PATTERN),
 ) -> dict[str, Any]:
     """Runs, newest first, in one workspace or across every workspace.
 
-    Naming `workspace_id` queries that workspace's index and 404s for a workspace
-    that does not exist. Omitting it lists every workspace's runs together off the
-    recency index, which is what a workspace overview needs to show each row's
-    latest run without one request per row.
+    Naming `workspace_id` returns that workspace's runs in full and 404s for a
+    workspace that does not exist, unchanged. Omitting it returns a page of every
+    workspace's runs off the recency index; pass `next_cursor` back as `cursor`
+    to continue. `limit` and `cursor` page only the cross-workspace list, so they
+    are refused alongside a workspace rather than ignored.
 
-    Both modes carry the same authorization, and that is correct rather than a gap.
-    This control plane is single tenant with no per workspace membership: a caller
-    holding `workspaces:read` already lists every workspace, and one holding
-    `runs:read` already lists the runs of any workspace id it names. The unscoped
-    list therefore returns exactly the set a caller could assemble from the scoped
-    list in a loop, so it widens no authority. Should per workspace authorization
-    ever arrive, this route has to filter to the caller's workspaces before the
-    scoped one does, because a cross-workspace read is where an ACL gap first shows.
-
-    Pass `next_cursor` back as `cursor` to continue, in either mode.
+    Both modes need exactly `runs:read`, the only check the per-workspace list
+    has ever made: there is no per-workspace ACL, so the cross-workspace list
+    returns nothing the caller could not list one workspace at a time.
     """
-    try:
-        if workspace_id is None:
-            items, next_cursor = service.list_all_runs(limit=limit, cursor=cursor)
-        else:
-            items, next_cursor = service.list_runs(workspace_id, limit=limit, cursor=cursor)
-    except workspace_reads.WorkspaceNotFound as error:
-        raise _not_found("No such workspace.") from error
-    return {
-        "items": [service.render_run(item) for item in items],
-        "next_cursor": next_cursor,
-    }
+    if workspace_id is not None:
+        if limit is not None or cursor is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="limit and cursor page only the cross-workspace list.",
+            )
+        try:
+            items = service.list_runs(workspace_id)
+        except workspace_reads.WorkspaceNotFound as error:
+            raise _not_found("No such workspace.") from error
+        return {"items": [service.render_run(item) for item in items], "next_cursor": None}
+
+    items, next_cursor = service.list_all_runs(limit=limit or service.DEFAULT_RUN_PAGE_SIZE, cursor=cursor)
+    return {"items": [service.render_run(item) for item in items], "next_cursor": next_cursor}
 
 
 @router.get(

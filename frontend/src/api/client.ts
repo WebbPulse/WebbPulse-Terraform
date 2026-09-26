@@ -284,11 +284,9 @@ export class TerraformApi {
   /**
    * Lists runs, newest first, in one workspace or across every workspace.
    *
-   * Naming a workspace queries that workspace's index and answers 404 for a
-   * workspace that does not exist. Omitting it lists every workspace's runs from
-   * the recency index, which is what the workspace list uses to show each row's
-   * latest run without one request per row. Both modes page through
-   * `next_cursor`, and a cursor belongs to the mode that issued it.
+   * Naming a workspace returns all of its runs and answers 404 for a workspace
+   * that does not exist. Omitting it returns one page of every workspace's runs;
+   * `limit` and `cursor` apply only then, with `next_cursor` continuing the list.
    */
   async listRuns(
     query: RunListQuery = {},

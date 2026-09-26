@@ -1,42 +1,24 @@
-"""Listing runs in one workspace and across every workspace, and paging both.
-
-The unscoped list is the one that could leak, so its authorization boundary is
-asserted here rather than left to the scoped list's coverage.
-"""
+"""Listing runs across every workspace: authorization, ordering and pagination."""
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.common.core.auth import (
-    CONFIGS_WRITE,
-    RUNS_READ,
-    RUNS_WRITE,
-    WORKSPACES_READ,
-    WORKSPACES_WRITE,
-)
-from app.common.db.tables import RUNS_BY_RECENCY_INDEX, RUNS_BY_WORKSPACE_INDEX
+from app.common.core.auth import ALL_SCOPES, RUNS_READ
+from app.common.db.tables import SEMAPHORE_RUN_ID
 from app.domains.runs import service as runs_service
-from tests.conftest import WORKSPACE_PAYLOAD
+from tests.conftest import WORKSPACE_PAYLOAD, mint_key
 
 BASE = "/api/v1/runs"
 
 
 @pytest.fixture
 def two_workspaces_with_runs(auth_client, state_machine):
-    """Two workspaces, each holding two plan-only runs, newest last per workspace.
-
-    Plan-only so each run finishes its own lifecycle rather than queueing behind
-    the one before it, which would leave the second `pending` and change nothing
-    about what the list has to return but would make the fixture harder to read.
-    """
+    """Two workspaces, each holding two finished plan-only runs."""
     from app.domains.workspaces import service as workspaces_service
 
     built: list[dict] = []
     for index in range(2):
-        workspace = auth_client.post(
-            "/api/v1/workspaces",
-            json={**WORKSPACE_PAYLOAD, "name": f"listing-{index}"},
-        )
+        workspace = auth_client.post("/api/v1/workspaces", json={**WORKSPACE_PAYLOAD, "name": f"listing-{index}"})
         assert workspace.status_code == 201, workspace.text
         workspace_id = workspace.json()["workspace_id"]
 
@@ -52,12 +34,7 @@ def two_workspaces_with_runs(auth_client, state_machine):
 
             created = auth_client.post(
                 BASE,
-                json={
-                    "workspace_id": workspace_id,
-                    "config_version_id": config_version_id,
-                    "plan_only": True,
-                    "message": "",
-                },
+                json={"workspace_id": workspace_id, "config_version_id": config_version_id, "plan_only": True},
             )
             assert created.status_code == 201, created.text
             run_id = created.json()["run_id"]
@@ -68,230 +45,155 @@ def two_workspaces_with_runs(auth_client, state_machine):
     return built
 
 
-def test_the_scoped_list_returns_only_that_workspace(auth_client, two_workspaces_with_runs):
-    """Naming a workspace still queries that workspace's index alone."""
+def every_run_id(built: list[dict]) -> list[str]:
+    """Every fixture run id, newest first, since a ULID orders by creation time."""
+    return sorted((run_id for workspace in built for run_id in workspace["run_ids"]), reverse=True)
+
+
+def read_every_page(client: TestClient, limit: int) -> list[str]:
+    """Follow `next_cursor` to the end and return every run id seen, in order."""
+    seen: list[str] = []
+    params: dict = {"limit": limit}
+    for _ in range(100):
+        response = client.get(BASE, params=params)
+        assert response.status_code == 200, response.text
+        page = response.json()
+        seen.extend(item["run_id"] for item in page["items"])
+        if page["next_cursor"] is None:
+            return seen
+        params = {"limit": limit, "cursor": page["next_cursor"]}
+    raise AssertionError("pagination did not terminate")
+
+
+def test_the_scoped_list_is_unchanged(auth_client, two_workspaces_with_runs):
+    """Naming a workspace returns that workspace's runs in full, with no cursor."""
     first, second = two_workspaces_with_runs
-    items = auth_client.get(BASE, params={"workspace_id": first["workspace_id"]}).json()["items"]
+    page = auth_client.get(BASE, params={"workspace_id": first["workspace_id"]}).json()
 
-    assert {item["run_id"] for item in items} == set(first["run_ids"])
-    assert not {item["run_id"] for item in items} & set(second["run_ids"])
+    assert [item["run_id"] for item in page["items"]] == sorted(first["run_ids"], reverse=True)
+    assert page["next_cursor"] is None
 
 
-def test_the_unscoped_list_spans_every_workspace(auth_client, two_workspaces_with_runs):
-    """Omitting the workspace returns both workspaces' runs in one response."""
+def test_the_unscoped_list_spans_every_workspace_newest_first(auth_client, two_workspaces_with_runs):
+    """Omitting the workspace returns every workspace's runs, newest first."""
     items = auth_client.get(BASE).json()["items"]
-    expected = {run_id for built in two_workspaces_with_runs for run_id in built["run_ids"]}
-
-    assert {item["run_id"] for item in items} == expected
+    assert [item["run_id"] for item in items] == every_run_id(two_workspaces_with_runs)
 
 
-def test_the_unscoped_list_is_newest_first(auth_client, two_workspaces_with_runs):
-    """Recency ordering holds across workspaces, which is the whole point of the index.
-
-    A run id is a ULID, so descending by id is descending by creation time and the
-    expected order is every id sorted backwards regardless of which workspace it
-    belongs to.
-    """
-    items = auth_client.get(BASE).json()["items"]
-    every_id = [run_id for built in two_workspaces_with_runs for run_id in built["run_ids"]]
-
-    assert [item["run_id"] for item in items] == sorted(every_id, reverse=True)
-
-
-def test_the_unscoped_list_carries_the_list_view_attributes(auth_client, two_workspaces_with_runs):
-    """The projected index returns what a workspace row renders: status and recency."""
+def test_the_unscoped_list_renders_full_runs(auth_client, two_workspaces_with_runs):
+    """A run from the index is the same object the run's own route returns."""
     item = auth_client.get(BASE).json()["items"][0]
-
-    assert item["workspace_id"]
-    assert item["status"]
-    assert item["created_at"]
-    assert item["actor"]["kind"] == "agent"
+    assert item == auth_client.get(f"{BASE}/{item['run_id']}").json()
+    assert "collection" not in item
 
 
 def test_the_unscoped_list_never_returns_the_semaphore(auth_client, created_run):
     """The reserved row carries no `collection`, so the recency index cannot hold it."""
-    from app.common.db.tables import SEMAPHORE_RUN_ID
-
     runs_service.release_semaphore(created_run["run_id"])
-    items = auth_client.get(BASE).json()["items"]
-
-    assert SEMAPHORE_RUN_ID not in {item["run_id"] for item in items}
-
-
-def test_the_unscoped_list_pages(auth_client, two_workspaces_with_runs):
-    """A limited unscoped list hands back a cursor that continues it without repeats."""
-    every_id = sorted(
-        (run_id for built in two_workspaces_with_runs for run_id in built["run_ids"]),
-        reverse=True,
-    )
-
-    seen: list[str] = []
-    cursor = None
-    for _ in range(len(every_id) + 1):
-        params: dict = {"limit": 1}
-        if cursor is not None:
-            params["cursor"] = cursor
-        page = auth_client.get(BASE, params=params).json()
-        seen.extend(item["run_id"] for item in page["items"])
-        cursor = page["next_cursor"]
-        if cursor is None:
-            break
-
-    assert seen == every_id
-    assert cursor is None
+    listed = [item["run_id"] for item in auth_client.get(BASE).json()["items"]]
+    assert listed == [created_run["run_id"]]
+    assert SEMAPHORE_RUN_ID not in listed
 
 
-def test_the_scoped_list_pages(auth_client, two_workspaces_with_runs):
-    """The per workspace mode pages the same way and stays inside its workspace."""
-    first = two_workspaces_with_runs[0]
-    expected = sorted(first["run_ids"], reverse=True)
-
-    seen: list[str] = []
-    cursor = None
-    for _ in range(len(expected) + 1):
-        params: dict = {"workspace_id": first["workspace_id"], "limit": 1}
-        if cursor is not None:
-            params["cursor"] = cursor
-        page = auth_client.get(BASE, params=params).json()
-        seen.extend(item["run_id"] for item in page["items"])
-        cursor = page["next_cursor"]
-        if cursor is None:
-            break
-
-    assert seen == expected
+@pytest.mark.parametrize("limit", [1, 3, 4, 200])
+def test_the_unscoped_list_pages_without_gaps_or_repeats(auth_client, two_workspaces_with_runs, limit):
+    """Following the cursor at any page size yields every run exactly once, in order."""
+    assert read_every_page(auth_client, limit) == every_run_id(two_workspaces_with_runs)
 
 
-def test_the_last_page_carries_no_cursor(auth_client, created_run):
-    """A list that fits in one page ends the pagination rather than looping."""
+def test_a_page_holds_at_most_limit_runs(auth_client, two_workspaces_with_runs):
+    """`limit` bounds the page and a cursor is returned while runs remain."""
+    page = auth_client.get(BASE, params={"limit": 3}).json()
+    assert len(page["items"]) == 3
+    assert page["next_cursor"] == page["items"][-1]["run_id"]
+
+
+def test_the_default_page_size_applies(auth_client, created_run, monkeypatch):
+    """Without `limit` the page holds the default number of runs."""
+    monkeypatch.setattr(runs_service, "DEFAULT_RUN_PAGE_SIZE", 1)
     page = auth_client.get(BASE).json()
-    assert page["next_cursor"] is None
+    assert len(page["items"]) == 1
 
 
-def test_a_mangled_cursor_restarts_rather_than_failing(auth_client, two_workspaces_with_runs):
-    """A cursor that is not decodable reads as no cursor, which cannot widen a read."""
-    response = auth_client.get(BASE, params={"cursor": "not-a-cursor"})
-    assert response.status_code == 200, response.text
-    assert response.json()["items"]
-
-
-def test_a_cursor_cannot_escape_the_scoped_query(auth_client, two_workspaces_with_runs):
-    """A cursor from the unscoped list does not widen a scoped one past its workspace.
-
-    The key condition is set by the request's `workspace_id` and never by the
-    cursor, so the worst a borrowed cursor does is skip rows.
-    """
-    first, second = two_workspaces_with_runs
-    unscoped = auth_client.get(BASE, params={"limit": 1}).json()
-
-    page = auth_client.get(
-        BASE,
-        params={"workspace_id": first["workspace_id"], "cursor": unscoped["next_cursor"]},
-    ).json()
-
-    assert not {item["run_id"] for item in page["items"]} & set(second["run_ids"])
-
-
-def test_the_unscoped_list_needs_the_same_scope_as_the_scoped_one(app, created_run):
-    """`runs:read` guards both modes, and a caller without it reaches neither.
-
-    This is the authorization boundary. The control plane is single tenant with no
-    per workspace membership, so the rule the scoped list enforces is a scope and
-    nothing else, and the unscoped list enforces exactly that same scope. A caller
-    holding it can already list any workspace id it names, so listing them together
-    returns no run it could not have assembled one workspace at a time.
-    """
-    from tests.conftest import mint_key
-
-    token = mint_key(WORKSPACES_READ, WORKSPACES_WRITE, CONFIGS_WRITE, RUNS_WRITE)
-    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
-        assert client.get(BASE).status_code == 403
-        assert client.get(BASE, params={"workspace_id": created_run["workspace_id"]}).status_code == 403
-
-
-def test_the_unscoped_list_refuses_an_unauthenticated_caller(client):
-    """No credential reaches neither mode."""
-    assert client.get(BASE).status_code == 401
-
-
-def test_the_unscoped_list_admits_a_read_only_caller(app, created_run):
-    """`runs:read` alone is enough, the same as for the scoped list."""
-    from tests.conftest import mint_key
-
-    token = mint_key(RUNS_READ)
-    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
-        response = client.get(BASE)
-        assert response.status_code == 200, response.text
-        assert [item["run_id"] for item in response.json()["items"]] == [created_run["run_id"]]
-
-
-def test_a_limit_over_the_ceiling_is_refused(auth_client):
-    """The page size is clamped at the contract rather than left to the caller."""
-    assert auth_client.get(BASE, params={"limit": runs_service.MAX_RUN_PAGE_SIZE + 1}).status_code == 422
-
-
-def test_a_zero_limit_is_refused(auth_client):
-    """A page of nothing would page forever, so it is rejected at the boundary."""
-    assert auth_client.get(BASE, params={"limit": 0}).status_code == 422
-
-
-def test_the_scoped_list_is_still_404_for_an_absent_workspace(auth_client):
-    """Making the parameter optional did not turn a bad workspace into an empty list."""
-    response = auth_client.get(BASE, params={"workspace_id": "ws-01JBQ0000000000000000000AA"})
-    assert response.status_code == 404
-
-
-def test_the_unscoped_list_is_empty_when_nothing_ran(auth_client, workspace):
-    """An environment with no runs lists nothing rather than failing on the index."""
+def test_an_empty_environment_lists_nothing(auth_client, workspace):
+    """No runs is an empty page, not an error."""
     response = auth_client.get(BASE)
     assert response.status_code == 200, response.text
     assert response.json() == {"items": [], "next_cursor": None}
 
 
-def test_the_service_lists_across_workspaces(two_workspaces_with_runs):
-    """The service call underneath returns the same set, without a route in the way."""
-    items, cursor = runs_service.list_all_runs()
-    expected = {run_id for built in two_workspaces_with_runs for run_id in built["run_ids"]}
-
-    assert {item["run_id"] for item in items} == expected
-    assert cursor is None
-
-
-def test_a_cursor_from_the_other_index_reads_as_no_cursor():
-    """The two indexes key differently, so neither one's cursor starts the other.
-
-    DynamoDB rejects a start key that is not the queried index's own key shape, so
-    an unvalidated foreign cursor would be a 500 rather than a refused read. It
-    decodes to `None` instead, which restarts the listing.
-    """
-    recency = runs_service.encode_cursor({"run_id": "run-x", "collection": "run"})
-
-    assert runs_service.decode_cursor(recency, index_name=RUNS_BY_RECENCY_INDEX) is not None
-    assert runs_service.decode_cursor(recency, index_name=RUNS_BY_WORKSPACE_INDEX) is None
+@pytest.mark.parametrize(
+    "cursor",
+    ["not-a-cursor", "run-semaphore", "ws-01JBQ0000000000000000000AA", "run-01jbq0000000000000000000aa", ""],
+)
+def test_a_malformed_cursor_is_refused(auth_client, created_run, cursor):
+    """Only a well-formed run id is a cursor; anything else is a 422, not a silent restart."""
+    assert auth_client.get(BASE, params={"cursor": cursor}).status_code == 422
 
 
-@pytest.mark.parametrize("value", [None, 1, False, [], {}, "", "\ud800", "x" * 1025])
-def test_invalid_cursor_values_restart(auth_client, created_run, value):
-    """Untrusted cursor values cannot reach DynamoDB as invalid key types."""
-    cursor = runs_service.encode_cursor({"run_id": value, "collection": "run"})
-    response = auth_client.get(BASE, params={"cursor": cursor})
-    assert response.status_code == 200
-    assert response.json()["items"][0]["run_id"] == created_run["run_id"]
+def test_a_cursor_past_every_run_is_an_empty_page(auth_client, two_workspaces_with_runs):
+    """A well-formed cursor older than every run ends the list rather than failing."""
+    response = auth_client.get(BASE, params={"cursor": "run-00000000000000000000000000"})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"items": [], "next_cursor": None}
 
 
-def test_another_workspace_cursor_restarts(auth_client, two_workspaces_with_runs):
-    """A valid cursor from another partition never reaches the scoped query."""
-    first, second = two_workspaces_with_runs
-    foreign = auth_client.get(BASE, params={"workspace_id": second["workspace_id"], "limit": 1}).json()
-    params = {"workspace_id": first["workspace_id"], "limit": 1}
-    expected = auth_client.get(BASE, params=params).json()
-    actual = auth_client.get(BASE, params={**params, "cursor": foreign["next_cursor"]})
-    assert actual.status_code == 200
-    assert actual.json() == expected
+def test_a_cursor_names_no_partition(auth_client, two_workspaces_with_runs):
+    """A cursor carries only a position, so it cannot steer the query to another partition."""
+    newest_first = every_run_id(two_workspaces_with_runs)
+    page = auth_client.get(BASE, params={"cursor": newest_first[0]}).json()
+    assert [item["run_id"] for item in page["items"]] == newest_first[1:]
 
 
-def test_another_collection_cursor_restarts(auth_client, created_run):
-    """A forged partition does not become the query's start key."""
-    cursor = runs_service.encode_cursor({"run_id": created_run["run_id"], "collection": "other"})
-    response = auth_client.get(BASE, params={"cursor": cursor})
-    assert response.status_code == 200
-    assert response.json()["items"][0]["run_id"] == created_run["run_id"]
+@pytest.mark.parametrize("params", [{"limit": 1}, {"cursor": "run-01JBQ0000000000000000000AA"}])
+def test_paging_parameters_are_refused_on_the_scoped_list(auth_client, created_run, params):
+    """`limit` and `cursor` apply only to the cross-workspace list and are refused, not ignored."""
+    response = auth_client.get(BASE, params={"workspace_id": created_run["workspace_id"], **params})
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("limit", [0, runs_service.MAX_RUN_PAGE_SIZE + 1])
+def test_a_limit_out_of_bounds_is_refused(auth_client, limit):
+    """The page size is bounded at the contract."""
+    assert auth_client.get(BASE, params={"limit": limit}).status_code == 422
+
+
+def test_a_malformed_workspace_is_refused_rather_than_widened(auth_client):
+    """A bad `workspace_id` is a 422, never a silent fall through to every workspace."""
+    assert auth_client.get(BASE, params={"workspace_id": "nonsense"}).status_code == 422
+
+
+def test_the_scoped_list_is_still_404_for_an_absent_workspace(auth_client):
+    """Making the parameter optional did not turn a bad workspace into an empty list."""
+    assert auth_client.get(BASE, params={"workspace_id": "ws-01JBQ0000000000000000000AA"}).status_code == 404
+
+
+def test_both_modes_refuse_a_caller_without_runs_read(app, created_run):
+    """Every scope but `runs:read` reaches neither list: the unscoped one adds no bypass."""
+    token = mint_key(*(scope for scope in ALL_SCOPES if scope != RUNS_READ))
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
+        assert client.get(BASE).status_code == 403
+        assert client.get(BASE, params={"workspace_id": created_run["workspace_id"]}).status_code == 403
+
+
+def test_both_modes_admit_runs_read_alone(app, created_run):
+    """`runs:read` alone reaches both lists: the unscoped one demands nothing extra."""
+    token = mint_key(RUNS_READ)
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
+        unscoped = client.get(BASE)
+        scoped = client.get(BASE, params={"workspace_id": created_run["workspace_id"]})
+    assert unscoped.status_code == 200, unscoped.text
+    assert scoped.status_code == 200, scoped.text
+    assert [item["run_id"] for item in unscoped.json()["items"]] == [created_run["run_id"]]
+
+
+def test_both_modes_refuse_an_unauthenticated_caller(client, created_run):
+    """No credential reaches neither list."""
+    assert client.get(BASE).status_code == 401
+    assert client.get(BASE, params={"workspace_id": created_run["workspace_id"]}).status_code == 401
+
+
+def test_a_run_token_reaches_neither_list(runner_client, created_run):
+    """A runner credential carries no human scope, so it cannot list runs in either mode."""
+    assert runner_client.get(BASE).status_code == 403
+    assert runner_client.get(BASE, params={"workspace_id": created_run["workspace_id"]}).status_code == 403

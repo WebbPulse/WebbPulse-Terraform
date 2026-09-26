@@ -151,7 +151,7 @@ def test_the_semaphore_row_never_appears_in_a_workspace_listing(auth_client, cre
     """The row carries no `workspace_id`, so the `by_workspace` GSI cannot return it."""
     seed_holders(created_run["run_id"])
 
-    listed, _ = runs_service.list_runs(workspace["workspace_id"])
+    listed = runs_service.list_runs(workspace["workspace_id"])
 
     assert [item["run_id"] for item in listed] == [created_run["run_id"]]
     assert SEMAPHORE_RUN_ID not in {item["run_id"] for item in listed}

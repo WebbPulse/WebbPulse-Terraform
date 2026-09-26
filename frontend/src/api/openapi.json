@@ -919,7 +919,7 @@
         "type": "object"
       },
       "RunActor": {
-        "description": "Who triggered a run, and how.\n\nThree fields rather than a free-form string, because the viewer needs the kind\nto choose an icon, the id to link to a principal and the name to render. It is\na snapshot taken at create: a display name that changes later does not rewrite\nhistory, which is what an audit trail is for.\n\n`id` and `display_name` are both optional. A `system` actor has neither, and an\n`agent` whose key carries no display name has only the id. An actor that cannot\nname a principal says so by leaving them empty rather than by borrowing one.",
+        "description": "Who triggered a run, snapshotted from the creating request's claims.",
         "properties": {
           "display_name": {
             "anyOf": [
@@ -933,28 +933,21 @@
             "title": "Display Name"
           },
           "id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Id"
+            "title": "Id",
+            "type": "string"
           },
           "kind": {
             "enum": [
               "user",
-              "agent",
-              "system"
+              "agent"
             ],
             "title": "Kind",
             "type": "string"
           }
         },
         "required": [
-          "kind"
+          "kind",
+          "id"
         ],
         "title": "RunActor",
         "type": "object"
@@ -1254,7 +1247,7 @@
         "type": "object"
       },
       "RunList": {
-        "description": "A page of runs, newest first.\n\nScoped to one workspace when the request named one and spanning every workspace\nwhen it did not. Both modes page the same way, through `next_cursor`.",
+        "description": "A list of runs, newest first.\n\nOne workspace's runs in full when the request named a workspace, otherwise a\npage of every workspace's runs continued through `next_cursor`.",
         "properties": {
           "items": {
             "items": {
@@ -2934,7 +2927,7 @@
     },
     "/api/v1/runs": {
       "get": {
-        "description": "Runs, newest first, in one workspace or across every workspace.\n\nNaming `workspace_id` queries that workspace's index and 404s for a workspace\nthat does not exist. Omitting it lists every workspace's runs together off the\nrecency index, which is what a workspace overview needs to show each row's\nlatest run without one request per row.\n\nBoth modes carry the same authorization, and that is correct rather than a gap.\nThis control plane is single tenant with no per workspace membership: a caller\nholding `workspaces:read` already lists every workspace, and one holding\n`runs:read` already lists the runs of any workspace id it names. The unscoped\nlist therefore returns exactly the set a caller could assemble from the scoped\nlist in a loop, so it widens no authority. Should per workspace authorization\never arrive, this route has to filter to the caller's workspaces before the\nscoped one does, because a cross-workspace read is where an ACL gap first shows.\n\nPass `next_cursor` back as `cursor` to continue, in either mode.",
+        "description": "Runs, newest first, in one workspace or across every workspace.\n\nNaming `workspace_id` returns that workspace's runs in full and 404s for a\nworkspace that does not exist, unchanged. Omitting it returns a page of every\nworkspace's runs off the recency index; pass `next_cursor` back as `cursor`\nto continue. `limit` and `cursor` page only the cross-workspace list, so they\nare refused alongside a workspace rather than ignored.\n\nBoth modes need exactly `runs:read`, the only check the per-workspace list\nhas ever made: there is no per-workspace ACL, so the cross-workspace list\nreturns nothing the caller could not list one workspace at a time.",
         "operationId": "list_runs_api_v1_runs_get",
         "parameters": [
           {
@@ -2961,11 +2954,17 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "maximum": 200,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
             }
           },
           {
@@ -2975,7 +2974,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 2048,
+                  "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
                   "type": "string"
                 },
                 {
@@ -3014,7 +3013,7 @@
         ]
       },
       "post": {
-        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.\n\nThe claims are resolved here rather than in the service because this request is\nthe only moment the triggering principal exists: nothing written later could\nrecover it. `actor_from_claims` never raises, so a credential that names no\nsubject records a `system` actor instead of failing the create.",
+        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.\n\nThe actor is taken from the verified claims here, because this request is the\nonly moment the triggering principal is known.",
         "operationId": "create_run_api_v1_runs_post",
         "requestBody": {
           "content": {
