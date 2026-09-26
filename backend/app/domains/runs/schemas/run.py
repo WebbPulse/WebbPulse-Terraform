@@ -85,6 +85,10 @@ class Run(BaseModel):
     queued_behind: Optional[str] = None
     """The run this one waits on, when it was queued rather than started."""
     changes: Optional[RunChanges] = None
+    """What the plan found. An apply never overwrites it."""
+    apply_changes: Optional[RunChanges] = None
+    """What the apply reported doing, from the engine's closing summary. `None`
+    until an apply succeeds, and on runs applied before this was recorded."""
     error: Optional[str] = None
     execution_arn: Optional[str] = None
     actor: Optional[RunActor] = None
@@ -193,6 +197,17 @@ class PlanOutputChange(BaseModel):
     sensitive: bool = False
 
 
+class AppliedOutput(BaseModel):
+    """One root output's value after a successful apply.
+
+    A sensitive output carries the redaction string rather than its value.
+    """
+
+    name: str
+    value: Any = None
+    sensitive: bool = False
+
+
 class RunPlan(BaseModel):
     """A run's plan as structured data, derived from `terraform show -json`.
 
@@ -207,6 +222,9 @@ class RunPlan(BaseModel):
     resource_changes: list[PlanResourceChange] = Field(default_factory=list)
     output_changes: list[PlanOutputChange] = Field(default_factory=list)
     has_changes: bool = False
+    applied_outputs: Optional[list[AppliedOutput]] = None
+    """The outputs as the apply left them, `None` until the run is applied and
+    on an apply that uploaded none."""
 
 
 class BackendConfig(BaseModel):
@@ -251,9 +269,10 @@ class Artifacts(BaseModel):
     plan_get_url: str
 
 
-ArtifactKind = Literal["plan", "plan_json", "log"]
-"""The three objects a phase uploads: the binary plan, its JSON rendering and
-the redacted transcript."""
+ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
+"""The objects a phase uploads: the binary plan, its JSON rendering, the
+redacted transcript and, after an apply, the outputs with sensitive values
+dropped."""
 
 
 class ArtifactUploadCreate(BaseModel):

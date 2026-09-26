@@ -271,7 +271,8 @@ def artifact_upload(payload: ArtifactUploadCreate, run_id: str = RunId) -> dict[
     sends the returned headers verbatim.
 
     The log's key is per phase and the phase comes from the run's status, so a
-    plan-phase runner cannot ask for the apply transcript's key.
+    plan-phase runner cannot ask for the apply transcript's key. The applied
+    outputs are an apply-phase artifact only, and a 422 anywhere else.
     """
     try:
         return service.artifact_upload(run_id, payload.artifact, payload.size_bytes)
@@ -280,6 +281,11 @@ def artifact_upload(payload: ArtifactUploadCreate, run_id: str = RunId) -> dict[
     except service.ArtifactTooLarge as error:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=str(error),
+        ) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(error),
         ) from error
 

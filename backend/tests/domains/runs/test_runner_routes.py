@@ -218,6 +218,24 @@ def test_the_log_upload_key_is_per_phase(auth_client, runner_client, created_run
     assert f"runs/{run_id}/apply.log" in apply["url"]
 
 
+def test_the_outputs_upload_is_an_apply_artifact(auth_client, runner_client, created_run, awaiting_confirmation):
+    """The applied outputs have their own key, and only an applying run may write it."""
+    refused = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": "outputs_json", "size_bytes": 64},
+    )
+    assert refused.status_code == 422
+
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    body = runner_client.post(
+        f"{BASE}/{run_id}/artifact-uploads",
+        json={"artifact": "outputs_json", "size_bytes": 64},
+    ).json()
+    assert f"runs/{run_id}/outputs.json" in body["url"]
+    assert body["headers"]["Content-Type"] == "application/json"
+
+
 @pytest.mark.parametrize(
     ("artifact", "size_bytes"),
     [("plan", 500_000_001), ("plan_json", 500_000_001), ("log", 50_000_001)],

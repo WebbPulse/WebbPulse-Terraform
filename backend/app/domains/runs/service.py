@@ -108,6 +108,7 @@ rather than failing the call that was meant to fail the run."""
 
 LOG_CONTENT_TYPE: Final = "text/plain"
 MAX_LOG_BYTES: Final = 50_000_000
+MAX_OUTPUTS_BYTES: Final = 10_000_000
 """A phase transcript is text, so fifty megabytes is far past any real run and
 still small enough that a signed URL cannot be used to park a large object."""
 
@@ -161,6 +162,11 @@ def plan_key(run_id: str) -> str:
 def plan_json_key(run_id: str) -> str:
     """The JSON plan key for one run."""
     return f"runs/{run_id}/plan.json"
+
+
+def outputs_key(run_id: str) -> str:
+    """The applied outputs key for one run, written once its apply succeeds."""
+    return f"runs/{run_id}/outputs.json"
 
 
 def log_key(run_id: str, phase: Phase) -> str:
@@ -711,6 +717,7 @@ def finish_run(
     *,
     error: str = "",
     changes: dict[str, int] | None = None,
+    apply_changes: dict[str, int] | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Move a run to a terminal status, revoke its token and promote its queue.
@@ -736,6 +743,8 @@ def finish_run(
         updates["error"] = error
     if changes is not None:
         updates["changes"] = changes
+    if apply_changes is not None:
+        updates["apply_changes"] = apply_changes
 
     run = get_run(run_id, settings=resolved)
     try:
@@ -811,6 +820,9 @@ def record_phase_result(
     successful plan finishes the run when it was `plan_only` or found no changes,
     and otherwise leaves it `awaiting_confirmation` for a human.
 
+    `changes` stays what the plan found. An apply's counts go to `apply_changes`
+    instead, so the run keeps the plan it confirmed next to what the apply did.
+
     A plan exiting 2 is a successful plan with changes, not a failure, because
     terraform plans under `-detailed-exitcode`. The runner already reports 0 for
     it; this keeps a runner that does not from erroring every plan with changes.
@@ -837,12 +849,12 @@ def record_phase_result(
             run_id,
             "errored",
             error=error or f"The {phase} phase exited {exit_code}.",
-            changes=changes,
+            changes=changes if phase == "plan" else None,
             settings=resolved,
         )
 
     if phase == "apply":
-        return finish_run(run_id, "applied", changes=changes, settings=resolved)
+        return finish_run(run_id, "applied", apply_changes=changes, settings=resolved)
 
     has_changes = any(int(changes.get(field, 0)) for field in ("add", "change", "destroy"))
     if bool(run.get("plan_only", False)) or not has_changes:
@@ -1146,6 +1158,47 @@ def summarise_plan(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def summarise_outputs(raw: Any) -> list[dict[str, Any]]:
+    """Project an `output -json` document into name, value and sensitivity.
+
+    The runner already drops sensitive values before upload, and they are
+    redacted again here so a document written any other way cannot leak one.
+    """
+    if not isinstance(raw, dict):
+        return []
+    outputs: list[dict[str, Any]] = []
+    for name, entry in sorted(raw.items()):
+        if not isinstance(entry, dict):
+            continue
+        sensitive = bool(entry.get("sensitive", False))
+        outputs.append(
+            {
+                "name": str(name),
+                "value": REDACTED if sensitive else entry.get("value"),
+                "sensitive": sensitive,
+            }
+        )
+    return outputs
+
+
+def _applied_outputs(run_id: str, settings: Settings) -> list[dict[str, Any]] | None:
+    """The run's applied outputs, or None when its apply uploaded none."""
+    from botocore.exceptions import ClientError
+
+    try:
+        response = _s3(settings).get_object(Bucket=settings.ARTIFACTS_BUCKET, Key=outputs_key(run_id))
+    except ClientError as error:
+        code = str(error.response.get("Error", {}).get("Code", ""))
+        if code in {"NoSuchKey", "404", "NotFound"}:
+            return None
+        raise
+    try:
+        document = json.loads(response["Body"].read(MAX_OUTPUTS_BYTES))
+    except ValueError:
+        return None
+    return summarise_outputs(document)
+
+
 def run_plan(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     """One run's plan, summarised and redacted for the viewer.
 
@@ -1160,7 +1213,7 @@ def run_plan(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]
     from botocore.exceptions import ClientError
 
     resolved = settings or get_settings()
-    get_run(run_id, settings=resolved)
+    run = get_run(run_id, settings=resolved)
 
     try:
         response = _s3(resolved).get_object(Bucket=resolved.ARTIFACTS_BUCKET, Key=plan_json_key(run_id))
@@ -1174,7 +1227,10 @@ def run_plan(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]
     document = json.loads(body)
     if not isinstance(document, dict):
         raise PlanNotFound(run_id)
-    return summarise_plan(run_id, document)
+    summary = summarise_plan(run_id, document)
+    if run.get("status") == "applied":
+        summary["applied_outputs"] = _applied_outputs(run_id, resolved)
+    return summary
 
 
 def _phase_for_status(status: str) -> Phase:
@@ -1306,7 +1362,8 @@ def artifact_upload(
     Raises:
         RunNotFound: No such run.
         ArtifactTooLarge: `size_bytes` is above the artifact's ceiling.
-        ValueError: `artifact` is not one of the three kinds.
+        ValueError: `artifact` is not a kind this run uploads, including
+            `outputs_json` outside the apply phase.
     """
     from webbpulse.storage import presigned_put
 
@@ -1320,6 +1377,8 @@ def artifact_upload(
         key, content_type, ceiling = plan_json_key(run_id), PLAN_JSON_CONTENT_TYPE, MAX_PLAN_BYTES
     elif artifact == "log":
         key, content_type, ceiling = log_key(run_id, phase), LOG_CONTENT_TYPE, MAX_LOG_BYTES
+    elif artifact == "outputs_json" and phase == "apply":
+        key, content_type, ceiling = outputs_key(run_id), PLAN_JSON_CONTENT_TYPE, MAX_OUTPUTS_BYTES
     else:
         raise ValueError(f"{artifact} is not an artifact this run uploads")
 
@@ -1386,6 +1445,8 @@ __all__ = [
     "log_key",
     "log_stream_name",
     "plan_json_key",
+    "outputs_key",
+    "summarise_outputs",
     "plan_key",
     "prune_semaphore",
     "record_phase_result",

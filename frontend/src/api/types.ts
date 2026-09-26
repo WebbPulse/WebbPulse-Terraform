@@ -165,6 +165,8 @@ export type PlanResourceChange = Schemas['PlanResourceChange'];
 
 /** One root output's change in a plan. */
 export type PlanOutputChange = Schemas['PlanOutputChange'];
+/** One root output's value after a successful apply, redacted when sensitive. */
+export type AppliedOutput = Schemas['AppliedOutput'];
 
 /**
  * What one resource or output is doing in the plan.

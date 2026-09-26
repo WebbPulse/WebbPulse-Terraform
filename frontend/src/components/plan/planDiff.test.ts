@@ -89,6 +89,43 @@ describe('attributeDiffs', () => {
     expect(diffs.every((diff) => diff.kind === 'removed')).toBe(true);
   });
 
+  it('leaves out the null attributes of a create', () => {
+    const diffs = attributeDiffs(
+      aResourceChange({
+        after: { length: 2, keepers: null, prefix: null },
+        after_unknown: { id: true },
+      })
+    );
+    expect(diffs.map((diff) => diff.key)).toEqual(['id', 'length']);
+  });
+
+  it('leaves out the null attributes of a delete', () => {
+    const diffs = attributeDiffs(
+      aResourceChange({
+        action: 'delete',
+        before: { id: 'lucky-horse', keepers: null },
+        after: null,
+        after_unknown: {},
+      })
+    );
+    expect(diffs.map((diff) => diff.key)).toEqual(['id']);
+  });
+
+  it('keeps an attribute that goes to or from null in an update', () => {
+    const diffs = attributeDiffs(
+      aResourceChange({
+        action: 'update',
+        before: { description: 'old', tags: null, note: null },
+        after: { description: null, tags: { team: 'platform' }, note: null },
+        after_unknown: {},
+      })
+    );
+    expect(diffs.map((diff) => [diff.key, diff.kind])).toEqual([
+      ['description', 'changed'],
+      ['tags', 'changed'],
+    ]);
+  });
+
   it('flags the attribute that forces a replacement', () => {
     const diffs = attributeDiffs(
       aResourceChange({
