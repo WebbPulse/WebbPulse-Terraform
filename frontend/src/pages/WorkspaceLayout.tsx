@@ -23,7 +23,6 @@ import {
   useWorkspaceNav,
 } from '../components';
 import { NewRunDialog } from './workspace/NewRunDialog';
-import { listRunHistory } from '../api/runHistory';
 import { isSetupComplete, setupSteps } from './workspace/setup';
 import { workspaceKeys, type WorkspaceContext } from './workspaceContext';
 
@@ -44,7 +43,7 @@ export function WorkspaceLayout(): React.ReactElement {
     { intervalMs: 30_000, queryKey: keys.versions, auth, enabled }
   );
   const runs = usePolledQuery<RunList>(
-    ({ signal }) => listRunHistory({ workspace_id: workspaceId }, signal),
+    ({ signal }) => api.listRuns({ workspace_id: workspaceId }, { signal }),
     { intervalMs: 10_000, queryKey: keys.runs, auth, enabled }
   );
   const name = query.data?.name ?? null;

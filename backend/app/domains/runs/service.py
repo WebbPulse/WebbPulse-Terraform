@@ -22,8 +22,6 @@ slot permanently.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -43,7 +41,6 @@ from ...common.db.tables import (
 )
 from ...common.workspaces import reads as workspace_reads
 from . import session_policy
-from .actor import SYSTEM_ACTOR, actor_columns, actor_from_row
 from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
 
 _log = logging.getLogger(__name__)
@@ -51,11 +48,10 @@ _log = logging.getLogger(__name__)
 RUN_ID_PREFIX: Final = "run-"
 
 DEFAULT_RUN_PAGE_SIZE: Final = 50
-"""How many runs a list returns when the caller names no limit."""
+"""How many runs a cross-workspace page holds when the caller names no limit."""
 
 MAX_RUN_PAGE_SIZE: Final = 200
-"""The ceiling a caller's `limit` is clamped to, so one request cannot walk the
-whole index."""
+"""The largest cross-workspace page a caller may ask for."""
 
 EXECUTING_STATUSES: Final = frozenset({"planning", "planned", "awaiting_confirmation", "applying"})
 """A run in one of these has an execution and may hold the state lock. `planned` is
@@ -326,7 +322,7 @@ def _queued_runs(workspace_id: str, *, settings: Settings) -> list[dict[str, Any
 def create_run(
     payload: dict[str, Any],
     *,
-    actor: Mapping[str, Any] | None = None,
+    actor: Optional[Mapping[str, Any]],
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Create a run, starting it or queueing it behind the workspace's active one.
@@ -344,12 +340,9 @@ def create_run(
 
     Args:
         payload: The validated create body.
-        actor: Who triggered this run, already derived from the request's claims by
-            the route. `None` means no principal, which is every internal path and
-            which stores a `system` actor rather than failing the create: a run the
-            control plane started for itself is a true statement, and refusing to
-            create one over attribution would take the product down for a defect in
-            a field nothing depends on.
+        actor: Who triggered this run, derived from the request's claims by the
+            route, or `None` when the claims named no subject, which stores no
+            actor rather than inventing one.
         settings: Overrides the resolved settings, for the suite.
 
     Raises:
@@ -386,8 +379,9 @@ def create_run(
         "message": str(payload.get("message", "")),
         "created_at": timestamp,
         "updated_at": timestamp,
-        **actor_columns(actor if actor is not None else SYSTEM_ACTOR),
     }
+    if actor is not None:
+        item["actor"] = dict(actor)
     if blocking is not None:
         item["queued_behind"] = str(blocking["run_id"])
 
@@ -555,80 +549,23 @@ def get_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     return dict(item)
 
 
-def encode_cursor(key: Mapping[str, Any] | None) -> Optional[str]:
-    """A DynamoDB `LastEvaluatedKey` as the opaque string a client pages with.
-
-    Encoding is not authentication; the query enforces the requested partition.
-    """
-    if not key:
-        return None
-    return base64.urlsafe_b64encode(json.dumps(dict(key), sort_keys=True).encode()).decode()
-
-
-def decode_cursor(cursor: Optional[str], *, index_name: Optional[str] = None) -> Optional[dict[str, Any]]:
-    """The start key a cursor names, or `None` for no cursor.
-
-    A cursor that is not decodable base64 JSON of an object reads as no cursor, so
-    a mangled or stale one restarts the listing rather than 500ing. It cannot widen
-    a read: the key condition is set by the caller's scope and not by the cursor,
-    so the worst a forged cursor does is skip a client past its own rows.
-
-    Naming an index additionally requires the cursor to carry exactly that index's
-    key attributes. The two indexes key on different attributes, so a cursor from
-    one is not a start key for the other, and DynamoDB answers a mismatched
-    `ExclusiveStartKey` with a validation error rather than by ignoring it. Reading
-    a foreign cursor as no cursor turns what would be a 500 into the first page,
-    which is the same tolerance a mangled cursor already gets.
-    """
-    if not cursor:
-        return None
-    try:
-        decoded = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-    except (ValueError, binascii.Error, UnicodeDecodeError):
-        return None
-    if not isinstance(decoded, dict):
-        return None
-    if any(
-        not isinstance(value, str) or not value or not value.isascii() or len(value) > 1024
-        for value in decoded.values()
-    ):
-        return None
-    if index_name is not None and set(decoded) != set(_cursor_attributes(index_name)):
-        return None
-    return decoded
-
-
-def list_runs(
-    workspace_id: str,
-    *,
-    limit: int = DEFAULT_RUN_PAGE_SIZE,
-    cursor: Optional[str] = None,
-    settings: Settings | None = None,
-) -> tuple[list[dict[str, Any]], Optional[str]]:
-    """One page of one workspace's runs, newest first, never the semaphore row.
-
-    Args:
-        workspace_id: The workspace to scope to.
-        limit: How many rows to return at most.
-        cursor: A `next_cursor` from a previous page, or `None` to start.
-        settings: Overrides the resolved settings, for the suite.
-
-    Returns:
-        The page's rows and the cursor continuing it, `None` on the last page.
+def list_runs(workspace_id: str, *, settings: Settings | None = None) -> list[dict[str, Any]]:
+    """One workspace's runs, newest first, never the semaphore row.
 
     Raises:
         WorkspaceNotFound: No such workspace, which is a 404 rather than an empty list.
     """
     resolved = settings or get_settings()
     workspace_reads.get_workspace(workspace_id, settings=resolved)
-    return _page_runs(
-        Key("workspace_id").eq(workspace_id),
-        index_name=RUNS_BY_WORKSPACE_INDEX,
-        limit=limit,
-        cursor=cursor,
-        settings=resolved,
-        partition=("workspace_id", workspace_id),
-    )
+    return [
+        dict(item)
+        for item in _runs(resolved).iter_query(
+            Key("workspace_id").eq(workspace_id),
+            index_name=RUNS_BY_WORKSPACE_INDEX,
+            ascending=False,
+        )
+        if _is_run_row(item)
+    ]
 
 
 def list_all_runs(
@@ -637,86 +574,27 @@ def list_all_runs(
     cursor: Optional[str] = None,
     settings: Settings | None = None,
 ) -> tuple[list[dict[str, Any]], Optional[str]]:
-    """One page of every workspace's runs together, newest first.
+    """One page of every workspace's runs, newest first, off `by_recency`.
 
-    Served by the `by_recency` index, whose partition is the constant `collection`
-    attribute and whose sort key is the run's own ULID id, so recency ordering
-    comes free and no second attribute has to stay in step with `created_at`.
+    The cursor is the `run_id` of the last run on the previous page. The partition
+    is fixed here and never read from the cursor, so a cursor can only position a
+    read inside this list.
 
-    The index projects only what a list row renders, so a row here carries fewer
-    attributes than the same row read by id. That is the point: the view this feeds
-    shows a status and a timestamp per workspace and has no use for the rest.
-
-    Nothing in this function is an authorization boundary. Scoping is the route's
-    job, and it is the same scope the per workspace list enforces because this
-    control plane has one tenant and no per workspace ACL.
+    Returns:
+        The page's runs and the cursor continuing it, `None` on the last page.
     """
     resolved = settings or get_settings()
-    return _page_runs(
+    start_key = None if cursor is None else {"collection": RUNS_COLLECTION, "run_id": cursor}
+    page = _runs(resolved).query(
         Key("collection").eq(RUNS_COLLECTION),
         index_name=RUNS_BY_RECENCY_INDEX,
         limit=limit,
-        cursor=cursor,
-        settings=resolved,
-        partition=("collection", RUNS_COLLECTION),
+        start_key=start_key,
+        ascending=False,
     )
-
-
-def _page_runs(
-    key_condition: Any,
-    *,
-    index_name: str,
-    limit: int,
-    cursor: Optional[str],
-    settings: Settings,
-    partition: tuple[str, str],
-) -> tuple[list[dict[str, Any]], Optional[str]]:
-    """One page of runs off `index_name`, newest first, never the semaphore row.
-
-    Pages until it has `limit` run rows or the index runs out, rather than
-    returning one short page per DynamoDB call: the semaphore row is filtered out
-    here, so a raw page can come back under the limit while more rows remain, and a
-    client that stopped at the first short page would miss them.
-    """
-    bounded = max(1, min(int(limit), MAX_RUN_PAGE_SIZE))
-    repository = _runs(settings)
-    start_key = decode_cursor(cursor, index_name=index_name)
-    if start_key is not None and start_key.get(partition[0]) != partition[1]:
-        start_key = None
-    collected: list[dict[str, Any]] = []
-    next_key: Optional[dict[str, Any]] = None
-
-    while True:
-        page = repository.query(
-            key_condition,
-            index_name=index_name,
-            limit=bounded,
-            start_key=start_key,
-            ascending=False,
-        )
-        collected.extend(dict(item) for item in page.items if _is_run_row(item))
-        next_key = page.last_evaluated_key
-        if len(collected) >= bounded or not next_key:
-            break
-        start_key = next_key
-
-    if len(collected) > bounded:
-        collected = collected[:bounded]
-        next_key = {name: collected[-1][name] for name in _cursor_attributes(index_name)}
-
-    return collected, encode_cursor(next_key)
-
-
-def _cursor_attributes(index_name: str) -> tuple[str, ...]:
-    """The attributes a start key for `index_name` is built from.
-
-    A GSI's key is its own two attributes plus the table's key, which is what
-    DynamoDB returns in `LastEvaluatedKey` and therefore what a cursor rebuilt from
-    a row has to carry.
-    """
-    if index_name == RUNS_BY_RECENCY_INDEX:
-        return ("run_id", "collection")
-    return ("run_id", "workspace_id", "created_at")
+    items = [dict(item) for item in page.items if _is_run_row(item)]
+    last = page.last_evaluated_key
+    return items, None if last is None else str(last["run_id"])
 
 
 def confirm_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
@@ -1461,25 +1339,11 @@ def render_run(item: dict[str, Any]) -> dict[str, Any]:
     """Strip the stored-only fields a run row carries.
 
     The task tokens and the token hash never leave the service: a caller holding a
-    confirm task token could confirm a run it has no scope for.
-
-    The actor's flat columns are folded back into the nested `actor` object the
-    contract describes, and `collection` is dropped: it is the `by_recency`
-    partition key and a constant, so it says nothing a caller could use. A row
-    written before attribution shipped renders `actor` as null, which the model
-    allows and nothing backfills.
+    confirm task token could confirm a run it has no scope for. `collection` is the
+    constant `by_recency` partition key and says nothing to a caller.
     """
-    hidden = {
-        "confirm_task_token",
-        "run_token_hash",
-        "collection",
-        "actor_kind",
-        "actor_id",
-        "actor_display_name",
-    }
-    rendered = {field: value for field, value in item.items() if field not in hidden}
-    rendered["actor"] = actor_from_row(item)
-    return rendered
+    hidden = {"confirm_task_token", "run_token_hash", "collection"}
+    return {field: value for field, value in item.items() if field not in hidden}
 
 
 __all__ = [
@@ -1516,8 +1380,6 @@ __all__ = [
     "get_run",
     "list_all_runs",
     "list_runs",
-    "decode_cursor",
-    "encode_cursor",
     "log_key",
     "log_stream_name",
     "plan_json_key",

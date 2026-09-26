@@ -24,52 +24,14 @@ RUNS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 RUNS_BY_RECENCY_INDEX: Final = "by_recency"
 """The GSI listing every workspace's runs together, newest last by `run_id`.
 
-Partitioned on the constant `collection` attribute, because listing across
-workspaces has no natural key to group on and the contract sizes this control
-plane at about 25 runs on an active day with a peak of 73. That is four orders of
-magnitude under the partition's own write ceiling, so the single partition a
-constant key produces is the cheapest correct answer rather than a hot spot. The
-sort key is `run_id`, which is a ULID and therefore already lexicographically
-ordered by creation time, so recency needs no second attribute.
-
-The projection is deliberately narrow: the workspace list renders a status badge
-and a timestamp per row, so only the attributes that view reads are carried and
-the index stays a fraction of the table.
+Partitioned on the constant `collection` attribute, since a cross-workspace list has
+no natural key to group on and run volume sits far under one partition's ceiling.
+`run_id` is a ULID, so it orders by creation time on its own.
 """
 
 RUNS_COLLECTION: Final = "run"
-"""The one value `collection` ever holds, which is what makes `by_recency` a single
-partition. Stamped on every run row at create and never on the semaphore row, so
-the reserved row stays out of the index the way it stays out of `by_workspace`."""
-
-RUNS_BY_RECENCY_ATTRIBUTES: Final = (
-    "run_id",
-    "collection",
-    "workspace_id",
-    "config_version_id",
-    "status",
-    "created_at",
-    "updated_at",
-    "plan_only",
-    "message",
-    "changes",
-    "actor_kind",
-    "actor_id",
-    "actor_display_name",
-)
-"""What `by_recency` projects, which is the smallest set that renders a list row.
-
-Two constraints fix this set and neither is negotiable. The contract's `Run` model
-requires `config_version_id`, so a projected row without it fails response
-validation rather than rendering short. The list view itself reads `message` for
-the run title, `changes` for the change counts, `status` for the badge,
-`created_at` for the timestamp, `plan_only` for the kind and the actor columns for
-the attribution.
-
-Everything else a run carries stays off the index deliberately: the plan and apply
-timestamps, the queue pointer, the error text, the execution ARN and both secrets
-are read only on a single run's own page, which fetches the full row by id.
-"""
+"""The one value `collection` holds. Stamped on every run row at create and never
+on the semaphore row, so the reserved row stays out of `by_recency`."""
 
 CONFIG_VERSIONS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 """The GSI listing one workspace's config versions, newest last by `created_at`."""
@@ -124,12 +86,7 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
                     {"AttributeName": "collection", "KeyType": "HASH"},
                     {"AttributeName": "run_id", "KeyType": "RANGE"},
                 ],
-                "Projection": {
-                    "ProjectionType": "INCLUDE",
-                    "NonKeyAttributes": [
-                        name for name in RUNS_BY_RECENCY_ATTRIBUTES if name not in ("collection", "run_id")
-                    ],
-                },
+                "Projection": {"ProjectionType": "ALL"},
             },
         ],
     },

@@ -1,4 +1,17 @@
-"""Populate the recency index without reading secrets or inventing run actors."""
+"""One-off: stamp `collection = "run"` on runs written before `by_recency` existed.
+
+A GSI only holds items carrying its key attributes, and rows created before this
+change lack `collection`, so they are missing from the cross-workspace list until
+this runs. It sets that one attribute and nothing else: legacy runs keep no actor,
+because who triggered them was never recorded.
+
+Run by hand from `backend/` once the index is ACTIVE and the backend that stamps
+new rows is deployed. Dry run by default; `--write` applies conditional updates,
+so a rerun or an overlapping run changes nothing twice. Each call scans at most
+`--max-pages` pages; continue with `--after NEXT_AFTER` until it prints null.
+
+    uv run python scripts/backfill_run_collection.py --table TABLE --region us-west-2 [--write]
+"""
 
 import argparse
 import json
@@ -64,7 +77,7 @@ def backfill(
 
 def main() -> None:
     """Require an explicit table and region; only --write enables conditional updates."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--table", required=True)
     parser.add_argument("--region", required=True)
     parser.add_argument("--write", action="store_true")

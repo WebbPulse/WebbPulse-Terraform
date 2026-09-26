@@ -13,11 +13,11 @@ interface EveryRun {
   workspaceNames: Map<string, string>;
 }
 
-/** Load global history and workspace labels concurrently. */
+/** Every run in the environment, newest first, with its workspace's name. */
 async function listEveryRun(signal: AbortSignal): Promise<EveryRun> {
-  const [workspaces, history] = await Promise.all([
+  const [workspaces, items] = await Promise.all([
     api.listWorkspaces({ signal }),
-    listRunHistory({}, signal),
+    listRunHistory(signal),
   ]);
   const workspaceNames = new Map(
     workspaces.items.map((workspace) => [
@@ -25,7 +25,7 @@ async function listEveryRun(signal: AbortSignal): Promise<EveryRun> {
       workspace.name,
     ])
   );
-  return { items: history.items, workspaceNames };
+  return { items, workspaceNames };
 }
 
 /** The runs page. */

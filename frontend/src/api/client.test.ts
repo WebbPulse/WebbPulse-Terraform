@@ -192,12 +192,23 @@ describe('TerraformApi runs', () => {
     expect(transport.requests[0]?.query.get('workspace_id')).toBe('ws-1');
   });
 
-  it('always sends the workspace, which the route requires', async () => {
+  it('lists across workspaces with only the paging it was given', async () => {
     const { api, transport } = apiOver({
-      'GET /api/v1/runs': { body: { items: [] } },
+      'GET /api/v1/runs': { body: { items: [], next_cursor: null } },
     });
-    await api.listRuns({ workspace_id: 'ws-2' });
-    expect(transport.requests[0]?.query.get('workspace_id')).toBe('ws-2');
+    await api.listRuns({ limit: 10, cursor: 'run-1' });
+    const query = transport.requests[0]?.query;
+    expect(query?.has('workspace_id')).toBe(false);
+    expect(query?.get('limit')).toBe('10');
+    expect(query?.get('cursor')).toBe('run-1');
+  });
+
+  it('sends no query at all for the first cross-workspace page', async () => {
+    const { api, transport } = apiOver({
+      'GET /api/v1/runs': { body: { items: [], next_cursor: null } },
+    });
+    await api.listRuns();
+    expect([...(transport.requests[0]?.query.keys() ?? [])]).toEqual([]);
   });
 
   it('starts a run with the contract body', async () => {
