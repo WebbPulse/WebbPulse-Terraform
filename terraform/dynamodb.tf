@@ -6,10 +6,12 @@ locals {
         { name = "workspace_id", type = "S" },
         { name = "name", type = "S" },
         { name = "vcs_repo_key", type = "S" },
+        { name = "vcs_repository_id", type = "S" },
       ]
       global_secondary_indexes = [
         { name = "by_name", hash_key = "name", projection_type = "ALL" },
         { name = "by_vcs_repo", hash_key = "vcs_repo_key", projection_type = "ALL" },
+        { name = "by_vcs_repository_id", hash_key = "vcs_repository_id", projection_type = "ALL" },
       ]
     }
 
