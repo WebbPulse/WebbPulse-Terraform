@@ -15,6 +15,10 @@ VariableCategory = Literal["terraform", "env"]
 becomes a process environment variable on the task."""
 
 
+VCS_REPO_PATTERN: Final = r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"
+"""A GitHub `owner/name`."""
+
+
 class RunRoleSetup(BaseModel):
     """What a person needs to build the run role for one workspace.
 
@@ -44,6 +48,15 @@ class WorkspaceBase(BaseModel):
     run_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
     working_directory: str = ""
     description: str = ""
+    vcs_repo: Optional[str] = Field(default=None, max_length=140, pattern=VCS_REPO_PATTERN)
+    """The GitHub repository, as `owner/name`, whose uploads may start runs here."""
+    tracked_branch: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    """The branch whose pushes start a normal run. No branch means pushes are ignored."""
+    trigger_patterns: list[str] = Field(default_factory=list, max_length=50)
+    """Glob patterns over repository paths. An upload starts a run only when a changed
+    path matches one. Empty means everything under the working directory."""
+    speculative_plans: bool = True
+    """Whether a pull request upload starts a plan only run."""
 
 
 class WorkspaceCreate(WorkspaceBase):
@@ -52,11 +65,19 @@ class WorkspaceCreate(WorkspaceBase):
     name: str = Field(min_length=1, max_length=90, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
-CLEARABLE_WORKSPACE_FIELDS: Final = ("run_role_arn", "working_directory", "description")
+CLEARABLE_WORKSPACE_FIELDS: Final = (
+    "run_role_arn",
+    "working_directory",
+    "description",
+    "vcs_repo",
+    "tracked_branch",
+    "trigger_patterns",
+    "speculative_plans",
+)
 """The update fields an explicit JSON null clears.
 
 The body follows JSON Merge Patch: an omitted key leaves the stored value alone
-and an explicit null removes the attribute from the row. Only these three carry a
+and an explicit null removes the attribute from the row. Only these fields carry a
 meaningful "not set" state. `engine` and `engine_version` are required on a stored
 workspace, so a null on either is a validation error rather than a clear.
 """
@@ -81,6 +102,10 @@ class WorkspaceUpdate(BaseModel):
     run_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
     working_directory: Optional[str] = None
     description: Optional[str] = None
+    vcs_repo: Optional[str] = Field(default=None, max_length=140, pattern=VCS_REPO_PATTERN)
+    tracked_branch: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    trigger_patterns: Optional[list[str]] = Field(default=None, max_length=50)
+    speculative_plans: Optional[bool] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -89,7 +114,7 @@ class WorkspaceUpdate(BaseModel):
 
         Every field defaults to `None` so that an omitted key stays unset, which is
         what keeps absent apart from null. That default makes `None` an accepted
-        value on all five, so the two non-clearable fields are refused here instead
+        value on every field, so the two non-clearable fields are refused here instead
         of by their annotation. Without this a null on `engine_version` would be
         read as a clear of a required attribute, and silently dropped.
         """
@@ -117,6 +142,9 @@ class Workspace(WorkspaceBase):
     """When a run last proved the runner assumed the role, as of the last recorded check."""
     run_role_account_id: Optional[str] = None
     """The account the role ARN names, as of that recorded check."""
+    vcs_repository_id: Optional[str] = None
+    """The GitHub id of the bound repository, recorded on the first upload so the
+    binding survives a rename. Cleared whenever `vcs_repo` changes."""
 
     model_config = ConfigDict(from_attributes=True)
 
