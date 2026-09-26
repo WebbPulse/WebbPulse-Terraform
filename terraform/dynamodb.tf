@@ -21,25 +21,7 @@ locals {
       ]
       global_secondary_indexes = [
         { name = "by_workspace", hash_key = "workspace_id", range_key = "created_at", projection_type = "ALL" },
-        {
-          name            = "by_recency"
-          hash_key        = "collection"
-          range_key       = "run_id"
-          projection_type = "INCLUDE"
-          non_key_attributes = [
-            "workspace_id",
-            "config_version_id",
-            "status",
-            "created_at",
-            "updated_at",
-            "plan_only",
-            "message",
-            "changes",
-            "actor_kind",
-            "actor_id",
-            "actor_display_name",
-          ]
-        },
+        { name = "by_recency", hash_key = "collection", range_key = "run_id", projection_type = "ALL" },
       ]
     }
 
