@@ -53,9 +53,9 @@ the token. The runner then:
 1. `GET {API_BASE_URL}/api/v1/runs/{RUN_ID}/bundle` with the run token as
    bearer, validating the response as `Bundle`: `run_id`, `workspace_id`,
    `engine`, `engine_version`, `config_url`, the nested `backend`, `run_role`
-   and `artifacts`, `working_directory` and the three variable maps. The backend
-   also sends `phase` and `plan_only`, which the model ignores: the phase comes
-   from `PHASE`.
+   and `artifacts`, `working_directory`, `is_destroy` and the three variable
+   maps. The backend also sends `phase` and `plan_only`, which the model
+   ignores: the phase comes from `PHASE`.
 2. Downloads and unpacks the config tarball, refusing members that escape the
    unpack directory, then resolves `working_directory` under it. An absolute
    value, one climbing out with `..`, or one the configuration does not carry
@@ -76,8 +76,9 @@ the token. The runner then:
    phase session policy, and exports only those credentials to the engine.
 5. Runs the engine from the working directory: `init`, then
    `plan -out plan.tfplan -detailed-exitcode` plus `show -json`
-   for the plan phase, or downloads `plan.tfplan` and runs `apply plan.tfplan`
-   for the apply phase.
+   for the plan phase, with `-destroy` added when the bundle's `is_destroy` is
+   set, or downloads `plan.tfplan` and runs `apply plan.tfplan` for the apply
+   phase, which applies a destroy plan the same way.
 6. Streams the engine's combined output line by line to the `<run_id>/<phase>`
    stream in `RUNNER_LOG_GROUP` and to stdout.
 7. Uploads `plan.tfplan` and `plan.json` on a plan phase and the redacted log on

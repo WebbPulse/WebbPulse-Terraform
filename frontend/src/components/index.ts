@@ -7,6 +7,7 @@ export {
 export { Button, type ButtonProps, type ButtonVariant } from './Button';
 export { CodeBlock, type CodeBlockProps } from './CodeBlock';
 export { CopyButton, type CopyButtonProps } from './CopyButton';
+export { DestroyBadge, type DestroyBadgeProps } from './DestroyBadge';
 export { Dialog, type DialogProps } from './Dialog';
 export { Disclosure, type DisclosureProps } from './Disclosure';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
@@ -58,7 +59,13 @@ export {
 export { RunLogViewer, type RunLogViewerProps } from './RunLogViewer';
 export { RailGroupLabel, RailLink, type RailLinkProps } from './RailLink';
 export { RunList, type RunListProps } from './RunList';
-export { changeSummary, runPath, runTitle } from './runText';
+export {
+  changeSummary,
+  isDestroyRun,
+  runKind,
+  runPath,
+  runTitle,
+} from './runText';
 export {
   SegmentedControl,
   type Segment,

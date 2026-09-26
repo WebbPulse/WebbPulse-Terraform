@@ -456,3 +456,27 @@ def test_create_is_409_when_the_pending_versions_object_is_absent(auth_client, w
 
     assert response.status_code == 409, response.text
     assert stored_config_version_status(version["config_version_id"]) == "pending"
+
+
+def test_a_run_is_not_a_destroy_by_default(created_run):
+    """A create that does not ask for a destroy plans normally."""
+    assert created_run["is_destroy"] is False
+    assert stored_run(created_run["run_id"])["is_destroy"] is False
+
+
+def test_create_records_a_destroy_run(auth_client, workspace, uploaded_config_version, state_machine):
+    """`is_destroy` lands on the run and reads back."""
+    body = auth_client.post(
+        BASE,
+        json=create_body(workspace["workspace_id"], uploaded_config_version["config_version_id"], is_destroy=True),
+    ).json()
+    assert body["is_destroy"] is True
+    assert body["plan_only"] is False
+    assert auth_client.get(f"{BASE}/{body['run_id']}").json()["is_destroy"] is True
+
+
+def test_a_run_row_written_before_destroy_runs_reads_as_not_a_destroy(created_run, auth_client):
+    """A row with no `is_destroy` attribute renders `False` rather than failing validation."""
+    table = boto3.resource("dynamodb", region_name=REGION).Table(local_table_name(RUNS, ENVIRONMENT))
+    table.update_item(Key={"run_id": created_run["run_id"]}, UpdateExpression="REMOVE is_destroy")
+    assert auth_client.get(f"{BASE}/{created_run['run_id']}").json()["is_destroy"] is False

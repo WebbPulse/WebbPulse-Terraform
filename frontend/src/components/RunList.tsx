@@ -5,7 +5,14 @@ import { Link } from 'react-router-dom';
 import { runGroup, type Run } from '../api';
 import { EmptyState } from './EmptyState';
 import { formatDateTime, formatRelative, shortRunId } from './format';
-import { changeSummary, runPath, runTitle } from './runText';
+import { DestroyBadge } from './DestroyBadge';
+import {
+  changeSummary,
+  isDestroyRun,
+  runKind,
+  runPath,
+  runTitle,
+} from './runText';
 import { StateBadge } from './StateBadge';
 
 /** Props for {@link RunList}. */
@@ -45,20 +52,21 @@ export function RunList({
             }`}
           >
             <div className="min-w-0 flex-1">
-              <Link
-                to={runPath(run)}
-                className="block truncate text-sm font-medium text-text-strong hover:text-accent hover:underline"
-              >
-                {runTitle(run)}
-              </Link>
+              <div className="flex min-w-0 items-center gap-2">
+                <Link
+                  to={runPath(run)}
+                  className="block truncate text-sm font-medium text-text-strong hover:text-accent hover:underline"
+                >
+                  {runTitle(run)}
+                </Link>
+                {isDestroyRun(run) ? <DestroyBadge /> : null}
+              </div>
               <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-text-faint">
                 <span className="font-mono" title={run.run_id}>
                   #{shortRunId(run.run_id)}
                 </span>
                 <span aria-hidden="true">|</span>
-                <span>
-                  {run.plan_only ? 'plan only run' : 'plan and apply run'}
-                </span>
+                <span>{runKind(run).toLowerCase()}</span>
                 {workspaceNames === undefined ? null : (
                   <>
                     <span aria-hidden="true">|</span>

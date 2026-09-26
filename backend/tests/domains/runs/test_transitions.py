@@ -322,3 +322,41 @@ def test_cancel_revokes_the_run_token(runner_client, created_run):
     run_id = created_run["run_id"]
     runs_service.cancel_run(run_id)
     assert runner_client.get(f"{BASE}/{run_id}/bundle").status_code == 401
+
+
+DESTROY_PLAN = {
+    "phase": "plan",
+    "exit_code": 0,
+    "changes": {"add": 0, "change": 0, "destroy": 1},
+    "error": "",
+}
+
+
+def _destroy_run(auth_client, workspace, uploaded_config_version, *, plan_only: bool) -> dict:
+    """A started destroy run on the fixture workspace."""
+    response = auth_client.post(
+        BASE,
+        json={
+            "workspace_id": workspace["workspace_id"],
+            "config_version_id": uploaded_config_version["config_version_id"],
+            "plan_only": plan_only,
+            "is_destroy": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_a_destroy_plan_awaits_confirmation(auth_client, workspace, uploaded_config_version, state_machine):
+    """A destroy plan that found resources stops for a human like any plan."""
+    run = _destroy_run(auth_client, workspace, uploaded_config_version, plan_only=False)
+    updated = runs_service.record_phase_result(run["run_id"], DESTROY_PLAN)
+    assert updated["status"] == "awaiting_confirmation"
+    assert updated["is_destroy"] is True
+
+
+def test_a_plan_only_destroy_run_never_applies(auth_client, workspace, uploaded_config_version, state_machine):
+    """`plan_only` holds for a destroy run: the plan finishes and nothing is destroyed."""
+    run = _destroy_run(auth_client, workspace, uploaded_config_version, plan_only=True)
+    updated = runs_service.record_phase_result(run["run_id"], DESTROY_PLAN)
+    assert updated["status"] == "planned_and_finished"

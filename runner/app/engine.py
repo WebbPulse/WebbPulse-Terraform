@@ -93,11 +93,12 @@ class EngineRunner:
         exit_code, _ = self.run(["init", "-input=false"])
         return exit_code
 
-    def plan(self) -> int:
-        """Produce a plan file, returning the detailed exit code."""
-        exit_code, _ = self.run(
-            ["plan", "-input=false", "-lock-timeout=120s", f"-out={PLAN_FILE}", "-detailed-exitcode"]
-        )
+    def plan(self, *, destroy: bool = False) -> int:
+        """Produce a plan file, a destroy plan when `destroy`, returning the detailed exit code."""
+        arguments = ["plan", "-input=false", "-lock-timeout=120s", f"-out={PLAN_FILE}", "-detailed-exitcode"]
+        if destroy:
+            arguments.append("-destroy")
+        exit_code, _ = self.run(arguments)
         return exit_code
 
     def show_plan_json(self) -> tuple[int, str]:

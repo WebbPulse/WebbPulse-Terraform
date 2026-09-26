@@ -158,6 +158,10 @@ class Bundle(BaseModel):
     means the tarball root, which is the common case."""
     backend: BackendConfig
     run_role: RunRole
+    is_destroy: bool = False
+    """Plan the destruction of every managed resource with `plan -destroy`. Only the
+    plan phase reads it: the apply applies the saved plan, which already carries the
+    destroy mode. A bundle from a control plane that predates destroy runs has none."""
     environment_variables: dict[str, str] = Field(default_factory=dict)
     terraform_variables: dict[str, object] = Field(default_factory=dict)
     """Literal values. They go to a JSON tfvars file, where a string is a string

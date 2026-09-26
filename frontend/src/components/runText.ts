@@ -23,3 +23,16 @@ export function runTitle(run: Run): string {
     ? `Run ${shortRunId(run.run_id)}`
     : run.message;
 }
+
+/** Whether the run plans the destruction of every resource the workspace manages. */
+export function isDestroyRun(run: Pick<Run, 'is_destroy'>): boolean {
+  return run.is_destroy === true;
+}
+
+/** What kind of run it is, as a sentence-case phrase such as "Destroy run". */
+export function runKind(run: Pick<Run, 'is_destroy' | 'plan_only'>): string {
+  if (isDestroyRun(run)) {
+    return run.plan_only ? 'Plan only destroy run' : 'Destroy run';
+  }
+  return run.plan_only ? 'Plan only run' : 'Plan and apply run';
+}

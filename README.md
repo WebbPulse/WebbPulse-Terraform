@@ -237,6 +237,7 @@ shape is `Bundle` in `runner/app/models.py`, which the backend serves exactly:
 | `run_id`, `workspace_id` | The run and its workspace |
 | `phase` | Derived from the run's status, never taken from the caller |
 | `plan_only` | Whether the run stops after the plan |
+| `is_destroy` | Whether the plan phase runs `plan -destroy`; the apply applies the saved plan either way |
 | `engine`, `engine_version` | `terraform` or `tofu`, and the pinned version |
 | `working_directory` | Directory within the configuration to run the engine from, empty for the root |
 | `config_url` | Presigned GET for the config tarball |
@@ -246,9 +247,9 @@ shape is `Bundle` in `runner/app/models.py`, which the backend serves exactly:
 | `artifacts` | `plan_put_url`, `plan_json_put_url`, `plan_get_url`, `log_put_url` |
 
 The session policy is read only for a plan and unrestricted for an apply. The
-runner models the nested objects, `engine_version` and `working_directory`, and
-ignores `phase` and `plan_only`, which state what the API served rather than
-instructing it: the runner takes its phase from `PHASE`.
+runner models the nested objects, `engine_version`, `working_directory` and
+`is_destroy`, and ignores `phase` and `plan_only`, which state what the API
+served rather than instructing it: the runner takes its phase from `PHASE`.
 
 Presigned URLs live for one hour and all four objects sit under `runs/<run_id>/`
 in the artifacts bucket, which is the prefix the bucket's lifecycle rule expires.
