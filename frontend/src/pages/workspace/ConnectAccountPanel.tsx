@@ -7,14 +7,20 @@ import {
 } from '@webbpulse/api-client/react';
 
 import {
+  PERMISSIONS_CHOICES,
   SNIPPET_FORMATS,
+  accountIdFromArn,
+  accountIdProblem,
   accountStatus,
   api,
+  normalizeAccountId,
   runRoleArnProblem,
   runRolePrefix,
   snippetFor,
   trustedPrincipals,
   type RunRoleCheck,
+  type RunRolePermissions,
+  type RunRoleQuickSetup,
   type SnippetFormat,
   type Workspace,
 } from '../../api';
@@ -37,53 +43,326 @@ export interface ConnectAccountPanelProps {
   runRoleCheck: RunRoleCheck | null;
   /** The workspace frame's refetch keys, so a save or a check refreshes every reader. */
   keys: WorkspaceKeys;
-  /** Folds the role creation snippets behind a disclosure. */
-  collapsible?: boolean;
 }
 
-/** The explanation, the role snippets, and the ARN form with its check. */
+/**
+ * AWS quick setup first, the connection state under it, and the manual path
+ * folded away for anyone creating the role with their own tooling.
+ */
 export function ConnectAccountPanel({
   workspace,
   runRoleCheck,
   keys,
-  collapsible = false,
 }: ConnectAccountPanelProps): React.ReactElement {
   const { run_role_setup: setup } = workspace;
   return (
     <div className="space-y-5">
       <p className="max-w-prose text-sm text-text-muted">
         Runs assume an IAM role in your AWS account to read and write your
-        infrastructure. Create the role below with a trust policy that names the
-        runner and this workspace's external id, then save its ARN here.
+        infrastructure. Quick setup creates that role with one AWS
+        CloudFormation stack. The role trusts only the runner, and only when it
+        presents this workspace's id.
       </p>
-      <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
-        <ValueRow label="Role name" value={setup.role_name} />
-        {trustedPrincipals(setup).map((arn, index) => (
-          <ValueRow
-            key={arn}
-            label={index === 0 ? 'Trusted principals' : ''}
-            value={arn}
-          />
-        ))}
-        <ValueRow label="External id" value={setup.external_id} />
-      </dl>
-      {collapsible ? (
-        <details className="group rounded-md border border-line">
-          <summary className="cursor-pointer px-3 py-2 text-sm text-text select-none hover:text-text-strong">
-            Role creation snippets
-          </summary>
-          <div className="border-t border-line p-3">
-            <RoleSnippets workspace={workspace} />
-          </div>
-        </details>
-      ) : (
-        <RoleSnippets workspace={workspace} />
-      )}
-      <RoleArnForm
+      <QuickSetup workspace={workspace} keys={keys} />
+      <ConnectionCheck
         workspace={workspace}
         runRoleCheck={runRoleCheck}
         keys={keys}
       />
+      <details className="group rounded-md border border-line">
+        <summary className="cursor-pointer px-3 py-2 text-sm text-text select-none hover:text-text-strong">
+          Set up the role manually
+        </summary>
+        <div className="space-y-5 border-t border-line p-3">
+          <p className="max-w-prose text-sm text-text-muted">
+            Create the role with your own Terraform, CloudFormation or the AWS
+            CLI, then save its ARN.
+          </p>
+          <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
+            <ValueRow label="Role name" value={setup.role_name} />
+            {trustedPrincipals(setup).map((arn, index) => (
+              <ValueRow
+                key={arn}
+                label={index === 0 ? 'Trusted principals' : ''}
+                value={arn}
+              />
+            ))}
+            <ValueRow label="External id" value={setup.external_id} />
+          </dl>
+          <RoleSnippets workspace={workspace} />
+          <RoleArnForm workspace={workspace} keys={keys} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+/**
+ * The account id and policy form that opens AWS CloudFormation quick create.
+ *
+ * The tab is opened blank inside the click, before the request, because a
+ * window opened after an await is treated as a popup and blocked. It is pointed
+ * at the console once the link arrives, and closed again if the request fails.
+ */
+function QuickSetup({
+  workspace,
+  keys,
+}: {
+  workspace: Workspace;
+  keys: WorkspaceKeys;
+}): React.ReactElement {
+  const savedAccount = accountIdFromArn(workspace.run_role_arn);
+  const [accountId, setAccountId] = useState(savedAccount ?? '');
+  const [permissions, setPermissions] =
+    useState<RunRolePermissions>('administrator');
+  const [problem, setProblem] = useState<string | null>(null);
+  const [launched, setLaunched] = useState<RunRoleQuickSetup | null>(null);
+  const [blocked, setBlocked] = useState(false);
+
+  const start = useMutationWithRefetch(
+    (body: { account_id: string; permissions: RunRolePermissions }) =>
+      api.startRunRoleQuickSetup(workspace.workspace_id, body),
+    keys.workspace
+  );
+  const choice =
+    PERMISSIONS_CHOICES.find((entry) => entry.id === permissions) ??
+    PERMISSIONS_CHOICES[0];
+
+  const launch = async (): Promise<void> => {
+    const why = accountIdProblem(accountId);
+    if (why !== null) {
+      setProblem(why);
+      return;
+    }
+    setProblem(null);
+    const tab = window.open('', '_blank');
+    if (tab !== null) {
+      tab.opener = null;
+    }
+    try {
+      const answer = await start.mutate({
+        account_id: normalizeAccountId(accountId),
+        permissions,
+      });
+      invalidateQueries(keys.runRoleCheck);
+      setLaunched(answer);
+      setBlocked(tab === null);
+      if (tab !== null) {
+        tab.location.href = answer.console_url;
+      }
+    } catch {
+      tab?.close();
+    }
+  };
+
+  return (
+    <section
+      aria-label="AWS quick setup"
+      className="rounded-lg border border-line bg-panel"
+    >
+      <div className="border-b border-line px-4 py-3">
+        <h3 className="text-sm font-semibold text-text-strong">
+          AWS quick setup
+        </h3>
+        <p className="mt-0.5 text-xs text-text-muted">
+          Opens AWS CloudFormation with the role filled in. Nothing to copy
+          back: the role ARN is saved here as you open it.
+        </p>
+      </div>
+      <form
+        aria-label="AWS quick setup"
+        className="space-y-3 px-4 py-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void launch();
+        }}
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label="AWS account ID"
+            error={problem}
+            hint="The account the role is created in and runs act on."
+          >
+            {(control) => (
+              <input
+                {...control}
+                value={accountId}
+                inputMode="numeric"
+                placeholder="123456789012"
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(event) => {
+                  setAccountId(event.target.value);
+                  setProblem(null);
+                }}
+                className={`${INPUT_CLASS} font-mono`}
+              />
+            )}
+          </Field>
+          <Field label="Permissions policy" hint={choice?.hint}>
+            {(control) => (
+              <select
+                {...control}
+                value={permissions}
+                onChange={(event) => {
+                  setPermissions(event.target.value as RunRolePermissions);
+                }}
+                className={INPUT_CLASS}
+              >
+                {PERMISSIONS_CHOICES.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+        </div>
+        <ErrorNotice error={start.error} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="submit"
+            variant={launched === null ? 'primary' : 'secondary'}
+            busy={start.isMutating}
+            busyLabel="Preparing the AWS CloudFormation stack"
+            disabled={accountId.trim() === ''}
+          >
+            {launched === null
+              ? 'Open AWS CloudFormation'
+              : 'Open AWS CloudFormation again'}
+          </Button>
+        </div>
+      </form>
+      {launched === null ? null : (
+        <LaunchedSteps launched={launched} blocked={blocked} />
+      )}
+    </section>
+  );
+}
+
+/** What is left to do in AWS once the quick create page is open. */
+function LaunchedSteps({
+  launched,
+  blocked,
+}: {
+  launched: RunRoleQuickSetup;
+  blocked: boolean;
+}): React.ReactElement {
+  return (
+    <div
+      data-testid="quick-setup-steps"
+      className="space-y-3 border-t border-line px-4 py-4 text-sm"
+    >
+      <p role="status" className="text-text">
+        Role ARN saved:{' '}
+        <code className="font-mono text-xs break-all text-text-strong">
+          {launched.role_arn}
+        </code>
+      </p>
+      {blocked ? (
+        <p className="text-text-muted">
+          Your browser blocked the new tab.{' '}
+          <a
+            href={launched.console_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent underline-offset-2 hover:underline"
+          >
+            Open AWS CloudFormation
+          </a>
+          .
+        </p>
+      ) : null}
+      <ol className="list-decimal space-y-1.5 pl-5 text-text-muted marker:text-text-faint">
+        <li>
+          In AWS, sign in to account{' '}
+          <code className="font-mono text-text">{launched.account_id}</code> if
+          you are not already.
+        </li>
+        <li>
+          Tick the acknowledgement that AWS CloudFormation might create IAM
+          resources with custom names, then choose Create stack.
+        </li>
+        <li>
+          Start a plan only run once the stack reaches CREATE_COMPLETE. The run
+          proves the runner can assume the role, and the connection below turns
+          connected.
+        </li>
+      </ol>
+      <p className="text-xs text-text-faint">
+        The link works for one hour. Open it again here for a fresh one.
+      </p>
+    </div>
+  );
+}
+
+/** The live connection state and the button that records it on the workspace. */
+function ConnectionCheck({
+  workspace,
+  runRoleCheck,
+  keys,
+}: {
+  workspace: Workspace;
+  runRoleCheck: RunRoleCheck | null;
+  keys: WorkspaceKeys;
+}): React.ReactElement {
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<unknown>(null);
+  const [result, setResult] = useState<RunRoleCheck | null>(null);
+  const unsaved = (workspace.run_role_arn ?? null) === null;
+
+  const shownCheck = useRef(runRoleCheck);
+  useEffect(() => {
+    if (shownCheck.current !== runRoleCheck) {
+      shownCheck.current = runRoleCheck;
+      setResult(null);
+    }
+  }, [runRoleCheck]);
+
+  const shownArn = useRef(workspace.run_role_arn);
+  useEffect(() => {
+    if (shownArn.current !== workspace.run_role_arn) {
+      shownArn.current = workspace.run_role_arn;
+      setResult(null);
+    }
+  }, [workspace.run_role_arn]);
+
+  const check = async (): Promise<void> => {
+    setChecking(true);
+    setCheckError(null);
+    try {
+      const outcome = await api.checkRunRole(workspace.workspace_id);
+      setResult(outcome);
+      invalidateQueries(keys.workspace);
+      invalidateQueries(keys.runRoleCheck);
+    } catch (thrown) {
+      setCheckError(thrown);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="secondary"
+          busy={checking}
+          busyLabel="Checking the latest runs"
+          disabled={unsaved}
+          title={unsaved ? 'Save a role ARN first.' : undefined}
+          onClick={() => {
+            void check();
+          }}
+        >
+          Check connection
+        </Button>
+        <ConnectionStatus
+          workspace={workspace}
+          check={result ?? runRoleCheck}
+        />
+      </div>
+      <ErrorNotice error={checkError} />
     </div>
   );
 }
@@ -140,36 +419,23 @@ function RoleSnippets({
   );
 }
 
-/** The ARN input with its save and connection check. */
+/** The ARN input for a role created outside quick setup. */
 function RoleArnForm({
   workspace,
-  runRoleCheck,
   keys,
 }: {
   workspace: Workspace;
-  runRoleCheck: RunRoleCheck | null;
   keys: WorkspaceKeys;
 }): React.ReactElement {
   const { run_role_setup: setup } = workspace;
   const [arn, setArn] = useState(workspace.run_role_arn ?? '');
   const [problem, setProblem] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [checkError, setCheckError] = useState<unknown>(null);
-  const [result, setResult] = useState<RunRoleCheck | null>(null);
 
   useEffect(() => {
     setArn(workspace.run_role_arn ?? '');
     setProblem(null);
   }, [workspace.run_role_arn]);
-
-  const shownCheck = useRef(runRoleCheck);
-  useEffect(() => {
-    if (shownCheck.current !== runRoleCheck) {
-      shownCheck.current = runRoleCheck;
-      setResult(null);
-    }
-  }, [runRoleCheck]);
 
   const save = useMutationWithRefetch(
     (value: string) =>
@@ -178,7 +444,6 @@ function RoleArnForm({
   );
 
   const dirty = arn.trim() !== (workspace.run_role_arn ?? '');
-  const unsaved = (workspace.run_role_arn ?? null) === null;
 
   const submit = async (): Promise<void> => {
     setSaved(false);
@@ -191,26 +456,10 @@ function RoleArnForm({
     setProblem(null);
     try {
       await save.mutate(value);
-      setResult(null);
+      invalidateQueries(keys.runRoleCheck);
       setSaved(true);
     } catch {
       return;
-    }
-  };
-
-  const check = async (): Promise<void> => {
-    setChecking(true);
-    setCheckError(null);
-    setSaved(false);
-    try {
-      const outcome = await api.checkRunRole(workspace.workspace_id);
-      setResult(outcome);
-      invalidateQueries(keys.workspace);
-      invalidateQueries(keys.runRoleCheck);
-    } catch (thrown) {
-      setCheckError(thrown);
-    } finally {
-      setChecking(false);
     }
   };
 
@@ -253,34 +502,15 @@ function RoleArnForm({
         )}
       </Field>
       <ErrorNotice error={save.error} />
-      <ErrorNotice error={checkError} />
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="submit"
-          variant={dirty || unsaved ? 'primary' : 'secondary'}
+          variant={dirty ? 'primary' : 'secondary'}
           busy={save.isMutating}
           busyLabel="Saving the role ARN"
-          disabled={arn.trim() === ''}
+          disabled={arn.trim() === '' || !dirty}
         >
           Save
-        </Button>
-        <Button
-          variant={dirty || unsaved ? 'secondary' : 'primary'}
-          busy={checking}
-          busyLabel="Checking the latest runs"
-          disabled={unsaved || dirty}
-          title={
-            dirty
-              ? 'Save the ARN before checking it.'
-              : unsaved
-                ? 'Save a role ARN first.'
-                : undefined
-          }
-          onClick={() => {
-            void check();
-          }}
-        >
-          Check connection
         </Button>
         {saved ? (
           <span role="status" className="text-sm text-success">
@@ -288,7 +518,6 @@ function RoleArnForm({
           </span>
         ) : null}
       </div>
-      <ConnectionStatus workspace={workspace} check={result ?? runRoleCheck} />
     </form>
   );
 }

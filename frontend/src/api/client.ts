@@ -38,6 +38,8 @@ import type {
   RunPhase,
   RunPlan,
   RunRoleCheck,
+  RunRoleQuickSetup,
+  RunRoleQuickSetupCreate,
   Variable,
   VariableList,
   VariableWrite,
@@ -226,6 +228,23 @@ export class TerraformApi {
     const response = await this.client.post<RunRoleCheck>(
       `/workspaces/${encodeURIComponent(workspaceId)}/run-role/check`,
       undefined,
+      options
+    );
+    return response.data;
+  }
+
+  /**
+   * Saves the role ARN derived from `body.account_id` and returns the AWS
+   * CloudFormation quick create link that creates the role.
+   */
+  async startRunRoleQuickSetup(
+    workspaceId: string,
+    body: RunRoleQuickSetupCreate,
+    options: RequestOptions = {}
+  ): Promise<RunRoleQuickSetup> {
+    const response = await this.client.post<RunRoleQuickSetup>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/run-role/quick-setup`,
+      body,
       options
     );
     return response.data;

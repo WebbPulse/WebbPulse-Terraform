@@ -34,6 +34,7 @@ export function createApiMock(): ApiMock {
     'deleteWorkspace',
     'readRunRoleCheck',
     'checkRunRole',
+    'startRunRoleQuickSetup',
     'listVariables',
     'putVariable',
     'deleteVariable',

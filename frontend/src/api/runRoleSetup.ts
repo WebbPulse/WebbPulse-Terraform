@@ -8,7 +8,12 @@
 
 import { ApiError, getWebbPulseError } from '@webbpulse/api-client';
 
-import type { RunRoleCheck, RunRoleSetup, Workspace } from './types';
+import type {
+  RunRoleCheck,
+  RunRolePermissions,
+  RunRoleSetup,
+  Workspace,
+} from './types';
 
 /** The error code a run start or a check answers when no role is set. */
 export const RUN_ROLE_MISSING_CODE = 'RUN_ROLE_MISSING';
@@ -296,4 +301,55 @@ export function snippetFor(format: SnippetFormat, setup: RunRoleSetup): string {
     case 'trust':
       return trustPolicyJson(setup);
   }
+}
+
+/** One managed policy choice quick setup offers, with what it means for runs. */
+export interface PermissionsChoice {
+  id: RunRolePermissions;
+  label: string;
+  hint: string;
+}
+
+/** The choices in the order the select shows them, the default first. */
+export const PERMISSIONS_CHOICES: readonly PermissionsChoice[] = [
+  {
+    id: 'administrator',
+    label: 'AdministratorAccess',
+    hint: 'Full access, so any configuration can plan and apply. Plans still run with a read only session.',
+  },
+  {
+    id: 'power_user',
+    label: 'PowerUserAccess',
+    hint: 'Everything but IAM and Organizations, so configurations that manage roles or policies cannot apply.',
+  },
+  {
+    id: 'read_only',
+    label: 'ReadOnlyAccess',
+    hint: 'Plans work and applies fail. Useful for drift checks.',
+  },
+  {
+    id: 'none',
+    label: 'None',
+    hint: 'The role trusts the runner and has no permissions. Attach a narrower policy in IAM after the stack is created.',
+  },
+];
+
+/** An account id with the dashes and spaces the AWS console prints removed. */
+export function normalizeAccountId(value: string): string {
+  return value.replace(/[\s-]/g, '');
+}
+
+/** Why an account id would be refused, or null when it is twelve digits. */
+export function accountIdProblem(value: string): string | null {
+  return /^\d{12}$/.test(normalizeAccountId(value))
+    ? null
+    : 'Enter the 12 digit AWS account ID.';
+}
+
+/** The account id in a role ARN, or null when it is not a role ARN. */
+export function accountIdFromArn(
+  arn: string | null | undefined
+): string | null {
+  const match = /^arn:aws:iam::(\d{12}):role\//.exec((arn ?? '').trim());
+  return match?.[1] ?? null;
 }

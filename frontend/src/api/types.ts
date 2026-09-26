@@ -45,6 +45,25 @@ export type RunRoleSetup = Schemas['RunRoleSetup'];
 export type RunRoleCheck = Schemas['RunRoleCheck'];
 
 /**
+ * The body that starts AWS quick setup: the account and the managed policy.
+ *
+ * The account id may carry the dashes the AWS console prints them with.
+ */
+export type RunRoleQuickSetupCreate = Schemas['RunRoleQuickSetupCreate'];
+
+/** The managed policy choices quick setup offers. */
+export type RunRolePermissions = NonNullable<
+  RunRoleQuickSetupCreate['permissions']
+>;
+
+/**
+ * What quick setup answers: the saved role ARN and the AWS CloudFormation link.
+ *
+ * The link carries a presigned template URL, so it lasts `expires_in` seconds.
+ */
+export type RunRoleQuickSetup = Schemas['RunRoleQuickSetup'];
+
+/**
  * The body that edits a workspace. Every field is optional.
  *
  * The name is absent because the backend's update model omits it: a rename

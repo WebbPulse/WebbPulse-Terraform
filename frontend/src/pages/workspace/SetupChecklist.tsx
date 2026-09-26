@@ -39,7 +39,7 @@ export interface SetupChecklistProps {
 const STEP_COPY: Record<SetupStepId, { title: string; summary: string }> = {
   connect: {
     title: 'Connect an AWS account',
-    summary: 'Create a role the runner can assume and save its ARN.',
+    summary: 'Create the role runs assume with one AWS CloudFormation stack.',
   },
   upload: {
     title: 'Upload a configuration',
