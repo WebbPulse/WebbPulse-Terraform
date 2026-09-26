@@ -14,9 +14,20 @@ RUNS: Final = "runs"
 VARIABLES: Final = "variables"
 CONFIG_VERSIONS: Final = "config-versions"
 USERS: Final = "users"
+VCS_UPLOADS: Final = "vcs-uploads"
 
 WORKSPACES_BY_NAME_INDEX: Final = "by_name"
 """The GSI enforcing one workspace per name, and resolving a name to a workspace."""
+
+WORKSPACES_BY_VCS_REPO_INDEX: Final = "by_vcs_repo"
+"""The GSI finding the workspaces bound to a repository by its lowercased `owner/name`."""
+
+WORKSPACES_BY_VCS_REPOSITORY_ID_INDEX: Final = "by_vcs_repository_id"
+"""The GSI finding the workspaces bound to a repository by its GitHub id, which a
+rename leaves unchanged."""
+
+VCS_UPLOADS_TTL_ATTRIBUTE: Final = "expires_at"
+"""The epoch seconds attribute DynamoDB expires an ingest record on."""
 
 RUNS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 """The GSI listing one workspace's runs, newest last by `created_at`."""
@@ -53,13 +64,25 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
         "AttributeDefinitions": [
             {"AttributeName": "workspace_id", "AttributeType": "S"},
             {"AttributeName": "name", "AttributeType": "S"},
+            {"AttributeName": "vcs_repo_key", "AttributeType": "S"},
+            {"AttributeName": "vcs_repository_id", "AttributeType": "S"},
         ],
         "GlobalSecondaryIndexes": [
             {
                 "IndexName": WORKSPACES_BY_NAME_INDEX,
                 "KeySchema": [{"AttributeName": "name", "KeyType": "HASH"}],
                 "Projection": {"ProjectionType": "ALL"},
-            }
+            },
+            {
+                "IndexName": WORKSPACES_BY_VCS_REPO_INDEX,
+                "KeySchema": [{"AttributeName": "vcs_repo_key", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+            },
+            {
+                "IndexName": WORKSPACES_BY_VCS_REPOSITORY_ID_INDEX,
+                "KeySchema": [{"AttributeName": "vcs_repository_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+            },
         ],
     },
     RUNS: {
@@ -135,9 +158,14 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
             }
         ],
     },
+    VCS_UPLOADS: {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [{"AttributeName": "upload_id", "KeyType": "HASH"}],
+        "AttributeDefinitions": [{"AttributeName": "upload_id", "AttributeType": "S"}],
+    },
 }
 
-ALL_TABLES: Final = (WORKSPACES, RUNS, VARIABLES, CONFIG_VERSIONS, USERS)
+ALL_TABLES: Final = (WORKSPACES, RUNS, VARIABLES, CONFIG_VERSIONS, USERS, VCS_UPLOADS)
 """Every logical table, in creation order. The suite and the local script walk it."""
 
 

@@ -22,7 +22,7 @@ from fastapi import APIRouter
 from webbpulse.events import register_stream_consumer
 
 from ....common.composition.settings import Settings
-from . import confirmations, task_failures
+from . import confirmations, ingest, task_failures
 
 _log = logging.getLogger(__name__)
 
@@ -52,9 +52,15 @@ def _kind(record: Mapping[str, Any]) -> str:
     return str(body.get("kind", "") or "")
 
 
+def _ingest(record: Mapping[str, Any], settings: Settings | None) -> None:
+    """Hand one upload to the ingest consumer, discarding the run ids it returns."""
+    ingest.handle_record(record, settings=settings)
+
+
 HANDLERS: dict[str, Handler] = {
     confirmations.CONFIRMATION_KIND: lambda record, settings: confirmations.handle_record(record, settings=settings),
     task_failures.TASK_FAILURE_KIND: lambda record, settings: task_failures.handle_record(record, settings=settings),
+    ingest.INGEST_KIND: lambda record, settings: _ingest(record, settings),
 }
 """Each `kind` this function consumes, against the consumer that owns it."""
 
