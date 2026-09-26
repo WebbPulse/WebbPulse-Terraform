@@ -10,7 +10,7 @@ locals {
     }
     runs = {
       memory        = 512
-      tables        = ["runs"]
+      tables        = ["runs", "vcs-uploads"]
       read_tables   = ["workspaces", "variables", "config-versions"]
       buckets       = true
       own_image_tag = false
@@ -22,6 +22,11 @@ locals {
         }
         run_task_failures = {
           queue_arn                       = module.run_task_failures.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
+        vcs_ingest = {
+          queue_arn                       = module.vcs_ingest.queue_arn
           batch_size                      = 1
           maximum_batching_window_seconds = 0
         }
@@ -131,8 +136,10 @@ module "lambda_domain" {
       CONFIG_VERSIONS_TABLE = module.dynamodb.table_names["config-versions"]
       USERS_TABLE           = module.dynamodb.table_names["users"]
       GITHUB_TABLE          = module.dynamodb.table_names["github"]
+      VCS_UPLOADS_TABLE     = module.dynamodb.table_names["vcs-uploads"]
 
-      GITHUB_APP_SLUG = var.github_app_slug
+      GITHUB_APP_SLUG   = var.github_app_slug
+      VCS_OIDC_AUDIENCE = var.vcs_oidc_audience
 
       IDENTITY_TABLE_PREFIX = local.prefix
 
@@ -221,6 +228,18 @@ locals {
         Effect   = "Allow"
         Action   = ["logs:GetLogEvents", "logs:DescribeLogStreams"]
         Resource = ["${aws_cloudwatch_log_group.runner.arn}:*"]
+      },
+      {
+        Sid      = "WriteIngestedConfigVersions"
+        Effect   = "Allow"
+        Action   = ["dynamodb:PutItem"]
+        Resource = [module.dynamodb.table_arns["config-versions"]]
+      },
+      {
+        Sid      = "RecordBoundRepositoryIds"
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem"]
+        Resource = [module.dynamodb.table_arns["workspaces"]]
       },
     ]
   }
