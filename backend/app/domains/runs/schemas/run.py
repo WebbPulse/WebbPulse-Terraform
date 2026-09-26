@@ -26,9 +26,33 @@ Phase = Literal["plan", "apply"]
 RUN_ROLE_DURATION_SECONDS = 3600
 """One hour on the assumed run role, matching the plan timeout plus headroom."""
 
-ActorKind = Literal["user", "agent"]
+ActorKind = Literal["user", "agent", "vcs"]
 """How a run was triggered: `user` is a person's JWT, `agent` a `wpk_` API key
-acting for the person who minted it."""
+acting for the person who minted it, `vcs` a GitHub Actions upload, named by the
+workflow's actor."""
+
+RunSource = Literal["api", "vcs_push", "vcs_pr"]
+"""Where a run came from: the API, a push to a tracked branch, or a pull request."""
+
+
+class RunVcs(BaseModel):
+    """The commit a VCS run was started from.
+
+    Everything except `head_sha` and `base_sha` comes from the verified GitHub
+    Actions token. Those two are what the workflow reported for a pull request and
+    are not verified.
+    """
+
+    repo: str
+    repository_id: str
+    sha: str
+    """The commit the token names. For a pull request, GitHub's merge commit."""
+    ref: str
+    branch: Optional[str] = None
+    """The pushed branch. `None` on a pull request."""
+    pr_number: Optional[int] = None
+    head_sha: Optional[str] = None
+    base_sha: Optional[str] = None
 
 
 class RunActor(BaseModel):
@@ -94,6 +118,10 @@ class Run(BaseModel):
     actor: Optional[RunActor] = None
     """Who triggered this run. `None` on a run created before attribution shipped,
     since that was never recorded and cannot be recovered."""
+    source: RunSource = "api"
+    """What started the run. A run created before VCS ingest reads as `api`."""
+    vcs: Optional[RunVcs] = None
+    """The commit a VCS run came from. `None` on an API run."""
 
     model_config = ConfigDict(from_attributes=True)
 

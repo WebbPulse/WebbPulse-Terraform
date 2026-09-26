@@ -50,7 +50,7 @@ Two buckets, each with its own KMS key, both created by the platform
 | Bucket | Holds | Lifecycle |
 | --- | --- | --- |
 | `webbpulse-terraform-<slug>-state` | Workspace state at `workspaces/<workspace_id>/terraform.tfstate` | Noncurrent versions expire after 365 days, 10 kept |
-| `webbpulse-terraform-<slug>-artifacts` | Config tarballs under `configs/`, plan artifacts and phase logs under `runs/` | Both prefixes expire after `var.artifact_retention_days`, default 90 |
+| `webbpulse-terraform-<slug>-artifacts` | Config tarballs under `configs/`, plan artifacts and phase logs under `runs/`, VCS uploads under `ingest/` | `configs/` and `runs/` expire after `var.artifact_retention_days`, default 90; `ingest/` after three days |
 
 The artifacts bucket allows CORS `PUT` from the frontend origin so a
 configuration version uploads straight to S3 over a presigned URL. The runner
@@ -61,16 +61,17 @@ State locking is Terraform's native S3 lockfile, which is why the engine floor i
 
 ## DynamoDB
 
-Five tables, prefixed `webbpulse-terraform-<slug>-`, with point in time recovery
+Six tables, prefixed `webbpulse-terraform-<slug>-`, with point in time recovery
 on and deletion protection in production.
 
 | Table | Key | Index |
 | --- | --- | --- |
-| `workspaces` | `workspace_id` | `by_name` on `name` |
+| `workspaces` | `workspace_id` | `by_name` on `name`, `by_vcs_repo` on `vcs_repo_key`, `by_vcs_repository_id` on `vcs_repository_id` |
 | `runs` | `run_id` | `by_workspace` on `workspace_id`, range `created_at` |
 | `variables` | `workspace_id`, range `key` | none |
 | `config-versions` | `config_version_id` | `by_workspace` on `workspace_id`, range `created_at` |
 | `users` | `id` | `email_lower-index` on `email_lower` |
+| `vcs-uploads` | `upload_id` | none, TTL on `expires_at` |
 
 The `runs` table also holds the concurrency semaphore as a single item with
 `run_id` of `run-semaphore`, whose `holders` string set the state machine adds to
@@ -78,8 +79,8 @@ and removes from. `var.run_concurrency_cap`, default 2, is the size it is
 condition checked against.
 
 The `workspaces` domain owns `workspaces`, `variables`, `config-versions` and
-`users`, and reads `runs`; the `runs` domain owns `runs` and reads the other
-three. The identity module creates ten tables of its own beside these, for
+`users`, and reads `runs`; the `runs` domain owns `runs` and `vcs-uploads` and
+reads the other four. VCS ingest is described in `backend/README.md`. The identity module creates ten tables of its own beside these, for
 credentials, refresh tokens, second factors and the rest, and `users` is the only
 account row this control plane keeps.
 

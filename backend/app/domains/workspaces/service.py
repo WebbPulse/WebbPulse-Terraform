@@ -132,8 +132,15 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "run_role_arn": payload.get("run_role_arn") or None,
         "working_directory": payload.get("working_directory", "") or "",
         "description": payload.get("description", "") or "",
+        "trigger_patterns": list(payload.get("trigger_patterns") or []),
+        "speculative_plans": bool(payload.get("speculative_plans", True)),
         "created_at": now_iso(),
     }
+    if payload.get("vcs_repo"):
+        item["vcs_repo"] = str(payload["vcs_repo"])
+        item["vcs_repo_key"] = str(payload["vcs_repo"]).lower()
+    if payload.get("tracked_branch"):
+        item["tracked_branch"] = str(payload["tracked_branch"])
     try:
         repository.put(item, condition=Attr("workspace_id").not_exists())
     except ConditionFailed as error:
@@ -184,6 +191,10 @@ def update_workspace(
     the previous success belonged to the previous role, and leaving it behind would
     show a new, unchecked role as connected. Clearing the ARN counts as a change,
     so the outcome goes with it.
+
+    A change to `vcs_repo` rewrites the lowercased `vcs_repo_key` the binding
+    index reads and drops the recorded `vcs_repository_id`, which belonged to the
+    previous repository. Clearing it removes both.
     """
     resolved = settings or get_settings()
     assignments = {key: value for key, value in changes.items() if value is not None}
@@ -198,6 +209,13 @@ def update_workspace(
     removals = [*clears]
     if role_changed:
         removals.extend(("run_role_checked_at", "run_role_account_id"))
+    if "vcs_repo" in changes and changes["vcs_repo"] != existing.get("vcs_repo"):
+        if existing.get("vcs_repository_id") is not None:
+            removals.append("vcs_repository_id")
+        if changes["vcs_repo"] is None:
+            removals.append("vcs_repo_key")
+        else:
+            assignments["vcs_repo_key"] = str(changes["vcs_repo"]).lower()
 
     names = {f"#{key}": key for key in (*assignments, *removals)}
     values = {f":{key}": value for key, value in assignments.items()}

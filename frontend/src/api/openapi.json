@@ -902,6 +902,16 @@
             "title": "Run Id",
             "type": "string"
           },
+          "source": {
+            "default": "api",
+            "enum": [
+              "api",
+              "vcs_push",
+              "vcs_pr"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
           "started_at": {
             "anyOf": [
               {
@@ -940,6 +950,16 @@
             ],
             "title": "Updated At"
           },
+          "vcs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunVcs"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "workspace_id": {
             "title": "Workspace Id",
             "type": "string"
@@ -977,7 +997,8 @@
           "kind": {
             "enum": [
               "user",
-              "agent"
+              "agent",
+              "vcs"
             ],
             "title": "Kind",
             "type": "string"
@@ -1255,6 +1276,16 @@
             ],
             "title": "Run Token"
           },
+          "source": {
+            "default": "api",
+            "enum": [
+              "api",
+              "vcs_push",
+              "vcs_pr"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
           "started_at": {
             "anyOf": [
               {
@@ -1292,6 +1323,16 @@
               }
             ],
             "title": "Updated At"
+          },
+          "vcs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunVcs"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "workspace_id": {
             "title": "Workspace Id",
@@ -1530,6 +1571,79 @@
           "role_name"
         ],
         "title": "RunRoleSetup",
+        "type": "object"
+      },
+      "RunVcs": {
+        "description": "The commit a VCS run was started from.\n\nEverything except `head_sha` and `base_sha` comes from the verified GitHub\nActions token. Those two are what the workflow reported for a pull request and\nare not verified.",
+        "properties": {
+          "base_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Sha"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "repository_id",
+          "sha",
+          "ref"
+        ],
+        "title": "RunVcs",
         "type": "object"
       },
       "StateVersion": {
@@ -1859,6 +1973,84 @@
         "title": "VariableWrite",
         "type": "object"
       },
+      "VcsUpload": {
+        "description": "Where to PUT the tarball.\n\nA retry of the same workflow run attempt gets the same `upload_id` and a freshly\nsigned URL for the same key. Every header is inside the signature and has to be\nsent verbatim.",
+        "properties": {
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          },
+          "upload_id": {
+            "title": "Upload Id",
+            "type": "string"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "upload_url",
+          "headers",
+          "expires_in"
+        ],
+        "title": "VcsUpload",
+        "type": "object"
+      },
+      "VcsUploadCreate": {
+        "description": "What the workflow reports alongside its GitHub Actions OIDC token.\n\nOnly `size_bytes` is used as given. The repository, the event, the branch, the\npull request number and the commit all come from the verified token, and\n`sha` and `base_sha` are recorded on a pull request as the workflow's\nunverified account of its head and base.",
+        "properties": {
+          "base_sha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Sha"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "sha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "title": "Sha",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 250000000.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sha",
+          "size_bytes"
+        ],
+        "title": "VcsUploadCreate",
+        "type": "object"
+      },
       "Workspace": {
         "description": "A stored workspace, with everything the run role setup needs.",
         "properties": {
@@ -1929,6 +2121,32 @@
           "run_role_setup": {
             "$ref": "#/components/schemas/RunRoleSetup"
           },
+          "speculative_plans": {
+            "default": true,
+            "title": "Speculative Plans",
+            "type": "boolean"
+          },
+          "tracked_branch": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracked Branch"
+          },
+          "trigger_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Trigger Patterns",
+            "type": "array"
+          },
           "updated_at": {
             "anyOf": [
               {
@@ -1939,6 +2157,30 @@
               }
             ],
             "title": "Updated At"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
+          },
+          "vcs_repository_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repository Id"
           },
           "working_directory": {
             "default": "",
@@ -2002,6 +2244,45 @@
               }
             ],
             "title": "Run Role Arn"
+          },
+          "speculative_plans": {
+            "default": true,
+            "title": "Speculative Plans",
+            "type": "boolean"
+          },
+          "tracked_branch": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracked Branch"
+          },
+          "trigger_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Trigger Patterns",
+            "type": "array"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
           },
           "working_directory": {
             "default": "",
@@ -2087,6 +2368,58 @@
               }
             ],
             "title": "Run Role Arn"
+          },
+          "speculative_plans": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speculative Plans"
+          },
+          "tracked_branch": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracked Branch"
+          },
+          "trigger_patterns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Patterns"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
           },
           "working_directory": {
             "anyOf": [
@@ -3795,6 +4128,47 @@
           }
         },
         "summary": "Run Plan",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/vcs/uploads": {
+      "post": {
+        "description": "Issue a presigned PUT for a workflow's configuration tarball.\n\nThe caller sends `Authorization: Bearer <GitHub Actions OIDC token>`. The\nrepository, event, branch and pull request number come from its verified\nclaims. A retry of the same workflow run attempt returns the same `upload_id`\nwith a new URL for the same key.",
+        "operationId": "create_vcs_upload_api_v1_vcs_uploads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VcsUploadCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VcsUpload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "The GitHub Actions OIDC token is missing or did not verify."
+          },
+          "404": {
+            "description": "No workspace is bound to the repository. `error_code` is `VCS_REPO_NOT_BOUND`."
+          },
+          "422": {
+            "description": "The token is for neither a branch push nor a pull request."
+          }
+        },
+        "summary": "Create Vcs Upload",
         "tags": [
           "runs"
         ]
