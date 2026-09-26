@@ -192,7 +192,7 @@ def _ensure_config_version(
     and an existing row means both are already done.
     """
     table = repositories.config_versions(settings)
-    if table.get({"workspace_id": workspace_id, "config_version_id": config_version_id}, consistent=True):
+    if table.get({"config_version_id": config_version_id}, consistent=True):
         return
     key = workspace_reads.config_key(workspace_id, config_version_id)
     _s3(settings).copy_object(
