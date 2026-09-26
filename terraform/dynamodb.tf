@@ -27,6 +27,7 @@ locals {
         { name = "by_workspace", hash_key = "workspace_id", range_key = "created_at", projection_type = "ALL" },
         { name = "by_recency", hash_key = "collection", range_key = "run_id", projection_type = "ALL" },
       ]
+      stream_view_type = "NEW_AND_OLD_IMAGES"
     }
 
     variables = {

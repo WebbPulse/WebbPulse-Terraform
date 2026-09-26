@@ -7,6 +7,7 @@ locals {
       buckets           = true
       own_image_tag     = false
       sqs_event_sources = {}
+      stream_sources    = {}
     }
     runs = {
       memory        = 512
@@ -31,6 +32,18 @@ locals {
           maximum_batching_window_seconds = 0
         }
       }
+      stream_sources = {
+        vcs_run_reports = {
+          stream_arn                         = module.dynamodb.stream_arns["runs"]
+          batch_size                         = 10
+          maximum_batching_window_in_seconds = 1
+          maximum_retry_attempts             = 2
+          filter_patterns = [jsonencode({
+            eventName = ["INSERT", "MODIFY"]
+            dynamodb  = { NewImage = { source = { S = [{ prefix = "vcs_" }] } } }
+          })]
+        }
+      }
     }
     github = {
       memory            = 256
@@ -39,6 +52,7 @@ locals {
       buckets           = false
       own_image_tag     = true
       sqs_event_sources = {}
+      stream_sources    = {}
     }
   }
 
@@ -116,7 +130,8 @@ module "lambda_domain" {
 
   timeout = local.lambda_domain_timeout
 
-  sqs_event_sources = each.value.sqs_event_sources
+  sqs_event_sources             = each.value.sqs_event_sources
+  dynamodb_stream_event_sources = each.value.stream_sources
 
   code = {
     image_uri = "${module.registry.repository_urls[each.key]}:${lookup(var.domain_image_tags, each.key, var.bootstrap_image_tag)}"
