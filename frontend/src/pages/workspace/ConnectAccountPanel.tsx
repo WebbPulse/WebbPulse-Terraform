@@ -1,6 +1,6 @@
 /** Everything a person needs to let runs into their AWS account. */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   invalidateQueries,
   useMutationWithRefetch,
@@ -8,8 +8,8 @@ import {
 
 import {
   SNIPPET_FORMATS,
+  accountStatus,
   api,
-  isConnected,
   runRoleArnProblem,
   runRolePrefix,
   snippetFor,
@@ -28,12 +28,15 @@ import {
   SegmentedControl,
   formatDateTime,
 } from '../../components';
+import type { WorkspaceKeys } from '../workspaceContext';
 
 /** Props for {@link ConnectAccountPanel}. */
 export interface ConnectAccountPanelProps {
   workspace: Workspace;
-  /** The refetch key the workspace read is registered under. */
-  queryKey: string;
+  /** The live run role check the workspace frame shares, or null until it answers. */
+  runRoleCheck: RunRoleCheck | null;
+  /** The workspace frame's refetch keys, so a save or a check refreshes every reader. */
+  keys: WorkspaceKeys;
   /** Folds the role creation snippets behind a disclosure. */
   collapsible?: boolean;
 }
@@ -41,7 +44,8 @@ export interface ConnectAccountPanelProps {
 /** The explanation, the role snippets, and the ARN form with its check. */
 export function ConnectAccountPanel({
   workspace,
-  queryKey,
+  runRoleCheck,
+  keys,
   collapsible = false,
 }: ConnectAccountPanelProps): React.ReactElement {
   const { run_role_setup: setup } = workspace;
@@ -75,7 +79,11 @@ export function ConnectAccountPanel({
       ) : (
         <RoleSnippets workspace={workspace} />
       )}
-      <RoleArnForm workspace={workspace} queryKey={queryKey} />
+      <RoleArnForm
+        workspace={workspace}
+        runRoleCheck={runRoleCheck}
+        keys={keys}
+      />
     </div>
   );
 }
@@ -135,10 +143,12 @@ function RoleSnippets({
 /** The ARN input with its save and connection check. */
 function RoleArnForm({
   workspace,
-  queryKey,
+  runRoleCheck,
+  keys,
 }: {
   workspace: Workspace;
-  queryKey: string;
+  runRoleCheck: RunRoleCheck | null;
+  keys: WorkspaceKeys;
 }): React.ReactElement {
   const { run_role_setup: setup } = workspace;
   const [arn, setArn] = useState(workspace.run_role_arn ?? '');
@@ -153,31 +163,18 @@ function RoleArnForm({
     setProblem(null);
   }, [workspace.run_role_arn]);
 
-  const workspaceId = workspace.workspace_id;
-  const savedArn = workspace.run_role_arn ?? null;
+  const shownCheck = useRef(runRoleCheck);
   useEffect(() => {
-    setResult(null);
-    if (savedArn === null) {
-      return;
+    if (shownCheck.current !== runRoleCheck) {
+      shownCheck.current = runRoleCheck;
+      setResult(null);
     }
-    let current = true;
-    api.readRunRoleCheck(workspaceId).then(
-      (outcome) => {
-        if (current) {
-          setResult(outcome ?? null);
-        }
-      },
-      () => undefined
-    );
-    return () => {
-      current = false;
-    };
-  }, [workspaceId, savedArn]);
+  }, [runRoleCheck]);
 
   const save = useMutationWithRefetch(
     (value: string) =>
       api.updateWorkspace(workspace.workspace_id, { run_role_arn: value }),
-    queryKey
+    keys.workspace
   );
 
   const dirty = arn.trim() !== (workspace.run_role_arn ?? '');
@@ -208,7 +205,8 @@ function RoleArnForm({
     try {
       const outcome = await api.checkRunRole(workspace.workspace_id);
       setResult(outcome);
-      invalidateQueries(queryKey);
+      invalidateQueries(keys.workspace);
+      invalidateQueries(keys.runRoleCheck);
     } catch (thrown) {
       setCheckError(thrown);
     } finally {
@@ -290,7 +288,7 @@ function RoleArnForm({
           </span>
         ) : null}
       </div>
-      <ConnectionStatus workspace={workspace} result={result} />
+      <ConnectionStatus workspace={workspace} check={result ?? runRoleCheck} />
     </form>
   );
 }
@@ -298,53 +296,38 @@ function RoleArnForm({
 /** What the runner's record says about the role, fresh or as last recorded. */
 function ConnectionStatus({
   workspace,
-  result,
+  check,
 }: {
   workspace: Workspace;
-  result: RunRoleCheck | null;
+  check: RunRoleCheck | null;
 }): React.ReactElement | null {
-  if ((workspace.run_role_arn ?? null) === null) {
+  const status = accountStatus(workspace, check);
+  const checkedAt = status.checkedAt;
+  if (status.state === 'missing') {
     return null;
   }
-  if (result !== null) {
-    const checkedAt = result.checked_at ?? null;
-    if (result.status === 'connected') {
-      return (
-        <StatusLine tone="ok" testValue="connected">
-          The runner assumed this role in account{' '}
-          <code className="font-mono">{result.account_id ?? 'unknown'}</code>
-          {checkedAt === null ? '.' : `, ${formatDateTime(checkedAt)}.`}
-        </StatusLine>
-      );
-    }
-    if (result.status === 'failed') {
-      return (
-        <StatusLine tone="bad" testValue="failed">
-          The runner could not assume the role
-          {checkedAt === null ? '' : ` on ${formatDateTime(checkedAt)}`}.{' '}
-          {result.error ?? ''}
-        </StatusLine>
-      );
-    }
-    return (
-      <StatusLine tone="neutral" testValue="unverified">
-        {result.error ?? 'No run has assumed this role yet.'}
-      </StatusLine>
-    );
-  }
-  if (isConnected(workspace)) {
-    const checkedAt = workspace.run_role_checked_at ?? null;
+  if (status.state === 'connected') {
     return (
       <StatusLine tone="ok" testValue="connected">
         The runner assumed this role in account{' '}
-        <code className="font-mono">{workspace.run_role_account_id}</code>
+        <code className="font-mono">{status.accountId ?? 'unknown'}</code>
         {checkedAt === null ? '.' : `, ${formatDateTime(checkedAt)}.`}
+      </StatusLine>
+    );
+  }
+  if (status.state === 'failed') {
+    return (
+      <StatusLine tone="bad" testValue="failed">
+        The runner could not assume the role
+        {checkedAt === null ? '' : ` on ${formatDateTime(checkedAt)}`}.{' '}
+        {status.error ?? ''}
       </StatusLine>
     );
   }
   return (
     <StatusLine tone="neutral" testValue="unverified">
-      Not verified yet. The first run proves the runner can assume the role.
+      {status.error ??
+        'Not verified yet. The first run proves the runner can assume the role.'}
     </StatusLine>
   );
 }

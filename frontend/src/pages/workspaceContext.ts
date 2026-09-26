@@ -2,14 +2,15 @@
 
 import { useOutletContext } from 'react-router-dom';
 
-import type { ConfigVersion, Run, Workspace } from '../api';
+import type { ConfigVersion, Run, RunRoleCheck, Workspace } from '../api';
 import type { SetupStep } from './workspace/setup';
 
-/** The refetch keys for a workspace, its versions and its runs. */
+/** The refetch keys for a workspace, its versions, its runs and its run role check. */
 export interface WorkspaceKeys {
   workspace: string;
   versions: string;
   runs: string;
+  runRoleCheck: string;
 }
 
 /** What every workspace page reads from the frame through the outlet. */
@@ -17,6 +18,8 @@ export interface WorkspaceContext {
   workspace: Workspace;
   versions: ConfigVersion[];
   runs: Run[];
+  /** The live run role check, or null until it has answered for the saved ARN. */
+  runRoleCheck: RunRoleCheck | null;
   steps: SetupStep[];
   /** Whether the version and run lists have both arrived. */
   settled: boolean;
@@ -49,5 +52,6 @@ export function workspaceKeys(workspaceId: string): WorkspaceKeys {
     workspace: `workspace:${workspaceId}`,
     versions: `config-versions:${workspaceId}`,
     runs: `runs:${workspaceId}`,
+    runRoleCheck: `run-role-check:${workspaceId}`,
   };
 }

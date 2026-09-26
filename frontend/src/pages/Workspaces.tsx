@@ -9,9 +9,9 @@ import {
 import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
+  accountStatus,
+  accountStatusLabel,
   api,
-  connectionLabel,
-  isConnected,
   type Engine,
   type Workspace,
   type WorkspaceCreate,
@@ -32,6 +32,7 @@ import {
   Th,
   Tr,
 } from '../components';
+import { useRunRoleCheck } from './useRunRoleCheck';
 
 /** The refetch key the list reads and the create form invalidates. */
 export const WORKSPACES_KEY = 'workspaces';
@@ -214,30 +215,47 @@ function WorkspaceTable({
   );
 }
 
-/** The account id with a green dot, or the words for a missing connection. */
+/**
+ * The account id with a green dot, or the words for a missing connection.
+ *
+ * Each row with a role reads the same check the workspace header does, so the
+ * list never disagrees with the page it links to.
+ */
 function ConnectionCell({
   workspace,
 }: {
   workspace: Workspace;
 }): React.ReactElement {
-  if (isConnected(workspace)) {
+  const check = useRunRoleCheck(workspace);
+  const status = accountStatus(workspace, check);
+  if (status.state === 'connected') {
     return (
-      <span className="inline-flex items-center gap-2 font-mono text-xs text-text">
+      <span
+        data-testid="workspace-row-account"
+        data-connection={status.state}
+        className="inline-flex items-center gap-2 font-mono text-xs text-text"
+      >
         <span
           aria-hidden="true"
           className="inline-block size-2 rounded-full bg-success"
         />
-        {workspace.run_role_account_id}
+        {accountStatusLabel(status)}
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-2 text-xs text-text-faint">
+    <span
+      data-testid="workspace-row-account"
+      data-connection={status.state}
+      className="inline-flex items-center gap-2 text-xs text-text-faint"
+    >
       <span
         aria-hidden="true"
-        className="inline-block size-2 rounded-full bg-surface-400"
+        className={`inline-block size-2 rounded-full ${
+          status.state === 'failed' ? 'bg-danger' : 'bg-surface-400'
+        }`}
       />
-      {connectionLabel(workspace)}
+      {accountStatusLabel(status)}
     </span>
   );
 }
