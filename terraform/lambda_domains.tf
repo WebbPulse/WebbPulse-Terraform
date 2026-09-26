@@ -171,12 +171,6 @@ locals {
   lambda_domain_extra_statements = {
     workspaces = [
       {
-        Sid      = "CheckAWorkspaceRunRole"
-        Effect   = "Allow"
-        Action   = ["sts:AssumeRole"]
-        Resource = local.workspace_run_role_arns
-      },
-      {
         Sid      = "DeleteADeletedWorkspacesFinishedRuns"
         Effect   = "Allow"
         Action   = ["dynamodb:DeleteItem"]

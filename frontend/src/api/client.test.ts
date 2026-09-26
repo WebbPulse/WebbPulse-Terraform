@@ -55,18 +55,38 @@ describe('TerraformApi workspaces', () => {
     });
   });
 
-  it('checks the run role on its own route with an empty POST', async () => {
+  it('reads the run role check with a GET that sends no body', async () => {
+    const answer = {
+      connected: false,
+      status: 'unverified',
+      account_id: null,
+      error: 'No run has assumed this role yet.',
+      run_id: null,
+      checked_at: null,
+    };
     const { api, transport } = apiOver({
-      'POST /api/v1/workspaces/ws-1/run-role/check': {
-        body: { connected: true, account_id: '123456789012', error: null },
-      },
+      'GET /api/v1/workspaces/ws-1/run-role/check': { body: answer },
     });
-    const result = await api.checkRunRole('ws-1');
-    expect(result).toEqual({
+    expect(await api.readRunRoleCheck('ws-1')).toEqual(answer);
+    expect(transport.requests[0]?.method).toBe('GET');
+    expect(transport.requests[0]?.path).toBe(
+      '/api/v1/workspaces/ws-1/run-role/check'
+    );
+  });
+
+  it('records the run role check on its own route with an empty POST', async () => {
+    const answer = {
       connected: true,
+      status: 'connected',
       account_id: '123456789012',
       error: null,
+      run_id: 'run-1',
+      checked_at: '2026-09-17T00:05:00Z',
+    };
+    const { api, transport } = apiOver({
+      'POST /api/v1/workspaces/ws-1/run-role/check': { body: answer },
     });
+    expect(await api.checkRunRole('ws-1')).toEqual(answer);
     expect(transport.requests[0]?.method).toBe('POST');
     expect(transport.requests[0]?.path).toBe(
       '/api/v1/workspaces/ws-1/run-role/check'

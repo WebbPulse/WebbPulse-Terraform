@@ -69,19 +69,8 @@ CONFIG_CONTENT_TYPE: Final = "application/gzip"
 CONFIG_UPLOAD_EXPIRES_IN: Final = 900
 """Fifteen minutes for the client to start its upload, the package's own default."""
 
-RUN_ROLE_CHECK_DURATION_SECONDS: Final = 900
-"""The shortest session STS will mint. The check only calls GetCallerIdentity, so
-nothing needs the hour a run takes."""
-
-RUN_ROLE_CHECK_SESSION_NAME: Final = "webbpulse-run-role-check"
-"""The session name the check assumes under, so a CloudTrail reader can tell a
-connection check from a run."""
-
 IAM_ROLE_NAME_MAX_LENGTH: Final = 64
 """The IAM ceiling on a role name. The derived name has to fit inside it."""
-
-RUN_ROLE_ACCESS_DENIED_MESSAGE: Final = "The role does not trust the runner or the external id does not match"
-"""What an AccessDenied means in practice, since STS will not say which half failed."""
 
 
 class WorkspaceNameTaken(Exception):
@@ -125,125 +114,6 @@ def render_workspace(item: dict[str, Any], *, settings: Settings | None = None) 
     resolved = settings or get_settings()
     workspace_id = str(item["workspace_id"])
     return dict(item) | {"run_role_setup": run_role_setup(workspace_id, settings=resolved)}
-
-
-def _sts(settings: Settings) -> Any:
-    """An STS client. Imported late so nothing connects at import."""
-    import boto3
-
-    return boto3.client("sts", region_name=settings.AWS_REGION_NAME or None)
-
-
-def probe_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """Assume the workspace's run role and report whether it answered, writing nothing.
-
-    Assumes with the workspace id as the external id, the way the runner does, then
-    calls GetCallerIdentity on the temporary credentials so the answer names the
-    account the role actually lives in rather than the one its ARN claims. The
-    outcome is returned and nothing else: the workspace row is untouched, which is
-    what lets a Terraform provider read this on every plan and refresh without
-    mutating anything.
-
-    Neither the credentials nor the STS message reach the return value or the log.
-
-    Raises:
-        WorkspaceNotFound: No such workspace.
-        RunRoleMissing: The workspace carries no run role ARN.
-    """
-    from botocore.exceptions import BotoCoreError, ClientError
-
-    resolved = settings or get_settings()
-    workspace = get_workspace(workspace_id, settings=resolved)
-    role_arn = str(workspace.get("run_role_arn", "") or "")
-    if not role_arn:
-        raise RunRoleMissing(workspace_id)
-
-    try:
-        assumed = _sts(resolved).assume_role(
-            RoleArn=role_arn,
-            RoleSessionName=RUN_ROLE_CHECK_SESSION_NAME,
-            ExternalId=workspace_id,
-            DurationSeconds=RUN_ROLE_CHECK_DURATION_SECONDS,
-        )
-        credentials = assumed["Credentials"]
-        import boto3
-
-        identity = boto3.client(
-            "sts",
-            region_name=resolved.AWS_REGION_NAME or None,
-            aws_access_key_id=credentials["AccessKeyId"],
-            aws_secret_access_key=credentials["SecretAccessKey"],
-            aws_session_token=credentials["SessionToken"],
-        ).get_caller_identity()
-    except ClientError as error:
-        return {"connected": False, "account_id": None, "error": _run_role_error(error)}
-    except BotoCoreError:
-        return {
-            "connected": False,
-            "account_id": None,
-            "error": "The role could not be reached.",
-        }
-
-    account_id = str(identity.get("Account", "") or "")
-    return {"connected": True, "account_id": account_id, "error": None}
-
-
-def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """Probe the workspace's run role and stamp the outcome on the row.
-
-    The probe itself is `probe_run_role`. What this adds is the record the UI reads
-    between visits: the timestamp and the account on a success, both cleared on a
-    failure, so a stale success cannot outlive a broken trust policy.
-
-    Raises:
-        WorkspaceNotFound: No such workspace.
-        RunRoleMissing: The workspace carries no run role ARN.
-    """
-    resolved = settings or get_settings()
-    outcome = probe_run_role(workspace_id, settings=resolved)
-    account_id = outcome["account_id"] if outcome["connected"] else None
-    _record_run_role_check(workspace_id, account_id, settings=resolved)
-    return outcome
-
-
-def _run_role_error(error: Any) -> str:
-    """One sentence for a person, from the STS error code alone.
-
-    The code is read rather than the message, because a message can echo the ARN
-    and the session name back at a caller who supplied neither.
-    """
-    code = str(error.response.get("Error", {}).get("Code", "") or "")
-    if code in {"AccessDenied", "AccessDeniedException"}:
-        return RUN_ROLE_ACCESS_DENIED_MESSAGE
-    if code in {"NoSuchEntity", "ValidationError", "InvalidParameterValue"}:
-        return "No role with that ARN exists."
-    if code == "ExpiredToken":
-        return "The control plane's own credentials expired."
-    return "The role could not be assumed."
-
-
-def _record_run_role_check(
-    workspace_id: str,
-    account_id: str | None,
-    *,
-    settings: Settings | None = None,
-) -> None:
-    """Stamp or clear the run role check fields on one workspace row."""
-    resolved = settings or get_settings()
-    repository = repositories.workspaces(resolved)
-    if account_id:
-        repository.update(
-            {"workspace_id": workspace_id},
-            update_expression=("SET run_role_checked_at = :checked, run_role_account_id = :account"),
-            expression_values={":checked": now_iso(), ":account": account_id},
-            condition=Attr("workspace_id").exists(),
-        )
-        return
-    repository.update(
-        {"workspace_id": workspace_id},
-        update_expression="REMOVE run_role_checked_at, run_role_account_id",
-        condition=Attr("workspace_id").exists(),
-    )
 
 
 def create_workspace(payload: dict[str, Any], *, settings: Settings | None = None) -> dict[str, Any]:

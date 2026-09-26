@@ -7,7 +7,7 @@ import { invalidateQueries } from '@webbpulse/api-client/react';
 import {
   RUN_ROLE_MISSING_MESSAGE,
   api,
-  isConnected,
+  hasRunRole,
   isRunRoleMissing,
   type ConfigVersion,
   type Workspace,
@@ -45,7 +45,7 @@ export function ConfigVersionsTab({
   error,
   keys,
 }: ConfigVersionsTabProps): React.ReactElement {
-  const connected = isConnected(workspace);
+  const connected = hasRunRole(workspace);
   return (
     <div className="space-y-5">
       <ErrorNotice error={error} />
@@ -62,8 +62,8 @@ export function ConfigVersionsTab({
           role="note"
           className="rounded-md border border-warning-line bg-warning-soft px-3 py-2 text-sm text-warning"
         >
-          {RUN_ROLE_MISSING_MESSAGE} Runs stay disabled until the connection
-          check passes under Settings, AWS account.
+          {RUN_ROLE_MISSING_MESSAGE} Save a role ARN under Settings, AWS
+          account. The first run proves the runner can assume it.
         </p>
       )}
       {isLoading ? (

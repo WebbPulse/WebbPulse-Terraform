@@ -867,30 +867,33 @@ export interface paths {
         };
         /**
          * Read Run Role Check
-         * @description Assume the workspace's run role and report whether it answered, writing nothing.
+         * @description Report whether the runner has assumed the workspace's run role, writing nothing.
          *
-         *     The same probe as the POST, without the record it leaves behind. A caller that
-         *     only wants to look, such as a Terraform provider reading on every plan and
-         *     refresh, uses this one so no plan mutates a workspace row. Because nothing is
-         *     written, the read scope is enough.
+         *     The answer comes from the runner's own record: the newest run created with the
+         *     current role ARN that got past, or failed on, the runner's AssumeRole. The API
+         *     never calls STS, so it holds no path into the account the role lives in. A role
+         *     no run has tried yet reads `unverified`, and a plan only run is the check.
          *
-         *     Always 200 when a role is configured, whether or not it answered. A workspace
-         *     with no role at all is a 400 carrying `RUN_ROLE_MISSING`.
+         *     A caller that only wants to look, such as a Terraform provider reading on every
+         *     plan and refresh, uses this one so no plan mutates a workspace row. Because
+         *     nothing is written, the read scope is enough.
+         *
+         *     Always 200 when a role is configured. A workspace with no role at all is a 400
+         *     carrying `RUN_ROLE_MISSING`.
          */
         get: operations["read_run_role_check_api_v1_workspaces__workspace_id__run_role_check_get"];
         put?: never;
         /**
          * Check Run Role
-         * @description Assume the workspace's run role and record the outcome on the workspace.
+         * @description Read the runner's record for the run role, as the GET does, and stamp it on the workspace.
          *
-         *     The recorded outcome is what the setup UI shows between visits, so this route
-         *     keeps its write and its write scope. Use the GET when only the answer is
-         *     wanted.
+         *     The stamp is what the workspace list shows between visits: the account and the
+         *     time of the run that proved the role on `connected`, both cleared otherwise, so
+         *     a stale success cannot outlive a role whose trust broke. Use the GET when only
+         *     the answer is wanted.
          *
-         *     Always 200 when a role is configured, whether or not it answered: a trust
-         *     policy that is not there yet is an expected state of the setup rather than a
-         *     request error. A workspace with no role at all is a 400 carrying
-         *     `RUN_ROLE_MISSING`.
+         *     Always 200 when a role is configured. A workspace with no role at all is a 400
+         *     carrying `RUN_ROLE_MISSING`.
          */
         post: operations["check_run_role_api_v1_workspaces__workspace_id__run_role_check_post"];
         delete?: never;
@@ -1728,18 +1731,28 @@ export interface components {
         };
         /**
          * RunRoleCheck
-         * @description The outcome of one AssumeRole against a workspace's run role.
+         * @description Whether the runner can assume a workspace's run role, from its own record.
          *
-         *     `error` is a sentence for a person rather than the STS code, and no part of
-         *     the temporary credentials reaches it.
+         *     The API never calls STS. The answer is the outcome of the runner's AssumeRole
+         *     in the newest run created with the current role ARN that reached it, so a role
+         *     no run has tried yet is `unverified` rather than refused.
          */
         RunRoleCheck: {
             /** Account Id */
             account_id?: string | null;
+            /** Checked At */
+            checked_at?: string | null;
             /** Connected */
             connected: boolean;
             /** Error */
             error?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "connected" | "failed" | "unverified";
         };
         /**
          * RunRoleSetup
@@ -1748,7 +1761,8 @@ export interface components {
          *     The role cannot exist before the workspace does: its trust policy names the
          *     workspace id as the external id, so the id has to be handed out first. Every
          *     workspace response carries these three values so the setup can be followed
-         *     without reading the stack's outputs.
+         *     without reading the stack's outputs. The runner task roles are the only
+         *     principals the trust policy needs: the API never assumes the role.
          */
         RunRoleSetup: {
             /** External Id */

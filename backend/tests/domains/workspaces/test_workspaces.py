@@ -5,6 +5,8 @@ stored value alone, an explicit null clears a clearable field, and a clear remov
 the attribute rather than writing a null into the row.
 """
 
+from app.common.db import repositories
+from app.common.db.tables import RUNS_COLLECTION
 from app.domains.workspaces import service
 from tests.conftest import WORKSPACE_PAYLOAD
 
@@ -219,9 +221,19 @@ def test_clearing_the_run_role_arn_makes_the_check_a_400(auth_client, workspace)
     assert response.json()["error_code"] == "RUN_ROLE_MISSING"
 
 
-def test_clearing_the_run_role_arn_drops_the_recorded_check(auth_client, workspace):
+def test_clearing_the_run_role_arn_drops_the_recorded_check(auth_client, workspace, settings):
     """The previous success belonged to the previous role, so it goes with it."""
     workspace_id = workspace["workspace_id"]
+    repositories.runs(settings).put(
+        {
+            "run_id": "run-01JBQ0000000000000000000AA",
+            "workspace_id": workspace_id,
+            "collection": RUNS_COLLECTION,
+            "status": "applied",
+            "run_role_arn": workspace["run_role_arn"],
+            "created_at": workspace["created_at"],
+        }
+    )
     assert auth_client.post(f"{BASE}/{workspace_id}/run-role/check").json()["connected"] is True
     assert auth_client.get(f"{BASE}/{workspace_id}").json()["run_role_checked_at"]
 

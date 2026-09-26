@@ -21,7 +21,8 @@ class RunRoleSetup(BaseModel):
     The role cannot exist before the workspace does: its trust policy names the
     workspace id as the external id, so the id has to be handed out first. Every
     workspace response carries these three values so the setup can be followed
-    without reading the stack's outputs.
+    without reading the stack's outputs. The runner task roles are the only
+    principals the trust policy needs: the API never assumes the role.
     """
 
     principal_arn: str
@@ -113,9 +114,9 @@ class Workspace(WorkspaceBase):
     updated_at: Optional[str] = None
     run_role_setup: RunRoleSetup
     run_role_checked_at: Optional[datetime] = None
-    """When the run role last answered an AssumeRole, or `None` when it never has."""
+    """When a run last proved the runner assumed the role, as of the last recorded check."""
     run_role_account_id: Optional[str] = None
-    """The account the run role resolved to on that check."""
+    """The account the role ARN names, as of that recorded check."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -126,16 +127,29 @@ class WorkspaceList(BaseModel):
     items: list[Workspace]
 
 
-class RunRoleCheck(BaseModel):
-    """The outcome of one AssumeRole against a workspace's run role.
+RunRoleCheckStatus = Literal["connected", "failed", "unverified"]
+"""What the runner's own record says about a workspace's run role."""
 
-    `error` is a sentence for a person rather than the STS code, and no part of
-    the temporary credentials reaches it.
+
+class RunRoleCheck(BaseModel):
+    """Whether the runner can assume a workspace's run role, from its own record.
+
+    The API never calls STS. The answer is the outcome of the runner's AssumeRole
+    in the newest run created with the current role ARN that reached it, so a role
+    no run has tried yet is `unverified` rather than refused.
     """
 
     connected: bool
+    """True only when a run proved the runner assumed this role."""
+    status: RunRoleCheckStatus
     account_id: Optional[str] = None
+    """The account the role ARN names, when connected."""
     error: Optional[str] = None
+    """A sentence for a person when not connected, saying what to fix or do next."""
+    run_id: Optional[str] = None
+    """The run the answer comes from, or `None` when unverified."""
+    checked_at: Optional[datetime] = None
+    """When that run reached its verdict."""
 
 
 class VariableWrite(BaseModel):

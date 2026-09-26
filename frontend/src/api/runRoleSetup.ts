@@ -26,16 +26,30 @@ export function isRunRoleMissing(error: unknown): boolean {
 }
 
 /**
- * Whether the workspace has a role that the last check could assume.
+ * Whether the workspace has a run role ARN saved, which is all a run needs.
+ *
+ * The API refuses a run only for a missing ARN. Whether the runner can assume
+ * the role is proven by the run itself, so this is what gates run starts.
+ */
+export function hasRunRole(workspace: Workspace): boolean {
+  return (workspace.run_role_arn ?? null) !== null;
+}
+
+/**
+ * Whether the last recorded check found a run that assumed the role.
  *
  * Both fields are optional on the wire, so an absent one counts as unset
  * exactly as an explicit null does.
  */
 export function isConnected(workspace: Workspace): boolean {
   return (
-    (workspace.run_role_arn ?? null) !== null &&
-    (workspace.run_role_account_id ?? null) !== null
+    hasRunRole(workspace) && (workspace.run_role_account_id ?? null) !== null
   );
+}
+
+/** The words for a workspace whose account is not shown as connected. */
+export function connectionLabel(workspace: Workspace): string {
+  return hasRunRole(workspace) ? 'Not verified' : 'Not connected';
 }
 
 /** The marker in a suggested role name that ends the assumable prefix. */
@@ -64,8 +78,8 @@ export function roleNameFromArn(arn: string): string | null {
 /**
  * Why a role ARN would not work for this workspace, or null when it would.
  *
- * A shape check and a prefix check, both local: the connection check is what
- * proves the role exists and trusts the runner.
+ * A shape check and a prefix check, both local: the first run is what proves
+ * the role exists and trusts the runner.
  */
 export function runRoleArnProblem(
   arn: string,

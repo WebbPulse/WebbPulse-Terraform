@@ -6,7 +6,10 @@ import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
+  RUN_ROLE_MISSING_MESSAGE,
   api,
+  connectionLabel,
+  hasRunRole,
   isConnected,
   type ConfigVersionList,
   type RunList,
@@ -159,12 +162,8 @@ function WorkspaceHeader({
         actions={
           <Button
             variant="primary"
-            disabled={!isConnected(workspace)}
-            title={
-              isConnected(workspace)
-                ? undefined
-                : 'Connect an AWS account before starting a run.'
-            }
+            disabled={!hasRunRole(workspace)}
+            title={hasRunRole(workspace) ? undefined : RUN_ROLE_MISSING_MESSAGE}
             onClick={onNewRun}
           >
             + New run
@@ -191,7 +190,7 @@ function WorkspaceHeader({
           {isConnected(workspace) ? (
             <span className="font-mono">{workspace.run_role_account_id}</span>
           ) : (
-            'Not connected'
+            connectionLabel(workspace)
           )}
         </Fact>
         <Divider />

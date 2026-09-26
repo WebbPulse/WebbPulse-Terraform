@@ -34,6 +34,20 @@ function assumablePrefix(): string {
 }
 
 /** Mounts the workspace pages inside the shell at the given path. */
+/** What the check answers while no run has tried the role. */
+const UNVERIFIED = {
+  connected: false,
+  status: 'unverified' as const,
+  account_id: null,
+  error: 'No run has assumed this role yet.',
+  run_id: null,
+  checked_at: null,
+};
+
+/** The settings page that holds the run role form once an ARN is saved. */
+const RUN_ROLE_SETTINGS =
+  '/workspaces/ws-01J000000000000000000000/settings/run-role';
+
 function renderDetail(path = '/workspaces/ws-01J000000000000000000000'): void {
   renderWithAuth(
     <Routes>
@@ -57,6 +71,7 @@ describe('WorkspaceLayout', () => {
   beforeEach(() => {
     resetApiMock();
     apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+    apiMock.readRunRoleCheck.mockResolvedValue(UNVERIFIED);
     apiMock.listVariables.mockResolvedValue({
       items: [
         aVariable(),
@@ -293,6 +308,7 @@ describe('WorkspaceLayout setup checklist', () => {
   beforeEach(() => {
     resetApiMock();
     apiMock.getWorkspace.mockResolvedValue(aFreshWorkspace());
+    apiMock.readRunRoleCheck.mockResolvedValue(UNVERIFIED);
     apiMock.listVariables.mockResolvedValue({ items: [] });
     apiMock.listConfigVersions.mockResolvedValue({ items: [] });
     apiMock.listRuns.mockResolvedValue({ items: [] });
@@ -402,53 +418,106 @@ describe('WorkspaceLayout setup checklist', () => {
     expect(apiMock.updateWorkspace).not.toHaveBeenCalled();
   });
 
-  it('reports a passing connection check with the account id', async () => {
+  it('reads the runner record on the settings page without writing', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const status = await screen.findByTestId('run-role-status');
+    expect(apiMock.readRunRoleCheck).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000'
+    );
+    expect(apiMock.checkRunRole).not.toHaveBeenCalled();
+    expect(status).toHaveAttribute('data-connection', 'unverified');
+    expect(status).toHaveTextContent('No run has assumed this role yet.');
+  });
+
+  it('reports a run that assumed the role with the account id', async () => {
     apiMock.getWorkspace.mockResolvedValue(
       aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn })
     );
     apiMock.checkRunRole.mockResolvedValue({
       connected: true,
+      status: 'connected',
       account_id: '123456789012',
       error: null,
+      run_id: 'run-1',
+      checked_at: '2026-09-17T00:05:00Z',
     });
 
-    renderDetail();
+    renderDetail(RUN_ROLE_SETTINGS);
 
-    const checklist = await screen.findByTestId('setup-checklist');
-    await userEvent.click(
-      within(checklist).getByRole('button', { name: 'Check connection' })
-    );
+    const checkButton = await screen.findByRole('button', {
+      name: 'Check connection',
+    });
+    const readsBefore = apiMock.getWorkspace.mock.calls.length;
+    await userEvent.click(checkButton);
 
     expect(apiMock.checkRunRole).toHaveBeenCalledWith(
       'ws-01J000000000000000000000'
     );
-    const status = await within(checklist).findByTestId('run-role-status');
-    expect(status).toHaveAttribute('data-connection', 'connected');
-    expect(status).toHaveTextContent('Connected to account 123456789012');
+    await waitFor(() => {
+      expect(screen.getByTestId('run-role-status')).toHaveAttribute(
+        'data-connection',
+        'connected'
+      );
+    });
+    await waitFor(() => {
+      expect(apiMock.getWorkspace.mock.calls.length).toBeGreaterThan(
+        readsBefore
+      );
+    });
+    expect(screen.getByTestId('run-role-status')).toHaveTextContent(
+      'The runner assumed this role in account 123456789012'
+    );
   });
 
-  it('reports a failing connection check with its reason', async () => {
+  it('reports a run the role refused with what to fix', async () => {
     apiMock.getWorkspace.mockResolvedValue(
       aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn })
     );
-    apiMock.checkRunRole.mockResolvedValue({
+    apiMock.readRunRoleCheck.mockResolvedValue({
       connected: false,
+      status: 'failed',
       account_id: null,
-      error: 'The role refused the runner. Check the trust policy.',
+      error: 'Its trust policy has to name every runner task role.',
+      run_id: 'run-1',
+      checked_at: null,
+    });
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('run-role-status')).toHaveAttribute(
+        'data-connection',
+        'failed'
+      );
+    });
+    expect(screen.getByTestId('run-role-status')).toHaveTextContent(
+      'The runner could not assume the role. Its trust policy has to name every runner task role.'
+    );
+  });
+
+  it('lets a saved but unverified role start a run, which is the check', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn })
+    );
+    apiMock.listConfigVersions.mockResolvedValue({
+      items: [aConfigVersion()],
     });
 
     renderDetail();
 
     const checklist = await screen.findByTestId('setup-checklist');
-    await userEvent.click(
-      within(checklist).getByRole('button', { name: 'Check connection' })
-    );
-
-    const status = await within(checklist).findByTestId('run-role-status');
-    expect(status).toHaveAttribute('data-connection', 'failed');
-    expect(status).toHaveTextContent(
-      'The role refused the runner. Check the trust policy.'
-    );
+    expect(
+      within(checklist).getByRole('button', { name: 'Run a plan' })
+    ).toBeEnabled();
+    for (const button of screen.getAllByRole('button', { name: '+ New run' })) {
+      expect(button).toBeEnabled();
+    }
+    expect(screen.getAllByText('Not verified').length).toBeGreaterThan(0);
   });
 
   it('disables the check until an ARN is saved', async () => {

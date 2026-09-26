@@ -46,6 +46,11 @@ describe('Workspaces', () => {
       items: [
         aWorkspace(),
         aFreshWorkspace({ workspace_id: 'ws-2', name: 'organization' }),
+        aFreshWorkspace({
+          workspace_id: 'ws-3',
+          name: 'network',
+          run_role_arn: aWorkspace().run_role_arn,
+        }),
       ],
     });
 
@@ -60,6 +65,7 @@ describe('Workspaces', () => {
     );
     expect(screen.getByText('123456789012')).toBeInTheDocument();
     expect(screen.getByText('Not connected')).toBeInTheDocument();
+    expect(screen.getByText('Not verified')).toBeInTheDocument();
   });
 
   it('says so when there are no workspaces', async () => {

@@ -23,6 +23,14 @@ describe('setupSteps', () => {
     ]);
   });
 
+  it('moves to upload once an ARN is saved, before any run proved it', () => {
+    const saved = aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn });
+    expect(setupSteps(saved, [], [])[0]).toEqual({
+      id: 'connect',
+      status: 'done',
+    });
+  });
+
   it('moves to upload once the account is connected', () => {
     expect(setupSteps(aWorkspace(), [], [])).toEqual([
       { id: 'connect', status: 'done' },

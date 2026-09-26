@@ -153,6 +153,27 @@ function RoleArnForm({
     setProblem(null);
   }, [workspace.run_role_arn]);
 
+  const workspaceId = workspace.workspace_id;
+  const savedArn = workspace.run_role_arn ?? null;
+  useEffect(() => {
+    setResult(null);
+    if (savedArn === null) {
+      return;
+    }
+    let current = true;
+    api.readRunRoleCheck(workspaceId).then(
+      (outcome) => {
+        if (current) {
+          setResult(outcome ?? null);
+        }
+      },
+      () => undefined
+    );
+    return () => {
+      current = false;
+    };
+  }, [workspaceId, savedArn]);
+
   const save = useMutationWithRefetch(
     (value: string) =>
       api.updateWorkspace(workspace.workspace_id, { run_role_arn: value }),
@@ -187,7 +208,7 @@ function RoleArnForm({
     try {
       const outcome = await api.checkRunRole(workspace.workspace_id);
       setResult(outcome);
-      invalidateQueries([queryKey]);
+      invalidateQueries(queryKey);
     } catch (thrown) {
       setCheckError(thrown);
     } finally {
@@ -248,7 +269,7 @@ function RoleArnForm({
         <Button
           variant={dirty || unsaved ? 'secondary' : 'primary'}
           busy={checking}
-          busyLabel="Checking the connection"
+          busyLabel="Checking the latest runs"
           disabled={unsaved || dirty}
           title={
             dirty
@@ -265,7 +286,7 @@ function RoleArnForm({
         </Button>
         {saved ? (
           <span role="status" className="text-sm text-success">
-            Saved. Now check the connection.
+            Saved. Start a plan only run to prove the runner can assume it.
           </span>
         ) : null}
       </div>
@@ -274,7 +295,7 @@ function RoleArnForm({
   );
 }
 
-/** The outcome of the last check, fresh from the button or as persisted. */
+/** What the runner's record says about the role, fresh or as last recorded. */
 function ConnectionStatus({
   workspace,
   result,
@@ -282,44 +303,48 @@ function ConnectionStatus({
   workspace: Workspace;
   result: RunRoleCheck | null;
 }): React.ReactElement | null {
-  const checkedAt = workspace.run_role_checked_at ?? null;
-  if (result !== null) {
-    const error = result.error ?? null;
-    return result.connected ? (
-      <StatusLine tone="ok" testValue="connected">
-        Connected to account{' '}
-        <code className="font-mono">{result.account_id ?? 'unknown'}</code>.
-      </StatusLine>
-    ) : (
-      <StatusLine tone="bad" testValue="failed">
-        Could not assume the role
-        {error === null ? '.' : `: ${error}`}
-      </StatusLine>
-    );
-  }
   if ((workspace.run_role_arn ?? null) === null) {
     return null;
   }
-  if (isConnected(workspace)) {
+  if (result !== null) {
+    const checkedAt = result.checked_at ?? null;
+    if (result.status === 'connected') {
+      return (
+        <StatusLine tone="ok" testValue="connected">
+          The runner assumed this role in account{' '}
+          <code className="font-mono">{result.account_id ?? 'unknown'}</code>
+          {checkedAt === null ? '.' : `, ${formatDateTime(checkedAt)}.`}
+        </StatusLine>
+      );
+    }
+    if (result.status === 'failed') {
+      return (
+        <StatusLine tone="bad" testValue="failed">
+          The runner could not assume the role
+          {checkedAt === null ? '' : ` on ${formatDateTime(checkedAt)}`}.{' '}
+          {result.error ?? ''}
+        </StatusLine>
+      );
+    }
     return (
-      <StatusLine tone="ok" testValue="connected">
-        Connected to account{' '}
-        <code className="font-mono">{workspace.run_role_account_id}</code>
-        {checkedAt === null ? '.' : `, checked ${formatDateTime(checkedAt)}.`}
+      <StatusLine tone="neutral" testValue="unverified">
+        {result.error ?? 'No run has assumed this role yet.'}
       </StatusLine>
     );
   }
-  if (checkedAt !== null) {
+  if (isConnected(workspace)) {
+    const checkedAt = workspace.run_role_checked_at ?? null;
     return (
-      <StatusLine tone="bad" testValue="failed">
-        The last check, {formatDateTime(checkedAt)}, could not assume the role.
-        Check again once the trust policy is in place.
+      <StatusLine tone="ok" testValue="connected">
+        The runner assumed this role in account{' '}
+        <code className="font-mono">{workspace.run_role_account_id}</code>
+        {checkedAt === null ? '.' : `, ${formatDateTime(checkedAt)}.`}
       </StatusLine>
     );
   }
   return (
-    <StatusLine tone="neutral" testValue="unchecked">
-      Not checked yet.
+    <StatusLine tone="neutral" testValue="unverified">
+      Not verified yet. The first run proves the runner can assume the role.
     </StatusLine>
   );
 }

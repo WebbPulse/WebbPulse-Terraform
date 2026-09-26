@@ -2,7 +2,14 @@
 
 import { Link } from 'react-router-dom';
 
-import { isActive, isConnected, type Run, type Workspace } from '../../api';
+import {
+  connectionLabel,
+  hasRunRole,
+  isActive,
+  isConnected,
+  type Run,
+  type Workspace,
+} from '../../api';
 import {
   Button,
   EmptyState,
@@ -66,7 +73,7 @@ export function OverviewPage(): React.ReactElement {
               title="No runs yet."
               hint="Start one with New run, or from a configuration version."
               action={
-                isConnected(workspace) ? (
+                hasRunRole(workspace) ? (
                   <Button variant="primary" onClick={openNewRun}>
                     + New run
                   </Button>
@@ -176,7 +183,7 @@ function WorkspaceFacts({
       value: isConnected(workspace) ? (
         <span className="font-mono">{workspace.run_role_account_id}</span>
       ) : (
-        'Not connected'
+        connectionLabel(workspace)
       ),
       to: `${base}/settings/run-role`,
     },

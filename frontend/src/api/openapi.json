@@ -1432,7 +1432,7 @@
         "type": "object"
       },
       "RunRoleCheck": {
-        "description": "The outcome of one AssumeRole against a workspace's run role.\n\n`error` is a sentence for a person rather than the STS code, and no part of\nthe temporary credentials reaches it.",
+        "description": "Whether the runner can assume a workspace's run role, from its own record.\n\nThe API never calls STS. The answer is the outcome of the runner's AssumeRole\nin the newest run created with the current role ARN that reached it, so a role\nno run has tried yet is `unverified` rather than refused.",
         "properties": {
           "account_id": {
             "anyOf": [
@@ -1444,6 +1444,18 @@
               }
             ],
             "title": "Account Id"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
           },
           "connected": {
             "title": "Connected",
@@ -1459,16 +1471,37 @@
               }
             ],
             "title": "Error"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "enum": [
+              "connected",
+              "failed",
+              "unverified"
+            ],
+            "title": "Status",
+            "type": "string"
           }
         },
         "required": [
-          "connected"
+          "connected",
+          "status"
         ],
         "title": "RunRoleCheck",
         "type": "object"
       },
       "RunRoleSetup": {
-        "description": "What a person needs to build the run role for one workspace.\n\nThe role cannot exist before the workspace does: its trust policy names the\nworkspace id as the external id, so the id has to be handed out first. Every\nworkspace response carries these three values so the setup can be followed\nwithout reading the stack's outputs.",
+        "description": "What a person needs to build the run role for one workspace.\n\nThe role cannot exist before the workspace does: its trust policy names the\nworkspace id as the external id, so the id has to be handed out first. Every\nworkspace response carries these three values so the setup can be followed\nwithout reading the stack's outputs. The runner task roles are the only\nprincipals the trust policy needs: the API never assumes the role.",
         "properties": {
           "external_id": {
             "title": "External Id",
@@ -4148,7 +4181,7 @@
     },
     "/api/v1/workspaces/{workspace_id}/run-role/check": {
       "get": {
-        "description": "Assume the workspace's run role and report whether it answered, writing nothing.\n\nThe same probe as the POST, without the record it leaves behind. A caller that\nonly wants to look, such as a Terraform provider reading on every plan and\nrefresh, uses this one so no plan mutates a workspace row. Because nothing is\nwritten, the read scope is enough.\n\nAlways 200 when a role is configured, whether or not it answered. A workspace\nwith no role at all is a 400 carrying `RUN_ROLE_MISSING`.",
+        "description": "Report whether the runner has assumed the workspace's run role, writing nothing.\n\nThe answer comes from the runner's own record: the newest run created with the\ncurrent role ARN that got past, or failed on, the runner's AssumeRole. The API\nnever calls STS, so it holds no path into the account the role lives in. A role\nno run has tried yet reads `unverified`, and a plan only run is the check.\n\nA caller that only wants to look, such as a Terraform provider reading on every\nplan and refresh, uses this one so no plan mutates a workspace row. Because\nnothing is written, the read scope is enough.\n\nAlways 200 when a role is configured. A workspace with no role at all is a 400\ncarrying `RUN_ROLE_MISSING`.",
         "operationId": "read_run_role_check_api_v1_workspaces__workspace_id__run_role_check_get",
         "parameters": [
           {
@@ -4192,7 +4225,7 @@
         ]
       },
       "post": {
-        "description": "Assume the workspace's run role and record the outcome on the workspace.\n\nThe recorded outcome is what the setup UI shows between visits, so this route\nkeeps its write and its write scope. Use the GET when only the answer is\nwanted.\n\nAlways 200 when a role is configured, whether or not it answered: a trust\npolicy that is not there yet is an expected state of the setup rather than a\nrequest error. A workspace with no role at all is a 400 carrying\n`RUN_ROLE_MISSING`.",
+        "description": "Read the runner's record for the run role, as the GET does, and stamp it on the workspace.\n\nThe stamp is what the workspace list shows between visits: the account and the\ntime of the run that proved the role on `connected`, both cleared otherwise, so\na stale success cannot outlive a role whose trust broke. Use the GET when only\nthe answer is wanted.\n\nAlways 200 when a role is configured. A workspace with no role at all is a 400\ncarrying `RUN_ROLE_MISSING`.",
         "operationId": "check_run_role_api_v1_workspaces__workspace_id__run_role_check_post",
         "parameters": [
           {
