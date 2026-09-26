@@ -1,7 +1,10 @@
 # first-run
 
 A configuration with no AWS resources, for the first end to end run on staging,
-whether started by hand or from a pull request.
+started by hand. Pull request and push runs are exercised in the public
+`WebbPulse/webbpulse-terraform-sandbox` repository, which carries a copy of this
+configuration and the upload workflow, and which the staging GitHub App is
+installed on instead of this repository.
 One `random_pet` and one output: enough to prove the runner unpacks the config,
 assumes the run role, takes the state lock and writes state, without needing any
 permission beyond the state bucket.

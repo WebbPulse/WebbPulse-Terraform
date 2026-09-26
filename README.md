@@ -304,6 +304,11 @@ object, its lock, the state bucket listing and the state KMS key. The steps, fro
 creating the workspace to confirming the apply, are in
 `examples/first-run/README.md`.
 
+VCS driven runs are proven in `WebbPulse/webbpulse-terraform-sandbox`, a public
+throwaway repository holding the same configuration and the upload workflow. The
+staging GitHub App is installed there and not on this repository, and the staging
+`first-run` workspace is bound to it.
+
 ## Pins
 
 `webbpulse` and `@webbpulse/*` float to the newest release at build time rather
