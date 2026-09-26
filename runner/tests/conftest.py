@@ -36,6 +36,9 @@ RUN_TOKEN = "run-token-do-not-log-abcdefghij"
 TASK_TOKEN = "task-token-do-not-log-klmnopqrst"
 SECRET_TFVAR = "super-secret-database-password-1234"
 SECRET_ENVVAR = "secret-provider-credential-567890abc"
+SECRET_HCL_TFVAR = '["secret-list-member-abcdefghij", "secret-list-member-klmnopqrst"]'
+"""A sensitive variable whose value is an HCL expression. The expression is the
+secret, so it is the expression the redactor has to mask."""
 
 PLAN_JSON_WITH_CHANGES = {
     "format_version": "1.2",
@@ -244,8 +247,11 @@ if SUBCOMMAND == "init":
             if key.startswith(("TF_VAR_", "PROVIDER_", "AWS_")):
                 print("env " + key + "=" + os.environ[key])
         for name in sorted(os.listdir(".")):
-            if name.endswith(".tfvars.json"):
+            if name.endswith(".tfvars.json") or name.endswith(".tfvars"):
                 print("tfvars file " + name)
+                if name.endswith(".tfvars"):
+                    for line in open(name).read().splitlines():
+                        print("tfvars line " + line)
     sys.exit({init_exit})
 if SUBCOMMAND == "plan":
     print("Terraform used the selected providers to generate the plan.")

@@ -2,13 +2,42 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 Phase = Literal["plan", "apply"]
 Engine = Literal["terraform", "tofu"]
+
+_QUOTED_LITERAL = re.compile(r'"((?:\\[^\r\n]|[^"\\\r\n])*)"')
+_HEREDOC_BODY = re.compile(r"<<-?([^\W\d][\w-]*)\r?\n(.*?)^[ \t]*\1[ \t]*$", re.MULTILINE | re.DOTALL)
+
+
+def hcl_literal_fragments(expression: str) -> list[str]:
+    """The pieces of an HCL expression the engine may print on their own.
+
+    The engine renders a list or map member by member, so the expression as typed
+    rarely appears in its output. Each quoted string is registered both as typed
+    and decoded, and each heredoc line on its own. This is best effort and never
+    refuses a value: what it cannot recognise is still covered by the whole
+    expression, which is registered beside it.
+    """
+    fragments = [expression]
+    for match in _QUOTED_LITERAL.finditer(expression):
+        raw = match.group(1)
+        fragments.append(raw)
+        try:
+            fragments.append(json.loads(f'"{raw}"'))
+        except ValueError:
+            pass
+    for match in _HEREDOC_BODY.finditer(expression):
+        body = match.group(2)
+        fragments.append(body.rstrip("\r\n"))
+        fragments.extend(line.strip() for line in body.splitlines())
+    return [fragment for fragment in fragments if fragment]
 
 
 class RunnerEnvError(RuntimeError):
@@ -131,6 +160,13 @@ class Bundle(BaseModel):
     run_role: RunRole
     environment_variables: dict[str, str] = Field(default_factory=dict)
     terraform_variables: dict[str, object] = Field(default_factory=dict)
+    """Literal values. They go to a JSON tfvars file, where a string is a string
+    whatever it contains, so quotes and braces in a value cannot be reinterpreted."""
+    hcl_variables: dict[str, str] = Field(default_factory=dict)
+    """Values that are HCL expressions rather than literals, which is the only way
+    a list or map typed input variable can be given one. They go to a native HCL
+    tfvars file, where the engine parses each one. A bundle from a control plane
+    that predates the flag carries none."""
     artifacts: Artifacts = Field(default_factory=Artifacts)
 
     def sensitive_values(self) -> list[str]:
@@ -142,6 +178,8 @@ class Bundle(BaseModel):
         for variable in self.terraform_variables.values():
             if isinstance(variable, str) and variable:
                 values.append(variable)
+        for expression in self.hcl_variables.values():
+            values.extend(hcl_literal_fragments(expression))
         if self.run_role.external_id:
             values.append(self.run_role.external_id)
         return values

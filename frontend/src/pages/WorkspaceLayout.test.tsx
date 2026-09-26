@@ -167,6 +167,37 @@ describe('WorkspaceLayout', () => {
     ).toBeInTheDocument();
   });
 
+  it.each(['terraform', 'env'] as const)(
+    'preserves HCL only when saving a terraform variable as %s',
+    async (category) => {
+      const variable = aVariable({ hcl: true, value: '["west", "east"]' });
+      apiMock.listVariables.mockResolvedValue({ items: [variable] });
+      apiMock.putVariable.mockResolvedValue(variable);
+      renderDetail('/workspaces/ws-01J000000000000000000000/variables');
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Edit' })
+      );
+      await userEvent.selectOptions(
+        screen.getByLabelText('Category'),
+        category
+      );
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Save variable' })
+      );
+
+      expect(apiMock.putVariable).toHaveBeenCalledWith(
+        variable.workspace_id,
+        variable.key,
+        expect.objectContaining({
+          value: variable.value,
+          category,
+          hcl: category === 'terraform',
+        })
+      );
+    }
+  );
+
   it('declares the file size and PUTs with every signed header', async () => {
     const put = vi.fn<typeof globalThis.fetch>(() =>
       Promise.resolve(new Response(null, { status: 200 }))

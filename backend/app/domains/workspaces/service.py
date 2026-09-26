@@ -37,12 +37,14 @@ from ...common.workspaces.reads import (
     list_variables,
     resolved_variables,
 )
+from . import hcl
 from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
 
 __all__ = [
     "CONFIG_VERSION_ID_PREFIX",
     "WORKSPACE_ID_PREFIX",
     "ConfigVersionNotFound",
+    "HclNotAllowed",
     "RunRoleMissing",
     "VariableNotFound",
     "WorkspaceNameTaken",
@@ -81,6 +83,16 @@ RUN_ROLE_ACCESS_DENIED_MESSAGE: Final = "The role does not trust the runner or t
 
 class WorkspaceNameTaken(Exception):
     """Another workspace already holds this name."""
+
+
+class HclNotAllowed(Exception):
+    """An `env` variable was marked HCL, which has no meaning.
+
+    A process environment variable is a string to the process, so there is nothing
+    that would parse the expression. Refused rather than ignored, because silently
+    dropping the flag would store a value whose rendering does not match what the
+    caller asked for.
+    """
 
 
 def run_role_name(workspace_id: str, *, settings: Settings | None = None) -> str:
@@ -366,24 +378,43 @@ def put_variable(
     A sensitive value never reaches the table in the clear, and the plaintext is
     not returned: the caller gets the row as the API renders it, with `value`
     absent.
+
+    An HCL value is validated before it is stored, so a broken expression is
+    refused here rather than failing every subsequent run on the workspace. The
+    validation happens ahead of the sealing so the message can never carry any of
+    a sensitive value back.
+
+    Raises:
+        WorkspaceNotFound: No such workspace.
+        HclNotAllowed: An `env` variable was marked HCL.
+        hcl.InvalidHcl: The expression cannot parse.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
     existing = repositories.variables(resolved).get({"workspace_id": workspace_id, "key": key})
 
     sensitive = bool(payload.get("sensitive", False))
+    category = str(payload.get("category", "terraform"))
+    is_hcl = bool(payload.get("hcl", False))
+    value = str(payload["value"])
+    if is_hcl and category != "terraform":
+        raise HclNotAllowed(key)
+    if is_hcl:
+        hcl.validate_name(key)
+        hcl.validate(value)
+
     item: dict[str, Any] = {
         "workspace_id": workspace_id,
         "key": key,
-        "category": payload.get("category", "terraform"),
+        "category": category,
         "sensitive": sensitive,
+        "hcl": is_hcl,
         "description": payload.get("description", "") or "",
         "created_at": str(existing["created_at"]) if existing else now_iso(),
     }
     if existing:
         item["updated_at"] = now_iso()
 
-    value = str(payload["value"])
     if sensitive:
         item.update(variable_cipher.seal(value, workspace_id=workspace_id, key=key, settings=resolved))
     else:
@@ -405,6 +436,9 @@ def render_variable(item: dict[str, Any]) -> dict[str, Any]:
 
     A sensitive variable's `value` is `None` rather than absent, so a client can
     tell "withheld" from "empty string" without reading the `sensitive` flag.
+
+    `hcl` is read with a default, because every row written before the flag
+    existed carries no such attribute and those values are literal.
     """
     sensitive = bool(item.get("sensitive", False))
     return {
@@ -413,6 +447,7 @@ def render_variable(item: dict[str, Any]) -> dict[str, Any]:
         "value": None if sensitive else str(item.get("value", "")),
         "category": str(item.get("category", "terraform")),
         "sensitive": sensitive,
+        "hcl": bool(item.get("hcl", False)),
         "description": str(item.get("description", "") or ""),
         "created_at": str(item.get("created_at", "")),
         "updated_at": str(item["updated_at"]) if item.get("updated_at") else None,

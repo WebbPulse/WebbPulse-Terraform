@@ -92,6 +92,14 @@ def test_put_rejects_a_key_starting_with_a_digit(auth_client, workspace):
     assert response.status_code == 422
 
 
+def test_hcl_rejects_dotted_names_without_replacing_existing_values(auth_client, workspace):
+    """An HCL write cannot store a name the runner cannot render."""
+    url = variables_url(workspace["workspace_id"], "dotted.name")
+    assert auth_client.put(url, json={"value": "original"}).status_code == 200
+    assert auth_client.put(url, json={"value": "true", "hcl": True}).status_code == 422
+    assert auth_client.get(url).json()["value"] == "original"
+
+
 def test_sensitive_value_is_not_returned_on_put(auth_client, workspace):
     """The response to setting a sensitive value carries no value."""
     response = auth_client.put(
@@ -236,3 +244,159 @@ def test_variables_are_scoped_to_their_workspace(auth_client, workspace):
         json={"value": "us-west-2", "category": "terraform", "sensitive": False},
     )
     assert auth_client.get(variables_url(other["workspace_id"])).json()["items"] == []
+
+
+def test_hcl_list_reaches_the_runner_as_an_expression(auth_client, workspace):
+    """An HCL list is stored under the HCL bucket, not among the literals.
+
+    The two buckets are what the runner writes to two different files, so a value
+    in the wrong one is a value the engine would take the wrong way.
+    """
+    workspace_id = workspace["workspace_id"]
+    response = auth_client.put(
+        variables_url(workspace_id, "subnets"),
+        json={"value": '["a", "b"]', "category": "terraform", "sensitive": False, "hcl": True},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["hcl"] is True
+
+    resolved = workspaces_service.resolved_variables(workspace_id)
+    assert resolved["hcl"]["subnets"] == '["a", "b"]'
+    assert "subnets" not in resolved["terraform"]
+
+
+def test_hcl_map_reaches_the_runner_as_an_expression(auth_client, workspace):
+    """A map expression survives the round trip character for character."""
+    workspace_id = workspace["workspace_id"]
+    expression = '{\n  env  = "staging"\n  size = 2\n}'
+    assert (
+        auth_client.put(
+            variables_url(workspace_id, "settings"),
+            json={"value": expression, "category": "terraform", "sensitive": False, "hcl": True},
+        ).status_code
+        == 200
+    )
+    assert workspaces_service.resolved_variables(workspace_id)["hcl"]["settings"] == expression
+
+
+def test_a_literal_with_quotes_and_braces_stays_literal(auth_client, workspace):
+    """With `hcl` false a value full of HCL punctuation is still a literal.
+
+    This is the corruption case: the value reads like an expression, so anything
+    that decided by inspection rather than by the flag would parse it.
+    """
+    workspace_id = workspace["workspace_id"]
+    value = '${var.nope} "quoted" {braces} ["a"]'
+    body = auth_client.put(
+        variables_url(workspace_id, "literal"),
+        json={"value": value, "category": "terraform", "sensitive": False, "hcl": False},
+    ).json()
+    assert body["hcl"] is False
+    assert body["value"] == value
+
+    resolved = workspaces_service.resolved_variables(workspace_id)
+    assert resolved["terraform"]["literal"] == value
+    assert "literal" not in resolved["hcl"]
+
+
+def test_hcl_defaults_to_false_when_it_is_not_sent(auth_client, workspace):
+    """Omitting the flag stores a literal, so no existing caller changes meaning."""
+    body = auth_client.put(
+        variables_url(workspace["workspace_id"], "region"),
+        json={"value": "us-west-2", "category": "terraform", "sensitive": False},
+    ).json()
+    assert body["hcl"] is False
+
+
+def test_env_plus_hcl_is_rejected(auth_client, workspace):
+    """An env variable cannot be HCL, and says so rather than dropping the flag."""
+    response = auth_client.put(
+        variables_url(workspace["workspace_id"], "SETTINGS"),
+        json={"value": '["a"]', "category": "env", "sensitive": False, "hcl": True},
+    )
+    assert response.status_code == 422
+    assert "env variable cannot be HCL" in response.text
+
+    assert auth_client.get(variables_url(workspace["workspace_id"], "SETTINGS")).status_code == 404
+
+
+def test_broken_hcl_is_rejected_at_write_time(auth_client, workspace):
+    """A syntactically impossible expression is refused when it is saved.
+
+    Storing it would turn every later run on the workspace into a parse error, so
+    the write is where it fails.
+    """
+    workspace_id = workspace["workspace_id"]
+    response = auth_client.put(
+        variables_url(workspace_id, "subnets"),
+        json={"value": '["a", "b"', "category": "terraform", "sensitive": False, "hcl": True},
+    )
+    assert response.status_code == 422
+    assert "HCL" in response.text
+    assert auth_client.get(variables_url(workspace_id, "subnets")).status_code == 404
+
+
+def test_a_legacy_row_without_the_attribute_reads_as_literal(auth_client, workspace):
+    """A row written before the flag existed carries no attribute and is literal.
+
+    Written straight to the table around the service, which is how every row
+    already in the environment looks.
+    """
+    workspace_id = workspace["workspace_id"]
+    table = boto3.resource("dynamodb", region_name=REGION).Table(local_table_name(VARIABLES, ENVIRONMENT))
+    table.put_item(
+        Item={
+            "workspace_id": workspace_id,
+            "key": "legacy",
+            "value": '["a", "b"]',
+            "category": "terraform",
+            "sensitive": False,
+            "description": "",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    assert "hcl" not in stored_item(workspace_id, "legacy")
+
+    body = auth_client.get(variables_url(workspace_id, "legacy")).json()
+    assert body["hcl"] is False
+    assert body["value"] == '["a", "b"]'
+
+    resolved = workspaces_service.resolved_variables(workspace_id)
+    assert resolved["terraform"]["legacy"] == '["a", "b"]'
+    assert resolved["hcl"] == {}
+
+
+def test_a_sensitive_hcl_variable_stays_redacted(auth_client, workspace):
+    """A sensitive value may be HCL, and is sealed and withheld exactly as before."""
+    workspace_id = workspace["workspace_id"]
+    expression = '["super-secret-one", "super-secret-two"]'
+    body = auth_client.put(
+        variables_url(workspace_id, "secrets"),
+        json={"value": expression, "category": "terraform", "sensitive": True, "hcl": True},
+    ).json()
+    assert body["sensitive"] is True
+    assert body["hcl"] is True
+    assert body["value"] is None
+
+    assert auth_client.get(variables_url(workspace_id, "secrets")).json()["value"] is None
+    listed = {item["key"]: item for item in auth_client.get(variables_url(workspace_id)).json()["items"]}
+    assert listed["secrets"]["value"] is None
+    assert listed["secrets"]["hcl"] is True
+
+    item = stored_item(workspace_id, "secrets")
+    assert "value" not in item
+    assert "super-secret-one" not in str(item)
+    assert item["hcl"] is True
+    assert item["secret_ciphertext"]
+
+    assert workspaces_service.resolved_variables(workspace_id)["hcl"]["secrets"] == expression
+
+
+def test_broken_sensitive_hcl_is_rejected_without_echoing_the_value(auth_client, workspace):
+    """The refusal for a sensitive expression names nothing of the expression."""
+    response = auth_client.put(
+        variables_url(workspace["workspace_id"], "secrets"),
+        json={"value": '["super-secret-one"', "category": "terraform", "sensitive": True, "hcl": True},
+    )
+    assert response.status_code == 422
+    assert "super-secret-one" not in response.text
