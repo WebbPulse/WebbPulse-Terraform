@@ -15,6 +15,7 @@ from webbpulse.identity.claims import AuthorizerClaims
 from ...common.core.auth import (
     CONFIGS_READ,
     CONFIGS_WRITE,
+    STATE_DOWNLOAD,
     VARIABLES_READ,
     VARIABLES_WRITE,
     WORKSPACES_READ,
@@ -439,7 +440,7 @@ def get_state_version(
 @router.post(
     "/workspaces/{workspace_id}/state-versions/{state_version_id}/download",
     response_model=StateVersionDownload,
-    dependencies=[Depends(scopes(WORKSPACES_READ))],
+    dependencies=[Depends(scopes(WORKSPACES_READ, STATE_DOWNLOAD))],
 )
 def download_state_version(
     request: Request,
@@ -448,7 +449,7 @@ def download_state_version(
     state_version_id: str = StateVersionId,
     claims: AuthorizerClaims = Depends(auth_claims),
 ) -> dict[str, Any]:
-    """Mint a short lived URL for one state version's raw bytes.
+    """Mint a short lived URL with workspaces:read and explicit state:download access.
 
     A `POST` rather than a `GET` because it is not a read: it mints a bearer
     credential for the most sensitive object the product stores, and that is an
