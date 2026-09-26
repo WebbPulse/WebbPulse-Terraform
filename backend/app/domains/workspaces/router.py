@@ -46,6 +46,15 @@ from .schemas.workspace import (
 RUN_ROLE_MISSING_CODE = "RUN_ROLE_MISSING"
 """The stable code a caller matches on when a workspace has no run role yet."""
 
+WORKSPACE_MANAGES_RESOURCES_CODE = "WORKSPACE_MANAGES_RESOURCES"
+"""The stable code a safe delete refuses with while the current state tracks resources."""
+
+WORKSPACE_HAS_ACTIVE_RUN_CODE = "WORKSPACE_HAS_ACTIVE_RUN"
+"""The stable code any delete refuses with while a run on the workspace is unfinished."""
+
+WORKSPACE_DELETE_EVENT = "workspaces.workspace.delete"
+"""The log event a workspace delete is recorded under, naming the workspace and the mode."""
+
 router = APIRouter()
 
 WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
@@ -240,12 +249,51 @@ def check_run_role(workspace_id: str = WorkspaceId) -> dict[str, Any]:
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
-def delete_workspace(workspace_id: str = WorkspaceId) -> None:
-    """Delete one workspace and its variables."""
+def delete_workspace(
+    workspace_id: str = WorkspaceId,
+    force: bool = Query(
+        False,
+        description="Skip the managed resources check and delete even though state still tracks resources.",
+    ),
+) -> None:
+    """Delete one workspace with its finished runs, current state and variables.
+
+    A safe delete is a 409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current
+    state tracks any resource instance: queue a destroy plan and apply it first, or
+    pass `force=true` to delete anyway and leave those resources unmanaged. Either
+    mode is a 409 carrying `WORKSPACE_HAS_ACTIVE_RUN` while a run on the workspace
+    has not finished. Nothing is removed on a refusal.
+    """
     try:
-        service.delete_workspace(workspace_id)
+        service.delete_workspace(workspace_id, force=force)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
+    except service.RunStillActive as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    f"Run {error.run_id} is still {error.status or 'active'}. "
+                    "Wait for it to finish or cancel it, then delete the workspace."
+                ),
+                "error_code": WORKSPACE_HAS_ACTIVE_RUN_CODE,
+            },
+        ) from error
+    except service.WorkspaceManagesResources as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "This workspace still manages resources. Queue a destroy plan and apply it first, "
+                    "or force delete to leave them unmanaged."
+                ),
+                "error_code": WORKSPACE_MANAGES_RESOURCES_CODE,
+            },
+        ) from error
+    _log.info(
+        "Deleted a workspace.",
+        extra={"event": WORKSPACE_DELETE_EVENT, "workspace_id": workspace_id, "force": force},
+    )
 
 
 @router.get(

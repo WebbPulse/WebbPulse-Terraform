@@ -39,6 +39,7 @@ from ...common.db.tables import (
     RUNS_COLLECTION,
     SEMAPHORE_RUN_ID,
 )
+from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import reads as workspace_reads
 from . import session_policy
 from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
@@ -61,7 +62,7 @@ ACTIVE_STATUSES: Final = frozenset({"pending"}) | EXECUTING_STATUSES
 """A run in one of these occupies its workspace's slot, queued runs included, so a
 new run queues behind the whole queue rather than racing its head."""
 
-TERMINAL_STATUSES: Final = frozenset({"applied", "planned_and_finished", "errored", "cancelled", "discarded"})
+TERMINAL_STATUSES: Final = TERMINAL_RUN_STATUSES
 """A run in one of these is finished, so its token is dead and the next queued run
 on its workspace may start."""
 

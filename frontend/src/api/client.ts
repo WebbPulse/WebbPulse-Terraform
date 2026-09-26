@@ -173,14 +173,21 @@ export class TerraformApi {
     return response.data;
   }
 
-  /** Deletes a workspace. */
+  /**
+   * Deletes a workspace. A safe delete rejects with `WORKSPACE_MANAGES_RESOURCES`
+   * while state tracks resources, and `force` skips that check. Either rejects
+   * with `WORKSPACE_HAS_ACTIVE_RUN` while a run is unfinished.
+   */
   async deleteWorkspace(
     workspaceId: string,
+    { force = false }: { force?: boolean } = {},
     options: RequestOptions = {}
   ): Promise<void> {
     await this.client.delete(
       `/workspaces/${encodeURIComponent(workspaceId)}`,
-      options
+      force
+        ? { ...options, query: { ...options.query, force: 'true' } }
+        : options
     );
   }
 

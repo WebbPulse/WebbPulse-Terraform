@@ -124,6 +124,17 @@ def _describe(run: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _require_delete_refused(api: Any, workspace_id: str, error_code: str, *, force: bool) -> None:
+    """Fail unless a workspace delete is a 409 carrying `error_code`, and the workspace survives it."""
+    response = api.delete(f"/api/v1/workspaces/{workspace_id}", params={"force": "true"} if force else None)
+    body = response.json() if response.status_code == 409 else {}
+    assert response.status_code == 409 and body.get("error_code") == error_code, (
+        f"a {'force' if force else 'safe'} delete answered {response.status_code}, expected {error_code}: "
+        f"{response.text[:400]}"
+    )
+    assert api.get(f"/api/v1/workspaces/{workspace_id}").status_code == 200, "a refused delete removed the workspace"
+
+
 def _require_status(run: dict[str, Any], expected: tuple[str, ...], phase: str) -> dict[str, Any]:
     """Fail unless the run settled on one of `expected`, naming the phase that failed.
 
@@ -233,6 +244,8 @@ class TestRunLifecycle:
         planned = _wait_for(api, run_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
         _require_status(planned, ("planned", "awaiting_confirmation"), "plan")
 
+        _require_delete_refused(api, workspace_id, "WORKSPACE_HAS_ACTIVE_RUN", force=True)
+
         logs = api.get(f"/api/v1/runs/{run_id}/logs", params={"phase": "plan"})
         assert logs.status_code == 200, logs.text[:400]
         assert isinstance(logs.json()["events"], list)
@@ -246,6 +259,8 @@ class TestRunLifecycle:
         apply_logs = api.get(f"/api/v1/runs/{run_id}/logs", params={"phase": "apply"})
         assert apply_logs.status_code == 200, apply_logs.text[:400]
 
+        _require_delete_refused(api, workspace_id, "WORKSPACE_MANAGES_RESOURCES", force=False)
+
         destroy_id = _create_run(api, workspace_id, config_version_id, plan_only=False, is_destroy=True)
         destroy_planned = _wait_for(api, destroy_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
         _require_status(destroy_planned, ("planned", "awaiting_confirmation"), "destroy plan")
@@ -257,6 +272,13 @@ class TestRunLifecycle:
 
         destroyed = _wait_for(api, destroy_id, APPLY_TERMINAL, APPLY_TIMEOUT_SECONDS)
         _require_status(destroyed, APPLY_SUCCESS, "destroy apply")
+
+        deleted = api.delete(f"/api/v1/workspaces/{workspace_id}")
+        assert deleted.status_code == 204, (
+            f"the safe delete after the destroy answered {deleted.status_code}: {deleted.text[:400]}"
+        )
+        for gone in (run_id, destroy_id):
+            assert api.get(f"/api/v1/runs/{gone}").status_code == 404, f"run {gone} outlived its workspace"
 
     def test_plan_only_run_finishes_without_applying(self, api: Any, workspace: dict[str, Any]) -> None:
         """A plan-only run reaches a terminal planned status and never applies."""

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { invalidateQueries } from '@webbpulse/api-client/react';
 
-import { api } from '../../../api';
+import { api, isWorkspaceManagesResources } from '../../../api';
 import {
   Button,
   Dialog,
@@ -28,12 +28,14 @@ export function DeletionSettings(): React.ReactElement {
       <DestroyPlanSection />
       <section className="space-y-3 rounded-lg border border-danger-line bg-panel p-4">
         <h3 className="text-sm font-medium text-text-strong">
-          Delete workspace
+          Delete from WebbPulse
         </h3>
         <p className="max-w-prose text-sm text-text-muted">
-          Deleting the workspace removes it and its variables. Resources the
-          runs created in your AWS account are not destroyed first. Delete the
-          workspace only once nothing it manages is still in use.
+          Deleting the workspace removes it, its variables, its finished runs
+          and its current state from WebbPulse. A workspace whose state still
+          tracks resources cannot be deleted until a destroy plan above has been
+          applied, unless you force the delete and leave those resources running
+          unmanaged in your AWS account.
         </p>
         <Button
           variant="danger"
@@ -41,7 +43,7 @@ export function DeletionSettings(): React.ReactElement {
             setConfirming(true);
           }}
         >
-          Delete workspace
+          Delete from WebbPulse
         </Button>
       </section>
       <Dialog
@@ -49,7 +51,7 @@ export function DeletionSettings(): React.ReactElement {
         onClose={() => {
           setConfirming(false);
         }}
-        title="Delete workspace"
+        title="Delete from WebbPulse"
         description="This cannot be undone."
       >
         <DeleteForm
@@ -64,7 +66,14 @@ export function DeletionSettings(): React.ReactElement {
   );
 }
 
-/** The confirmation form: the name typed back, then the delete. */
+/** The phrase a force delete has to be typed back with, on top of the name. */
+const FORCE_DELETE_PHRASE = 'force delete';
+
+/**
+ * The confirmation form: the name typed back, then a safe delete. When the API
+ * refuses because state still tracks resources, the form turns into a force
+ * delete held behind a second typed confirmation.
+ */
 function DeleteForm({
   name,
   workspaceId,
@@ -76,22 +85,32 @@ function DeleteForm({
 }): React.ReactElement {
   const navigate = useNavigate();
   const [typed, setTyped] = useState('');
+  const [forcing, setForcing] = useState(false);
+  const [typedForce, setTypedForce] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
+  const ready = forcing
+    ? typed === name && typedForce === FORCE_DELETE_PHRASE
+    : typed === name;
+
   const submit = async (): Promise<void> => {
-    if (typed !== name) {
+    if (!ready) {
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await api.deleteWorkspace(workspaceId);
+      await api.deleteWorkspace(workspaceId, { force: forcing });
       invalidateQueries([WORKSPACES_KEY]);
       void navigate('/workspaces', { replace: true });
     } catch (thrown) {
-      setError(thrown);
       setBusy(false);
+      if (!forcing && isWorkspaceManagesResources(thrown)) {
+        setForcing(true);
+        return;
+      }
+      setError(thrown);
     }
   };
 
@@ -111,6 +130,7 @@ function DeleteForm({
             autoFocus
             autoComplete="off"
             spellCheck={false}
+            readOnly={forcing}
             value={typed}
             onChange={(event) => {
               setTyped(event.target.value);
@@ -119,6 +139,40 @@ function DeleteForm({
           />
         )}
       </Field>
+      {forcing ? (
+        <div className="space-y-3" data-testid="force-delete">
+          <div
+            role="alert"
+            className="space-y-1 rounded-md border border-danger-line bg-danger-soft p-3 text-sm"
+          >
+            <p className="font-medium text-text-strong">
+              This workspace still manages resources.
+            </p>
+            <p className="text-text-muted">
+              Its state still tracks infrastructure, so a safe delete was
+              refused. Queue a destroy plan from Destroy infrastructure above
+              and apply it first. A force delete removes the workspace anyway
+              and leaves those resources running, no longer managed by
+              WebbPulse.
+            </p>
+          </div>
+          <Field label={`Type ${FORCE_DELETE_PHRASE} to force the delete`}>
+            {(control) => (
+              <input
+                {...control}
+                autoFocus
+                autoComplete="off"
+                spellCheck={false}
+                value={typedForce}
+                onChange={(event) => {
+                  setTypedForce(event.target.value);
+                }}
+                className={`${INPUT_CLASS} font-mono`}
+              />
+            )}
+          </Field>
+        </div>
+      ) : null}
       <ErrorNotice error={error} />
       <div className="flex justify-end gap-2 pt-1">
         <Button variant="ghost" onClick={onCancel}>
@@ -129,9 +183,9 @@ function DeleteForm({
           variant="danger"
           busy={busy}
           busyLabel="Deleting the workspace"
-          disabled={typed !== name}
+          disabled={!ready}
         >
-          Delete workspace
+          {forcing ? 'Force delete' : 'Delete from WebbPulse'}
         </Button>
       </div>
     </form>

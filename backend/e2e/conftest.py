@@ -21,6 +21,9 @@ from runs_cleanup import end_runs_for_workspace
 
 pytest_plugins = ["webbpulse.e2e"]
 
+MANAGES_RESOURCES_CODE = "WORKSPACE_MANAGES_RESOURCES"
+"""The code a safe delete is refused with while the workspace's state tracks resources."""
+
 RUN_ROLE_ARN_VARIABLE = "E2E_RUN_ROLE_ARN"
 
 JOURNEY_RUN_ROLE_ARN_VARIABLE = "E2E_JOURNEY_RUN_ROLE_ARN"
@@ -216,22 +219,35 @@ def _cleanup_client(env: Any) -> Any:
 
 
 def _delete_workspace(client: Any, workspace_id: str) -> str:
-    """End this workspace's runs, then delete it, describing failures rather than raising.
+    """End this workspace's runs, then safe delete it, describing failures rather than raising.
 
-    The runs go first because deleting the workspace leaves them untouched, and a run
-    still planning or applying holds an execution open. A run that will not end is
-    reported but does not stop the delete, since leaving the workspace behind as well
-    would only add to what is orphaned.
+    The runs go first because an unfinished run refuses the delete. A safe delete that
+    is refused because state still tracks resources falls back to a force delete, so
+    no state object is left behind either way, but it is still reported as a failure:
+    a case that ends managing resources did not clean up after itself.
     """
     problems = [f"{workspace_id}: run {item}" for item in end_runs_for_workspace(client, workspace_id)]
+    path = f"/api/v1/workspaces/{workspace_id}"
     try:
-        response = client.delete(f"/api/v1/workspaces/{workspace_id}")
+        response = client.delete(path)
+        if response.status_code == 409 and _error_code(response) == MANAGES_RESOURCES_CODE:
+            problems.append(f"{workspace_id} still managed resources, so it was force deleted")
+            response = client.delete(path, params={"force": "true"})
     except Exception as error:
         problems.append(f"{workspace_id} ({type(error).__name__})")
         return "; ".join(problems)
     if response.status_code not in (200, 204, 404):
-        problems.append(f"{workspace_id} ({response.status_code})")
+        problems.append(f"{workspace_id} ({response.status_code} {_error_code(response) or ''})".strip())
     return "; ".join(problems)
+
+
+def _error_code(response: Any) -> str:
+    """The `error_code` a refusal carries, or an empty string when it carries none."""
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    return str(body.get("error_code") or "") if isinstance(body, dict) else ""
 
 
 def _workspace_ids(client: Any) -> list[dict[str, Any]]:
@@ -267,9 +283,10 @@ def _is_stale(item: dict[str, Any]) -> bool:
 def pytest_e2e_cleanup(env: Any, phase: str, created: Sequence[Any]) -> Any:
     """End this run's runs and delete its workspaces at the end, and stale ones at the start.
 
-    Deleting a workspace takes its variables and config versions with it, but not its
-    runs, so every non-terminal run is cancelled or discarded and waited out first.
-    Nothing a case started is still executing once this returns.
+    A workspace delete refuses while a run is unfinished, so every non-terminal run is
+    cancelled or discarded and waited out first, and the delete then takes the finished
+    runs, the current state and the variables with it. Nothing a case started is still
+    executing once this returns.
     """
     if env.read_only:
         return ""
@@ -363,8 +380,10 @@ def run_role_arn(e2e_env: Any) -> str:
 def workspace(api: Any, e2e_env: Any, run_role_arn: str, created_resources: list[Any]) -> Iterator[dict[str, Any]]:
     """A workspace this run owns, registered for cleanup before it is used.
 
-    Teardown ends every run the case left behind, whether it passed or failed, so no
-    execution outlives the case even though the session sweep would also catch it.
+    Teardown ends every run the case left behind and safe deletes the workspace,
+    whether the case passed or failed, so no execution, state object or run row
+    outlives it. A workspace still managing resources is force deleted and the
+    teardown fails, naming it.
     """
     body = {
         "name": f"{e2e_env.resource_prefix}{secrets.token_hex(3)}",
@@ -380,6 +399,6 @@ def workspace(api: Any, e2e_env: Any, run_role_arn: str, created_resources: list
     try:
         yield created
     finally:
-        unfinished = end_runs_for_workspace(api, str(created["workspace_id"]))
-        if unfinished:
-            print(f"e2e cleanup could not end run(s): {', '.join(unfinished)}")
+        failure = _delete_workspace(api, str(created["workspace_id"]))
+        if failure:
+            pytest.fail(f"e2e teardown did not leave the workspace cleanly deleted: {failure}")

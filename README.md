@@ -124,7 +124,17 @@ gate's Lambda authorizer or an equivalent before agents can use it.
 | `POST /runs/{run_id}/phase-result` | run token |
 
 `runs:apply` exists so confirming an apply can be granted separately from
-creating or cancelling a run. The identity routes under `/api/auth` come from the
+creating or cancelling a run.
+
+`DELETE /workspaces/{workspace_id}` follows HCP Terraform's safe delete. It is a
+409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current state tracks any
+resource instance, so apply a destroy run first, or pass `?force=true` to delete
+anyway and leave those resources unmanaged. Either mode is a 409 carrying
+`WORKSPACE_HAS_ACTIVE_RUN` while a run on the workspace has not finished. A
+delete removes the workspace's finished runs, its current state object (the
+versioned bucket keeps the history behind a delete marker), its variables and
+then the workspace row, so a failure part way leaves the workspace in place for a
+retry. Config versions are left to the artifacts bucket lifecycle. The identity routes under `/api/auth` come from the
 shared identity module and are served by the `workspaces` function.
 
 ### Agent API keys

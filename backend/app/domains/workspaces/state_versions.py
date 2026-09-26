@@ -2,10 +2,11 @@
 
 The state bucket is versioned, so S3 already holds every state a run has written
 and there is no second copy to keep: a state version here is one S3 object
-version of `workspaces/<id>/terraform.tfstate`, named by its `VersionId`. Nothing
-in this module writes, and no row records a state version, because a row would be
-a parallel history that drifts from the bucket the moment a lifecycle rule
-expires a version.
+version of `workspaces/<id>/terraform.tfstate`, named by its `VersionId`. No row
+records a state version, because a row would be a parallel history that drifts
+from the bucket the moment a lifecycle rule expires a version. The one write in
+this module is `delete_current_state`, which a workspace delete makes and which
+leaves every version in place behind a delete marker.
 
 Terraform writes state through its own S3 backend, so the control plane never
 sees the write and cannot stamp user metadata on the object. The serial and the
@@ -362,6 +363,75 @@ def _current_version_id(workspace_id: str, *, settings: Settings) -> Optional[st
     return str(version_id) if version_id else None
 
 
+def _manages_resources(body: bytes) -> bool:
+    """Whether a state body records any resource with at least one instance.
+
+    The answer is a single boolean and nothing else leaves this function, the
+    same boundary `_summary` holds. A body that does not parse, or whose
+    resources are not the shape Terraform writes, counts as managing resources:
+    a safe delete that cannot read the state has to refuse rather than guess.
+    """
+    try:
+        parsed = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return True
+    if not isinstance(parsed, dict):
+        return True
+    resources = parsed.get("resources", [])
+    if not isinstance(resources, list):
+        return True
+    for resource in resources:
+        if not isinstance(resource, dict):
+            return True
+        instances = resource.get("instances", [])
+        if not isinstance(instances, list) or instances:
+            return True
+    return False
+
+
+def current_state_manages_resources(workspace_id: str, *, settings: Settings | None = None) -> bool:
+    """Whether the workspace's current state still records a resource instance.
+
+    A missing object, or a deployment with no state bucket, means nothing was
+    ever written and so nothing is managed. A body over `METADATA_READ_CEILING`
+    is not parsed and counts as managing resources, so only a force delete gets
+    past it. The body is read, reduced to one boolean and dropped: none of it is
+    returned or logged.
+    """
+    resolved = settings or get_settings()
+    if not resolved.STATE_BUCKET:
+        return False
+    from botocore.exceptions import ClientError
+
+    try:
+        obj = _s3(resolved).get_object(Bucket=resolved.STATE_BUCKET, Key=state_key(workspace_id))
+    except ClientError as error:
+        status = int(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
+        if status == 404 or error.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+    with obj["Body"] as body:
+        content = body.read(METADATA_READ_CEILING + 1)
+    if len(content) > METADATA_READ_CEILING:
+        return True
+    return _manages_resources(content)
+
+
+def delete_current_state(workspace_id: str, *, settings: Settings | None = None) -> None:
+    """Delete the workspace's current state object, leaving its history behind.
+
+    The bucket is versioned, so this writes a delete marker rather than removing
+    any version: the old states stay recoverable until the noncurrent lifecycle
+    rule expires them. Deleting a key that is not there succeeds, so a workspace
+    that never ran costs one call and no error. With no state bucket configured
+    there is nothing to delete.
+    """
+    resolved = settings or get_settings()
+    if not resolved.STATE_BUCKET:
+        return
+    _s3(resolved).delete_object(Bucket=resolved.STATE_BUCKET, Key=state_key(workspace_id))
+
+
 def state_version_download(
     workspace_id: str,
     state_version_id: str,
@@ -422,6 +492,8 @@ __all__ = [
     "InvalidPageToken",
     "StateBucketMissing",
     "StateVersionNotFound",
+    "current_state_manages_resources",
+    "delete_current_state",
     "get_state_version",
     "list_state_versions",
     "state_key",

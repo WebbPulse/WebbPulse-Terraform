@@ -787,7 +787,13 @@ export interface paths {
         post?: never;
         /**
          * Delete Workspace
-         * @description Delete one workspace and its variables.
+         * @description Delete one workspace with its finished runs, current state and variables.
+         *
+         *     A safe delete is a 409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current
+         *     state tracks any resource instance: queue a destroy plan and apply it first, or
+         *     pass `force=true` to delete anyway and leave those resources unmanaged. Either
+         *     mode is a 409 carrying `WORKSPACE_HAS_ACTIVE_RUN` while a run on the workspace
+         *     has not finished. Nothing is removed on a refusal.
          */
         delete: operations["delete_workspace_api_v1_workspaces__workspace_id__delete"];
         options?: never;
@@ -3649,7 +3655,10 @@ export interface operations {
     };
     delete_workspace_api_v1_workspaces__workspace_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Skip the managed resources check and delete even though state still tracks resources. */
+                force?: boolean;
+            };
             header?: never;
             path: {
                 workspace_id: string;

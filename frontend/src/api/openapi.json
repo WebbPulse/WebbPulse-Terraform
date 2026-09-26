@@ -3784,7 +3784,7 @@
     },
     "/api/v1/workspaces/{workspace_id}": {
       "delete": {
-        "description": "Delete one workspace and its variables.",
+        "description": "Delete one workspace with its finished runs, current state and variables.\n\nA safe delete is a 409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current\nstate tracks any resource instance: queue a destroy plan and apply it first, or\npass `force=true` to delete anyway and leave those resources unmanaged. Either\nmode is a 409 carrying `WORKSPACE_HAS_ACTIVE_RUN` while a run on the workspace\nhas not finished. Nothing is removed on a refusal.",
         "operationId": "delete_workspace_api_v1_workspaces__workspace_id__delete",
         "parameters": [
           {
@@ -3797,6 +3797,18 @@
               "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
               "title": "Workspace Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Skip the managed resources check and delete even though state still tracks resources.",
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Skip the managed resources check and delete even though state still tracks resources.",
+              "title": "Force",
+              "type": "boolean"
             }
           }
         ],
