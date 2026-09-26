@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -16,7 +18,7 @@ from app.api import ApiError, RunnerApi
 from app.credentials import CredentialsError, assume_run_role
 from app.engine import build_environment, parse_changes
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
-from app.models import BackendConfig, Bundle, Changes, PhaseResult, RunRole
+from app.models import BackendConfig, Bundle, Changes, PhaseResult, RunRole, hcl_literal_fragments
 from tests.conftest import (
     LOG_GROUP,
     PLAN_JSON_NO_CHANGES,
@@ -434,3 +436,159 @@ def test_a_refused_put_is_an_api_error(aws: None, config_tarball: bytes) -> None
 
     with pytest.raises(ApiError, match="403"):
         api.upload_text("log", "a transcript")
+
+
+def test_hcl_tfvars_are_written_unquoted(tmp_path: Path) -> None:
+    """An HCL expression reaches the native tfvars file exactly as it was stored.
+
+    Quoting it would turn a list into an eight character string and hand a
+    `list(string)` input variable the wrong type without anything failing.
+    """
+    path = workspace.write_hcl_tfvars(tmp_path, {"subnets": '["a", "b"]', "count": "2"})
+    assert path is not None
+    assert path.name == workspace.HCL_TFVARS_FILENAME
+    body = path.read_text()
+    assert 'subnets = (\n["a", "b"]\n)' in body
+    assert "count = (\n2\n)" in body
+    assert '"["a", "b"]"' not in body
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_hcl_tfvars_keep_a_multi_line_expression_on_one_assignment(tmp_path: Path) -> None:
+    """A map or heredoc spans lines without running into the next assignment."""
+    expression = '{\n  env  = "staging"\n  size = 2\n}'
+    path = workspace.write_hcl_tfvars(tmp_path, {"a": expression, "settings": expression})
+    assert path is not None
+    body = path.read_text()
+    assert f"settings = (\n{expression}\n)" in body
+    assert body.endswith("\n")
+
+
+def test_no_hcl_tfvars_file_without_hcl_variables(tmp_path: Path) -> None:
+    """A workspace with only literal variables gets no native tfvars file at all."""
+    assert workspace.write_hcl_tfvars(tmp_path, {}) is None
+
+
+def test_hcl_tfvars_refuse_a_name_that_is_not_an_identifier(tmp_path: Path) -> None:
+    """A name is written unquoted, so anything but an identifier is refused."""
+    with pytest.raises(workspace.ConfigError, match="valid HCL identifier"):
+        workspace.write_hcl_tfvars(tmp_path, {'a" = "b\nevil': '"x"'})
+
+
+def test_a_literal_with_hcl_punctuation_stays_literal(tmp_path: Path) -> None:
+    """A literal goes to the JSON file, where its punctuation cannot be reread.
+
+    JSON is what makes this safe: the value is the JSON string it is, so quotes,
+    braces and `${` in it are characters rather than syntax.
+    """
+    value = '${var.nope} "quoted" {braces} ["a"]'
+    path = workspace.write_tfvars(tmp_path, {"literal": value})
+    assert path is not None
+    assert json.loads(path.read_text()) == {"literal": value}
+
+
+def test_prepare_writes_both_variable_files(tmp_path: Path, run_role_arn: str, config_tarball: bytes) -> None:
+    """Literal and HCL variables land in their own files in the working directory."""
+    archive = tmp_path / "config.tar.gz"
+    archive.write_bytes(config_tarball)
+    payload = bundle_payload(run_role_arn) | {"hcl_variables": {"subnets": '["a", "b"]'}}
+    bundle = Bundle.model_validate(payload)
+    root = tmp_path / "config"
+    root.mkdir()
+
+    target = workspace.prepare(root, bundle, archive)
+
+    assert (target / workspace.TFVARS_FILENAME).exists()
+    assert 'subnets = (\n["a", "b"]\n)' in (target / workspace.HCL_TFVARS_FILENAME).read_text()
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        '# leading comment\n["a", "b"]',
+        '["a", "b"] // trailing comment',
+        'true ?\n["a"] :\n["b"]',
+        "<<-END-TEXT\n  body\n  END-TEXT",
+        '"$${unfinished"',
+        '"%%{unfinished"',
+    ],
+)
+def test_hcl_file_parses_with_terraform(tmp_path: Path, expression: str) -> None:
+    """The real parser accepts grouped values beside a second assignment."""
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        pytest.skip("Terraform is not installed")
+    path = workspace.write_hcl_tfvars(tmp_path, {"example": expression, "neighbor": "true"})
+    assert path is not None
+    result = subprocess.run(
+        [terraform, "fmt", "-write=false", "-list=false", str(path)],
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0
+
+
+def test_prepare_writes_no_hcl_file_for_a_bundle_without_the_field(
+    tmp_path: Path, run_role_arn: str, config_tarball: bytes
+) -> None:
+    """A bundle from a control plane that predates the flag is unchanged."""
+    archive = tmp_path / "config.tar.gz"
+    archive.write_bytes(config_tarball)
+    bundle = Bundle.model_validate(bundle_payload(run_role_arn))
+    root = tmp_path / "config"
+    root.mkdir()
+
+    target = workspace.prepare(root, bundle, archive)
+
+    assert bundle.hcl_variables == {}
+    assert not (target / workspace.HCL_TFVARS_FILENAME).exists()
+
+
+def test_bundle_sensitive_values_cover_hcl_variables(run_role_arn: str) -> None:
+    """A sensitive HCL expression is registered for redaction like any other value.
+
+    The expression itself is the secret when the variable is sensitive, so it is
+    the expression that has to be masked before any line is emitted.
+    """
+    payload = bundle_payload(run_role_arn) | {"hcl_variables": {"secrets": f'["{SECRET_TFVAR}"]'}}
+    bundle = Bundle.model_validate(payload)
+    assert f'["{SECRET_TFVAR}"]' in bundle.sensitive_values()
+
+    redactor = Redactor(bundle.sensitive_values())
+    assert SECRET_TFVAR not in redactor.scrub(f'subnets = ["{SECRET_TFVAR}"]')
+
+
+def test_a_sensitive_hcl_member_is_masked_when_printed_alone(run_role_arn: str) -> None:
+    """The engine prints a list member or map value on its own line, so each is masked."""
+    payload = bundle_payload(run_role_arn) | {
+        "hcl_variables": {"secrets": f'{{ token = "{SECRET_TFVAR}", other = "second-secret" }}'}
+    }
+    redactor = Redactor(Bundle.model_validate(payload).sensitive_values())
+    assert SECRET_TFVAR not in redactor.scrub(f'      + token = "{SECRET_TFVAR}"')
+    assert "second-secret" not in redactor.scrub("second-secret")
+
+
+def test_escaped_quoted_literals_are_masked_as_the_engine_prints_them() -> None:
+    """A string with escapes is registered both raw and decoded."""
+    fragments = hcl_literal_fragments('["tab\\there", "quote\\"d"]')
+    assert "tab\\there" in fragments
+    assert "tab\there" in fragments
+    assert 'quote"d' in fragments
+
+
+def test_heredoc_bodies_and_lines_are_masked() -> None:
+    """A heredoc body is registered whole and line by line, trimmed of indentation."""
+    fragments = hcl_literal_fragments("<<-EOT\n  first-line\n  second-line\n  EOT")
+    assert "first-line" in fragments
+    assert "second-line" in fragments
+    assert "  first-line\n  second-line" in fragments
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["1", "true", '"${var.x}"', '"\\u12"', "<<EOT\nno end", '"unterminated', '"\\', "<<-\n"],
+)
+def test_fragment_extraction_never_refuses_a_value(expression: str) -> None:
+    """Extraction is best effort: a short, dynamic or odd expression still yields itself."""
+    assert expression in hcl_literal_fragments(expression)

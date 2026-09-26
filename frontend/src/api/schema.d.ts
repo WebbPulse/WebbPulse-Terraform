@@ -927,6 +927,9 @@ export interface paths {
         /**
          * Put Variable
          * @description Set one variable. A sensitive value is sealed before it is stored.
+         *
+         *     A broken HCL expression and an `env` variable marked HCL are both refused
+         *     here, so neither is stored to fail on every later run.
          */
         put: operations["put_variable_api_v1_workspaces__workspace_id__variables__key__put"];
         post?: never;
@@ -1679,6 +1682,11 @@ export interface components {
              * @default
              */
             description?: string;
+            /**
+             * Hcl
+             * @default false
+             */
+            hcl?: boolean;
             /** Key */
             key: string;
             /** Sensitive */
@@ -1714,6 +1722,11 @@ export interface components {
              * @default
              */
             description?: string;
+            /**
+             * Hcl
+             * @default false
+             */
+            hcl?: boolean;
             /**
              * Sensitive
              * @default false
