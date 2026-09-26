@@ -5,6 +5,8 @@ import { aFreshWorkspace, aWorkspace } from '../test-helpers/fixtures';
 import {
   ADMINISTRATOR_POLICY_ARN,
   SNIPPET_FORMATS,
+  accountStatus,
+  accountStatusLabel,
   connectionLabel,
   hasRunRole,
   isConnected,
@@ -151,5 +153,54 @@ describe('isConnected', () => {
     expect(
       isConnected(aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn }))
     ).toBe(false);
+  });
+});
+
+describe('accountStatus', () => {
+  const check = {
+    connected: true,
+    status: 'connected' as const,
+    account_id: '210987654321',
+    error: null,
+    run_id: 'run-1',
+    checked_at: '2026-09-17T00:05:00Z',
+  };
+  const unstamped = aWorkspace({
+    run_role_account_id: null,
+    run_role_checked_at: null,
+  });
+
+  it('prefers the live check over the stamped fields', () => {
+    const status = accountStatus(aWorkspace(), check);
+    expect(status.state).toBe('connected');
+    expect(accountStatusLabel(status)).toBe('210987654321');
+    expect(accountStatusLabel(accountStatus(unstamped, check))).toBe(
+      '210987654321'
+    );
+  });
+
+  it('falls back to the stamped fields until the check answers', () => {
+    expect(accountStatusLabel(accountStatus(aWorkspace(), null))).toBe(
+      '123456789012'
+    );
+    expect(accountStatusLabel(accountStatus(unstamped, null))).toBe(
+      'Not verified'
+    );
+  });
+
+  it('names a failed check and a missing role', () => {
+    expect(
+      accountStatusLabel(
+        accountStatus(unstamped, {
+          ...check,
+          connected: false,
+          status: 'failed',
+          account_id: null,
+        })
+      )
+    ).toBe('Connection failed');
+    expect(accountStatusLabel(accountStatus(aFreshWorkspace(), check))).toBe(
+      'Not connected'
+    );
   });
 });

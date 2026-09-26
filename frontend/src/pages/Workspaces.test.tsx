@@ -41,6 +41,34 @@ describe('Workspaces', () => {
     resetApiMock();
   });
 
+  it('shows each row the same check the workspace header reads, without writing', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({
+      items: [
+        aWorkspace({ run_role_account_id: null, run_role_checked_at: null }),
+        aFreshWorkspace({ workspace_id: 'ws-2', name: 'organization' }),
+      ],
+    });
+    apiMock.readRunRoleCheck.mockResolvedValue({
+      connected: true,
+      status: 'connected',
+      account_id: '123456789012',
+      error: null,
+      run_id: 'run-1',
+      checked_at: '2026-09-17T00:05:00Z',
+    });
+
+    renderList();
+
+    expect(await screen.findByText('123456789012')).toBeInTheDocument();
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
+    expect(apiMock.readRunRoleCheck).toHaveBeenCalledTimes(1);
+    expect(apiMock.readRunRoleCheck).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      expect.objectContaining({ signal: expect.any(AbortSignal) as unknown })
+    );
+    expect(apiMock.checkRunRole).not.toHaveBeenCalled();
+  });
+
   it('renders the workspaces the API returned, each linking to its detail', async () => {
     apiMock.listWorkspaces.mockResolvedValue({
       items: [

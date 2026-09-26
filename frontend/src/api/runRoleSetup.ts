@@ -8,7 +8,7 @@
 
 import { ApiError, getWebbPulseError } from '@webbpulse/api-client';
 
-import type { RunRoleSetup, Workspace } from './types';
+import type { RunRoleCheck, RunRoleSetup, Workspace } from './types';
 
 /** The error code a run start or a check answers when no role is set. */
 export const RUN_ROLE_MISSING_CODE = 'RUN_ROLE_MISSING';
@@ -50,6 +50,61 @@ export function isConnected(workspace: Workspace): boolean {
 /** The words for a workspace whose account is not shown as connected. */
 export function connectionLabel(workspace: Workspace): string {
   return hasRunRole(workspace) ? 'Not verified' : 'Not connected';
+}
+
+/** Where a workspace's AWS account stands, as every surface shows it. */
+export interface AccountStatus {
+  state: 'connected' | 'failed' | 'unverified' | 'missing';
+  accountId: string | null;
+  checkedAt: string | null;
+  error: string | null;
+}
+
+/**
+ * The one answer to whether the workspace's account is connected.
+ *
+ * The live check reads the runner's own record of the latest runs, so it wins
+ * whenever it has arrived. Until then the fields a manual check stamped on the
+ * workspace stand in for it.
+ */
+export function accountStatus(
+  workspace: Workspace,
+  check: RunRoleCheck | null
+): AccountStatus {
+  if (!hasRunRole(workspace)) {
+    return { state: 'missing', accountId: null, checkedAt: null, error: null };
+  }
+  if (check !== null) {
+    return {
+      state: check.status,
+      accountId: check.account_id ?? null,
+      checkedAt: check.checked_at ?? null,
+      error: check.error ?? null,
+    };
+  }
+  if (isConnected(workspace)) {
+    return {
+      state: 'connected',
+      accountId: workspace.run_role_account_id ?? null,
+      checkedAt: workspace.run_role_checked_at ?? null,
+      error: null,
+    };
+  }
+  return { state: 'unverified', accountId: null, checkedAt: null, error: null };
+}
+
+/** The short words for an account status, or its account id once connected. */
+export function accountStatusLabel(status: AccountStatus): string {
+  switch (status.state) {
+    case 'connected':
+      return status.accountId ?? 'Connected';
+    case 'failed':
+      return 'Connection failed';
+    case 'unverified':
+      return 'Not verified';
+    case 'missing':
+      return 'Not connected';
+  }
 }
 
 /** The marker in a suggested role name that ends the assumable prefix. */

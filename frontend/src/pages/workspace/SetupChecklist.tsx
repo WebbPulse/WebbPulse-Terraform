@@ -10,9 +10,11 @@ import {
   isRunRoleMissing,
   type ConfigVersion,
   type Run,
+  type RunRoleCheck,
   type Workspace,
 } from '../../api';
 import { Button, ErrorNotice, runPath } from '../../components';
+import type { WorkspaceKeys } from '../workspaceContext';
 import { ConnectAccountPanel } from './ConnectAccountPanel';
 import { UploadConfigForm } from './UploadConfigForm';
 import {
@@ -28,8 +30,9 @@ export interface SetupChecklistProps {
   steps: readonly SetupStep[];
   versions: readonly ConfigVersion[];
   runs: readonly Run[];
-  /** The refetch keys for the workspace, its versions and its runs. */
-  keys: { workspace: string; versions: string; runs: string };
+  /** The live run role check, or null until it has answered. */
+  runRoleCheck: RunRoleCheck | null;
+  keys: WorkspaceKeys;
 }
 
 /** What each step is called and what it asks for. */
@@ -61,6 +64,7 @@ export function SetupChecklist({
   steps,
   versions,
   runs,
+  runRoleCheck,
   keys,
 }: SetupChecklistProps): React.ReactElement {
   const [expanded, setExpanded] = useState<
@@ -155,6 +159,7 @@ export function SetupChecklist({
                         workspace={workspace}
                         versions={versions}
                         runs={runs}
+                        runRoleCheck={runRoleCheck}
                         keys={keys}
                       />
                     </div>
@@ -210,18 +215,24 @@ function StepBody({
   workspace,
   versions,
   runs,
+  runRoleCheck,
   keys,
 }: {
   id: SetupStepId;
   workspace: Workspace;
   versions: readonly ConfigVersion[];
   runs: readonly Run[];
-  keys: SetupChecklistProps['keys'];
+  runRoleCheck: RunRoleCheck | null;
+  keys: WorkspaceKeys;
 }): React.ReactElement {
   switch (id) {
     case 'connect':
       return (
-        <ConnectAccountPanel workspace={workspace} queryKey={keys.workspace} />
+        <ConnectAccountPanel
+          workspace={workspace}
+          runRoleCheck={runRoleCheck}
+          keys={keys}
+        />
       );
     case 'upload':
       return (

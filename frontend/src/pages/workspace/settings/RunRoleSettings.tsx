@@ -5,7 +5,7 @@ import { ConnectAccountPanel } from '../ConnectAccountPanel';
 
 /** The AWS account page. */
 export function RunRoleSettings(): React.ReactElement {
-  const { workspace, keys } = useWorkspace();
+  const { workspace, runRoleCheck, keys } = useWorkspace();
   return (
     <div className="max-w-3xl space-y-4">
       <div>
@@ -16,7 +16,11 @@ export function RunRoleSettings(): React.ReactElement {
           it, and the outcome shows here.
         </p>
       </div>
-      <ConnectAccountPanel workspace={workspace} queryKey={keys.workspace} />
+      <ConnectAccountPanel
+        workspace={workspace}
+        runRoleCheck={runRoleCheck}
+        keys={keys}
+      />
     </div>
   );
 }
