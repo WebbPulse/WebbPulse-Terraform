@@ -1,6 +1,7 @@
 # first-run
 
-A configuration with no AWS resources, for the first end to end run on staging.
+A configuration with no AWS resources, for the first end to end run on staging,
+whether started by hand or from a pull request.
 One `random_pet` and one output: enough to prove the runner unpacks the config,
 assumes the run role, takes the state lock and writes state, without needing any
 permission beyond the state bucket.
