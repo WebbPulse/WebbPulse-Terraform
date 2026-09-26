@@ -243,9 +243,17 @@ JWKS for issuer `https://token.actions.githubusercontent.com` and the audience
 truth: repository, repository id, event, branch, pull request number (from
 `refs/pull/<n>/merge`) and commit all come from its claims. The body's head and
 base shas are stored marked unverified and decide nothing. There are no per
-repository roles and no repository map: a workspace binds itself with `vcs_repo`,
-and the first upload records the repository id on it, so a rename keeps the
-binding and a new repository under the old name does not inherit it.
+repository roles and no repository map: a workspace binds itself with `vcs_repo`.
+Connecting a repository (create or PATCH) resolves it through the GitHub App from
+the `app` secret the workspaces function already reads: the App JWT finds the
+installation and its token lists the repositories, which records
+`vcs_repository_id`, `vcs_installation_id` and the canonical name and defaults
+`tracked_branch` to the default branch. A repository the App cannot see is 422
+`VCS_REPO_NOT_INSTALLED`, and a GitHub failure is 502/503 `GITHUB_UNAVAILABLE`.
+With no App configured the binding is by name and the first upload records the
+id. Either way a rename keeps the binding and a new repository under the old name
+does not inherit it. `working_directory` is normalized to a clean relative path,
+`tracked_branch` must be a valid git branch name, and trigger patterns are trimmed.
 
 The route writes an ingest record to `vcs-uploads` (three day TTL) and answers
 exactly 201 `{upload_id, upload_url, headers, expires_in}`, a presigned PUT to
@@ -262,8 +270,9 @@ reads the record by the upload id in the key, never the object's metadata. For
 each bound workspace it applies the branch filter (a push needs `tracked_branch`),
 `speculative_plans` (for pull requests), and `trigger_patterns` as recursive globs
 against `.webbpulse/changed-paths.txt` (empty patterns mean
-`<working_directory>/**`, and a missing list or `*` matches everything). It copies
-the tarball to a config version and creates a run sourced `vcs_push` (normal) or
+`<working_directory>/**`, and a missing list or `*` matches everything).
+`file_triggers_enabled: false` is HCP's "Always trigger runs" and skips the path
+filter. It copies the tarball to a config version and creates a run sourced `vcs_push` (normal) or
 `vcs_pr` (plan only) with a `vcs` block and a `vcs` actor. The config version and
 run ids are derived from the upload and the workspace, so a redelivered message or
 a PUT retried into a second S3 event creates nothing new. A newer upload from the

@@ -24,6 +24,7 @@ from ...common.db.tables import (
 )
 from ...common.runs.workspace_runs import RunStillActive, delete_workspace_runs, require_no_active_run
 from ...common.workspaces import reads
+from ...common.workspaces import vcs as workspace_vcs
 from ...common.workspaces.reads import (
     CONFIG_VERSION_ID_PREFIX,
     WORKSPACE_ID_PREFIX,
@@ -38,14 +39,16 @@ from ...common.workspaces.reads import (
     list_variables,
     resolved_variables,
 )
-from . import hcl, state_versions
+from . import hcl, state_versions, vcs_connect
 from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
+from .vcs_connect import RepositoryNotInstalled
 
 __all__ = [
     "CONFIG_VERSION_ID_PREFIX",
     "WORKSPACE_ID_PREFIX",
     "ConfigVersionNotFound",
     "HclNotAllowed",
+    "RepositoryNotInstalled",
     "RunRoleMissing",
     "RunStillActive",
     "VariableNotFound",
@@ -116,8 +119,39 @@ def render_workspace(item: dict[str, Any], *, settings: Settings | None = None) 
     return dict(item) | {"run_role_setup": run_role_setup(workspace_id, settings=resolved)}
 
 
+def _connection(
+    repository: str,
+    *,
+    branch_given: bool,
+    settings: Settings,
+) -> dict[str, Any]:
+    """The attributes connecting a workspace to `repository` writes.
+
+    Resolved through the GitHub App when the environment has one, which records the
+    repository id, the installation and the canonical name, and fills the tracked
+    branch with the default branch when the request named none. Without an App only
+    the name is written and the first upload records the id.
+    """
+    found = vcs_connect.resolve_repository(repository, settings=settings)
+    if found is None:
+        return {"vcs_repo": repository, "vcs_repo_key": workspace_vcs.repo_key(repository)}
+    attributes: dict[str, Any] = {
+        "vcs_repo": found.full_name,
+        "vcs_repo_key": workspace_vcs.repo_key(found.full_name),
+        "vcs_repository_id": found.repository_id,
+        "vcs_installation_id": found.installation_id,
+    }
+    if not branch_given and found.default_branch:
+        attributes["tracked_branch"] = found.default_branch
+    return attributes
+
+
 def create_workspace(payload: dict[str, Any], *, settings: Settings | None = None) -> dict[str, Any]:
-    """Store a new workspace, refusing a name another workspace holds."""
+    """Store a new workspace, refusing a name another workspace holds.
+
+    A `vcs_repo` is resolved through the GitHub App before anything is written, so a
+    repository the App cannot see is refused with `RepositoryNotInstalled`.
+    """
     resolved = settings or get_settings()
     repository = repositories.workspaces(resolved)
     name = str(payload["name"])
@@ -134,13 +168,17 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "description": payload.get("description", "") or "",
         "trigger_patterns": list(payload.get("trigger_patterns") or []),
         "speculative_plans": bool(payload.get("speculative_plans", True)),
+        "file_triggers_enabled": bool(payload.get("file_triggers_enabled", True)),
         "created_at": now_iso(),
     }
-    if payload.get("vcs_repo"):
-        item["vcs_repo"] = str(payload["vcs_repo"])
-        item["vcs_repo_key"] = str(payload["vcs_repo"]).lower()
     if payload.get("tracked_branch"):
         item["tracked_branch"] = str(payload["tracked_branch"])
+    if payload.get("vcs_repo"):
+        item |= _connection(
+            str(payload["vcs_repo"]),
+            branch_given=bool(payload.get("tracked_branch")),
+            settings=resolved,
+        )
     try:
         repository.put(item, condition=Attr("workspace_id").not_exists())
     except ConditionFailed as error:
@@ -193,8 +231,11 @@ def update_workspace(
     so the outcome goes with it.
 
     A change to `vcs_repo` rewrites the lowercased `vcs_repo_key` the binding
-    index reads and drops the recorded `vcs_repository_id`, which belonged to the
-    previous repository. Clearing it removes both.
+    index reads and resolves the repository through the GitHub App, which records
+    its id, installation and canonical name, and fills `tracked_branch` with the
+    default branch when the request carries no branch. Without an App the recorded
+    id and installation are dropped instead, since they belonged to the previous
+    repository. Clearing `vcs_repo` removes all of them.
     """
     resolved = settings or get_settings()
     assignments = {key: value for key, value in changes.items() if value is not None}
@@ -209,13 +250,27 @@ def update_workspace(
     removals = [*clears]
     if role_changed:
         removals.extend(("run_role_checked_at", "run_role_account_id"))
-    if "vcs_repo" in changes and changes["vcs_repo"] != existing.get("vcs_repo"):
-        if existing.get("vcs_repository_id") is not None:
-            removals.append("vcs_repository_id")
-        if changes["vcs_repo"] is None:
-            removals.append("vcs_repo_key")
+    if "vcs_repo" in changes and not _repository_changed(changes["vcs_repo"], existing):
+        assignments.pop("vcs_repo", None)
+    elif "vcs_repo" in changes:
+        connection: dict[str, Any] = {}
+        if changes["vcs_repo"] is not None:
+            same_repository = workspace_vcs.repo_key(str(changes["vcs_repo"])) == workspace_vcs.repo_key(
+                str(existing.get("vcs_repo") or "")
+            )
+            connection = _connection(
+                str(changes["vcs_repo"]),
+                branch_given="tracked_branch" in changes or (same_repository and bool(existing.get("tracked_branch"))),
+                settings=resolved,
+            )
+            assignments |= connection
         else:
-            assignments["vcs_repo_key"] = str(changes["vcs_repo"]).lower()
+            removals.append("vcs_repo_key")
+        removals.extend(
+            key
+            for key in ("vcs_repository_id", "vcs_installation_id")
+            if key not in connection and existing.get(key) is not None
+        )
 
     names = {f"#{key}": key for key in (*assignments, *removals)}
     values = {f":{key}": value for key, value in assignments.items()}
@@ -237,6 +292,20 @@ def update_workspace(
     if updated is None:
         raise WorkspaceNotFound(workspace_id)
     return updated
+
+
+def _repository_changed(requested: Any, existing: dict[str, Any]) -> bool:
+    """Whether a requested `vcs_repo` has to be written.
+
+    The same repository in any case is left alone once its id is recorded, so a
+    repeated save of a connected repository costs no GitHub call. A binding with no
+    id yet is resolved again, which upgrades a name only binding once an App exists.
+    """
+    current = existing.get("vcs_repo")
+    if requested is None or current is None:
+        return requested != current
+    same = workspace_vcs.repo_key(str(requested)) == workspace_vcs.repo_key(str(current))
+    return not (same and existing.get("vcs_repository_id") is not None)
 
 
 class WorkspaceManagesResources(Exception):

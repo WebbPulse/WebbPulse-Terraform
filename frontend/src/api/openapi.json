@@ -2581,6 +2581,11 @@
             "title": "Engine Version",
             "type": "string"
           },
+          "file_triggers_enabled": {
+            "default": true,
+            "title": "File Triggers Enabled",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -2661,6 +2666,17 @@
             ],
             "title": "Updated At"
           },
+          "vcs_installation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Installation Id"
+          },
           "vcs_repo": {
             "anyOf": [
               {
@@ -2727,6 +2743,11 @@
             "minLength": 1,
             "title": "Engine Version",
             "type": "string"
+          },
+          "file_triggers_enabled": {
+            "default": true,
+            "title": "File Triggers Enabled",
+            "type": "boolean"
           },
           "name": {
             "maxLength": 90,
@@ -2858,6 +2879,17 @@
               }
             ],
             "title": "Engine Version"
+          },
+          "file_triggers_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Triggers Enabled"
           },
           "run_role_arn": {
             "anyOf": [
@@ -5057,7 +5089,7 @@
         ]
       },
       "post": {
-        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.",
+        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.\n\nA `vcs_repo` is resolved through the environment's GitHub App: the id, the\ninstallation and the canonical name are recorded, and `tracked_branch` defaults to\nthe repository's default branch. A repository the App is not installed on is a 422\ncarrying `VCS_REPO_NOT_INSTALLED`.",
         "operationId": "create_workspace_api_v1_workspaces_post",
         "requestBody": {
           "content": {
@@ -5192,7 +5224,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on `run_role_arn`, `working_directory` or\n`description` clears that field. `model_dump(exclude_unset=True)` is what keeps\nthe two apart, so a field is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {

@@ -7,10 +7,13 @@ and an agent holding a `wpk_` key reach them through the same check.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from webbpulse.identity.claims import AuthorizerClaims
+from webbpulse.integrations.github import GitHubError, GitHubRateLimited
 
 from ...common.core.auth import (
     CONFIGS_READ,
@@ -53,6 +56,12 @@ WORKSPACE_MANAGES_RESOURCES_CODE = "WORKSPACE_MANAGES_RESOURCES"
 
 WORKSPACE_HAS_ACTIVE_RUN_CODE = "WORKSPACE_HAS_ACTIVE_RUN"
 """The stable code any delete refuses with while a run on the workspace is unfinished."""
+
+VCS_REPO_NOT_INSTALLED_CODE = "VCS_REPO_NOT_INSTALLED"
+"""The stable code a connect refuses with when the GitHub App cannot see the repository."""
+
+GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
+"""The stable code a connect fails with when GitHub could not answer."""
 
 WORKSPACE_DELETE_EVENT = "workspaces.workspace.delete"
 """The log event a workspace delete is recorded under, naming the workspace and the mode."""
@@ -128,6 +137,37 @@ def _run_role_missing() -> HTTPException:
     )
 
 
+@contextmanager
+def _connect_errors() -> Iterator[None]:
+    """Translate a failed repository resolution into this API's errors.
+
+    GitHub's own message is never forwarded, since the resolution runs on App credentials.
+    """
+    try:
+        yield
+    except service.RepositoryNotInstalled as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": f"The GitHub App is not installed on {error}. Install it on the repository first.",
+                "error_code": VCS_REPO_NOT_INSTALLED_CODE,
+            },
+        ) from error
+    except GitHubRateLimited as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "message": "GitHub is rate limiting this App. Try again shortly.",
+                "error_code": GITHUB_UNAVAILABLE_CODE,
+            },
+        ) from error
+    except GitHubError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"message": "GitHub could not resolve the repository.", "error_code": GITHUB_UNAVAILABLE_CODE},
+        ) from error
+
+
 @router.get(
     "/workspaces",
     response_model=WorkspaceList,
@@ -151,9 +191,15 @@ def create_workspace(payload: WorkspaceCreate) -> dict[str, Any]:
     id as the external id, so the role cannot exist until the workspace does. The
     response's `run_role_setup` carries everything needed to build it, and
     `PATCH /workspaces/{id}` attaches it afterwards.
+
+    A `vcs_repo` is resolved through the environment's GitHub App: the id, the
+    installation and the canonical name are recorded, and `tracked_branch` defaults to
+    the repository's default branch. A repository the App is not installed on is a 422
+    carrying `VCS_REPO_NOT_INSTALLED`.
     """
     try:
-        return service.render_workspace(service.create_workspace(payload.model_dump()))
+        with _connect_errors():
+            return service.render_workspace(service.create_workspace(payload.model_dump()))
     except service.WorkspaceNameTaken as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -183,15 +229,19 @@ def update_workspace(payload: WorkspaceUpdate, workspace_id: str = WorkspaceId) 
     """Edit one workspace. The name and the id are not editable.
 
     The body is JSON Merge Patch: an omitted key leaves the stored value exactly
-    as it was, and an explicit null on `run_role_arn`, `working_directory` or
-    `description` clears that field. `model_dump(exclude_unset=True)` is what keeps
-    the two apart, so a field is only touched when the request carried its key.
+    as it was, and an explicit null on any field but `engine` and `engine_version`
+    clears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a
+    field is only touched when the request carried its key.
 
     Changing or clearing `run_role_arn` drops the recorded check outcome, so the
     role reads as unchecked until `run-role/check` says otherwise.
+
+    Connecting another `vcs_repo` resolves it through the GitHub App the way the
+    create does, and a null disconnects the repository.
     """
     try:
-        updated = service.update_workspace(workspace_id, payload.model_dump(exclude_unset=True))
+        with _connect_errors():
+            updated = service.update_workspace(workspace_id, payload.model_dump(exclude_unset=True))
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     return service.render_workspace(updated)

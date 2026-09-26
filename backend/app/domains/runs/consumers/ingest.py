@@ -150,6 +150,14 @@ def trigger_patterns(workspace: Mapping[str, Any]) -> list[str]:
     return [f"{directory}/**"] if directory else ["**"]
 
 
+def always_triggers(workspace: Mapping[str, Any]) -> bool:
+    """Whether the workspace runs on every upload, whatever paths it changed.
+
+    HCP Terraform's "Always trigger runs": `file_triggers_enabled` set to false.
+    """
+    return workspace.get("file_triggers_enabled", True) is False
+
+
 def paths_match(patterns: Iterable[str], paths: Optional[list[str]]) -> bool:
     """Whether any changed path matches any pattern. `None` paths match everything."""
     if paths is None:
@@ -374,7 +382,7 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
     started: list[str] = []
     for workspace in workspaces:
         workspace_id = str(workspace["workspace_id"])
-        if not paths_match(trigger_patterns(workspace), paths):
+        if not always_triggers(workspace) and not paths_match(trigger_patterns(workspace), paths):
             continue
         if not str(workspace.get("run_role_arn", "") or ""):
             _log.info(
@@ -397,6 +405,7 @@ __all__ = [
     "INGEST_KIND",
     "MalformedIngest",
     "deterministic_id",
+    "always_triggers",
     "handle_record",
     "parse_body",
     "paths_match",

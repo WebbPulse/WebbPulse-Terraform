@@ -11,6 +11,7 @@ import { VariablesPage } from './workspace/VariablesPage';
 import { DeletionSettings } from './workspace/settings/DeletionSettings';
 import { GeneralSettings } from './workspace/settings/GeneralSettings';
 import { RunRoleSettings } from './workspace/settings/RunRoleSettings';
+import { VersionControlSettings } from './workspace/settings/VersionControlSettings';
 
 /** The workspace pages, nested under the workspace shell. */
 export function workspaceRoutes(): React.ReactElement {
@@ -24,6 +25,10 @@ export function workspaceRoutes(): React.ReactElement {
       <Route path="settings" element={<Navigate to="general" replace />} />
       <Route path="settings/general" element={<GeneralSettings />} />
       <Route path="settings/run-role" element={<RunRoleSettings />} />
+      <Route
+        path="settings/version-control"
+        element={<VersionControlSettings />}
+      />
       <Route path="settings/deletion" element={<DeletionSettings />} />
     </Route>
   );

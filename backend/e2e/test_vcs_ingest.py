@@ -94,6 +94,8 @@ def test_an_upload_starts_a_vcs_run(api: Any, e2e_env: Any, workspace: dict[str,
     if event == "push":
         patch["tracked_branch"] = ref.removeprefix("refs/heads/")
     updated = api.patch(f"/api/v1/workspaces/{workspace['workspace_id']}", json=patch)
+    if updated.status_code == 422 and "VCS_REPO_NOT_INSTALLED" in updated.text:
+        pytest.skip("the stage's GitHub App is not installed on this repository")
     assert updated.status_code == 200, updated.text[:400]
 
     data = _tarball(directory)

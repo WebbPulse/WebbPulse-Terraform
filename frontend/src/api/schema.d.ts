@@ -953,6 +953,11 @@ export interface paths {
          *     id as the external id, so the role cannot exist until the workspace does. The
          *     response's `run_role_setup` carries everything needed to build it, and
          *     `PATCH /workspaces/{id}` attaches it afterwards.
+         *
+         *     A `vcs_repo` is resolved through the environment's GitHub App: the id, the
+         *     installation and the canonical name are recorded, and `tracked_branch` defaults to
+         *     the repository's default branch. A repository the App is not installed on is a 422
+         *     carrying `VCS_REPO_NOT_INSTALLED`.
          */
         post: operations["create_workspace_api_v1_workspaces_post"];
         delete?: never;
@@ -993,12 +998,15 @@ export interface paths {
          * @description Edit one workspace. The name and the id are not editable.
          *
          *     The body is JSON Merge Patch: an omitted key leaves the stored value exactly
-         *     as it was, and an explicit null on `run_role_arn`, `working_directory` or
-         *     `description` clears that field. `model_dump(exclude_unset=True)` is what keeps
-         *     the two apart, so a field is only touched when the request carried its key.
+         *     as it was, and an explicit null on any field but `engine` and `engine_version`
+         *     clears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a
+         *     field is only touched when the request carried its key.
          *
          *     Changing or clearing `run_role_arn` drops the recorded check outcome, so the
          *     role reads as unchecked until `run-role/check` says otherwise.
+         *
+         *     Connecting another `vcs_repo` resolves it through the GitHub App the way the
+         *     create does, and a null disconnects the repository.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -2461,6 +2469,11 @@ export interface components {
             engine?: "terraform" | "tofu";
             /** Engine Version */
             engine_version: string;
+            /**
+             * File Triggers Enabled
+             * @default true
+             */
+            file_triggers_enabled?: boolean;
             /** Name */
             name: string;
             /** Run Role Account Id */
@@ -2481,6 +2494,8 @@ export interface components {
             trigger_patterns?: string[];
             /** Updated At */
             updated_at?: string | null;
+            /** Vcs Installation Id */
+            vcs_installation_id?: string | null;
             /** Vcs Repo */
             vcs_repo?: string | null;
             /** Vcs Repository Id */
@@ -2511,6 +2526,11 @@ export interface components {
             engine?: "terraform" | "tofu";
             /** Engine Version */
             engine_version: string;
+            /**
+             * File Triggers Enabled
+             * @default true
+             */
+            file_triggers_enabled?: boolean;
             /** Name */
             name: string;
             /** Run Role Arn */
@@ -2561,6 +2581,8 @@ export interface components {
             engine?: ("terraform" | "tofu") | null;
             /** Engine Version */
             engine_version?: string | null;
+            /** File Triggers Enabled */
+            file_triggers_enabled?: boolean | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /** Speculative Plans */
