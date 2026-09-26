@@ -102,6 +102,15 @@ describe('TerraformApi workspaces', () => {
     });
     await api.deleteWorkspace('ws-1');
     expect(transport.requests[0]?.method).toBe('DELETE');
+    expect(transport.requests[0]?.query.has('force')).toBe(false);
+  });
+
+  it('asks for a force delete through the query', async () => {
+    const { api, transport } = apiOver({
+      'DELETE /api/v1/workspaces/ws-1': { status: 204 },
+    });
+    await api.deleteWorkspace('ws-1', { force: true });
+    expect(transport.requests[0]?.query.get('force')).toBe('true');
   });
 });
 

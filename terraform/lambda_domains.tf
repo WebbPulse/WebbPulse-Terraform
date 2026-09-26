@@ -176,6 +176,12 @@ locals {
         Action   = ["sts:AssumeRole"]
         Resource = local.workspace_run_role_arns
       },
+      {
+        Sid      = "DeleteADeletedWorkspacesFinishedRuns"
+        Effect   = "Allow"
+        Action   = ["dynamodb:DeleteItem"]
+        Resource = [module.dynamodb.table_arns["runs"]]
+      },
     ]
     runs = [
       {

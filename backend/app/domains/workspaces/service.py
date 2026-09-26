@@ -22,6 +22,7 @@ from ...common.db.tables import (
     CONFIG_VERSIONS_BY_WORKSPACE_INDEX,
     WORKSPACES_BY_NAME_INDEX,
 )
+from ...common.runs.workspace_runs import RunStillActive, delete_workspace_runs, require_no_active_run
 from ...common.workspaces import reads
 from ...common.workspaces.reads import (
     CONFIG_VERSION_ID_PREFIX,
@@ -37,7 +38,7 @@ from ...common.workspaces.reads import (
     list_variables,
     resolved_variables,
 )
-from . import hcl
+from . import hcl, state_versions
 from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
 
 __all__ = [
@@ -46,8 +47,10 @@ __all__ = [
     "ConfigVersionNotFound",
     "HclNotAllowed",
     "RunRoleMissing",
+    "RunStillActive",
     "VariableNotFound",
     "WorkspaceNameTaken",
+    "WorkspaceManagesResources",
     "WorkspaceNotFound",
     "config_key",
     "config_object_exists",
@@ -348,14 +351,28 @@ def update_workspace(
     return updated
 
 
-def delete_workspace(workspace_id: str, *, settings: Settings | None = None) -> None:
-    """Delete one workspace and every variable on it, or `WorkspaceNotFound`.
+class WorkspaceManagesResources(Exception):
+    """The workspace's current state still tracks resources, so a safe delete refuses."""
 
-    The config versions and runs are left alone: they carry the history of what
-    ran, and the artifacts bucket lifecycle expires their objects at 90 days.
+
+def delete_workspace(workspace_id: str, *, force: bool = False, settings: Settings | None = None) -> None:
+    """Delete one workspace with its finished runs, current state and variables.
+
+    Every check runs before anything is removed: `WorkspaceNotFound`, then
+    `RunStillActive` for a run that has not finished, then, unless `force`,
+    `WorkspaceManagesResources` when the current state tracks an instance. The
+    deletes then run runs, state, variables and the workspace row last, so a
+    failure part way leaves the workspace in place and a retry finishes the job.
+    Removing the state object leaves a delete marker over its versions, and the
+    config versions and their tarballs are left to the artifacts bucket lifecycle.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
+    require_no_active_run(workspace_id, settings=resolved)
+    if not force and state_versions.current_state_manages_resources(workspace_id, settings=resolved):
+        raise WorkspaceManagesResources(workspace_id)
+    delete_workspace_runs(workspace_id, settings=resolved)
+    state_versions.delete_current_state(workspace_id, settings=resolved)
     variables_repository = repositories.variables(resolved)
     keys = [
         {"workspace_id": workspace_id, "key": str(item["key"])}
