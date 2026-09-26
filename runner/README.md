@@ -66,8 +66,9 @@ the token. The runner then:
    `zz_webbpulse.auto.tfvars.json`, where JSON decoding makes every value what it
    says it is, so a value carrying quotes, braces or `${` cannot be reinterpreted.
    Values the workspace marked HCL go to `zz_webbpulse.auto.tfvars`, the native
-   form, written as bare `key = expression` assignments so the engine parses each
-   one. That is the only way a `list` or `map` typed input variable can be given a
+   form, written as `key = (\n<value>\n)` so the engine parses each one and the
+   value stays inside its own parenthesis, which the backend's write time check
+   guarantees it cannot close. That is the only way a `list` or `map` typed input variable can be given a
    value: quoting `["a", "b"]` into the JSON file would hand a `list(string)`
    variable an eight character string instead. A key is in one file or the other,
    never both, so the two auto loaded files never contend.
@@ -95,6 +96,8 @@ The engine comes from the bundle's `engine` field, `terraform` or `tofu`.
 Every line passes through `app.logs.Redactor` before it reaches CloudWatch Logs,
 stdout or the uploaded log artifact. The run token, the task token, the assumed
 role credentials, the external id and every environment, terraform and HCL variable
-value are registered as sensitive. The engine's environment is built without the
+value are registered as sensitive, and an HCL value's string and heredoc
+literals are registered on their own too, since the engine can print a member
+without the rest of the expression. The engine's environment is built without the
 runner's own tokens and without the task role's container credentials, so a
 provider that dumps its environment cannot leak them.
