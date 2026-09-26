@@ -1952,6 +1952,87 @@
         "title": "RunRoleCheck",
         "type": "object"
       },
+      "RunRoleQuickSetup": {
+        "description": "The quick create link for a workspace's run role, whose ARN is now saved.",
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "console_url": {
+            "title": "Console Url",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "permissions_policy_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permissions Policy Arn"
+          },
+          "region": {
+            "title": "Region",
+            "type": "string"
+          },
+          "role_arn": {
+            "title": "Role Arn",
+            "type": "string"
+          },
+          "role_name": {
+            "title": "Role Name",
+            "type": "string"
+          },
+          "stack_name": {
+            "title": "Stack Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "role_arn",
+          "role_name",
+          "stack_name",
+          "region",
+          "console_url",
+          "expires_in"
+        ],
+        "title": "RunRoleQuickSetup",
+        "type": "object"
+      },
+      "RunRoleQuickSetupCreate": {
+        "description": "Start AWS quick setup for one workspace.",
+        "properties": {
+          "account_id": {
+            "pattern": "^\\d{12}$",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "permissions": {
+            "default": "administrator",
+            "enum": [
+              "administrator",
+              "power_user",
+              "read_only",
+              "none"
+            ],
+            "title": "Permissions",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id"
+        ],
+        "title": "RunRoleQuickSetupCreate",
+        "type": "object"
+      },
       "RunRoleSetup": {
         "description": "What a person needs to build the run role for one workspace.\n\nThe role cannot exist before the workspace does: its trust policy names the\nworkspace id as the external id, so the id has to be handed out first. Every\nworkspace response carries these three values so the setup can be followed\nwithout reading the stack's outputs. The runner task roles are the only\nprincipals the trust policy needs: the API never assumes the role.",
         "properties": {
@@ -5397,6 +5478,62 @@
           }
         },
         "summary": "Check Run Role",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/run-role/quick-setup": {
+      "post": {
+        "description": "Save the run role ARN for an account and return an AWS CloudFormation quick create link.\n\nThe role name is derived from the workspace, so the account id is all the ARN\nneeds: it is saved here and nothing has to be copied back from AWS. The link\nopens a stack whose template trusts only the runner task roles with this\nworkspace id as the external id. It embeds a template URL that expires after\n`expires_in` seconds, so ask for a fresh link rather than storing one. Calling\nagain with the same account keeps the saved ARN and its check outcome.\n\nA deployment with no runner task roles or no artifacts bucket answers 503.",
+        "operationId": "start_run_role_quick_setup_api_v1_workspaces__workspace_id__run_role_quick_setup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRoleQuickSetupCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRoleQuickSetup"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Start Run Role Quick Setup",
         "tags": [
           "workspaces"
         ]

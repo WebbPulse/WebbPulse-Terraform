@@ -8,7 +8,15 @@ import {
 import { invalidateQueries } from '@webbpulse/api-client/react';
 import { ApiError } from '@webbpulse/api-client';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
 import { Layout } from '../components/Layout';
@@ -858,5 +866,190 @@ describe('WorkspaceLayout account status', () => {
     expect(await screen.findByTestId('workspace-account')).toHaveTextContent(
       '123456789012'
     );
+  });
+});
+
+/** What quick setup answers for the fixture workspace. */
+function aQuickSetup(permissions: string | null = null): {
+  account_id: string;
+  role_arn: string;
+  role_name: string;
+  stack_name: string;
+  region: string;
+  permissions_policy_arn: string | null;
+  expires_in: number;
+  console_url: string;
+} {
+  const roleName = aWorkspace().run_role_setup.role_name;
+  return {
+    account_id: '123456789012',
+    role_arn: `arn:aws:iam::123456789012:role/${roleName}`,
+    role_name: roleName,
+    stack_name: roleName,
+    region: 'us-west-2',
+    permissions_policy_arn: permissions,
+    expires_in: 3600,
+    console_url:
+      'https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate',
+  };
+}
+
+/** A stand in for the tab `window.open` returns. */
+function aTab(): { opener: unknown; location: { href: string }; close: Mock } {
+  return { opener: {}, location: { href: '' }, close: vi.fn() };
+}
+
+describe('AWS quick setup', () => {
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.getWorkspace.mockResolvedValue(aFreshWorkspace());
+    apiMock.readRunRoleCheck.mockResolvedValue(UNVERIFIED);
+    apiMock.listVariables.mockResolvedValue({ items: [] });
+    apiMock.listConfigVersions.mockResolvedValue({ items: [] });
+    apiMock.listRuns.mockResolvedValue({ items: [] });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('opens AWS CloudFormation in a new tab with nothing to copy back', async () => {
+    const tab = aTab();
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as never);
+    apiMock.startRunRoleQuickSetup.mockResolvedValue(
+      aQuickSetup('arn:aws:iam::aws:policy/ReadOnlyAccess')
+    );
+
+    renderDetail();
+
+    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
+    await userEvent.type(
+      within(setup).getByLabelText('AWS account ID'),
+      '1234-5678-9012'
+    );
+    await userEvent.selectOptions(
+      within(setup).getByLabelText('Permissions policy'),
+      'read_only'
+    );
+    await userEvent.click(
+      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
+    );
+
+    expect(open).toHaveBeenCalledWith('', '_blank');
+    expect(apiMock.startRunRoleQuickSetup).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      { account_id: '123456789012', permissions: 'read_only' }
+    );
+    const steps = await screen.findByTestId('quick-setup-steps');
+    expect(steps).toHaveTextContent(aQuickSetup().role_arn);
+    expect(steps).toHaveTextContent('Create stack');
+    expect(tab.opener).toBeNull();
+    expect(tab.location.href).toBe(aQuickSetup().console_url);
+    expect(
+      screen.getByRole('button', { name: 'Open AWS CloudFormation again' })
+    ).toBeInTheDocument();
+  });
+
+  it('offers the link when the browser blocks the new tab', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    apiMock.startRunRoleQuickSetup.mockResolvedValue(aQuickSetup());
+
+    renderDetail();
+
+    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
+    await userEvent.type(
+      within(setup).getByLabelText('AWS account ID'),
+      '123456789012'
+    );
+    await userEvent.click(
+      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
+    );
+
+    const steps = await screen.findByTestId('quick-setup-steps');
+    expect(
+      within(steps).getByRole('link', { name: 'Open AWS CloudFormation' })
+    ).toHaveAttribute('href', aQuickSetup().console_url);
+  });
+
+  it('closes the blank tab and says why when the request fails', async () => {
+    const tab = aTab();
+    vi.spyOn(window, 'open').mockReturnValue(tab as never);
+    apiMock.startRunRoleQuickSetup.mockRejectedValue(
+      new ApiError({
+        status: 503,
+        statusText: 'Service Unavailable',
+        url: 'https://api.test/api/v1/workspaces/ws-01J000000000000000000000/run-role/quick-setup',
+        method: 'POST',
+        body: {
+          success: false,
+          status: 503,
+          message: 'AWS quick setup is not available in this environment.',
+          request_id: 'r-1',
+        },
+      })
+    );
+
+    renderDetail();
+
+    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
+    await userEvent.type(
+      within(setup).getByLabelText('AWS account ID'),
+      '123456789012'
+    );
+    await userEvent.click(
+      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
+    );
+
+    await waitFor(() => {
+      expect(tab.close).toHaveBeenCalled();
+    });
+    expect(await within(setup).findByRole('alert')).toBeInTheDocument();
+    expect(screen.queryByTestId('quick-setup-steps')).not.toBeInTheDocument();
+  });
+
+  it('refuses a malformed account id without a request or a tab', async () => {
+    const open = vi.spyOn(window, 'open');
+
+    renderDetail();
+
+    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
+    await userEvent.type(
+      within(setup).getByLabelText('AWS account ID'),
+      '12345'
+    );
+    await userEvent.click(
+      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
+    );
+
+    expect(await within(setup).findByRole('alert')).toHaveTextContent(
+      'Enter the 12 digit AWS account ID.'
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(apiMock.startRunRoleQuickSetup).not.toHaveBeenCalled();
+  });
+
+  it('prefills the account from the saved role on the settings page', async () => {
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
+    expect(within(setup).getByLabelText('AWS account ID')).toHaveValue(
+      '123456789012'
+    );
+  });
+
+  it('keeps the manual path behind a disclosure', async () => {
+    renderDetail();
+
+    const checklist = await screen.findByTestId('setup-checklist');
+    const manual = within(checklist)
+      .getByText('Set up the role manually')
+      .closest('details');
+    expect(manual).not.toBeNull();
+    expect(manual).not.toHaveAttribute('open');
+    expect(
+      within(manual as HTMLElement).getByRole('form', { name: 'Run role' })
+    ).toBeInTheDocument();
   });
 });

@@ -182,7 +182,7 @@ def pytest_e2e_journeys(env: Any) -> Any:
                 ExpectUrl(r"/workspaces/ws-"),
                 ExpectText("h1", opened),
                 ExpectVisible("section[aria-labelledby='setup-checklist-title']"),
-                ExpectVisible("form[aria-label='Run role']"),
+                ExpectVisible("form[aria-label='AWS quick setup']"),
                 ExpectVisible("nav[aria-label='Workspace sections']"),
             ],
         ),

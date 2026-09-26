@@ -1091,6 +1091,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{workspace_id}/run-role/quick-setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Run Role Quick Setup
+         * @description Save the run role ARN for an account and return an AWS CloudFormation quick create link.
+         *
+         *     The role name is derived from the workspace, so the account id is all the ARN
+         *     needs: it is saved here and nothing has to be copied back from AWS. The link
+         *     opens a stack whose template trusts only the runner task roles with this
+         *     workspace id as the external id. It embeds a template URL that expires after
+         *     `expires_in` seconds, so ask for a fresh link rather than storing one. Calling
+         *     again with the same account keeps the saved ARN and its check outcome.
+         *
+         *     A deployment with no runner task roles or no artifacts bucket answers 503.
+         */
+        post: operations["start_run_role_quick_setup_api_v1_workspaces__workspace_id__run_role_quick_setup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{workspace_id}/state-versions": {
         parameters: {
             query?: never;
@@ -2102,6 +2131,42 @@ export interface components {
              * @enum {string}
              */
             status: "connected" | "failed" | "unverified";
+        };
+        /**
+         * RunRoleQuickSetup
+         * @description The quick create link for a workspace's run role, whose ARN is now saved.
+         */
+        RunRoleQuickSetup: {
+            /** Account Id */
+            account_id: string;
+            /** Console Url */
+            console_url: string;
+            /** Expires In */
+            expires_in: number;
+            /** Permissions Policy Arn */
+            permissions_policy_arn?: string | null;
+            /** Region */
+            region: string;
+            /** Role Arn */
+            role_arn: string;
+            /** Role Name */
+            role_name: string;
+            /** Stack Name */
+            stack_name: string;
+        };
+        /**
+         * RunRoleQuickSetupCreate
+         * @description Start AWS quick setup for one workspace.
+         */
+        RunRoleQuickSetupCreate: {
+            /** Account Id */
+            account_id: string;
+            /**
+             * Permissions
+             * @default administrator
+             * @enum {string}
+             */
+            permissions?: "administrator" | "power_user" | "read_only" | "none";
         };
         /**
          * RunRoleSetup
@@ -4671,6 +4736,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRoleCheck"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_run_role_quick_setup_api_v1_workspaces__workspace_id__run_role_quick_setup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRoleQuickSetupCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRoleQuickSetup"];
                 };
             };
             /** @description Request validation failed. */

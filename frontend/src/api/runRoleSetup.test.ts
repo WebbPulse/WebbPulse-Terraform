@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { aFreshWorkspace, aWorkspace } from '../test-helpers/fixtures';
 import {
   ADMINISTRATOR_POLICY_ARN,
+  PERMISSIONS_CHOICES,
+  accountIdFromArn,
+  accountIdProblem,
   SNIPPET_FORMATS,
   accountStatus,
   accountStatusLabel,
@@ -11,6 +14,7 @@ import {
   hasRunRole,
   isConnected,
   isRunRoleMissing,
+  normalizeAccountId,
   roleNameFromArn,
   runRoleArnProblem,
   runRolePrefix,
@@ -202,5 +206,38 @@ describe('accountStatus', () => {
     expect(accountStatusLabel(accountStatus(aFreshWorkspace(), check))).toBe(
       'Not connected'
     );
+  });
+});
+
+describe('account ids', () => {
+  it('accepts the id as the console prints it', () => {
+    expect(normalizeAccountId('1234-5678-9012')).toBe('123456789012');
+    expect(normalizeAccountId(' 1234 5678 9012 ')).toBe('123456789012');
+    expect(accountIdProblem('1234-5678-9012')).toBeNull();
+  });
+
+  it('refuses anything but twelve digits', () => {
+    for (const value of ['', '12345678901', '1234567890123', 'abcdefghijkl']) {
+      expect(accountIdProblem(value)).toBe(
+        'Enter the 12 digit AWS account ID.'
+      );
+    }
+  });
+
+  it('reads the account out of a saved role ARN', () => {
+    expect(accountIdFromArn(aWorkspace().run_role_arn)).toBe('123456789012');
+    expect(accountIdFromArn(null)).toBeNull();
+    expect(accountIdFromArn('arn:aws:s3:::bucket')).toBeNull();
+  });
+});
+
+describe('PERMISSIONS_CHOICES', () => {
+  it('leads with administrator, the API default, and ends with none', () => {
+    expect(PERMISSIONS_CHOICES.map((choice) => choice.id)).toEqual([
+      'administrator',
+      'power_user',
+      'read_only',
+      'none',
+    ]);
   });
 });

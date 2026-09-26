@@ -94,6 +94,33 @@ describe('TerraformApi workspaces', () => {
     expect(transport.requests[0]?.body).toBeUndefined();
   });
 
+  it('starts quick setup with the account and policy in the body', async () => {
+    const answer = {
+      account_id: '123456789012',
+      role_arn: 'arn:aws:iam::123456789012:role/control-plane-workspace-01J',
+      role_name: 'control-plane-workspace-01J',
+      stack_name: 'control-plane-workspace-01J',
+      region: 'us-west-2',
+      permissions_policy_arn: null,
+      expires_in: 3600,
+      console_url:
+        'https://us-west-2.console.aws.amazon.com/cloudformation/home',
+    };
+    const { api, transport } = apiOver({
+      'POST /api/v1/workspaces/ws-1/run-role/quick-setup': { body: answer },
+    });
+    expect(
+      await api.startRunRoleQuickSetup('ws-1', {
+        account_id: '123456789012',
+        permissions: 'none',
+      })
+    ).toEqual(answer);
+    expect(transport.requests[0]?.body).toEqual({
+      account_id: '123456789012',
+      permissions: 'none',
+    });
+  });
+
   it('patches a workspace on its own path', async () => {
     const { api, transport } = apiOver({
       'PATCH /api/v1/workspaces/ws-1': { body: aWorkspace() },
