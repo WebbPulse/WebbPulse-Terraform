@@ -152,3 +152,18 @@ output "e2e_run_role_arn" {
   description = "ARN of the run role the e2e suite passes when it creates a workspace. Null outside staging"
   value       = one(aws_iam_role.e2e_run_role[*].arn)
 }
+
+output "vcs_upload_url" {
+  description = "Endpoint the reusable upload workflow calls with a GitHub Actions OIDC token to get a presigned ingest upload"
+  value       = "${local.api_url}/api/v1/vcs/uploads"
+}
+
+output "vcs_oidc_audience" {
+  description = "Audience the reusable upload workflow must request its GitHub Actions OIDC token with"
+  value       = var.vcs_oidc_audience
+}
+
+output "vcs_ingest_queue_url" {
+  description = "Queue EventBridge feeds with Object Created events under ingest/ in the artifacts bucket"
+  value       = module.vcs_ingest.queue_url
+}

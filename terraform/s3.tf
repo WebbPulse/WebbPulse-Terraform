@@ -27,6 +27,8 @@ module "artifacts" {
   kms_key_description = "Encrypts config tarballs, plan artifacts and phase logs in ${local.prefix}-artifacts"
   kms_key_alias       = "${local.prefix}-artifacts"
 
+  enable_eventbridge_notifications = true
+
   lifecycle_rules = {
     expire-configs = {
       prefix                                 = "configs/"
@@ -39,6 +41,12 @@ module "artifacts" {
       expiration_days                        = var.artifact_retention_days
       noncurrent_version_expiration_days     = 7
       abort_incomplete_multipart_upload_days = 7
+    }
+    expire-ingest = {
+      prefix                                 = "ingest/"
+      expiration_days                        = 3
+      noncurrent_version_expiration_days     = 1
+      abort_incomplete_multipart_upload_days = 1
     }
   }
 

@@ -5,9 +5,11 @@ locals {
       attributes = [
         { name = "workspace_id", type = "S" },
         { name = "name", type = "S" },
+        { name = "vcs_repo_key", type = "S" },
       ]
       global_secondary_indexes = [
         { name = "by_name", hash_key = "name", projection_type = "ALL" },
+        { name = "by_vcs_repo", hash_key = "vcs_repo_key", projection_type = "ALL" },
       ]
     }
 
@@ -44,6 +46,15 @@ locals {
       global_secondary_indexes = [
         { name = "by_workspace", hash_key = "workspace_id", range_key = "created_at", projection_type = "ALL" },
       ]
+    }
+
+    "vcs-uploads" = {
+      hash_key = "upload_id"
+      attributes = [
+        { name = "upload_id", type = "S" },
+      ]
+      ttl_attribute          = "expires_at"
+      point_in_time_recovery = false
     }
 
     users = {
