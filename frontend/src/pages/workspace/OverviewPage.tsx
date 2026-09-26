@@ -186,6 +186,25 @@ function WorkspaceFacts({
       to: `${base}/settings/general`,
     },
     {
+      label: 'Repository',
+      value: workspace.vcs_repo ? (
+        <span data-testid="overview-repository" className="font-mono">
+          {workspace.vcs_repo}
+          {workspace.tracked_branch ? (
+            <span className="text-text-muted">
+              {' '}
+              on {workspace.tracked_branch}
+            </span>
+          ) : null}
+        </span>
+      ) : (
+        <span data-testid="overview-repository" className="text-text-muted">
+          Not connected
+        </span>
+      ),
+      to: `${base}/settings/version-control`,
+    },
+    {
       label: 'AWS account',
       value: (
         <span

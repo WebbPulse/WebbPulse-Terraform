@@ -33,6 +33,7 @@ const SECTIONS: readonly { path: string; label: string; end?: boolean }[] = [
 const SETTINGS: readonly { path: string; label: string }[] = [
   { path: 'general', label: 'General' },
   { path: 'run-role', label: 'AWS account' },
+  { path: 'version-control', label: 'Version Control' },
   { path: 'deletion', label: 'Destruction and deletion' },
 ];
 

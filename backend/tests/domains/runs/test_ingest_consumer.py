@@ -155,6 +155,22 @@ def test_trigger_patterns_glob_recursively(client, settings, bind, state_machine
     assert runs_on(shallow, settings) == []
 
 
+def test_always_trigger_runs_ignores_the_changed_paths(client, settings, bind, state_machine):
+    """`file_triggers_enabled` false runs on any change, the working directory included or not."""
+    always = bind("always", working_directory="stacks/app", file_triggers_enabled=False)
+    filtered = bind("filtered", working_directory="stacks/app")
+    deliver(upload(client, settings, claims(), tarball("docs/readme.md\n")), settings)
+    assert len(runs_on(always, settings)) == 1
+    assert runs_on(filtered, settings) == []
+
+
+def test_always_triggers_reads_the_flag():
+    """Absent means filtered, the default."""
+    assert ingest.always_triggers({"file_triggers_enabled": False}) is True
+    assert ingest.always_triggers({"file_triggers_enabled": True}) is False
+    assert ingest.always_triggers({}) is False
+
+
 def test_a_star_changed_path_matches_every_workspace(client, settings, bind, state_machine):
     """The workflow writes `*` when it could not diff."""
     workspace = bind(trigger_patterns=["nowhere/**"])

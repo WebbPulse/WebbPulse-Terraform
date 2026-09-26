@@ -737,6 +737,33 @@ describe('WorkspaceLayout account status', () => {
     expect(apiMock.checkRunRole).not.toHaveBeenCalled();
   });
 
+  it('shows the connected repository and branch in the overview', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ vcs_repo: 'WebbPulse/infra', tracked_branch: 'staging' })
+    );
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-repository')).toHaveTextContent(
+        'WebbPulse/infra on staging'
+      );
+    });
+  });
+
+  it('says when no repository is connected', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-repository')).toHaveTextContent(
+        'Not connected'
+      );
+    });
+  });
+
   it('agrees with the connection panel on the settings page', async () => {
     apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
 

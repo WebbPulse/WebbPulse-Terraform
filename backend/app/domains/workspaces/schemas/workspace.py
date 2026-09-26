@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import posixpath
+import re
 from datetime import datetime
 from typing import Any, Final, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Engine = Literal["terraform", "tofu"]
 """Which binary runs this workspace. The runner image bundles both."""
@@ -17,6 +19,61 @@ becomes a process environment variable on the task."""
 
 VCS_REPO_PATTERN: Final = r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"
 """A GitHub `owner/name`."""
+
+WORKING_DIRECTORY_MAX_LENGTH: Final = 255
+TRIGGER_PATTERN_MAX_LENGTH: Final = 255
+_BRANCH_FORBIDDEN: Final = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]|\.\.|@\{|//")
+
+
+def normalize_working_directory(value: str) -> str:
+    """A working directory as a clean relative path, `""` for the repository root.
+
+    Leading `./`, repeated and trailing slashes are dropped. An absolute path, a `..`
+    segment, a backslash or a control character is refused, since the runner resolves
+    the directory inside the archive and would refuse it later anyway.
+    """
+    candidate = value.strip()
+    if not candidate or candidate == ".":
+        return ""
+    if len(candidate) > WORKING_DIRECTORY_MAX_LENGTH:
+        raise ValueError(f"working_directory is longer than {WORKING_DIRECTORY_MAX_LENGTH} characters")
+    if candidate.startswith("/"):
+        raise ValueError("working_directory must be relative to the repository root")
+    if "\\" in candidate or any(ord(character) < 32 or ord(character) == 127 for character in candidate):
+        raise ValueError("working_directory must be a plain relative path")
+    if ".." in candidate.split("/"):
+        raise ValueError("working_directory cannot leave the repository with '..'")
+    normalized = posixpath.normpath(candidate)
+    return "" if normalized == "." else normalized
+
+
+def validate_branch(value: str) -> str:
+    """A branch name git would accept, following `git check-ref-format --branch`."""
+    candidate = value.strip()
+    if (
+        not candidate
+        or _BRANCH_FORBIDDEN.search(candidate)
+        or candidate.startswith(("/", "-", "."))
+        or candidate.endswith(("/", ".", ".lock"))
+        or "/." in candidate
+        or candidate == "@"
+    ):
+        raise ValueError("tracked_branch is not a valid branch name")
+    return candidate
+
+
+def validate_trigger_patterns(values: list[str]) -> list[str]:
+    """Trimmed, non-empty patterns, each within the length limit, duplicates dropped."""
+    cleaned: list[str] = []
+    for value in values:
+        pattern = value.strip()
+        if not pattern:
+            raise ValueError("a trigger pattern cannot be empty")
+        if len(pattern) > TRIGGER_PATTERN_MAX_LENGTH:
+            raise ValueError(f"a trigger pattern is longer than {TRIGGER_PATTERN_MAX_LENGTH} characters")
+        if pattern not in cleaned:
+            cleaned.append(pattern)
+    return cleaned
 
 
 class RunRoleSetup(BaseModel):
@@ -57,12 +114,33 @@ class WorkspaceBase(BaseModel):
     path matches one. Empty means everything under the working directory."""
     speculative_plans: bool = True
     """Whether a pull request upload starts a plan only run."""
+    file_triggers_enabled: bool = True
+    """Whether uploads are filtered by changed paths. False always triggers a run, the
+    way HCP Terraform's "Always trigger runs" does."""
 
 
 class WorkspaceCreate(WorkspaceBase):
     """A new workspace. The name is unique across the environment."""
 
     name: str = Field(min_length=1, max_length=90, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+    @field_validator("working_directory")
+    @classmethod
+    def _normalize_working_directory(cls, value: str) -> str:
+        """Store the directory as a clean relative path."""
+        return normalize_working_directory(value)
+
+    @field_validator("tracked_branch")
+    @classmethod
+    def _validate_branch(cls, value: Optional[str]) -> Optional[str]:
+        """Refuse a name git would not accept as a branch."""
+        return None if value is None else validate_branch(value)
+
+    @field_validator("trigger_patterns")
+    @classmethod
+    def _validate_trigger_patterns(cls, value: list[str]) -> list[str]:
+        """Trim the patterns and refuse empty or oversized ones."""
+        return validate_trigger_patterns(value)
 
 
 CLEARABLE_WORKSPACE_FIELDS: Final = (
@@ -73,6 +151,7 @@ CLEARABLE_WORKSPACE_FIELDS: Final = (
     "tracked_branch",
     "trigger_patterns",
     "speculative_plans",
+    "file_triggers_enabled",
 )
 """The update fields an explicit JSON null clears.
 
@@ -106,6 +185,25 @@ class WorkspaceUpdate(BaseModel):
     tracked_branch: Optional[str] = Field(default=None, min_length=1, max_length=255)
     trigger_patterns: Optional[list[str]] = Field(default=None, max_length=50)
     speculative_plans: Optional[bool] = None
+    file_triggers_enabled: Optional[bool] = None
+
+    @field_validator("working_directory")
+    @classmethod
+    def _normalize_working_directory(cls, value: Optional[str]) -> Optional[str]:
+        """Store the directory as a clean relative path."""
+        return None if value is None else normalize_working_directory(value)
+
+    @field_validator("tracked_branch")
+    @classmethod
+    def _validate_branch(cls, value: Optional[str]) -> Optional[str]:
+        """Refuse a name git would not accept as a branch."""
+        return None if value is None else validate_branch(value)
+
+    @field_validator("trigger_patterns")
+    @classmethod
+    def _validate_trigger_patterns(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        """Trim the patterns and refuse empty or oversized ones."""
+        return None if value is None else validate_trigger_patterns(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -143,8 +241,13 @@ class Workspace(WorkspaceBase):
     run_role_account_id: Optional[str] = None
     """The account the role ARN names, as of that recorded check."""
     vcs_repository_id: Optional[str] = None
-    """The GitHub id of the bound repository, recorded on the first upload so the
-    binding survives a rename. Cleared whenever `vcs_repo` changes."""
+    """The GitHub id of the bound repository, so the binding survives a rename.
+
+    Resolved through the GitHub App when the repository is connected, or recorded on
+    the first upload when the environment has no App. Cleared whenever `vcs_repo`
+    changes to a repository that is not resolved."""
+    vcs_installation_id: Optional[str] = None
+    """The GitHub App installation that covered the repository when it was connected."""
 
     model_config = ConfigDict(from_attributes=True)
 

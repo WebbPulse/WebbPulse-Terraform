@@ -5,9 +5,12 @@ import { Route, Routes } from 'react-router-dom';
 
 import { aFreshWorkspace, aWorkspace } from '../test-helpers/fixtures';
 import {
+  jsonResponse,
   renderWithAuth,
   signedInAuthClient,
+  stubAuthClient,
 } from '../test-helpers/renderWithAuth';
+import { anApp, anInstallation } from './settings/fixtures';
 import {
   apiClientModuleMock,
   apiMock,
@@ -193,5 +196,86 @@ describe('Workspaces', () => {
     expect(
       screen.getByRole('button', { name: 'New workspace' })
     ).toBeInTheDocument();
+  });
+
+  it('offers the three workflows, CLI-driven by default', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
+    renderList();
+
+    await screen.findByText('No workspaces yet.');
+    const form = await openCreateForm();
+    expect(
+      within(form).getByLabelText('Version control workflow')
+    ).not.toBeChecked();
+    expect(within(form).getByLabelText('CLI-driven workflow')).toBeChecked();
+    expect(
+      within(form).getByLabelText('API-driven workflow')
+    ).not.toBeChecked();
+  });
+
+  it('creates a version control workspace from a picked repository', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
+    apiMock.createWorkspace.mockResolvedValue(aFreshWorkspace());
+    apiMock.getGitHubApp.mockResolvedValue(anApp());
+    apiMock.listGitHubInstallations.mockResolvedValue({
+      items: [anInstallation()],
+    });
+    apiMock.listGitHubRepositories.mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          name: 'infra',
+          full_name: 'WebbPulse/infra',
+          private: true,
+          default_branch: 'staging',
+        },
+      ],
+    });
+    renderWithAuth(
+      <Routes>
+        <Route path="/workspaces" element={<Workspaces />} />
+        <Route path="/workspaces/:workspaceId" element={<p>Detail page</p>} />
+      </Routes>,
+      stubAuthClient({
+        fetch: () =>
+          Promise.resolve(
+            jsonResponse({ access_token: 'test-token', expires_in: 3600 })
+          ),
+        user: { email: 'admin@webbpulse.com', is_admin: true },
+      }),
+      ['/workspaces']
+    );
+
+    await screen.findByText('No workspaces yet.');
+    const form = await openCreateForm();
+    await userEvent.click(
+      within(form).getByLabelText('Version control workflow')
+    );
+    await userEvent.type(within(form).getByLabelText('Name'), 'platform');
+    const create = within(form).getByRole('button', {
+      name: 'Create workspace',
+    });
+    expect(create).toBeDisabled();
+    await userEvent.click(
+      await within(form).findByRole('option', { name: /WebbPulse\/infra/ })
+    );
+    await userEvent.type(
+      within(form).getByLabelText('Working directory'),
+      'examples/first-run'
+    );
+    await userEvent.click(create);
+
+    expect(apiMock.createWorkspace).toHaveBeenCalledWith({
+      name: 'platform',
+      engine: 'terraform',
+      engine_version: '1.11.0',
+      vcs_repo: 'WebbPulse/infra',
+      tracked_branch: 'staging',
+      working_directory: 'examples/first-run',
+      file_triggers_enabled: true,
+      trigger_patterns: [],
+      speculative_plans: true,
+    });
+    expect(await screen.findByText('Detail page')).toBeInTheDocument();
   });
 });

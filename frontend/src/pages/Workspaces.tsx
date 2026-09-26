@@ -33,6 +33,15 @@ import {
   Tr,
 } from '../components';
 import { useRunRoleCheck } from './useRunRoleCheck';
+import { RepositoryPicker } from './workspace/vcs/RepositoryPicker';
+import { VcsFields } from './workspace/vcs/VcsFields';
+import {
+  EMPTY_VCS_SETTINGS,
+  WORKFLOWS,
+  createBody,
+  type VcsSettings,
+  type Workflow,
+} from './workspace/vcs/vcsSettings';
 
 /** The refetch key the list reads and the create form invalidates. */
 export const WORKSPACES_KEY = 'workspaces';
@@ -97,7 +106,7 @@ export function Workspaces(): React.ReactElement {
           setCreating(false);
         }}
         title="New workspace"
-        description="Name it now. Connecting an AWS account comes next, on the workspace page."
+        description="Pick how runs start and name it. Connecting an AWS account comes next, on the workspace page."
       >
         <CreateWorkspaceForm
           onCancel={() => {
@@ -260,7 +269,7 @@ function ConnectionCell({
   );
 }
 
-/** The form that creates a workspace with a name and its engine. */
+/** The form that creates a workspace: its workflow, name and engine. */
 function CreateWorkspaceForm({
   onCancel,
   onCreated,
@@ -272,22 +281,30 @@ function CreateWorkspaceForm({
   const [description, setDescription] = useState('');
   const [engine, setEngine] = useState<Engine>('terraform');
   const [engineVersion, setEngineVersion] = useState(DEFAULT_ENGINE_VERSION);
+  const [workflow, setWorkflow] = useState<Workflow>('cli');
+  const [repository, setRepository] = useState<string | null>(null);
+  const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
+  const [vcs, setVcs] = useState<VcsSettings>(EMPTY_VCS_SETTINGS);
+  const needsRepository = workflow === 'vcs' && repository === null;
   const { mutate, isMutating, error } = useMutationWithRefetch(
     (body: WorkspaceCreate) => api.createWorkspace(body),
     WORKSPACES_KEY
   );
 
   const submit = async (): Promise<void> => {
-    const body: WorkspaceCreate = {
+    if (needsRepository) {
+      return;
+    }
+    const base: WorkspaceCreate = {
       name: name.trim(),
       engine,
       engine_version: engineVersion.trim(),
     };
     if (description.trim() !== '') {
-      body.description = description.trim();
+      base.description = description.trim();
     }
     try {
-      onCreated(await mutate(body));
+      onCreated(await mutate(createBody(base, workflow, repository, vcs)));
     } catch {
       return;
     }
@@ -366,6 +383,75 @@ function CreateWorkspaceForm({
           )}
         </Field>
       </div>
+      <fieldset className="space-y-2 text-sm">
+        <legend className="text-text-muted">Workflow</legend>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {WORKFLOWS.map((item) => (
+            <label
+              key={item.id}
+              className={`flex cursor-pointer flex-col gap-1 rounded-md border p-3 transition-colors hover:border-surface-400 has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-accent ${
+                workflow === item.id
+                  ? 'border-accent bg-raised'
+                  : 'border-line-strong bg-panel'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="workflow"
+                  value={item.id}
+                  aria-label={item.label}
+                  aria-describedby={`workflow-${item.id}-description`}
+                  checked={workflow === item.id}
+                  onChange={() => {
+                    setWorkflow(item.id);
+                  }}
+                  className="accent-accent"
+                />
+                <span className="font-medium text-text-strong">
+                  {item.label}
+                </span>
+              </span>
+              <span
+                id={`workflow-${item.id}-description`}
+                className="text-xs text-text-muted"
+              >
+                {item.description}
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      {workflow === 'vcs' ? (
+        <div className="space-y-4 border-t border-line pt-4">
+          <div className="space-y-2 text-sm">
+            <span className="text-text-muted">Repository</span>
+            <RepositoryPicker
+              value={repository}
+              onChange={(picked) => {
+                setRepository(picked.full_name);
+                setDefaultBranch(picked.default_branch ?? null);
+                setVcs((current) => ({
+                  ...current,
+                  branch: picked.default_branch ?? '',
+                }));
+              }}
+            />
+            {repository !== null ? (
+              <p className="text-xs text-text-muted">
+                Selected <span className="font-mono">{repository}</span>.
+              </p>
+            ) : null}
+          </div>
+          {repository !== null ? (
+            <VcsFields
+              value={vcs}
+              onChange={setVcs}
+              defaultBranch={defaultBranch}
+            />
+          ) : null}
+        </div>
+      ) : null}
       <ErrorNotice error={error} />
       <div className="flex justify-end gap-2 pt-1">
         <Button variant="ghost" onClick={onCancel}>
@@ -376,6 +462,7 @@ function CreateWorkspaceForm({
           variant="primary"
           busy={isMutating}
           busyLabel="Creating the workspace"
+          disabled={needsRepository}
         >
           Create workspace
         </Button>
