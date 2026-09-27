@@ -16,6 +16,7 @@ CONFIG_VERSIONS: Final = "config-versions"
 USERS: Final = "users"
 GITHUB: Final = "github"
 VCS_UPLOADS: Final = "vcs-uploads"
+REGISTRY: Final = "registry"
 
 WORKSPACES_BY_NAME_INDEX: Final = "by_name"
 """The GSI enforcing one workspace per name, and resolving a name to a workspace."""
@@ -175,13 +176,24 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
         "KeySchema": [{"AttributeName": "upload_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [{"AttributeName": "upload_id", "AttributeType": "S"}],
     },
+    REGISTRY: {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+            {"AttributeName": "pk", "KeyType": "HASH"},
+            {"AttributeName": "sk", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "pk", "AttributeType": "S"},
+            {"AttributeName": "sk", "AttributeType": "S"},
+        ],
+    },
 }
 
 GITHUB_TTL_ATTRIBUTE: Final = "expires_at"
 """The GitHub table's TTL attribute. Terraform enables it; a read checks it too,
 because DynamoDB deletes expired rows up to days late."""
 
-ALL_TABLES: Final = (WORKSPACES, RUNS, VARIABLES, CONFIG_VERSIONS, USERS, GITHUB, VCS_UPLOADS)
+ALL_TABLES: Final = (WORKSPACES, RUNS, VARIABLES, CONFIG_VERSIONS, USERS, GITHUB, VCS_UPLOADS, REGISTRY)
 """Every logical table, in creation order. The suite and the local script walk it."""
 
 

@@ -59,7 +59,7 @@ uv run uvicorn app.common.composition.app:app --reload --port 8000
 ```
 
 One `backend/Dockerfile` builds one image per domain, selected by the `DOMAIN`
-build argument (`workspaces`, `runs` or `github`). The base image lives in the Artifacts
+build argument (`workspaces`, `runs`, `github` or `registry`). The base image lives in the Artifacts
 account, so log in to that ECR first, and the build reads the CodeArtifact token
 as a Docker secret:
 
@@ -140,7 +140,7 @@ mounts under `/api/v1`.
 ### The domain registry
 
 `app/common/composition/wiring.py` is the only place a domain is declared. The
-`DOMAINS` map carries `workspaces`, `runs` and `github`. Adding one is a package under
+`DOMAINS` map carries `workspaces`, `runs`, `github` and `registry`. Adding one is a package under
 `app/domains/`, one entry in the map, a two line entrypoint and the matching
 Terraform entry. Loaders are lazy, so importing the registry imports no endpoint
 module and each image carries only its own code.
@@ -156,10 +156,11 @@ agent with a `wpk_` API key that the gate authorizer passes through by prefix an
 `claims_or_api_key` verifies in process. Both render as the same claims object,
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
-runner routes, `POST /vcs/uploads` (a GitHub Actions OIDC token, verified in
-process) and the anonymous identity documents do not. The scopes are
+runner routes, `POST /vcs/uploads` and `POST /registry/uploads` (GitHub Actions
+OIDC tokens, verified in process), the registry protocol under `/v1/modules`
+(a `wpk_` key only) and the anonymous identity documents do not. The scopes are
 `workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}`,
-`runs:{read,write,apply}` and `state:download`.
+`runs:{read,write,apply}`, `state:download` and `registry:read`.
 
 State history and metadata require `workspaces:read`. Raw state downloads also
 require `state:download`, granted to admin sessions and explicitly delegated agent
@@ -208,6 +209,30 @@ confirmation is sent to the `run-confirmations` SQS queue instead and consumed b
 the runs function through an event source mapping. That route mounts at the root
 rather than under `/api/v1`, and the HTTP API never lists it, so the only way to
 reach it is the Lambda Web Adapter's pass-through path.
+
+### Module registry
+
+The `registry` domain speaks Terraform's module registry protocol. The SPA serves
+`/.well-known/terraform.json`, the only anonymous path, pointing `modules.v1` at
+`<api host>/v1/modules/`. `GET /v1/modules/{ns}/{name}/{provider}/versions` and
+`.../{version}/download` sit past the gate with no authorizer and require a
+`wpk_` key holding `registry:read`, which Terraform sends from
+`TF_TOKEN_<host>`. The download is a 204 whose `X-Terraform-Get` is a five minute
+presigned GET ending `.tar.gz`.
+
+Publishing: a workflow on a `v<semver>` tag push calls `POST /api/v1/registry/uploads`
+with its GitHub Actions OIDC token (audience `VCS_OIDC_AUDIENCE`), verified by
+`app/common/github/oidc.py`. The repository must be a key of `REGISTRY_REPOSITORIES`
+(JSON, repository to `""` or a `name/provider` override); otherwise the namespace is
+the owner and the name and provider come from `terraform-<provider>-<name>`. The
+route writes a `pending` version row and presigns a PUT to
+`registry/incoming/<upload id>.tar.gz`, which the bucket expires after seven days.
+An EventBridge rule sends `module_ingested` to the registry queue; the consumer
+checks the tarball (plain files and directories, no path escapes, at least one
+`.tf`), copies it to `registry/modules/...` and marks the version `published`, or
+`failed` with the reason. Published versions are immutable; a failed or pending
+one can be uploaded again. In Root A the consumer route is shadowed by the runs
+consumer at the same pass-through path, so tests call `route_record` directly.
 
 ### VCS ingest
 

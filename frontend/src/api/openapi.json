@@ -909,6 +909,218 @@
         "title": "ManifestStartRequest",
         "type": "object"
       },
+      "Module": {
+        "description": "One module and every version uploaded for it, newest first.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleVersion"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "namespace",
+          "name",
+          "provider",
+          "source",
+          "versions"
+        ],
+        "title": "Module",
+        "type": "object"
+      },
+      "ModuleAddress": {
+        "description": "One module version's registry address.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "namespace",
+          "name",
+          "provider",
+          "version"
+        ],
+        "title": "ModuleAddress",
+        "type": "object"
+      },
+      "ModuleList": {
+        "description": "Every module in the registry.",
+        "properties": {
+          "modules": {
+            "items": {
+              "$ref": "#/components/schemas/Module"
+            },
+            "title": "Modules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "modules"
+        ],
+        "title": "ModuleList",
+        "type": "object"
+      },
+      "ModuleUpload": {
+        "description": "Where to PUT the tarball.\n\nA retry of the same workflow run attempt gets the same `upload_id` and a freshly\nsigned URL for the same key. Every header is inside the signature and has to be\nsent verbatim.",
+        "properties": {
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          },
+          "module": {
+            "$ref": "#/components/schemas/ModuleAddress"
+          },
+          "upload_id": {
+            "title": "Upload Id",
+            "type": "string"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "upload_url",
+          "headers",
+          "expires_in",
+          "module"
+        ],
+        "title": "ModuleUpload",
+        "type": "object"
+      },
+      "ModuleUploadCreate": {
+        "description": "What the publishing workflow reports alongside its GitHub Actions OIDC token.\n\nThe module and its version come from the verified token: the namespace is the\nrepository owner, the name and provider come from the repository, and the\nversion from the pushed tag.",
+        "properties": {
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000000.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size_bytes"
+        ],
+        "title": "ModuleUploadCreate",
+        "type": "object"
+      },
+      "ModuleVersion": {
+        "description": "One version of a module and where its ingest stands.",
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "repository": {
+            "title": "Repository",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "published",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "status",
+          "repository",
+          "sha",
+          "actor",
+          "created_at"
+        ],
+        "title": "ModuleVersion",
+        "type": "object"
+      },
       "PhaseResult": {
         "description": "What the runner reports when a phase ends.\n\nExtra top level fields the runner sends, such as `run_id` and `has_changes`,\nare ignored: the id comes from the path and the change flag from `changes`.",
         "properties": {
@@ -4549,6 +4761,82 @@
         "summary": "List Repositories",
         "tags": [
           "github"
+        ]
+      }
+    },
+    "/api/v1/registry/modules": {
+      "get": {
+        "description": "Every module and every version, with pending and failed ingests shown.",
+        "operationId": "list_modules_api_v1_registry_modules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Modules",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/uploads": {
+      "post": {
+        "description": "Issue a presigned PUT for a module version's tarball.\n\nThe caller sends `Authorization: Bearer <GitHub Actions OIDC token>` from a\nworkflow running on a `v<semver>` tag push. The module and version come from\nits verified claims. A retry of the same workflow run attempt returns the same\n`upload_id` with a new URL for the same key.",
+        "operationId": "create_module_upload_api_v1_registry_uploads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModuleUploadCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleUpload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "The GitHub Actions OIDC token is missing or did not verify."
+          },
+          "403": {
+            "description": "The repository may not publish modules. `error_code` is `REGISTRY_REPO_NOT_ALLOWED`."
+          },
+          "409": {
+            "description": "The version is already published. `error_code` is `REGISTRY_VERSION_EXISTS`."
+          },
+          "422": {
+            "description": "The token is not for a version tag push, or the repository names no valid module."
+          }
+        },
+        "summary": "Create Module Upload",
+        "tags": [
+          "registry"
         ]
       }
     },

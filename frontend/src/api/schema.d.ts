@@ -668,6 +668,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/registry/modules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Modules
+         * @description Every module and every version, with pending and failed ingests shown.
+         */
+        get: operations["list_modules_api_v1_registry_modules_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Module Upload
+         * @description Issue a presigned PUT for a module version's tarball.
+         *
+         *     The caller sends `Authorization: Bearer <GitHub Actions OIDC token>` from a
+         *     workflow running on a `v<semver>` tag push. The module and version come from
+         *     its verified claims. A retry of the same workflow run attempt returns the same
+         *     `upload_id` with a new URL for the same key.
+         */
+        post: operations["create_module_upload_api_v1_registry_uploads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -1661,6 +1706,104 @@ export interface components {
             name?: string | null;
             /** Organization */
             organization?: string | null;
+        };
+        /**
+         * Module
+         * @description One module and every version uploaded for it, newest first.
+         */
+        Module: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Provider */
+            provider: string;
+            /** Source */
+            source: string;
+            /** Versions */
+            versions: components["schemas"]["ModuleVersion"][];
+        };
+        /**
+         * ModuleAddress
+         * @description One module version's registry address.
+         */
+        ModuleAddress: {
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Provider */
+            provider: string;
+            /** Version */
+            version: string;
+        };
+        /**
+         * ModuleList
+         * @description Every module in the registry.
+         */
+        ModuleList: {
+            /** Modules */
+            modules: components["schemas"]["Module"][];
+        };
+        /**
+         * ModuleUpload
+         * @description Where to PUT the tarball.
+         *
+         *     A retry of the same workflow run attempt gets the same `upload_id` and a freshly
+         *     signed URL for the same key. Every header is inside the signature and has to be
+         *     sent verbatim.
+         */
+        ModuleUpload: {
+            /** Expires In */
+            expires_in: number;
+            /** Headers */
+            headers: {
+                [key: string]: string;
+            };
+            module: components["schemas"]["ModuleAddress"];
+            /** Upload Id */
+            upload_id: string;
+            /** Upload Url */
+            upload_url: string;
+        };
+        /**
+         * ModuleUploadCreate
+         * @description What the publishing workflow reports alongside its GitHub Actions OIDC token.
+         *
+         *     The module and its version come from the verified token: the namespace is the
+         *     repository owner, the name and provider come from the repository, and the
+         *     version from the pushed tag.
+         */
+        ModuleUploadCreate: {
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /**
+         * ModuleVersion
+         * @description One version of a module and where its ingest stands.
+         */
+        ModuleVersion: {
+            /** Actor */
+            actor: string;
+            /** Created At */
+            created_at: string;
+            /** Error */
+            error?: string | null;
+            /** Published At */
+            published_at?: string | null;
+            /** Repository */
+            repository: string;
+            /** Sha */
+            sha: string;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "published" | "failed";
+            /** Version */
+            version: string;
         };
         /**
          * PhaseResult
@@ -4095,6 +4238,87 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
+            };
+        };
+    };
+    list_modules_api_v1_registry_modules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_module_upload_api_v1_registry_uploads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModuleUploadCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleUpload"];
+                };
+            };
+            /** @description The GitHub Actions OIDC token is missing or did not verify. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The repository may not publish modules. `error_code` is `REGISTRY_REPO_NOT_ALLOWED`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The version is already published. `error_code` is `REGISTRY_VERSION_EXISTS`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The token is not for a version tag push, or the repository names no valid module. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
