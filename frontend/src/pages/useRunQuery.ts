@@ -25,8 +25,11 @@ export const RUN_POLL_STALL_MS = RUN_POLL_MAX_BACKOFF_MS + RUN_READ_DEADLINE_MS;
  * Polls one run every few seconds until it reaches a terminal state.
  *
  * The polled query bounds each read with a deadline, caps the backoff after
- * failures and restarts a stalled loop while the page is visible. Once the run
- * is terminal the poll stops, because a terminal run never changes again.
+ * failures and restarts a stalled loop while the page is visible. The poll
+ * does not pause while the page is hidden, so a run confirmed or discarded and
+ * then left in a background tab is current when the tab is looked at again.
+ * Once the run is terminal the poll stops, because a terminal run never
+ * changes again.
  */
 export function useRunQuery(runId: string): PolledQueryResult<Run> {
   const auth = useQueryAuth();
@@ -40,6 +43,7 @@ export function useRunQuery(runId: string): PolledQueryResult<Run> {
       stallTimeoutMs: RUN_POLL_STALL_MS,
       queryKey: `run:${runId}`,
       auth,
+      refetchOnVisible: false,
       enabled: runId !== '' && settledRunId !== runId,
     }
   );

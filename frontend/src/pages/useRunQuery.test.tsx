@@ -93,4 +93,36 @@ describe('useRunQuery', () => {
     });
     expect(hungSignal?.aborted).toBe(true);
   });
+
+  it('keeps polling a run that has not settled while the page is hidden', async () => {
+    let status: 'awaiting_confirmation' | 'applying' | 'applied' =
+      'awaiting_confirmation';
+    apiMock.getRun.mockImplementation(() => Promise.resolve(aRun(status)));
+    const visibility = vi
+      .spyOn(document, 'visibilityState', 'get')
+      .mockReturnValue('hidden');
+
+    try {
+      renderWithAuth(<Probe />, signedInAuthClient());
+      await waitFor(() => {
+        expect(screen.getByTestId('status')).toHaveTextContent(
+          'awaiting_confirmation'
+        );
+      });
+
+      status = 'applying';
+      await advance(RUN_POLL_INTERVAL_MS);
+      await waitFor(() => {
+        expect(screen.getByTestId('status')).toHaveTextContent('applying');
+      });
+
+      status = 'applied';
+      await advance(RUN_POLL_INTERVAL_MS);
+      await waitFor(() => {
+        expect(screen.getByTestId('status')).toHaveTextContent('applied');
+      });
+    } finally {
+      visibility.mockRestore();
+    }
+  });
 });
