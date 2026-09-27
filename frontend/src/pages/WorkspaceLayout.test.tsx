@@ -29,6 +29,7 @@ import {
   aWorkspace,
 } from '../test-helpers/fixtures';
 import { runRolePrefix } from '../api/runRoleSetup';
+import type { RunRoleCheck } from '../api/types';
 import {
   renderWithAuth,
   signedInAuthClient,
@@ -1157,7 +1158,7 @@ const STAGED_ARN =
 /** The check once a role is staged beside the working one. */
 function withPending(
   status: 'connected' | 'failed' | 'unverified'
-): typeof CONNECTED & { pending: Record<string, unknown> } {
+): RunRoleCheck {
   return {
     ...CONNECTED,
     pending: {

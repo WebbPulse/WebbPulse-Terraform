@@ -322,7 +322,7 @@ function PendingRole({
             busyLabel="Discarding the new role"
             onClick={() => {
               void discard
-                .mutate(undefined)
+                .mutate()
                 .then(() => {
                   invalidateQueries(keys.runRoleCheck);
                 })
