@@ -60,32 +60,24 @@ class Clients:
 
 def _initial_secrets(env: RunnerEnv) -> list[str]:
     """The secrets the runner holds before it has read anything from the API."""
-    secrets = [env.task_token.get_secret_value()]
-    if env.run_token is not None:
-        secrets.append(env.run_token.get_secret_value())
-    return secrets
+    return [env.task_token.get_secret_value()]
 
 
 def obtain_run_token(env: RunnerEnv, clients: Clients, api: RunnerApi) -> str:
     """Get the run token by trading the task's signed identity for it.
 
-    A `RUN_TOKEN` override, when the task was started with one, is the fallback
-    for an exchange that fails, so a runner image and a state machine from either
-    side of the change still run together. What happened goes to the container's
-    own output, not the run's transcript.
+    The exchange is the only source. A token passed on the task overrides would be
+    readable by anyone who can describe the task or read the execution history, so
+    none is accepted, and a failed exchange fails the phase.
     """
-    if clients.identity is not None:
-        try:
-            token = api.exchange_token(clients.identity(env.run_id))
-        except (ApiError, identity.IdentityError) as error:
-            print(f"run token exchange failed: {error}", flush=True)
-        else:
-            print("run token obtained from the task identity", flush=True)
-            return token
-    if api.has_token and env.run_token is not None:
-        print("using the run token the task was started with", flush=True)
-        return env.run_token.get_secret_value()
-    raise PhaseFailure("RunTokenUnavailable", "no run token from the exchange or the task overrides")
+    if clients.identity is None:
+        raise PhaseFailure("RunTokenUnavailable", "the task has no identity to exchange for a run token")
+    try:
+        token = api.exchange_token(clients.identity(env.run_id))
+    except (ApiError, identity.IdentityError) as error:
+        raise PhaseFailure("RunTokenUnavailable", str(error)) from error
+    print("run token obtained from the task identity", flush=True)
+    return token
 
 
 def _run_plan(

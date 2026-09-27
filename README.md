@@ -23,12 +23,16 @@ the prefix `webbpulse-terraform-<slug>`. Both accounts are `us-west-2`.
 | Slug | `staging` | `prod` |
 | Frontend host | `staging.terraform.webbpulse.com` | `terraform.webbpulse.com` |
 | API host | `api.staging.terraform.webbpulse.com` | `api.terraform.webbpulse.com` |
-| `identity_jwt_mode` | `gate` | `native` |
+| `identity_jwt_mode` | `gate` | `lambda` |
 | Access gate | optional, `var.staging_access_gate` | never |
 
 Custom domains and the gate require `var.staging_profile` of `full` together with
 `var.route53_zone_id`. With `reduced` the hostnames fall back to the CloudFront
-and HTTP API endpoints, and the CORS origin follows.
+and HTTP API endpoints, and the CORS origin follows. With custom domains on, the
+default `execute-api` endpoint is disabled, so the API answers only on its host.
+
+Production must run `identity_jwt_mode` as `lambda` or `native`: the plan fails on
+`gate` or `off` there, since neither enforces anything without the staging gate.
 
 ## Repository layout
 
@@ -89,13 +93,15 @@ account row this control plane keeps.
 Every route is mounted under `/api/v1` and reached through the HTTP API. Every
 product route is marked `require_identity_jwt`. A person arrives with a JWT the
 gateway authorizer verified. An agent arrives with a `wpk_` API key, which the
-gate authorizer passes through by prefix (`identity_jwt.api_key_prefixes`) and
-`claims_or_api_key` verifies in process. Both render as the same claims, so a
+gateway authorizer (the staging gate, or the `lambda` mode REQUEST authorizer in
+production) passes through by prefix (`identity_jwt.api_key_prefixes`) and
+`claims_or_api_key` verifies in process, reloading the owner on every request so a
+disabled or demoted owner's keys lose their scopes at once. Both render as the same claims, so a
 scope guard cannot tell them apart. The two runner routes carry no gateway
 authorizer and are gated in the application on a run token bound to the run in
 the path. API Gateway's native JWT authorizer refuses any non-JWT bearer, so
-`native` mode cannot admit agent keys on product routes; production needs the
-gate's Lambda authorizer or an equivalent before agents can use it.
+`native` mode cannot admit agent keys on product routes, which is why production
+uses `lambda`.
 
 | Route | Scope |
 | --- | --- |
@@ -244,8 +250,9 @@ A linux/arm64 image on Fargate, one task per phase, launched into the public
 subnets of the runner VPC. The task definition supplies `TF_IN_AUTOMATION`,
 `ENVIRONMENT`, `AWS_REGION_NAME`, `PHASE` and `RUNNER_LOG_GROUP`; the state
 machine's container overrides add `RUN_ID`, `WORKSPACE_ID`, `PHASE`,
-`TASK_TOKEN`, `RUN_TOKEN` and `API_BASE_URL`. `RunnerEnv` requires `RUN_ID`,
-`PHASE`, `TASK_TOKEN`, `API_BASE_URL`, `RUN_TOKEN` and `RUNNER_LOG_GROUP`.
+`TASK_TOKEN` and `API_BASE_URL`. `RunnerEnv` requires `RUN_ID`, `PHASE`,
+`TASK_TOKEN`, `API_BASE_URL` and `RUNNER_LOG_GROUP`. The run token comes only from
+the runner token exchange; a failed exchange fails the phase.
 
 The runner fetches `GET /api/v1/runs/{run_id}/bundle` with the run token as
 bearer. The bundle is the only response in the API carrying decrypted variable

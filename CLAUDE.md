@@ -152,8 +152,9 @@ that Root A is exactly the union of the Root B applications.
 ### Auth
 
 A person arrives with a JWT the API Gateway authorizer has already verified, an
-agent with a `wpk_` API key that the gate authorizer passes through by prefix and
-`claims_or_api_key` verifies in process. Both render as the same claims object,
+agent with a `wpk_` API key that the gateway authorizer (the staging gate, or the
+`lambda` mode authorizer in production) passes through by prefix and
+`claims_or_api_key` verifies in process, with `live_scopes` reloading the owner. Both render as the same claims object,
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
 runner routes, `POST /github/webhooks` (a webhook signature), the registry protocol
@@ -389,8 +390,8 @@ the only reader.
 ### Runner protocol
 
 Step Functions starts the runner with `runTask.waitForTaskToken`. It exchanges
-its task identity for the run token (`app/identity.py`), falling back to a
-`RUN_TOKEN` override if the task has one, then fetches the
+its task identity for the run token (`app/identity.py`), failing the phase if
+the exchange is refused (no `RUN_TOKEN` override is read), then fetches the
 bundle, unpacks the config tarball, writes the S3 backend override and the auto
 loaded tfvars files, assumes the workspace's run role with the phase session policy,
 points the S3 backend at the task role through the `webbpulse-state` profile so

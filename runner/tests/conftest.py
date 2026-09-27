@@ -199,6 +199,8 @@ def make_transport(
         if request.url.host in ("releases.hashicorp.com", "github.com"):
             served = (releases or {}).get(str(request.url))
             return httpx.Response(404) if served is None else httpx.Response(200, content=served)
+        if path.endswith("/runner-token"):
+            return httpx.Response(200, json={"run_token": RUN_TOKEN})
         if path.endswith("/bundle"):
             recorder.bundle_requests += 1
             if bundle_status != 200 or bundle is None:
@@ -342,7 +344,6 @@ def make_env(phase: str = "plan") -> RunnerEnv:
             "PHASE": phase,
             "TASK_TOKEN": TASK_TOKEN,
             "API_BASE_URL": API_BASE_URL,
-            "RUN_TOKEN": RUN_TOKEN,
             "RUNNER_LOG_GROUP": LOG_GROUP,
             "AWS_REGION": "us-west-2",
         }
@@ -356,4 +357,5 @@ def make_clients(transport: httpx.MockTransport) -> Clients:
         sts=boto3.client("sts", region_name="us-west-2"),
         sfn=boto3.client("stepfunctions", region_name="us-west-2"),
         http=httpx.Client(transport=transport),
+        identity=lambda run_id: {"x-webbpulse-run-id": run_id},
     )
