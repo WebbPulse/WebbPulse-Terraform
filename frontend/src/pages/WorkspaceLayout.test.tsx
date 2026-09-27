@@ -29,7 +29,11 @@ import {
   aWorkspace,
 } from '../test-helpers/fixtures';
 import { runRolePrefix } from '../api/runRoleSetup';
-import type { RunRoleCheck } from '../api/types';
+import type {
+  AwsConnection,
+  RunRoleCheck,
+  RunRoleQuickSetup,
+} from '../api/types';
 import {
   renderWithAuth,
   signedInAuthClient,
@@ -43,6 +47,8 @@ import {
 vi.mock('../api/client', () => apiClientModuleMock());
 
 const { workspaceRoutes } = await import('./workspaceRoutes');
+const { CONNECT_POLL_INTERVAL_MS } =
+  await import('./workspace/ConnectAccountPanel');
 
 /** The role name prefix the fixture's runner may assume. */
 function assumablePrefix(): string {
@@ -919,29 +925,53 @@ describe('WorkspaceLayout account status', () => {
   });
 });
 
-/** What quick setup answers for the fixture workspace. */
-function aQuickSetup(permissions: string | null = null): {
-  account_id: string;
-  role_arn: string;
-  role_name: string;
-  stack_name: string;
-  region: string;
-  permissions_policy_arn: string | null;
-  expires_in: number;
-  console_url: string;
-} {
+/** What Connect AWS answers for the fixture workspace. */
+function aQuickSetup(permissions: string | null = null): RunRoleQuickSetup {
   const roleName = aWorkspace().run_role_setup.role_name;
   return {
-    account_id: '123456789012',
-    role_arn: `arn:aws:iam::123456789012:role/${roleName}`,
+    account_id: null,
+    role_arn: null,
     role_name: roleName,
     stack_name: roleName,
     region: 'us-west-2',
     permissions_policy_arn: permissions,
     expires_in: 3600,
+    reports_back: true,
+    connect_expires_at: '2999-01-01T01:00:00Z',
     console_url:
       'https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate',
   };
+}
+
+/** A connection record, overridable field by field. */
+function aConnection(overrides: Partial<AwsConnection> = {}): AwsConnection {
+  return {
+    status: 'waiting',
+    requested_at: '2026-09-26T00:00:00Z',
+    expires_at: '2999-01-01T01:00:00Z',
+    reported_at: null,
+    account_id: null,
+    role_arn: null,
+    stack_id: null,
+    run_id: null,
+    pending: false,
+    disconnected_at: null,
+    ...overrides,
+  };
+}
+
+/** What a stack's report records for the fixture role. */
+function aReport(overrides: Partial<AwsConnection> = {}): AwsConnection {
+  return aConnection({
+    status: 'connected',
+    reported_at: '2026-09-26T00:02:00Z',
+    account_id: '123456789012',
+    role_arn: aWorkspace().run_role_arn ?? null,
+    stack_id:
+      'arn:aws:cloudformation:us-west-2:123456789012:stack/control-plane/1',
+    run_id: 'run-01J000000000000000000009',
+    ...overrides,
+  });
 }
 
 /** A stand in for the tab `window.open` returns. */
@@ -949,7 +979,7 @@ function aTab(): { opener: unknown; location: { href: string }; close: Mock } {
   return { opener: {}, location: { href: '' }, close: vi.fn() };
 }
 
-describe('AWS quick setup', () => {
+describe('Connect AWS', () => {
   beforeEach(() => {
     resetApiMock();
     apiMock.getWorkspace.mockResolvedValue(aFreshWorkspace());
@@ -963,7 +993,7 @@ describe('AWS quick setup', () => {
     vi.restoreAllMocks();
   });
 
-  it('opens AWS CloudFormation in a new tab with nothing to copy back', async () => {
+  it('opens AWS CloudFormation with no account to type and waits for the stack', async () => {
     const tab = aTab();
     const open = vi.spyOn(window, 'open').mockReturnValue(tab as never);
     apiMock.startRunRoleQuickSetup.mockResolvedValue(
@@ -972,32 +1002,59 @@ describe('AWS quick setup', () => {
 
     renderDetail();
 
-    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
-    await userEvent.type(
-      within(setup).getByLabelText('AWS account ID'),
-      '1234-5678-9012'
+    const setup = await screen.findByRole('form', { name: 'Connect AWS' });
+    expect(within(setup).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(within(setup).getByLabelText('Permissions policy')).toHaveValue(
+      'administrator'
     );
     await userEvent.selectOptions(
       within(setup).getByLabelText('Permissions policy'),
       'read_only'
     );
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ aws_connection: aConnection() })
+    );
     await userEvent.click(
-      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
+      within(setup).getByRole('button', { name: 'Connect AWS' })
     );
 
     expect(open).toHaveBeenCalledWith('', '_blank');
     expect(apiMock.startRunRoleQuickSetup).toHaveBeenCalledWith(
       'ws-01J000000000000000000000',
-      { account_id: '123456789012', permissions: 'read_only' }
+      { permissions: 'read_only' }
     );
-    const steps = await screen.findByTestId('quick-setup-steps');
-    expect(steps).toHaveTextContent(aQuickSetup().role_arn);
-    expect(steps).toHaveTextContent('Create stack');
+    const waiting = await screen.findByTestId('aws-connect-waiting');
+    expect(waiting).toHaveTextContent('Waiting for the stack in AWS');
+    expect(waiting).toHaveTextContent('Create stack');
     expect(tab.opener).toBeNull();
     expect(tab.location.href).toBe(aQuickSetup().console_url);
     expect(
-      screen.getByRole('button', { name: 'Open AWS CloudFormation again' })
+      screen.getByRole('button', { name: 'Connect AWS again' })
     ).toBeInTheDocument();
+  });
+
+  it('rereads the workspace while the stack has not reported back', async () => {
+    const setInterval = vi.spyOn(window, 'setInterval');
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ aws_connection: aConnection() })
+    );
+
+    renderDetail();
+
+    await screen.findByTestId('aws-connect-waiting');
+    const poll = setInterval.mock.calls.find(
+      ([, delay]) => delay === CONNECT_POLL_INTERVAL_MS
+    );
+    expect(poll).toBeDefined();
+    const readsBefore = apiMock.getWorkspace.mock.calls.length;
+    act(() => {
+      (poll?.[0] as () => void)();
+    });
+    await waitFor(() => {
+      expect(apiMock.getWorkspace.mock.calls.length).toBeGreaterThan(
+        readsBefore
+      );
+    });
   });
 
   it('offers the link when the browser blocks the new tab', async () => {
@@ -1006,19 +1063,35 @@ describe('AWS quick setup', () => {
 
     renderDetail();
 
-    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
-    await userEvent.type(
-      within(setup).getByLabelText('AWS account ID'),
-      '123456789012'
+    const setup = await screen.findByRole('form', { name: 'Connect AWS' });
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ aws_connection: aConnection() })
     );
     await userEvent.click(
-      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
+      within(setup).getByRole('button', { name: 'Connect AWS' })
     );
 
-    const steps = await screen.findByTestId('quick-setup-steps');
+    const waiting = await screen.findByTestId('aws-connect-waiting');
     expect(
-      within(steps).getByRole('link', { name: 'Open AWS CloudFormation' })
+      await within(waiting).findByRole('link', {
+        name: 'Open AWS CloudFormation',
+      })
     ).toHaveAttribute('href', aQuickSetup().console_url);
+  });
+
+  it('says when the last link ran out unused', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({
+        aws_connection: aConnection({ expires_at: '2020-01-01T00:00:00Z' }),
+      })
+    );
+
+    renderDetail();
+
+    expect(await screen.findByTestId('aws-connect-expired')).toHaveTextContent(
+      'The last link expired'
+    );
+    expect(screen.queryByTestId('aws-connect-waiting')).not.toBeInTheDocument();
   });
 
   it('closes the blank tab and says why when the request fails', async () => {
@@ -1041,44 +1114,82 @@ describe('AWS quick setup', () => {
 
     renderDetail();
 
-    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
-    await userEvent.type(
-      within(setup).getByLabelText('AWS account ID'),
-      '123456789012'
-    );
+    const setup = await screen.findByRole('form', { name: 'Connect AWS' });
     await userEvent.click(
-      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
+      within(setup).getByRole('button', { name: 'Connect AWS' })
     );
 
     await waitFor(() => {
       expect(tab.close).toHaveBeenCalled();
     });
     expect(await within(setup).findByRole('alert')).toBeInTheDocument();
-    expect(screen.queryByTestId('quick-setup-steps')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('aws-connect-waiting')).not.toBeInTheDocument();
   });
 
-  it('refuses a malformed account id without a request or a tab', async () => {
-    const open = vi.spyOn(window, 'open');
-
-    renderDetail();
-
-    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
-    await userEvent.type(
-      within(setup).getByLabelText('AWS account ID'),
-      '12345'
-    );
-    await userEvent.click(
-      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
+  it('says the stack was deleted when the role went with it', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({
+        aws_connection: aReport({
+          status: 'disconnected',
+          disconnected_at: '2026-09-26T01:00:00Z',
+        }),
+      })
     );
 
-    expect(await within(setup).findByRole('alert')).toHaveTextContent(
-      'Enter the 12 digit AWS account ID.'
-    );
-    expect(open).not.toHaveBeenCalled();
-    expect(apiMock.startRunRoleQuickSetup).not.toHaveBeenCalled();
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    expect(
+      await screen.findByTestId('aws-connect-disconnected')
+    ).toHaveTextContent('123456789012');
   });
 
-  it('prefills the account from the saved role on the settings page', async () => {
+  it('shows the reported account as connected and links the verification run', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        run_role_checked_at: null,
+        run_role_account_id: null,
+        aws_connection: aReport(),
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(connected).toHaveTextContent(
+      'Connected to AWS account 123456789012'
+    );
+    expect(
+      within(connected).queryByTestId('verified-badge')
+    ).not.toBeInTheDocument();
+    expect(
+      within(connected).getByTestId('verification-run-link')
+    ).toHaveAttribute(
+      'href',
+      '/workspaces/ws-01J000000000000000000000/runs/run-01J000000000000000000009'
+    );
+  });
+
+  it('marks the account verified once a run has assumed the role', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ aws_connection: aReport() })
+    );
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(
+      await within(connected).findByTestId('verified-badge')
+    ).toHaveTextContent('Verified');
+    expect(
+      within(connected).queryByTestId('verification-run-link')
+    ).not.toBeInTheDocument();
+    expect(
+      within(connected).getByRole('button', { name: 'Check connection' })
+    ).toBeEnabled();
+  });
+
+  it('opens the setup paths from Change role and keeps the current role on the way out', async () => {
     apiMock.getWorkspace.mockResolvedValue(aWorkspace());
 
     renderDetail(RUN_ROLE_SETTINGS);
@@ -1086,10 +1197,9 @@ describe('AWS quick setup', () => {
     await userEvent.click(
       await screen.findByRole('button', { name: 'Change role' })
     );
-    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
-    expect(within(setup).getByLabelText('AWS account ID')).toHaveValue(
-      '123456789012'
-    );
+    expect(
+      await screen.findByRole('form', { name: 'Connect AWS' })
+    ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole('button', { name: 'Keep the current role' })
     );
@@ -1109,7 +1219,7 @@ describe('AWS quick setup', () => {
       within(connected).getByRole('button', { name: 'Check connection' })
     ).toBeEnabled();
     expect(
-      screen.queryByRole('form', { name: 'AWS quick setup' })
+      screen.queryByRole('form', { name: 'Connect AWS' })
     ).not.toBeInTheDocument();
   });
 
@@ -1192,33 +1302,34 @@ describe('A staged run role', () => {
     vi.restoreAllMocks();
   });
 
-  it('says a new account was staged rather than saved when a role already works', async () => {
-    vi.spyOn(window, 'open').mockReturnValue(aTab() as never);
-    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
-    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
-    apiMock.startRunRoleQuickSetup.mockResolvedValue({
-      ...aQuickSetup(),
-      account_id: '210987654321',
-      role_arn: STAGED_ARN,
-      pending: true,
-    });
+  it('says the stack reported back and the verification run started', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        pending_run_role_arn: STAGED_ARN,
+        aws_connection: aReport({
+          account_id: '210987654321',
+          role_arn: STAGED_ARN,
+          pending: true,
+          run_id: 'run-01J000000000000000000003',
+        }),
+      })
+    );
 
     renderDetail(RUN_ROLE_SETTINGS);
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Change role' })
+    const pending = await screen.findByTestId('pending-account');
+    expect(pending).toHaveTextContent('The stack reported back');
+    expect(
+      within(pending).getByTestId('verification-run-link')
+    ).toHaveAttribute(
+      'href',
+      '/workspaces/ws-01J000000000000000000000/runs/run-01J000000000000000000003'
     );
-    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
-    const account = within(setup).getByLabelText('AWS account ID');
-    await userEvent.clear(account);
-    await userEvent.type(account, '210987654321');
-    await userEvent.click(
-      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
-    );
-
-    const steps = await screen.findByTestId('quick-setup-steps');
-    expect(steps).toHaveTextContent(`New role staged: ${STAGED_ARN}`);
-    expect(steps).toHaveTextContent('Runs keep the current role');
+    expect(
+      within(pending).getByRole('button', {
+        name: 'Start another verification run',
+      })
+    ).toBeInTheDocument();
   });
 
   it('keeps the working role in charge and shows the staged one apart', async () => {
