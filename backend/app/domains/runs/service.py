@@ -41,6 +41,7 @@ from ...common.db.tables import (
 )
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import reads as workspace_reads
+from ...common.workspaces import run_role_check
 from . import session_policy
 from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
 
@@ -828,8 +829,32 @@ def finish_run(
             },
         )
     _revoke_run_token(run, settings=resolved)
+    _record_run_role(str(run["workspace_id"]), settings=resolved)
     _promote_queue(str(run["workspace_id"]), settings=resolved)
     return updated
+
+
+def _record_run_role(workspace_id: str, *, settings: Settings) -> None:
+    """Record what the finished run proved about the workspace's run role.
+
+    This is what switches a workspace to a staged role as soon as its verification
+    run assumes it, instead of the next time someone opens the workspace, and what
+    keeps the recorded check current after every run. Best effort, like queue
+    promotion: a failure here must not leave the run stuck non-terminal.
+    """
+    try:
+        run_role_check.check_run_role(workspace_id, settings=settings)
+    except (workspace_reads.WorkspaceNotFound, workspace_reads.RunRoleMissing):
+        return
+    except Exception as error:  # noqa: BLE001
+        _log.exception(
+            "Could not record the run role check after a run finished.",
+            extra={
+                "event": "runs.run_role_check.failed",
+                "workspace_id": workspace_id,
+                "error": type(error).__name__,
+            },
+        )
 
 
 def _revoke_run_token(run: dict[str, Any], *, settings: Settings) -> None:

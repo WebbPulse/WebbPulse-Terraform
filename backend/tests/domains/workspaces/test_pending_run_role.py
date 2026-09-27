@@ -1,8 +1,9 @@
 """A staged run role: kept apart from the working one until a verification run proves it.
 
 A half finished quick setup must not break a workspace that works, so a new role
-is staged as `pending_run_role_arn`, runs keep the current role, and only the
-recording check switches over once a `run_role_check` run assumed the staged one.
+is staged as `pending_run_role_arn`, runs keep the current role, and the
+workspace switches over when a `run_role_check` run that assumed the staged one
+finishes.
 """
 
 from typing import Any
@@ -10,8 +11,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.common.workspaces import run_role_check
 from app.domains.runs import service as runs_service
-from app.domains.workspaces import run_role_check
 from tests.conftest import WORKSPACE_PAYLOAD
 
 BASE = "/api/v1/workspaces"
@@ -143,10 +144,10 @@ def test_the_check_reports_the_staged_role_separately(auth_client, workspace):
     assert pending["error"] == run_role_check.PENDING_UNVERIFIED_MESSAGE
 
 
-def test_a_proven_role_is_switched_to_by_the_recording_check(
+def test_a_proven_role_is_switched_to_when_its_verification_run_finishes(
     auth_client, workspace, uploaded_config_version, state_machine
 ):
-    """Once the verification plan assumed the role, the POST check makes it current."""
+    """The verification plan's terminal transition makes the staged role current, with no page visit."""
     workspace_id = workspace["workspace_id"]
     _stage(auth_client, workspace_id)
     run = _start_run(
@@ -154,19 +155,51 @@ def test_a_proven_role_is_switched_to_by_the_recording_check(
     ).json()
     _finish_plan(run["run_id"])
 
-    read = auth_client.get(f"{BASE}/{workspace_id}/run-role/check").json()
-    assert read["pending"]["status"] == "connected"
-    assert auth_client.get(f"{BASE}/{workspace_id}").json()["run_role_arn"] == CURRENT
-
-    body = auth_client.post(f"{BASE}/{workspace_id}/run-role/check").json()
-    assert body["status"] == "connected"
-    assert body["account_id"] == STAGED_ACCOUNT
-    assert body["run_id"] == run["run_id"]
-    assert body["pending"] is None
     stored = auth_client.get(f"{BASE}/{workspace_id}").json()
     assert stored["run_role_arn"] == STAGED
     assert stored["pending_run_role_arn"] is None
     assert stored["run_role_account_id"] == STAGED_ACCOUNT
+    assert stored["run_role_checked_at"]
+
+    body = auth_client.get(f"{BASE}/{workspace_id}/run-role/check").json()
+    assert body["status"] == "connected"
+    assert body["account_id"] == STAGED_ACCOUNT
+    assert body["run_id"] == run["run_id"]
+    assert body["pending"] is None
+
+
+def test_a_refused_verification_run_leaves_the_working_role(
+    auth_client, workspace, uploaded_config_version, state_machine
+):
+    """A verification run the runner could not assume keeps the current role and the staged one apart."""
+    workspace_id = workspace["workspace_id"]
+    _stage(auth_client, workspace_id)
+    run = _start_run(
+        auth_client, workspace_id, uploaded_config_version["config_version_id"], run_role_check=True
+    ).json()
+    runs_service.finish_run(run["run_id"], "errored", error="The run failed with AssumeRoleFailed.")
+
+    stored = auth_client.get(f"{BASE}/{workspace_id}").json()
+    assert stored["run_role_arn"] == CURRENT
+    assert stored["pending_run_role_arn"] == STAGED
+    pending = auth_client.get(f"{BASE}/{workspace_id}/run-role/check").json()["pending"]
+    assert pending["status"] == "failed"
+
+
+def test_a_failed_record_never_blocks_the_run_ending(
+    auth_client, workspace, uploaded_config_version, state_machine, monkeypatch
+):
+    """The run still reaches its terminal status when recording the check raises."""
+    workspace_id = workspace["workspace_id"]
+    run = _start_run(auth_client, workspace_id, uploaded_config_version["config_version_id"]).json()
+
+    def broken(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        """Fail the way a throttled table would."""
+        raise RuntimeError("throttled")
+
+    monkeypatch.setattr(run_role_check, "check_run_role", broken)
+    _finish_plan(run["run_id"])
+    assert runs_service.get_run(run["run_id"])["status"] == "planned_and_finished"
 
 
 @pytest.mark.parametrize(
