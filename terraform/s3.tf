@@ -48,6 +48,12 @@ module "artifacts" {
       noncurrent_version_expiration_days     = 1
       abort_incomplete_multipart_upload_days = 1
     }
+    expire-registry-incoming = {
+      prefix                                 = "registry/incoming/"
+      expiration_days                        = 7
+      noncurrent_version_expiration_days     = 1
+      abort_incomplete_multipart_upload_days = 1
+    }
   }
 
   cors_rules = [

@@ -168,6 +168,11 @@ output "vcs_ingest_queue_url" {
   value       = module.vcs_ingest.queue_url
 }
 
+output "registry_ingest_queue_url" {
+  description = "Queue EventBridge feeds with Object Created events under registry/incoming/ in the artifacts bucket"
+  value       = module.registry_ingest.queue_url
+}
+
 output "workspace_cleanup_queue_url" {
   description = "Queue a workspace delete sends its S3 cleanup to, consumed by the runs function"
   value       = module.workspace_cleanup.queue_url

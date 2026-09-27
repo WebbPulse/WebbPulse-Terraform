@@ -24,19 +24,20 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `versions.tf` | Terraform and provider constraints, the `cloud {}` block |
 | `providers.tf` | The default provider, `us_east_1` for the CloudFront cert, `dns` and `parent_dns` assume-role aliases |
 | `variables.tf`, `locals.tf`, `data.tf` | Inputs, the derived names, the caller identity |
-| `dynamodb.tf` | The tables: workspaces, runs, variables, config-versions, users, and vcs-uploads, whose ingest records expire through TTL |
-| `s3.tf` | The state bucket and the artifacts bucket, each with its own KMS key. The artifacts bucket sends EventBridge notifications, and `ingest/` expires after 3 days |
-| `ecr.tf` | `webbpulse-terraform/{workspaces,runs,runner}` |
-| `lambda_domains.tf` | The `workspaces` and `runs` functions, their roles and inline policies |
-| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer. The runner routes and `POST /api/v1/vcs/uploads` carry `authorization_type = "NONE"`, so neither the identity JWT nor the staging gate applies; each verifies its own token in the function |
+| `dynamodb.tf` | The tables: workspaces, runs, variables, config-versions, users, github, registry, and vcs-uploads, whose ingest records expire through TTL |
+| `s3.tf` | The state bucket and the artifacts bucket, each with its own KMS key. The artifacts bucket sends EventBridge notifications, `ingest/` expires after 3 days and `registry/incoming/` after 7. Published modules under `registry/modules/` never expire |
+| `ecr.tf` | `webbpulse-terraform/{workspaces,runs,github,registry,runner}` |
+| `lambda_domains.tf` | The `workspaces`, `runs`, `github` and `registry` functions, their roles and inline policies |
+| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer. The runner routes, `POST /api/v1/vcs/uploads`, `POST /api/v1/registry/uploads` and the `/v1/modules/` registry protocol routes carry `authorization_type = "NONE"`, so neither the identity JWT nor the staging gate applies; each verifies its own token in the function |
 | `identity.tf`, `app_secrets.tf` | The identity platform module and the single JSON `app` secret |
 | `vpc.tf`, `ecs.tf`, `runner_logs.tf` | The public-only VPC, the Fargate cluster and the two phase task definitions, the runner log group |
 | `step_functions.tf`, `state_machines/run.asl.json` | The per-run state machine |
 | `sqs.tf` | The run confirmations queue the state machine's task token is sent through |
 | `vcs_ingest.tf` | The EventBridge rule on Object Created under `ingest/` in the artifacts bucket, and the queue it feeds the `runs` function as `config_ingested` messages |
+| `registry.tf` | The module registry: the repository allowlist, the EventBridge rule on Object Created under `registry/incoming/`, and the queue it feeds the `registry` function as `module_ingested` messages |
 | `workspace_cleanup.tf` | The queue a workspace delete sends its run artifacts, config tarballs and state history purge to, consumed by the `runs` function as `workspace_cleanup` messages |
 | `task_failures.tf` | The EventBridge rule on runner tasks that failed to start, and the queue it feeds so a run fails without waiting out its phase heartbeat |
-| `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, the certificates, the staging child zone with its NS delegation, and the alias records |
+| `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, whose `/.well-known/terraform.json` (emitted by the Vite build, `modules.v1` on the API host) is a public path past the staging gate, the certificates, the staging child zone with its NS delegation, and the alias records |
 | `staging_access_gate.tf` | Staging only, the email gate in front of the site and the API |
 | `iam_github_actions.tf` | The deploy and CI OIDC roles |
 | `monitoring.tf`, `management.tf` | The three aggregate alarms in production, budgets |
@@ -76,7 +77,7 @@ refresh it to a tag that still exists before any apply that recreates one.
 
 ### A domain added later
 
-A domain added after an account is bootstrapped, today `github`, is declared
+A domain added after an account is bootstrapped, today `github` and `registry`, is declared
 with `own_image_tag = true`. Its ECR repository is new, so it holds no image and
 `bootstrap_image_tag` cannot seed it. The domain stays out of the function map
 until `var.domain_image_tags` names a tag for it.

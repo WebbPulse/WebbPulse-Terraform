@@ -10,6 +10,7 @@ module "registry" {
     workspaces = {}
     runs       = {}
     github     = {}
+    registry   = {}
     runner = {
       image_tag_mutability = "MUTABLE"
     }

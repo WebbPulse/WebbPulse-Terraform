@@ -1,6 +1,6 @@
 module "frontend" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/spa-frontend"
-  version = "~> 2.27"
+  version = "~> 2.31"
 
   name = "${local.prefix}-frontend"
 
@@ -22,6 +22,8 @@ module "frontend" {
     cache_policy_id_caching_disabled                       = module.staging_access_gate[0].cache_policy_id_caching_disabled
     origin_request_policy_id_all_viewer_except_host_header = module.staging_access_gate[0].origin_request_policy_id_all_viewer_except_host_header
   } : null
+
+  public_paths = ["/.well-known/terraform.json"]
 
   create_dns_records = false
 }

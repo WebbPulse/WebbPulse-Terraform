@@ -69,6 +69,13 @@ locals {
     "GET /api/v1/github/installations/{installation_id}/repositories" = { integration = "github" }
   } : {}
 
+  registry_routes = contains(keys(local.lambda_domains), "registry") ? {
+    "GET /v1/modules/{namespace}/{name}/{provider}/versions"           = { integration = "registry", authorization_type = "NONE" }
+    "GET /v1/modules/{namespace}/{name}/{provider}/{version}/download" = { integration = "registry", authorization_type = "NONE" }
+    "POST /api/v1/registry/uploads"                                    = { integration = "registry", authorization_type = "NONE" }
+    "GET /api/v1/registry/modules"                                     = { integration = "registry" }
+  } : {}
+
   product_routes = merge(
     { for key, route in local.workspaces_routes : key => merge(route, { require_identity_jwt = true }) },
     {
@@ -76,6 +83,10 @@ locals {
       key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
     },
     { for key, route in local.github_routes : key => merge(route, { require_identity_jwt = true }) },
+    {
+      for key, route in local.registry_routes :
+      key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
+    },
   )
 
   auth_anonymous_routes = {
