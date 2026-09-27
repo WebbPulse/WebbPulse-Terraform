@@ -34,6 +34,7 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `step_functions.tf`, `state_machines/run.asl.json` | The per-run state machine |
 | `sqs.tf` | The run confirmations queue the state machine's task token is sent through |
 | `vcs_ingest.tf` | The EventBridge rule on Object Created under `ingest/` in the artifacts bucket, and the queue it feeds the `runs` function as `config_ingested` messages |
+| `workspace_cleanup.tf` | The queue a workspace delete sends its run artifacts, config tarballs and state history purge to, consumed by the `runs` function as `workspace_cleanup` messages |
 | `task_failures.tf` | The EventBridge rule on runner tasks that failed to start, and the queue it feeds so a run fails without waiting out its phase heartbeat |
 | `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, the certificates, the staging child zone with its NS delegation, and the alias records |
 | `staging_access_gate.tf` | Staging only, the email gate in front of the site and the API |
