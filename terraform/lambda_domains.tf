@@ -12,7 +12,7 @@ locals {
     runs = {
       memory        = 512
       tables        = ["runs", "vcs-uploads"]
-      read_tables   = ["workspaces", "variables", "config-versions"]
+      read_tables   = ["workspaces", "variables", "config-versions", "users"]
       buckets       = true
       own_image_tag = false
       sqs_event_sources = {
@@ -74,7 +74,7 @@ locals {
     github = {
       memory            = 256
       tables            = ["github"]
-      read_tables       = []
+      read_tables       = ["users"]
       buckets           = false
       own_image_tag     = true
       sqs_event_sources = {}
@@ -83,7 +83,7 @@ locals {
     registry = {
       memory        = 512
       tables        = ["registry"]
-      read_tables   = []
+      read_tables   = ["users"]
       buckets       = false
       own_image_tag = true
       sqs_event_sources = {

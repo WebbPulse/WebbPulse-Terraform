@@ -152,8 +152,9 @@ that Root A is exactly the union of the Root B applications.
 ### Auth
 
 A person arrives with a JWT the API Gateway authorizer has already verified, an
-agent with a `wpk_` API key that the gate authorizer passes through by prefix and
-`claims_or_api_key` verifies in process. Both render as the same claims object,
+agent with a `wpk_` API key that the gateway authorizer (the staging gate, or the
+`lambda` mode authorizer in production) passes through by prefix and
+`claims_or_api_key` verifies in process, with `live_scopes` reloading the owner. Both render as the same claims object,
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
 runner routes, `POST /github/webhooks` (a webhook signature), the registry protocol
