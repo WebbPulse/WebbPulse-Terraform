@@ -216,6 +216,9 @@ module "lambda_domain" {
       RUNNER_CLUSTER_ARN   = module.runner.cluster_arn
       RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
 
+      RUN_CREDENTIALS_ROLE_ARN = aws_iam_role.run_credentials.arn
+      RUN_STATE_ROLE_ARN       = aws_iam_role.run_state.arn
+
       APP_SECRETS_ARN = module.app_secrets.arns["app"]
 
       WEBBPULSE_OTEL_SAMPLE_RATIO        = var.environment == "production" ? "0.1" : "1.0"
@@ -322,6 +325,12 @@ locals {
         Effect   = "Allow"
         Action   = ["dynamodb:UpdateItem"]
         Resource = [module.dynamodb.table_arns["workspaces"]]
+      },
+      {
+        Sid      = "VendRunPhaseCredentials"
+        Effect   = "Allow"
+        Action   = ["sts:AssumeRole"]
+        Resource = [aws_iam_role.run_credentials.arn]
       },
       {
         Sid      = "DescribeRunnerTasksForTokenExchange"

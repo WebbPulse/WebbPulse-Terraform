@@ -8,9 +8,11 @@ or stages it beside a role already in use, and answers with an AWS CloudFormatio
 quick create link. Creating that stack is the only thing left to do in AWS, and
 nothing has to be copied back.
 
-The template is rendered per environment with the runner task roles baked in as
-the only trusted principals, so a stack cannot be pointed at anything else by
-editing a parameter. The role name and the external id are parameters, pinned by
+The template is rendered per environment with the control plane's credential
+vending role baked in as the only trusted principal, so a stack cannot be pointed
+at anything else by editing a parameter. No runner task can assume the role
+itself: the runs function assumes it on a phase's behalf and hands the phase
+session keys, read only for a plan. The role name and the external id are parameters, pinned by
 patterns to this environment's role prefix and to a workspace id. CloudFormation
 only reads templates from S3, so the rendered body is written once to the
 artifacts bucket under a key derived from its hash and handed out as a short
@@ -109,6 +111,7 @@ def _report_back(template: dict[str, Any], topic_arn: str) -> dict[str, Any]:
                 "ConnectToken": {"Ref": "ConnectToken"},
                 "WorkspaceId": {"Ref": "ExternalId"},
                 "RoleArn": {"Fn::GetAtt": ["RunRole", "Arn"]},
+                "TrustVersion": aws_connect.TRUST_VERSION,
             },
         }
     }
@@ -128,16 +131,16 @@ def template_body(settings: Settings) -> dict[str, Any]:
     """The CloudFormation template for this environment's run roles.
 
     Raises:
-        QuickSetupUnavailable: No runner task role is configured to trust.
+        QuickSetupUnavailable: No credential vending role is configured to trust.
     """
-    principals = settings.runner_task_role_arns
+    principals = settings.run_role_principal_arns
     if not principals or not settings.RUN_ROLE_NAME_PREFIX:
-        raise QuickSetupUnavailable("No runner task roles are configured for this environment.")
+        raise QuickSetupUnavailable("No credential vending role is configured for this environment.")
     policy_values = [arn for arn in PERMISSIONS_POLICY_ARNS.values() if arn is not None]
     template: dict[str, Any] = {
         "AWSTemplateFormatVersion": "2010-09-09",
         "Description": (
-            "WebbPulse Terraform run role. Trusts only the WebbPulse Terraform runner, "
+            "WebbPulse Terraform run role. Trusts only the WebbPulse Terraform credential vending role, "
             "and only with this workspace id as the external id."
         ),
         "Metadata": {
@@ -156,13 +159,13 @@ def template_body(settings: Settings) -> dict[str, Any]:
         "Parameters": {
             "RoleName": {
                 "Type": "String",
-                "Description": "The runner only assumes roles with this prefix. Keep the prefilled name.",
+                "Description": "WebbPulse Terraform only assumes roles with this prefix. Keep the prefilled name.",
                 "AllowedPattern": f"^{re.escape(settings.RUN_ROLE_NAME_PREFIX)}[0-9A-Za-z]{{26}}$",
                 "ConstraintDescription": f"must start with {settings.RUN_ROLE_NAME_PREFIX}",
             },
             "ExternalId": {
                 "Type": "String",
-                "Description": "The runner sends the workspace id as the external id when it assumes the role.",
+                "Description": "WebbPulse Terraform sends the workspace id as the external id to assume the role.",
                 "AllowedPattern": "^ws-[0-9A-Za-z]{26}$",
                 "ConstraintDescription": "must be a workspace id",
             },
@@ -189,7 +192,7 @@ def template_body(settings: Settings) -> dict[str, Any]:
                         "Version": "2012-10-17",
                         "Statement": [
                             {
-                                "Sid": "WebbPulseTerraformRunner",
+                                "Sid": "WebbPulseTerraformCredentialVending",
                                 "Effect": "Allow",
                                 "Principal": {"AWS": principals},
                                 "Action": "sts:AssumeRole",
@@ -237,7 +240,7 @@ def ensure_template(settings: Settings) -> str:
     new key and an existing object never needs rewriting.
 
     Raises:
-        QuickSetupUnavailable: No artifacts bucket or no runner principals.
+        QuickSetupUnavailable: No artifacts bucket or no vending principal.
     """
     if not settings.ARTIFACTS_BUCKET:
         raise QuickSetupUnavailable("ARTIFACTS_BUCKET is unset, so no template can be served.")

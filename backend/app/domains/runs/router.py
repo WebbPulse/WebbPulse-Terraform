@@ -25,7 +25,7 @@ from ...common.core.auth import (
     scopes,
 )
 from ...common.workspaces import reads as workspace_reads
-from . import runner_tokens, service
+from . import phase_tasks, runner_tokens, service, vending
 from .actor import actor_from_claims
 from .schemas.run import (
     ArtifactUpload,
@@ -72,6 +72,16 @@ RUN_ROLE_MISSING_CODE = "RUN_ROLE_MISSING"
 
 PENDING_RUN_ROLE_MISSING_CODE = "PENDING_RUN_ROLE_MISSING"
 """The code a run role check carries when the workspace has no staged role to verify."""
+
+RUN_ROLE_ASSUME_FAILED_CODE = "RUN_ROLE_ASSUME_FAILED"
+"""The code a bundle carries when the workspace's run role refused the vending role.
+The runner reports it as `AssumeRoleFailed`, which is what the run role check reads."""
+
+RUN_CREDENTIALS_UNAVAILABLE_CODE = "RUN_CREDENTIALS_UNAVAILABLE"
+"""The code a bundle carries when this deployment could not vend credentials at all."""
+
+PHASE_TASK_UNRESOLVED_CODE = "PHASE_TASK_UNRESOLVED"
+"""The code a phase result carries when no runner task of the phase matches the run."""
 
 
 @router.post(
@@ -282,6 +292,13 @@ def run_bundle(run_id: str = RunId) -> dict[str, Any]:
     """
     try:
         return service.run_bundle(run_id)
+    except vending.RunRoleAssumeFailed as error:
+        raise _conflict(str(error), error_code=RUN_ROLE_ASSUME_FAILED_CODE) from error
+    except (vending.VendingUnavailable, vending.StateCredentialsFailed) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": str(error), "error_code": RUN_CREDENTIALS_UNAVAILABLE_CODE},
+        ) from error
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
     except workspace_reads.WorkspaceNotFound as error:
@@ -329,13 +346,21 @@ def artifact_upload(payload: ArtifactUploadCreate, run_id: str = RunId) -> dict[
     dependencies=[Depends(require_run_token())],
 )
 def phase_result(payload: PhaseResult, run_id: str = RunId) -> dict[str, Any]:
-    """Record a phase's outcome and advance the run. Runner only."""
+    """Record a phase's outcome, advance the run and resolve its task token. Runner only.
+
+    The runner holds no Step Functions permission, so this is how both a result and
+    a failure reach the waiting state.
+    """
     try:
-        updated = service.record_phase_result(run_id, payload.model_dump())
+        updated = phase_tasks.report(run_id, payload.model_dump())
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
     except service.PhaseMismatch as error:
         raise _conflict("That run is not in the reported phase.") from error
+    except phase_tasks.PhaseTaskUnresolved as error:
+        raise _conflict(
+            "No runner task of that phase can be matched to this run.", error_code=PHASE_TASK_UNRESOLVED_CODE
+        ) from error
     return {"run_id": run_id, "status": updated["status"]}
 
 

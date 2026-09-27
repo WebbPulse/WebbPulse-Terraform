@@ -14,7 +14,14 @@ import pytest
 
 from app.common.composition import settings as settings_module
 from app.domains.workspaces import quick_setup
-from tests.conftest import ARTIFACTS_BUCKET, REGION, RUN_ROLE_NAME_PREFIX, RUNNER_TASK_ROLE_ARNS, WORKSPACE_PAYLOAD
+from tests.conftest import (
+    ARTIFACTS_BUCKET,
+    REGION,
+    RUN_CREDENTIALS_ROLE_ARN,
+    RUN_ROLE_NAME_PREFIX,
+    RUNNER_TASK_ROLE_ARNS,
+    WORKSPACE_PAYLOAD,
+)
 
 BASE = "/api/v1/workspaces"
 ACCOUNT = "123456789012"
@@ -104,8 +111,8 @@ def test_no_policy_choice_passes_the_sentinel(auth_client):
     assert _fragment(body["console_url"])["param_PermissionsPolicyArn"] == quick_setup.NO_POLICY
 
 
-def test_template_trusts_only_the_runner_with_the_external_id(auth_client, settings):
-    """The stored template names every runner task role and nothing else, behind the external id."""
+def test_template_trusts_only_the_vending_role_with_the_external_id(auth_client, settings):
+    """The stored template names the credential vending role and nothing else, behind the external id."""
     workspace_id = _create(auth_client)["workspace_id"]
     _start(auth_client, workspace_id)
     _, key = quick_setup.render_template(settings)
@@ -115,7 +122,8 @@ def test_template_trusts_only_the_runner_with_the_external_id(auth_client, setti
     (statement,) = role["AssumeRolePolicyDocument"]["Statement"]
     assert statement["Effect"] == "Allow"
     assert statement["Action"] == "sts:AssumeRole"
-    assert statement["Principal"] == {"AWS": RUNNER_TASK_ROLE_ARNS}
+    assert statement["Principal"] == {"AWS": [RUN_CREDENTIALS_ROLE_ARN]}
+    assert not set(statement["Principal"]["AWS"]) & set(RUNNER_TASK_ROLE_ARNS)
     assert statement["Condition"] == {"StringEquals": {"sts:ExternalId": {"Ref": "ExternalId"}}}
     assert role["RoleName"] == {"Ref": "RoleName"}
     assert role["MaxSessionDuration"] == 3600
@@ -259,10 +267,10 @@ def test_read_scope_cannot_start_quick_setup(auth_client, scoped_client):
     assert _start(reader, workspace_id).status_code == 403
 
 
-def test_no_runner_roles_is_503(auth_client, monkeypatch):
+def test_no_vending_role_is_503(auth_client, monkeypatch):
     """A deployment with nothing to trust cannot render a template, and says so."""
     workspace_id = _create(auth_client)["workspace_id"]
-    monkeypatch.setenv("RUNNER_TASK_ROLE_ARN", "")
+    monkeypatch.setenv("RUN_CREDENTIALS_ROLE_ARN", "")
     settings_module.reset_settings_cache()
     response = _start(auth_client, workspace_id)
     assert response.status_code == 503, response.text

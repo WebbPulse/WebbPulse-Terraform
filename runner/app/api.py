@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -12,7 +13,34 @@ DEFAULT_TIMEOUT = httpx.Timeout(30.0, read=120.0)
 
 
 class ApiError(RuntimeError):
-    """The runs domain rejected a call or could not be reached."""
+    """The runs domain rejected a call or could not be reached.
+
+    `error_code` is the machine readable code a rejection's detail carried, empty
+    when it carried none.
+    """
+
+    def __init__(self, message: str, error_code: str = "") -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
+def _error_code(response: httpx.Response) -> str:
+    """The `error_code` of a rejection, empty when the body has none.
+
+    The API's error envelope carries it at the top level; a bare FastAPI detail
+    object is read too.
+    """
+    try:
+        body: object = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    envelope = cast(dict[str, object], body)
+    detail = envelope.get("detail")
+    source = cast(dict[str, object], detail) if isinstance(detail, dict) else envelope
+    code = source.get("error_code")
+    return code if isinstance(code, str) else ""
 
 
 class RunnerApi:
@@ -58,7 +86,7 @@ class RunnerApi:
         except httpx.HTTPError as error:
             raise ApiError(f"bundle fetch failed: {type(error).__name__}") from error
         if response.status_code != 200:
-            raise ApiError(f"bundle fetch returned {response.status_code}")
+            raise ApiError(f"bundle fetch returned {response.status_code}", _error_code(response))
         try:
             return Bundle.model_validate(response.json())
         except ValueError as error:

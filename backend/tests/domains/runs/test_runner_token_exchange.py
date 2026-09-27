@@ -149,6 +149,45 @@ def test_a_running_task_gets_a_token_that_replaces_the_old_one(app, client, crea
     assert token not in caplog.text
 
 
+def _with_task_token(task: dict[str, Any], token: str) -> dict[str, Any]:
+    """The same task with a Step Functions task token among its overrides."""
+    task["overrides"]["containerOverrides"][0]["environment"].append({"name": "TASK_TOKEN", "value": token})
+    return task
+
+
+def test_the_exchange_records_the_task_whose_token_the_phase_resolves(client, created_run, cluster, sts, ecs):
+    """The phase result resolves the task token from the exchanged task's own overrides, never the caller."""
+    run_id = created_run["run_id"]
+    ecs.tasks = [_with_task_token(_task(run_id), "sfn-token")]
+    assert _exchange(client, run_id, _signed(run_id)).status_code == 200
+
+    settings = settings_module.get_settings()
+    run = runs_service.get_run(run_id, settings=settings)
+    assert run[runner_tokens.RUNNER_TASK_ATTRIBUTE] == TASK_ID
+    assert runner_tokens.phase_task_token(run, "plan", settings=settings) == "sfn-token"
+    with pytest.raises(runner_tokens.ExchangeRefused):
+        runner_tokens.phase_task_token(run, "apply", settings=settings)
+
+
+def test_a_run_no_task_exchanged_for_resolves_no_token(created_run, cluster, ecs):
+    """With no exchanged task there is nothing to resolve, so no report can complete the phase."""
+    settings = settings_module.get_settings()
+    run = runs_service.get_run(created_run["run_id"], settings=settings)
+    with pytest.raises(runner_tokens.ExchangeRefused):
+        runner_tokens.phase_task_token(run, "plan", settings=settings)
+    assert ecs.calls == []
+
+
+def test_a_task_with_no_task_token_resolves_none(client, created_run, cluster, sts, ecs):
+    """A task started without a task token is refused rather than resolved to an empty token."""
+    run_id = created_run["run_id"]
+    assert _exchange(client, run_id, _signed(run_id)).status_code == 200
+    settings = settings_module.get_settings()
+    run = runs_service.get_run(run_id, settings=settings)
+    with pytest.raises(runner_tokens.ExchangeRefused):
+        runner_tokens.phase_task_token(run, "plan", settings=settings)
+
+
 def test_only_the_signed_headers_and_the_fixed_body_reach_sts(client, created_run, cluster, sts, ecs):
     """The replay is exactly one regional `GetCallerIdentity`, whatever else the caller sent."""
     run_id = created_run["run_id"]

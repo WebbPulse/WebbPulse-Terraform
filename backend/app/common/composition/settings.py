@@ -119,6 +119,15 @@ class Settings(BaseServiceSettings):
     """The ECS cluster runner tasks run on. The runner token exchange describes the
     calling task there to learn which run and phase it was started for."""
 
+    RUN_CREDENTIALS_ROLE_ARN: str = ""
+    """The one principal every workspace run role trusts. The runs function
+    assumes it to vend each run phase its credentials, so no runner task holds
+    a path to a workspace role. `run_role_principal_arns` is what a trust names."""
+
+    RUN_STATE_ROLE_ARN: str = ""
+    """The state bucket role the vending role assumes, with a session policy
+    narrowing it to one workspace's state, for the S3 backend's credentials."""
+
     RUN_ROLE_NAME_PREFIX: str = ""
     """The prefix every workspace run role name carries, `${local.prefix}-workspace-`.
     The runner's AssumeRole grant is scoped to it, so a role named outside it cannot
@@ -187,6 +196,11 @@ class Settings(BaseServiceSettings):
     def runner_task_role_arns(self) -> list[str]:
         """Every runner task role ARN, in the order Terraform set them."""
         return [arn.strip() for arn in self.RUNNER_TASK_ROLE_ARN.split(",") if arn.strip()]
+
+    @property
+    def run_role_principal_arns(self) -> list[str]:
+        """The principals a workspace run role trusts: the vending role alone."""
+        return [self.RUN_CREDENTIALS_ROLE_ARN] if self.RUN_CREDENTIALS_ROLE_ARN else []
 
     @property
     def dynamodb_endpoint_url(self) -> str | None:

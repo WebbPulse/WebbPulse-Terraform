@@ -125,6 +125,35 @@ class EngineRunner:
         return self.run(["output", "-json"], capture=True)
 
 
+TASK_CREDENTIAL_KEYS: frozenset[str] = frozenset(
+    {
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+        "ECS_CONTAINER_METADATA_URI",
+        "ECS_CONTAINER_METADATA_URI_V4",
+    }
+)
+"""What the ECS agent gives the task to reach its role's credentials and metadata."""
+
+RUNNER_ONLY_KEYS: frozenset[str] = TASK_CREDENTIAL_KEYS | {
+    "TASK_TOKEN",
+    "RUN_TOKEN",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_PROFILE",
+    "AWS_DEFAULT_PROFILE",
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_ROLE_ARN",
+    "AWS_ROLE_SESSION_NAME",
+}
+"""The runner's own variables, none of which the engine may inherit."""
+
+
 def build_environment(
     base: dict[str, str],
     aws_credentials: dict[str, str],
@@ -135,30 +164,19 @@ def build_environment(
 ) -> dict[str, str]:
     """Assemble the engine's environment without letting the runner's own tokens through.
 
-    `aws_credentials` is the run role, which the providers use. `backend_environment`
-    points the SDK at the state profile the backend override names, and is applied
-    last so a workspace variable cannot redirect where state credentials come from.
+    `aws_credentials` is the vended run role session, which the providers use.
+    `backend_environment` points the SDK at the state profile the backend override
+    names, and is applied last so a workspace variable cannot redirect where state
+    credentials come from. No path to the task role's credentials survives, not
+    even one a workspace variable names, though that role reaches nothing but the
+    runner's log stream.
     """
-    environment = {
-        key: value
-        for key, value in base.items()
-        if key
-        not in {
-            "TASK_TOKEN",
-            "RUN_TOKEN",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
-            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
-            "AWS_CONTAINER_AUTHORIZATION_TOKEN",
-        }
-    }
+    environment = {key: value for key, value in base.items() if key not in RUNNER_ONLY_KEYS}
     environment.update(BASE_ENVIRONMENT)
     environment["AWS_REGION"] = region
     environment["AWS_DEFAULT_REGION"] = region
     environment["TF_DATA_DIR"] = str(directory / ".terraform")
-    environment.update(bundle_environment)
+    environment.update({key: value for key, value in bundle_environment.items() if key not in TASK_CREDENTIAL_KEYS})
     environment.update(aws_credentials)
     environment.update(backend_environment or {})
     return environment

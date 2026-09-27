@@ -15,19 +15,22 @@ import pytest
 
 from app import workspace
 from app.api import ApiError, RunnerApi
-from app.credentials import CredentialsError, assume_run_role
 from app.engine import build_environment, parse_apply_changes, parse_changes
 from app.install import release_urls
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
 from app.main import redact_outputs
-from app.models import BackendConfig, Bundle, Changes, PhaseResult, RunRole, hcl_literal_fragments
+from app.models import BackendConfig, Bundle, Changes, PhaseResult, VendedCredentials, hcl_literal_fragments
 from tests.conftest import (
     LOG_GROUP,
     PLAN_JSON_NO_CHANGES,
     PLAN_JSON_WITH_CHANGES,
+    PROVIDER_SECRET_ACCESS_KEY,
+    PROVIDER_SESSION_TOKEN,
     RUN_ID,
     SECRET_ENVVAR,
     SECRET_TFVAR,
+    STATE_SECRET_ACCESS_KEY,
+    STATE_SESSION_TOKEN,
     WORKSPACE_ID,
     ApiRecorder,
     bundle_payload,
@@ -57,6 +60,7 @@ def test_backend_override_sets_native_locking() -> None:
         key=f"workspaces/{WORKSPACE_ID}/terraform.tfstate",
         region="us-west-2",
         kms_key_id="arn:aws:kms:us-west-2:870550636948:key/abc",
+        credentials=VendedCredentials(access_key_id="a", secret_access_key="b", session_token="c"),
     )
     body = workspace.write_backend_override(directory, backend).read_text()
     assert 'bucket       = "webbpulse-terraform-staging-state"' in body
@@ -64,6 +68,7 @@ def test_backend_override_sets_native_locking() -> None:
     assert 'region       = "us-west-2"' in body
     assert 'kms_key_id   = "arn:aws:kms:us-west-2:870550636948:key/abc"' in body
     assert "use_lockfile = true" in body
+    assert f'workspace_key_prefix = "workspaces/{WORKSPACE_ID}/env"' in body
 
 
 def test_tfvars_are_written_owner_only(tmp_path: Path) -> None:
@@ -214,13 +219,14 @@ def test_build_environment_drops_the_runner_tokens(tmp_path: Path) -> None:
     assert environment["AWS_REGION"] == "us-west-2"
 
 
-def test_bundle_sensitive_values_cover_variables_and_external_id(run_role_arn: str) -> None:
-    """Every variable value and the external id are registered as sensitive."""
+def test_bundle_sensitive_values_cover_variables_and_vended_keys(run_role_arn: str) -> None:
+    """Every variable value and both vended sessions' secrets are registered as sensitive."""
     bundle = Bundle.model_validate(bundle_payload(run_role_arn))
     values = bundle.sensitive_values()
     assert SECRET_TFVAR in values
     assert SECRET_ENVVAR in values
-    assert WORKSPACE_ID in values
+    for secret in (PROVIDER_SECRET_ACCESS_KEY, PROVIDER_SESSION_TOKEN, STATE_SECRET_ACCESS_KEY, STATE_SESSION_TOKEN):
+        assert secret in values
 
 
 def test_bundle_ignores_the_api_only_top_level_fields(run_role_arn: str) -> None:
@@ -234,7 +240,7 @@ def test_bundle_ignores_the_api_only_top_level_fields(run_role_arn: str) -> None
     payload |= {"phase": "plan", "plan_only": False, "working_directory": "infra"}
     bundle = Bundle.model_validate(payload)
     assert bundle.engine_version == "1.16.4"
-    assert bundle.run_role.duration_seconds == 3600
+    assert bundle.run_role_arn == run_role_arn
     assert bundle.is_destroy is False
 
 
@@ -263,84 +269,6 @@ def test_log_sink_swallows_delivery_failures(aws: None) -> None:
     sink.write("a line")
     sink.flush()
     assert sink.lines == ["a line"]
-
-
-def test_assume_role_passes_the_external_id_and_policy(aws: None, run_role_arn: str) -> None:
-    """The run role is assumed with the workspace id as the external id."""
-    role = RunRole(
-        role_arn=run_role_arn,
-        external_id=WORKSPACE_ID,
-        session_policy={
-            "Version": "2012-10-17",
-            "Statement": [{"Effect": "Allow", "Action": "s3:Get*", "Resource": "*"}],
-        },
-    )
-    exported = assume_run_role(boto3.client("sts", region_name="us-west-2"), role, "run-01JTEST", "plan")
-    assert set(exported) == {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
-
-
-def test_assume_role_failure_is_wrapped(aws: None) -> None:
-    """A rejected assume role surfaces as a CredentialsError naming the cause.
-
-    The botocore message is carried through because it names the malformed
-    field or the denied action and holds no credential material.
-    """
-    role = RunRole(role_arn="not-an-arn", external_id=WORKSPACE_ID)
-    with pytest.raises(CredentialsError):
-        assume_run_role(boto3.client("sts", region_name="us-west-2"), role, "run-01JTEST", "plan")
-
-
-class _RecordingSTS:
-    """An STS stand in that records the assume role request and returns credentials."""
-
-    def __init__(self) -> None:
-        """Start with no recorded request."""
-        self.request: dict[str, object] = {}
-
-    def assume_role(self, **kwargs: object) -> dict[str, dict[str, str]]:
-        """Record the request and hand back a fixed credential triple."""
-        self.request = kwargs
-        return {
-            "Credentials": {
-                "AccessKeyId": "AKIAEXAMPLE",
-                "SecretAccessKey": "secret",
-                "SessionToken": "token",
-            }
-        }
-
-
-def test_assume_role_passes_the_managed_policy_arns() -> None:
-    """A plan role's managed policies reach STS as PolicyArns.
-
-    The plan phase expresses "read everything" with the managed ReadOnlyAccess
-    policy, so losing this argument would silently strip a plan's reads.
-    """
-    client = _RecordingSTS()
-    role = RunRole(
-        role_arn="arn:aws:iam::870550636948:role/run",
-        external_id=WORKSPACE_ID,
-        session_policy={"Version": "2012-10-17", "Statement": []},
-        session_policy_arns=["arn:aws:iam::aws:policy/ReadOnlyAccess"],
-    )
-    assume_run_role(client, role, "run-01JTEST", "plan")  # type: ignore[arg-type]
-    assert client.request["PolicyArns"] == [{"arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}]
-
-
-def test_assume_role_omits_policy_arns_when_there_are_none() -> None:
-    """An apply role sends no PolicyArns key at all.
-
-    STS rejects an empty PolicyArns list, so the key has to be absent rather
-    than present and empty.
-    """
-    client = _RecordingSTS()
-    role = RunRole(
-        role_arn="arn:aws:iam::870550636948:role/run",
-        external_id=WORKSPACE_ID,
-        session_policy={"Version": "2012-10-17", "Statement": []},
-    )
-    assume_run_role(client, role, "run-01JTEST", "apply")  # type: ignore[arg-type]
-    assert "PolicyArns" not in client.request
-    assert "Policy" in client.request
 
 
 def test_upload_requests_the_url_for_the_exact_size(aws: None, config_tarball: bytes) -> None:

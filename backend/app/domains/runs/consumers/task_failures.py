@@ -1,25 +1,23 @@
-"""The task failure consumer: fails a run whose Fargate task never started.
+"""The task stop consumer: fails a phase whose Fargate task stopped without reporting.
 
 `Plan` and `Apply` are `ecs:runTask.waitForTaskToken` states, so the execution sits
-on a task token the runner container is supposed to send. When the task never runs
-at all, because the image tag resolves to nothing, an ENI cannot be attached or the
-pull is denied, there is no container to send it and the state waits out its
-heartbeat before the run errors. An EventBridge rule on ECS `Task
-State Change` for the runner cluster delivers the stop here instead, and this sends
-`SendTaskFailure` against the same token so the execution takes its existing
-`MarkErrored` and `ReleaseSemaphoreAfterFailure` path within seconds.
+on a task token. The runner holds no Step Functions permission and reports through
+the phase result route instead, so a task that never starts (an image tag that
+resolves to nothing, an ENI that cannot attach, a denied pull) or a runner that
+dies before it can report leaves nobody to resolve that token until the state's
+heartbeat expires. An EventBridge rule on ECS `Task State Change` for every stopped
+runner task delivers the stop here, and this sends `SendTaskFailure` against the
+same token so the execution takes its existing `MarkErrored` and
+`ReleaseSemaphoreAfterFailure` path within seconds.
 
-The token needs no lookup table. Every phase state passes `RUN_ID` and `TASK_TOKEN`
-as container environment overrides, and ECS echoes `overrides` back verbatim on the
-state change event, so the event carries both the run it belongs to and the token to
-fail. That is what keeps this path free of the write-then-read race the confirmations
-queue has to live with.
+The token needs no lookup table. Every phase state passes `RUN_ID`, `PHASE` and
+`TASK_TOKEN` as container environment overrides, and ECS echoes `overrides` back
+verbatim on the state change event. Most stops are of a runner that already
+reported, whose token Step Functions has consumed, so a run that has left the
+stopped task's phase is left alone and a consumed token is work already done.
 
-Raising is how a record is retried, exactly as on the confirmations queue. Delivery
-is at least once and the runner may have reported a result first, so the service side
-treats a terminal run and an already consumed token as work already done rather than
-as failures, and only a genuinely unresolvable delivery parks on the dead letter
-queue.
+Raising is how a record is retried, exactly as on the confirmations queue, and only
+a genuinely unresolvable delivery parks on the dead letter queue.
 """
 
 from __future__ import annotations
@@ -40,28 +38,32 @@ An ECS state change carries no kind of its own, so the rule adds one and this qu
 can hold both message shapes without either consumer guessing at the other's."""
 
 FAILED_TO_START_STOP_CODE = "TaskFailedToStart"
-"""The one ECS stop code this consumer acts on.
-
-Every other stop code means the container ran, so the runner had its chance to report
-and the state machine's own result path owns the outcome."""
+"""The ECS stop code of a task whose container never ran."""
 
 TASK_FAILURE_ERROR = "TaskFailedToStart"
-"""The `SendTaskFailure` error name, which is what the run's error records."""
+"""The `SendTaskFailure` error name for a task that never started."""
+
+RUNNER_STOPPED_ERROR = "RunnerStopped"
+"""The `SendTaskFailure` error name for a runner that ran but stopped unreported."""
 
 RUN_ID_VARIABLE = "RUN_ID"
+PHASE_VARIABLE = "PHASE"
 TASK_TOKEN_VARIABLE = "TASK_TOKEN"
-"""The two container environment overrides every phase state sets, and the only
+"""The container environment overrides every phase state sets, the last the only
 place the task token exists outside the execution."""
 
-DEFAULT_STOPPED_REASON = "The Fargate task failed to start and ECS gave no reason."
+PHASE_STATUSES = {"plan": "planning", "apply": "applying"}
+"""The run status a phase task's run holds while that phase is still unresolved."""
+
+DEFAULT_STOPPED_REASON = "The Fargate task stopped and ECS gave no reason."
 
 
 class MalformedTaskFailure(Exception):
     """The message body is not a task stop this consumer can act on."""
 
 
-class NotAFailedStart(Exception):
-    """The stop is a real one this consumer must ignore rather than retry.
+class NotAPhaseStop(Exception):
+    """The stop is one this consumer must ignore rather than retry.
 
     Separate from `MalformedTaskFailure` because it is not a fault: the message was
     well formed and the answer is that there is nothing to do.
@@ -129,36 +131,52 @@ def _overrides(detail: Mapping[str, Any]) -> dict[str, str]:
     return flattened
 
 
-def parse_body(record: Mapping[str, Any]) -> tuple[str, str, str]:
-    """The run id, task token and stopped reason one queue record carries.
+def _stop_cause(detail: Mapping[str, Any]) -> str:
+    """The stopped reason with each container's exit code, which carry no secrets."""
+    reason = str(detail.get("stoppedReason", "") or "").strip() or DEFAULT_STOPPED_REASON
+    containers = detail.get("containers")
+    codes = (
+        [
+            f"{container.get('name', 'container')} exited {container['exitCode']}"
+            for container in containers or []
+            if isinstance(container, Mapping) and isinstance(container.get("exitCode"), int)
+        ]
+        if isinstance(containers, list)
+        else []
+    )
+    return "; ".join([reason, *codes])
+
+
+def parse_body(record: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+    """The run id, phase, task token, error name and cause one queue record carries.
 
     Raises:
         MalformedTaskFailure: The body is not a usable task stop. It still raises
             rather than returning, so the message parks on the dead letter queue
             instead of a run hanging on a token this consumer quietly dropped.
-        NotAFailedStart: The task stopped for some reason other than failing to
-            start, or carries neither of the two overrides, so the runner either
-            ran or this is not a phase task at all.
+        NotAPhaseStop: The task has not stopped, or carries no run id, phase and
+            task token, so it is not a phase task at all.
     """
     detail = _detail(record)
 
     last_status = str(detail.get("lastStatus", ""))
-    stop_code = str(detail.get("stopCode", ""))
-    if last_status != "STOPPED" or stop_code != FAILED_TO_START_STOP_CODE:
-        raise NotAFailedStart(f"The task is {last_status or 'statusless'} with stop code {stop_code or 'none'}.")
+    if last_status != "STOPPED":
+        raise NotAPhaseStop(f"The task is {last_status or 'statusless'}, not STOPPED.")
 
     overrides = _overrides(detail)
     run_id = overrides.get(RUN_ID_VARIABLE, "")
+    phase = overrides.get(PHASE_VARIABLE, "")
     task_token = overrides.get(TASK_TOKEN_VARIABLE, "")
-    if not run_id or not task_token:
-        raise NotAFailedStart("The task carries no run id and task token, so it is not a phase task.")
+    if not run_id or not task_token or phase not in PHASE_STATUSES:
+        raise NotAPhaseStop("The task carries no run id, phase and task token, so it is not a phase task.")
 
-    reason = str(detail.get("stoppedReason", "") or "").strip() or DEFAULT_STOPPED_REASON
-    return run_id, task_token, reason
+    stop_code = str(detail.get("stopCode", ""))
+    error = TASK_FAILURE_ERROR if stop_code == FAILED_TO_START_STOP_CODE else RUNNER_STOPPED_ERROR
+    return run_id, phase, task_token, error, _stop_cause(detail)
 
 
 def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None) -> None:
-    """Fail one run whose phase task never started.
+    """Fail one run whose phase task stopped while its run was still in that phase.
 
     A stop this consumer has no business acting on is logged and dropped rather than
     retried: retrying would park a perfectly ordinary task stop on the dead letter
@@ -170,36 +188,40 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
             run row rather than being dropped with a token still live.
     """
     try:
-        run_id, task_token, reason = parse_body(record)
-    except NotAFailedStart as error:
+        run_id, phase, task_token, error, cause = parse_body(record)
+    except NotAPhaseStop as reason:
         _log.info(
-            "Ignoring an ECS task stop that is not a phase task failing to start.",
-            extra={"event": "runs.task_failure.ignored", "reason": str(error)},
+            "Ignoring an ECS task stop that is not a phase task.",
+            extra={"event": "runs.task_failure.ignored", "reason": str(reason)},
         )
         return
 
     sent = service.fail_phase_task(
         run_id,
         task_token,
-        error=TASK_FAILURE_ERROR,
-        cause=reason,
+        error=error,
+        cause=cause,
+        expected_status=PHASE_STATUSES[phase],
         settings=settings,
     )
     _log.info(
-        "Handled a phase task that failed to start.",
-        extra={"event": "runs.task_failure.handled", "run_id": run_id, "sent": sent},
+        "Handled a stopped phase task.",
+        extra={"event": "runs.task_failure.handled", "run_id": run_id, "error": error, "sent": sent},
     )
 
 
 __all__ = [
     "DEFAULT_STOPPED_REASON",
     "FAILED_TO_START_STOP_CODE",
+    "PHASE_STATUSES",
+    "PHASE_VARIABLE",
+    "RUNNER_STOPPED_ERROR",
     "RUN_ID_VARIABLE",
     "TASK_FAILURE_ERROR",
     "TASK_FAILURE_KIND",
     "TASK_TOKEN_VARIABLE",
     "MalformedTaskFailure",
-    "NotAFailedStart",
+    "NotAPhaseStop",
     "handle_record",
     "parse_body",
 ]

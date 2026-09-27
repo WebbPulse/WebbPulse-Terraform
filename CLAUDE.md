@@ -189,18 +189,29 @@ So the token never has to travel in the Step Functions execution input.
 
 A workspace's run role is optional at create, since its trust policy names the
 workspace id as the external id and so the id has to exist first. Every workspace
-response carries `run_role_setup` (the runner task roles to trust, the external id
-and the derived role name). `GET /workspaces/{id}/run-role/check` reports
-`{connected, status, account_id, error, run_id, checked_at}` from the runner's own
-AssumeRole outcome in the newest run on the current ARN, never from an STS call,
+response carries `run_role_setup` (the principal to trust, the external id and the
+derived role name). The one principal a run role trusts is the control plane's
+vending role, `<prefix>-run-credentials`; no runner task role can assume a run
+role and the task roles hold no `sts:AssumeRole`. `GET /workspaces/{id}/run-role/check` reports
+`{connected, status, account_id, error, run_id, checked_at}` from the vending
+AssumeRole outcome in the newest run on the current ARN, never from a separate STS call,
 so a role no run has tried is `unverified` and a plan only run is the check. The
 POST gives the same answer and stamps `run_role_checked_at` and
-`run_role_account_id`. The API holds no `sts:AssumeRole` on run roles. A run
-created against a workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`.
+`run_role_account_id`. A run created against a workspace with no run role is a
+409 carrying `RUN_ROLE_MISSING`.
+
+Credentials are vended per phase by the runs function when it serves the bundle
+(`app/domains/runs/vending.py`): the runs function role assumes the vending role,
+which assumes the workspace's run role (external id = workspace id; a plan passes
+`ReadOnlyAccess` as its session policy ARN, an apply none) and the state role
+`<prefix>-run-state`, narrowed by `session_policy.state_policy` to
+`workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last an hour.
+A refused run role is a 409 `RUN_ROLE_ASSUME_FAILED` on the bundle, which the
+runner reports as `AssumeRoleFailed`.
 
 `POST /workspaces/{id}/run-role/quick-setup` takes an optional account id, saves the
 derived ARN when one is given and returns an AWS CloudFormation quick create link. The template
-(`app/domains/workspaces/quick_setup.py`) trusts only the runner task roles with
+(`app/domains/workspaces/quick_setup.py`) trusts only the vending role with
 the workspace id as the external id, and is stored content addressed under
 `templates/run-role/` in the artifacts bucket, served by presigned GET.
 
@@ -216,7 +227,10 @@ it. The workspace's `aws_connection` records what the UI shows, and its
 `verification` (`pending`, `verified` or `failed` with `verification_error`) is
 settled when a run on that role ends: a clean finish verifies it, and an error or
 a cancel fails it. A staged role is only switched to once its run finished its
-plan.
+plan. The `Connection` resource carries `TrustVersion` (`aws_connect.TRUST_VERSION`,
+"2" since vending), recorded on the connection; a Quick setup role whose
+connection lacks the current version is `run_role_reconnect_required`, and the UI
+asks for the stack to be deleted and connected again, or updated in place.
 
 ### Runs
 
@@ -372,13 +386,20 @@ the only reader.
 Step Functions starts the runner with `runTask.waitForTaskToken`. It exchanges
 its task identity for the run token (`app/identity.py`), falling back to a
 `RUN_TOKEN` override if the task has one, then fetches the
-bundle, unpacks the config tarball, writes the S3 backend override and the auto
-loaded tfvars files, assumes the workspace's run role with the phase session policy,
-points the S3 backend at the task role through the `webbpulse-state` profile so
-the run role only reaches the providers, runs the engine (`terraform` or `tofu`, from the bundle), streams redacted output
-to CloudWatch Logs, uploads its artifacts to presigned URLs and reports back
-through the task token. Every line passes through `app.logs.Redactor` first, and
-the engine's environment is built without the runner's own tokens.
+bundle, which carries the vended run role keys (`aws_credentials`) and state keys
+(`backend.credentials`), unpacks the config tarball, writes the S3 backend
+override (`workspace_key_prefix = "workspaces/<id>/env"`) and the auto loaded
+tfvars files, gives the providers the run role keys and the S3 backend the state
+keys through the `webbpulse-state` profile, runs the engine (`terraform` or
+`tofu`, from the bundle), streams redacted output to CloudWatch Logs, uploads its
+artifacts to presigned URLs and reports through `POST /runs/{id}/phase-result`
+(an `error_name` for a failure). The runner holds no Step Functions permission:
+`phase_tasks.report` resolves the task token from the exchanged task's own ECS
+overrides (`runner_task_id`) and sends the success or failure, and the task stop
+consumer fails a phase whose runner stopped without reporting. The task role holds
+only its log stream, so the container credential endpoint gives the engine
+nothing; the engine's environment is also built without the runner's own tokens
+or any `AWS_CONTAINER_*` variable. Every line passes through `app.logs.Redactor` first.
 
 ---
 

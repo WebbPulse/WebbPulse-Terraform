@@ -87,8 +87,36 @@ class RunnerEnv(BaseModel):
         )
 
 
+class VendedCredentials(BaseModel):
+    """One session's keys, vended by the control plane for this phase alone.
+
+    The runner assumes no role. Its task role reaches nothing but its log stream,
+    so whatever the engine runs cannot reach a workspace role through the task's
+    credential endpoint; the keys arrive in the bundle instead.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    access_key_id: str
+    secret_access_key: str
+    session_token: str
+    expiration: str = ""
+
+    def environment(self) -> dict[str, str]:
+        """The keys as the `AWS_*` variables the providers read."""
+        return {
+            "AWS_ACCESS_KEY_ID": self.access_key_id,
+            "AWS_SECRET_ACCESS_KEY": self.secret_access_key,
+            "AWS_SESSION_TOKEN": self.session_token,
+        }
+
+    def secrets(self) -> list[str]:
+        """The parts that must never reach a log line."""
+        return [value for value in (self.secret_access_key, self.session_token) if value]
+
+
 class BackendConfig(BaseModel):
-    """S3 backend settings for the workspace's state."""
+    """S3 backend settings for the workspace's state, with keys scoped to its prefix."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -96,20 +124,7 @@ class BackendConfig(BaseModel):
     key: str
     region: str
     kms_key_id: str
-
-
-class RunRole(BaseModel):
-    """The per workspace role the engine runs as, plus the phase session policy."""
-
-    model_config = ConfigDict(frozen=True)
-
-    role_arn: str
-    external_id: str
-    session_policy: dict[str, object] | None = None
-    session_policy_arns: list[str] = Field(default_factory=list)
-    """Managed policies the session unions with the inline document, empty for
-    an apply."""
-    duration_seconds: int = 3600
+    credentials: VendedCredentials
 
 
 ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
@@ -157,7 +172,10 @@ class Bundle(BaseModel):
     """Directory within the unpacked configuration to run the engine from. Empty
     means the tarball root, which is the common case."""
     backend: BackendConfig
-    run_role: RunRole
+    run_role_arn: str = ""
+    """The workspace run role the provider keys are a session of, for the transcript."""
+    aws_credentials: VendedCredentials
+    """The workspace run role's keys for this phase, read only for a plan."""
     is_destroy: bool = False
     """Plan the destruction of every managed resource with `plan -destroy`. Only the
     plan phase reads it: the apply applies the saved plan, which already carries the
@@ -184,8 +202,8 @@ class Bundle(BaseModel):
                 values.append(variable)
         for expression in self.hcl_variables.values():
             values.extend(hcl_literal_fragments(expression))
-        if self.run_role.external_id:
-            values.append(self.run_role.external_id)
+        values.extend(self.aws_credentials.secrets())
+        values.extend(self.backend.credentials.secrets())
         return values
 
 
@@ -200,7 +218,7 @@ class Changes(BaseModel):
 
 
 class PhaseResult(BaseModel):
-    """What the runner reports to the API and to Step Functions."""
+    """What the runner reports to the API, which resolves the phase's task token."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -212,3 +230,6 @@ class PhaseResult(BaseModel):
     error: str | None = None
     """The failure text, `None` when the phase succeeded. The API treats an
     absent and an empty error the same, so `None` is dropped rather than sent."""
+    error_name: str | None = None
+    """The short error name of a phase that failed before it had a result. The
+    API fails the phase's task with it, so the run's error names it."""

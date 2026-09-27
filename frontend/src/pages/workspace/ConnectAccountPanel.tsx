@@ -198,9 +198,13 @@ export function ConnectAccountPanel({
         keys={keys}
       />
     );
+  const reconnect = workspace.run_role_reconnect_required ? (
+    <ReconnectNotice connection={connection} />
+  ) : null;
   if (savedArn !== null && !changing) {
     return (
       <div className="space-y-5">
+        {reconnect}
         {pending}
         <ConnectedRole
           workspace={workspace}
@@ -216,6 +220,7 @@ export function ConnectAccountPanel({
   }
   return (
     <div className="space-y-5">
+      {reconnect}
       {pending}
       {savedArn === null ? null : (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2 text-sm">
@@ -251,8 +256,8 @@ export function ConnectAccountPanel({
       <p className="max-w-prose text-sm text-text-muted">
         Runs assume an IAM role in your AWS account to read and write your
         infrastructure. Connect AWS creates that role with one AWS
-        CloudFormation stack. The role trusts only the runner, and only when it
-        presents this workspace's id.
+        CloudFormation stack. The role trusts only WebbPulse Terraform, and only
+        when it presents this workspace's id.
       </p>
       <QuickSetup workspace={workspace} keys={keys} />
       <details className="group rounded-md border border-line">
@@ -284,6 +289,42 @@ export function ConnectAccountPanel({
           />
         </div>
       </details>
+    </div>
+  );
+}
+
+/**
+ * The role came from a stack whose trust predates credential vending, so runs
+ * can no longer assume it. The stack name is the role name, so a second stack
+ * cannot be created beside it: the old one is deleted first.
+ */
+function ReconnectNotice({
+  connection,
+}: {
+  connection: AwsConnection | null;
+}): React.ReactElement {
+  const account = connection?.account_id ?? null;
+  return (
+    <div
+      role="alert"
+      data-testid="aws-reconnect-required"
+      className="space-y-2 rounded-lg border border-warning-line bg-warning-soft/30 px-4 py-3 text-sm"
+    >
+      <p className="font-medium text-warning">Reconnect required</p>
+      <p className="max-w-prose text-text-muted">
+        This role was created from an older AWS CloudFormation template that
+        trusts the runner directly. Runs now get their credentials from
+        WebbPulse Terraform, so they can no longer assume this role. Delete the
+        stack
+        {account === null ? null : (
+          <>
+            {' '}
+            in account <code className="font-mono text-text">{account}</code>
+          </>
+        )}
+        , then choose Connect AWS again to create the role with the current
+        trust.
+      </p>
     </div>
   );
 }

@@ -42,8 +42,8 @@ from ...common.db.tables import (
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
-from . import session_policy
-from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
+from . import vending
+from .schemas.run import Phase
 
 _log = logging.getLogger(__name__)
 
@@ -1060,9 +1060,10 @@ def fail_phase_task(
     *,
     error: str,
     cause: str,
+    expected_status: str | None = None,
     settings: Settings | None = None,
 ) -> bool:
-    """Fail the phase task token of a run whose Fargate task never started.
+    """Fail the phase task token of a run whose Fargate task stopped without reporting.
 
     The counterpart of `discard_run` for the phase states rather than the
     confirmation wait. `Plan` and `Apply` are `ecs:runTask.waitForTaskToken`, so a
@@ -1084,6 +1085,9 @@ def fail_phase_task(
             override carried it.
         error: The `SendTaskFailure` error name.
         cause: The `SendTaskFailure` cause, which is the ECS stopped reason.
+        expected_status: The status the run holds while the stopped task's phase is
+            unresolved. A run in any other status has moved past that phase and is
+            left alone.
         settings: Settings override, for the suite.
 
     Returns:
@@ -1096,9 +1100,9 @@ def fail_phase_task(
     resolved = settings or get_settings()
     run = get_run(run_id, settings=resolved)
     status = str(run.get("status", ""))
-    if status in TERMINAL_STATUSES:
+    if status in TERMINAL_STATUSES or (expected_status is not None and status != expected_status):
         _log.info(
-            "A phase task failed to start for a run that already finished; leaving it alone.",
+            "A phase task stopped for a run that has moved on; leaving it alone.",
             extra={"event": "runs.phase_task.already_terminal", "run_id": run_id, "status": status},
         )
         return False
@@ -1398,7 +1402,8 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
 
     The phase is derived from the run's status rather than taken from the caller,
     so a runner holding a plan-phase token cannot ask for the apply phase's
-    unrestricted session policy.
+    unrestricted session. The phase's credentials are vended here, never by the
+    runner: see `vending`.
 
     The config version is read through the shared reads for the same reason run
     creation reads it that way: this function runs under the runs role, which
@@ -1409,6 +1414,9 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         WorkspaceNotFound: The workspace was deleted under the run.
         ConfigVersionNotFound: The config version was deleted under the run.
         StateKmsKeyMissing: The deployment set no `STATE_KMS_KEY_ARN`.
+        VendingUnavailable: No vending role is configured or it cannot be assumed.
+        RunRoleAssumeFailed: The workspace's run role is unset or refused the vending role.
+        StateCredentialsFailed: The state role could not be assumed.
     """
     from webbpulse.storage import presigned_get
 
@@ -1432,12 +1440,13 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     region = resolved.AWS_REGION_NAME
     endpoint = resolved.s3_endpoint_url
     workspace_state_key = state_key(workspace_id)
-    phase_policy = session_policy.for_phase(
-        phase,
-        state_bucket=resolved.STATE_BUCKET,
-        state_key=workspace_state_key,
-        artifacts_bucket=resolved.ARTIFACTS_BUCKET,
+    role_arn = str((run.get("run_role_arn") if run.get("run_role_check") else workspace.get("run_role_arn", "")) or "")
+    provider, state = vending.vend(
+        role_arn=role_arn,
+        workspace_id=workspace_id,
         run_id=run_id,
+        phase=phase,
+        settings=resolved,
     )
 
     return {
@@ -1461,16 +1470,10 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
             "key": workspace_state_key,
             "region": region,
             "kms_key_id": resolved.STATE_KMS_KEY_ARN,
+            "credentials": state.as_dict(),
         },
-        "run_role": {
-            "role_arn": str(
-                run.get("run_role_arn") if run.get("run_role_check") else workspace.get("run_role_arn", "")
-            ),
-            "external_id": workspace_id,
-            "session_policy": phase_policy.document,
-            "session_policy_arns": list(phase_policy.policy_arns),
-            "duration_seconds": RUN_ROLE_DURATION_SECONDS,
-        },
+        "run_role_arn": role_arn,
+        "aws_credentials": provider.as_dict(),
         "terraform_variables": variables["terraform"],
         "hcl_variables": variables["hcl"],
         "environment_variables": variables["env"],

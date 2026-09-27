@@ -98,8 +98,12 @@ def _request(
     physical_id: str | None = None,
     old: dict[str, str] | None = None,
     response_url: str = RESPONSE_URL,
+    trust_version: str | None = aws_connect.TRUST_VERSION,
 ) -> dict[str, Any]:
-    """One CloudFormation custom resource request as the topic delivers it."""
+    """One CloudFormation custom resource request as the topic delivers it.
+
+    `trust_version=None` is a stack built from a template older than the vended trust.
+    """
     body: dict[str, Any] = {
         "RequestType": kind,
         "ServiceToken": TOPIC_ARN,
@@ -115,6 +119,8 @@ def _request(
             "RoleArn": role_arn or _role(workspace_id, account),
         },
     }
+    if trust_version is not None:
+        body["ResourceProperties"]["TrustVersion"] = trust_version
     if physical_id is not None:
         body["PhysicalResourceId"] = physical_id
     if old is not None:
@@ -175,6 +181,7 @@ def test_template_carries_the_connection_resource(settings):
     assert resource["Properties"]["ServiceToken"] == TOPIC_ARN
     assert resource["Properties"]["RoleArn"] == {"Fn::GetAtt": ["RunRole", "Arn"]}
     assert template["Parameters"]["ConnectToken"]["NoEcho"] is True
+    assert resource["Properties"]["TrustVersion"] == aws_connect.TRUST_VERSION
 
 
 def test_template_without_a_topic_has_no_connection(monkeypatch):
@@ -472,6 +479,65 @@ def test_an_update_with_a_fresh_token_reconnects(auth_client, answers, state_mac
     assert answer["Status"] == "SUCCESS"
     assert answer["PhysicalResourceId"] == physical_id
     assert _row(workspace_id)["pending_run_role_arn"] == _role(workspace_id)
+
+
+def test_a_stack_with_the_current_trust_needs_no_reconnect(auth_client, answers, state_machine):
+    """A create from the current template records its trust version and shows no reconnect."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    _handle(_request("Create", workspace_id, _token(auth_client, workspace_id)))
+
+    assert _row(workspace_id)["aws_connection"][aws_connect.TRUST_VERSION_FIELD] == aws_connect.TRUST_VERSION
+    assert auth_client.get(f"/api/v1/workspaces/{workspace_id}").json()["run_role_reconnect_required"] is False
+
+
+def test_a_stack_from_an_older_template_requires_a_reconnect(auth_client, answers, state_machine):
+    """A stack whose trust predates the vending role still trusts the runner task roles, so it must be updated."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    _handle(_request("Create", workspace_id, _token(auth_client, workspace_id), trust_version=None))
+
+    assert auth_client.get(f"/api/v1/workspaces/{workspace_id}").json()["run_role_reconnect_required"] is True
+
+
+def test_updating_an_old_stack_to_the_current_template_clears_the_reconnect(auth_client, answers, state_machine):
+    """An in place update with the current template records the new trust version."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    _handle(_request("Create", workspace_id, token, trust_version=None))
+    physical_id = answers["sent"][-1]["body"]["PhysicalResourceId"]
+    old = _request("Create", workspace_id, token, trust_version=None)["ResourceProperties"]
+
+    _handle(_request("Update", workspace_id, token, physical_id=physical_id, old=old, request_id="req-up"))
+
+    assert answers["sent"][-1]["body"]["Status"] == "SUCCESS"
+    assert _row(workspace_id)["aws_connection"][aws_connect.TRUST_VERSION_FIELD] == aws_connect.TRUST_VERSION
+    assert auth_client.get(f"/api/v1/workspaces/{workspace_id}").json()["run_role_reconnect_required"] is False
+
+
+@pytest.mark.parametrize(
+    ("workspace", "expected"),
+    [
+        ({"run_role_arn": "arn:aws:iam::1:role/r"}, False),
+        ({"run_role_arn": "arn:aws:iam::1:role/r", "aws_connection": {"role_arn": "arn:aws:iam::1:role/other"}}, False),
+        ({"run_role_arn": "arn:aws:iam::1:role/r", "aws_connection": {"role_arn": "arn:aws:iam::1:role/r"}}, True),
+        (
+            {
+                "pending_run_role_arn": "arn:aws:iam::1:role/r",
+                "aws_connection": {"role_arn": "arn:aws:iam::1:role/r", "trust_version": "1"},
+            },
+            True,
+        ),
+        (
+            {
+                "run_role_arn": "arn:aws:iam::1:role/r",
+                "aws_connection": {"role_arn": "arn:aws:iam::1:role/r", "trust_version": aws_connect.TRUST_VERSION},
+            },
+            False,
+        ),
+    ],
+)
+def test_reconnect_is_required_only_for_a_stale_stack_that_still_provides_the_role(workspace, expected):
+    """A hand built role or a connection that no longer provides the role is never flagged."""
+    assert aws_connect.reconnect_required(workspace) is expected
 
 
 @pytest.mark.parametrize(

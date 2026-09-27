@@ -268,6 +268,7 @@ def _create(request: Mapping[str, Any], *, settings: Settings, physical_id: str 
         stack_id=str(request["StackId"]),
         request_id=str(request["RequestId"]),
         physical_id=physical_id,
+        trust_version=properties.get("TrustVersion", ""),
         settings=settings,
     )
     if result.outcome == "invalid":
@@ -295,8 +296,9 @@ def _update(request: Mapping[str, Any], *, settings: Settings) -> None:
 
     An update that leaves the workspace, the stack and the role as the connection
     recorded them is answered SUCCESS unchanged, which also covers the rollback of a
-    refused update. A new token is a fresh connect under the same physical id. A
-    different workspace or a role in another account is refused.
+    refused update, and records the trust version the template now grants. A new
+    token is a fresh connect under the same physical id. A different workspace or a
+    role in another account is refused.
     """
     physical_id = str(request.get("PhysicalResourceId") or "")
     new = _properties(request)
@@ -315,6 +317,9 @@ def _update(request: Mapping[str, Any], *, settings: Settings) -> None:
         and connection.get("role_arn") == new.get("RoleArn")
     )
     if unchanged:
+        trust_version = new.get("TrustVersion", "")
+        if trust_version != str(connection.get(aws_connect.TRUST_VERSION_FIELD) or ""):
+            aws_connect.record_trust_version(workspace_id, physical_id, trust_version, settings=settings)
         _answer(request, "SUCCESS", physical_id, data={"WorkspaceId": workspace_id, "AccountId": stack[1]})
         return
     if workspace_id != old.get("WorkspaceId") or new.get("ConnectToken") == old.get("ConnectToken"):

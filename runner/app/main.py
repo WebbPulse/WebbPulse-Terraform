@@ -1,4 +1,9 @@
-"""Entrypoint: run one phase of one run, then report to the API and Step Functions."""
+"""Entrypoint: run one phase of one run, then report to the API.
+
+The runner holds no Step Functions permission: the API resolves the phase's task
+token when the result or the failure is posted, and a runner that stops without
+posting is failed by the task stop consumer.
+"""
 
 from __future__ import annotations
 
@@ -13,21 +18,23 @@ from typing import TYPE_CHECKING, Callable, cast
 import boto3
 import httpx
 
-from app import callback, credentials, engine, identity, install, state_credentials, workspace
+from app import engine, identity, install, state_credentials, workspace
 from app.api import ApiError, RunnerApi, build_client
 from app.logs import CloudWatchLogSink, Redactor
 from app.models import Bundle, Changes, PhaseResult, RunnerEnv, RunnerEnvError
 
 if TYPE_CHECKING:
     from mypy_boto3_logs.client import CloudWatchLogsClient
-    from mypy_boto3_stepfunctions.client import SFNClient
-    from mypy_boto3_sts.client import STSClient
 else:
-    CloudWatchLogsClient = SFNClient = STSClient = object
+    CloudWatchLogsClient = object
+
+
+RUN_ROLE_ASSUME_FAILED_CODE = "RUN_ROLE_ASSUME_FAILED"
+"""The bundle's error code when the workspace's run role refused the control plane."""
 
 
 class PhaseFailure(RuntimeError):
-    """A phase could not be completed; carries the short error name for the callback."""
+    """A phase could not be completed; carries the short error name the API fails the task with."""
 
     def __init__(self, error: str, cause: str) -> None:
         super().__init__(cause)
@@ -40,8 +47,6 @@ class Clients:
     """The AWS and HTTP clients the runner needs, injectable for tests."""
 
     logs: CloudWatchLogsClient
-    sts: STSClient
-    sfn: SFNClient
     http: httpx.Client
     identity: Callable[[str], dict[str, str]] | None = None
 
@@ -51,8 +56,6 @@ class Clients:
         session = boto3.session.Session(region_name=region)
         return cls(
             logs=session.client("logs"),
-            sts=session.client("sts"),
-            sfn=session.client("stepfunctions"),
             http=build_client(),
             identity=identity.session_signer(session, region),
         )
@@ -163,14 +166,20 @@ def _upload_outputs(runner: engine.EngineRunner, api: RunnerApi, sink: CloudWatc
         sink.write(f"applied outputs not uploaded: {error}")
 
 
-def execute(env: RunnerEnv, clients: Clients, directory: Path, redactor: Redactor | None = None) -> PhaseResult:
+def execute(
+    env: RunnerEnv,
+    clients: Clients,
+    directory: Path,
+    redactor: Redactor | None = None,
+    api: RunnerApi | None = None,
+) -> PhaseResult:
     """Fetch the bundle, run the phase, upload the artifacts and post the result.
 
-    `redactor` is shared with the caller so a failure it reports is scrubbed of
-    the run token this phase obtained.
+    `redactor` and `api` are shared with the caller so a failure it reports is
+    scrubbed of the run token this phase obtained and posted with that token.
     """
     redactor = redactor or Redactor(_initial_secrets(env))
-    api = RunnerApi(env, clients.http)
+    api = api or RunnerApi(env, clients.http)
     sink = CloudWatchLogSink(clients.logs, env.log_group, f"{env.run_id}/{env.phase}", redactor)
 
     with sink:
@@ -178,6 +187,8 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path, redactor: Redacto
         try:
             bundle: Bundle = api.fetch_bundle()
         except ApiError as error:
+            if error.error_code == RUN_ROLE_ASSUME_FAILED_CODE:
+                raise PhaseFailure("AssumeRoleFailed", str(error)) from error
             raise PhaseFailure("BundleFetchFailed", str(error)) from error
         redactor.extend(bundle.sensitive_values())
 
@@ -194,16 +205,10 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path, redactor: Redacto
         except workspace.ConfigError as error:
             raise PhaseFailure("ConfigUnpackFailed", str(error)) from error
 
-        try:
-            aws_credentials = credentials.assume_run_role(clients.sts, bundle.run_role, env.run_id, env.phase)
-        except credentials.CredentialsError as error:
-            raise PhaseFailure("AssumeRoleFailed", str(error)) from error
-        redactor.extend(aws_credentials.values())
-
-        backend_environment = state_credentials.write_profile(directory / "aws", os.environ, sys.executable)
+        backend_environment = state_credentials.write_profile(directory / "aws", bundle.backend.credentials)
         environment = engine.build_environment(
             dict(os.environ),
-            aws_credentials,
+            bundle.aws_credentials.environment(),
             bundle.environment_variables,
             bundle.backend.region,
             engine_directory,
@@ -261,26 +266,38 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path, redactor: Redacto
         return result
 
 
-def run(env: RunnerEnv, clients: Clients, directory: Path) -> int:
-    """Execute the phase and send task success or task failure, never raising."""
-    redactor = Redactor(_initial_secrets(env))
+def report_failure(env: RunnerEnv, api: RunnerApi, error: str, cause: str) -> None:
+    """Post a failed phase to the API, which fails the task with `error`.
+
+    Without a run token there is nothing to post with, so the task's own stop is
+    what fails the phase. A post the API refuses is left to that stop as well.
+    """
+    if not api.has_token:
+        print("no run token, so the task stop reports this failure", file=sys.stderr, flush=True)
+        return
     try:
-        result = execute(env, clients, directory, redactor)
+        api.post_phase_result(
+            PhaseResult(run_id=env.run_id, phase=env.phase, exit_code=1, error=cause, error_name=error)
+        )
+    except ApiError as failure:
+        print(f"failure report not accepted: {failure}", file=sys.stderr, flush=True)
+
+
+def run(env: RunnerEnv, clients: Clients, directory: Path) -> int:
+    """Execute the phase and report a failure to the API, never raising."""
+    redactor = Redactor(_initial_secrets(env))
+    api = RunnerApi(env, clients.http)
+    try:
+        execute(env, clients, directory, redactor, api)
     except PhaseFailure as failure:
         print(redactor.scrub(f"{failure.error}: {failure.cause}"), file=sys.stderr, flush=True)
-        callback.send_failure(
-            clients.sfn,
-            env.task_token.get_secret_value(),
-            failure.error,
-            redactor.scrub(failure.cause),
-        )
+        report_failure(env, api, failure.error, redactor.scrub(failure.cause))
         return 1
     except Exception as error:
         cause = redactor.scrub(f"{type(error).__name__}: {error}")
         print(f"unexpected failure: {cause}", file=sys.stderr, flush=True)
-        callback.send_failure(clients.sfn, env.task_token.get_secret_value(), "RunnerFailed", cause)
+        report_failure(env, api, "RunnerFailed", cause)
         return 1
-    callback.send_success(clients.sfn, env.task_token.get_secret_value(), result.exit_code, result.changes)
     return 0
 
 
