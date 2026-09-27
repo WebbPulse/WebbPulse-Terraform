@@ -144,7 +144,7 @@ describe('NewWorkspace', () => {
     expect(apiMock.createWorkspace).toHaveBeenCalledWith({
       name: 'platform',
       engine: 'terraform',
-      engine_version: '1.16.3',
+      engine_version: '1.16.4',
     });
     expect(await screen.findByText('Detail page')).toBeInTheDocument();
   });
@@ -168,7 +168,7 @@ describe('NewWorkspace', () => {
     expect(apiMock.createWorkspace).toHaveBeenCalledWith({
       name: 'platform',
       engine: 'terraform',
-      engine_version: '1.16.3',
+      engine_version: '1.16.4',
       description: 'The platform workspace.',
     });
   });
@@ -185,9 +185,9 @@ describe('NewWorkspace', () => {
       screen.getByRole('button', { name: /Advanced options/ })
     );
     const version = screen.getByLabelText('Engine version');
-    expect(version).toHaveValue('1.16.3');
+    expect(version).toHaveValue('1.16.4');
     expect(
-      within(version).getByRole('option', { name: '1.16.3 (default)' })
+      within(version).getByRole('option', { name: '1.16.4 (default)' })
     ).toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText('Engine'), 'tofu');
@@ -200,7 +200,7 @@ describe('NewWorkspace', () => {
     const create = screen.getByRole('button', { name: 'Create workspace' });
     expect(create).toBeDisabled();
     expect(create).toHaveAccessibleDescription(
-      'The engine version has to be an exact release, such as 1.16.3.'
+      'The engine version has to be an exact release, such as 1.16.4.'
     );
 
     await userEvent.type(typed, '.7');
@@ -258,7 +258,7 @@ describe('NewWorkspace', () => {
     expect(apiMock.createWorkspace).toHaveBeenCalledWith({
       name: 'infra',
       engine: 'terraform',
-      engine_version: '1.16.3',
+      engine_version: '1.16.4',
       vcs_repo: 'WebbPulse/infra',
       working_directory: 'examples/first-run',
       file_triggers_enabled: true,

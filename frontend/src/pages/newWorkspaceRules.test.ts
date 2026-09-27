@@ -17,7 +17,7 @@ describe('nameFromRepository', () => {
 });
 
 describe('missingForCreate', () => {
-  const ok = { name: 'platform', engine: { version: '1.16.3' } };
+  const ok = { name: 'platform', engine: { version: '1.16.4' } };
 
   it('asks for a repository first on the version control workflow', () => {
     expect(missingForCreate({ ...ok, workflow: 'vcs', repository: null })).toBe(
@@ -47,7 +47,7 @@ describe('missingForCreate', () => {
         workflow: 'api',
         repository: null,
       })
-    ).toBe('The engine version has to be an exact release, such as 1.16.3.');
+    ).toBe('The engine version has to be an exact release, such as 1.16.4.');
     expect(
       missingForCreate({ ...ok, workflow: 'vcs', repository: 'o/r' })
     ).toBeNull();
@@ -56,7 +56,7 @@ describe('missingForCreate', () => {
 
 describe('engineVersions', () => {
   it('defaults each engine to the release the runner ships with', () => {
-    expect(defaultEngineVersion('terraform')).toBe('1.16.3');
+    expect(defaultEngineVersion('terraform')).toBe('1.16.4');
     expect(defaultEngineVersion('tofu')).toBe('1.12.6');
   });
 

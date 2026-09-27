@@ -20,7 +20,7 @@ export const ENGINE_LABELS: Record<Engine, string> = {
  */
 export const ENGINE_VERSIONS: Record<Engine, readonly string[]> = {
   terraform: [
-    '1.16.3',
+    '1.16.4',
     '1.15.9',
     '1.14.9',
     '1.13.5',
@@ -53,7 +53,7 @@ export function engineVersionProblem(version: string): string | null {
     return 'Choose an engine version.';
   }
   if (!isExactVersion(version)) {
-    return 'The engine version has to be an exact release, such as 1.16.3.';
+    return 'The engine version has to be an exact release, such as 1.16.4.';
   }
   return null;
 }
