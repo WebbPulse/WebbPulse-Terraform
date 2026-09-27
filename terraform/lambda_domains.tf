@@ -180,6 +180,7 @@ module "lambda_domain" {
       REGISTRY_TABLE        = module.dynamodb.table_names["registry"]
 
       GITHUB_APP_SLUG   = var.github_app_slug
+      API_BASE_URL      = "https://${local.api_host}"
       VCS_OIDC_AUDIENCE = var.vcs_oidc_audience
 
       REGISTRY_REPOSITORIES = jsonencode(local.registry_repositories)
