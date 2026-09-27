@@ -1149,3 +1149,167 @@ describe('AWS quick setup', () => {
     ).toBeInTheDocument();
   });
 });
+
+/** A role quick setup staged in another account while the fixture's role works. */
+const STAGED_ARN =
+  'arn:aws:iam::210987654321:role/control-plane-workspace-ws-01J000000000000000000000';
+
+/** The check once a role is staged beside the working one. */
+function withPending(
+  status: 'connected' | 'failed' | 'unverified'
+): typeof CONNECTED & { pending: Record<string, unknown> } {
+  return {
+    ...CONNECTED,
+    pending: {
+      role_arn: STAGED_ARN,
+      connected: status === 'connected',
+      status,
+      account_id: status === 'connected' ? '210987654321' : null,
+      error:
+        status === 'failed' ? 'The runner could not assume the role.' : null,
+      run_id: status === 'unverified' ? null : 'run-01J000000000000000000001',
+      checked_at: status === 'unverified' ? null : '2026-09-26T00:05:00Z',
+    },
+  };
+}
+
+describe('A staged run role', () => {
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ pending_run_role_arn: STAGED_ARN })
+    );
+    apiMock.readRunRoleCheck.mockResolvedValue(withPending('unverified'));
+    apiMock.listVariables.mockResolvedValue({ items: [] });
+    apiMock.listConfigVersions.mockResolvedValue({
+      items: [aConfigVersion()],
+    });
+    apiMock.listRuns.mockResolvedValue({ items: [aRun('applied')] });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('says a new account was staged rather than saved when a role already works', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(aTab() as never);
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+    apiMock.startRunRoleQuickSetup.mockResolvedValue({
+      ...aQuickSetup(),
+      account_id: '210987654321',
+      role_arn: STAGED_ARN,
+      pending: true,
+    });
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Change role' })
+    );
+    const setup = await screen.findByRole('form', { name: 'AWS quick setup' });
+    const account = within(setup).getByLabelText('AWS account ID');
+    await userEvent.clear(account);
+    await userEvent.type(account, '210987654321');
+    await userEvent.click(
+      within(setup).getByRole('button', { name: 'Open AWS CloudFormation' })
+    );
+
+    const steps = await screen.findByTestId('quick-setup-steps');
+    expect(steps).toHaveTextContent(`New role staged: ${STAGED_ARN}`);
+    expect(steps).toHaveTextContent('Runs keep the current role');
+  });
+
+  it('keeps the working role in charge and shows the staged one apart', async () => {
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const pending = await screen.findByTestId('pending-account');
+    expect(pending).toHaveTextContent('Switching to AWS account 210987654321');
+    expect(pending).toHaveTextContent(STAGED_ARN);
+    await waitFor(() => {
+      expect(within(pending).getByTestId('run-role-status')).toHaveAttribute(
+        'data-connection',
+        'unverified'
+      );
+    });
+    expect(screen.getByTestId('connected-account')).toHaveTextContent(
+      'AWS account 123456789012'
+    );
+    expect(apiMock.checkRunRole).not.toHaveBeenCalled();
+  });
+
+  it('starts a plan only verification run against the staged role', async () => {
+    apiMock.createRun.mockResolvedValue(
+      aRun('planning', { run_id: 'run-01J000000000000000000002' })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const pending = await screen.findByTestId('pending-account');
+    const start = within(pending).getByRole('button', {
+      name: 'Start verification run',
+    });
+    await waitFor(() => {
+      expect(start).toBeEnabled();
+    });
+    await userEvent.click(start);
+
+    expect(apiMock.createRun).toHaveBeenCalledWith({
+      workspace_id: 'ws-01J000000000000000000000',
+      config_version_id: aConfigVersion().config_version_id,
+      run_role_check: true,
+      message: 'Verify the run role in AWS account 210987654321',
+    });
+  });
+
+  it('discards the staged role with a merge patch null', async () => {
+    apiMock.updateWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const pending = await screen.findByTestId('pending-account');
+    await userEvent.click(
+      within(pending).getByRole('button', { name: 'Discard the new role' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      { pending_run_role_arn: null }
+    );
+  });
+
+  it('says a staged role the runner refused failed, and switches nothing', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(withPending('failed'));
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const pending = await screen.findByTestId('pending-account');
+    await waitFor(() => {
+      expect(within(pending).getByTestId('run-role-status')).toHaveAttribute(
+        'data-connection',
+        'failed'
+      );
+    });
+    expect(apiMock.checkRunRole).not.toHaveBeenCalled();
+  });
+
+  it('switches to a verified role through the recording check once', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(withPending('connected'));
+    apiMock.checkRunRole.mockResolvedValue(CONNECTED);
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(apiMock.checkRunRole).toHaveBeenCalledWith(
+        'ws-01J000000000000000000000'
+      );
+    });
+    act(() => {
+      invalidateQueries('run-role-check:ws-01J000000000000000000000');
+    });
+    await waitFor(() => {
+      expect(apiMock.readRunRoleCheck.mock.calls.length).toBeGreaterThan(1);
+    });
+    expect(apiMock.checkRunRole).toHaveBeenCalledTimes(1);
+  });
+});

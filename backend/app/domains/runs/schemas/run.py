@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 RunStatus = Literal[
     "pending",
@@ -107,6 +107,17 @@ class RunCreate(BaseModel):
     """Plan the destruction of every resource the workspace manages, as
     `terraform plan -destroy` does. Applying it removes them from the state."""
     message: str = Field(default="", max_length=1024)
+    run_role_check: bool = False
+    """Verify the workspace's staged `pending_run_role_arn`: the run is plan only and
+    assumes the staged role instead of the current one, and the run role check
+    switches the workspace over once it connects."""
+
+    @model_validator(mode="after")
+    def _a_role_check_only_plans(self) -> "RunCreate":
+        """Refuse a destroy plan as a role check, which is plan only by definition."""
+        if self.run_role_check and self.is_destroy:
+            raise ValueError("a run role check cannot be a destroy run")
+        return self
 
 
 class RunChanges(BaseModel):
@@ -134,6 +145,10 @@ class Run(BaseModel):
     """Whether the plan destroys every managed resource. `False` on a run created
     before destroy runs shipped, which is what those runs were."""
     message: str = ""
+    run_role_check: bool = False
+    """Whether this run verifies a staged role rather than running as the current one."""
+    run_role_arn: Optional[str] = None
+    """The role this run was created with, and for a role check the role it assumes."""
     created_at: str
     updated_at: Optional[str] = None
     started_at: Optional[str] = None

@@ -66,6 +66,9 @@ def _conflict(message: str, *, error_code: str | None = None) -> HTTPException:
 RUN_ROLE_MISSING_CODE = "RUN_ROLE_MISSING"
 """The code a caller matches on to send a person to the workspace's run role setup."""
 
+PENDING_RUN_ROLE_MISSING_CODE = "PENDING_RUN_ROLE_MISSING"
+"""The code a run role check carries when the workspace has no staged role to verify."""
+
 
 @router.post(
     "/runs",
@@ -86,6 +89,10 @@ def create_run(
     A workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the
     runner would have nothing to assume.
 
+    `run_role_check` starts a plan only run that assumes the workspace's staged
+    `pending_run_role_arn` rather than its current role. It is a 409 carrying
+    `PENDING_RUN_ROLE_MISSING` when no role is staged.
+
     The actor is taken from the verified claims here, because this request is the
     only moment the triggering principal is known.
     """
@@ -97,6 +104,11 @@ def create_run(
         raise _conflict(
             "This workspace has no run role ARN yet, so a run has nothing to assume.",
             error_code=RUN_ROLE_MISSING_CODE,
+        ) from error
+    except service.PendingRunRoleMissing as error:
+        raise _conflict(
+            "This workspace has no staged run role, so there is nothing for a run role check to verify.",
+            error_code=PENDING_RUN_ROLE_MISSING_CODE,
         ) from error
     except workspace_reads.ConfigVersionNotFound as error:
         raise _not_found("No such config version.") from error

@@ -145,6 +145,7 @@ class WorkspaceCreate(WorkspaceBase):
 
 CLEARABLE_WORKSPACE_FIELDS: Final = (
     "run_role_arn",
+    "pending_run_role_arn",
     "working_directory",
     "description",
     "vcs_repo",
@@ -179,6 +180,9 @@ class WorkspaceUpdate(BaseModel):
     engine: Optional[Engine] = None
     engine_version: Optional[str] = Field(default=None, min_length=1, max_length=32)
     run_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
+    """Switch runs to this role at once, dropping any pending role."""
+    pending_run_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
+    """Stage a role to switch to once a verification run assumes it. Null discards it."""
     working_directory: Optional[str] = None
     description: Optional[str] = None
     vcs_repo: Optional[str] = Field(default=None, max_length=140, pattern=VCS_REPO_PATTERN)
@@ -236,6 +240,9 @@ class Workspace(WorkspaceBase):
     created_at: str
     updated_at: Optional[str] = None
     run_role_setup: RunRoleSetup
+    pending_run_role_arn: Optional[str] = None
+    """A role waiting on its verification run. Runs keep using `run_role_arn` until
+    the run role check sees the runner assume it and switches the workspace over."""
     run_role_checked_at: Optional[datetime] = None
     """When a run last proved the runner assumed the role, as of the last recorded check."""
     run_role_account_id: Optional[str] = None
@@ -262,6 +269,19 @@ RunRoleCheckStatus = Literal["connected", "failed", "unverified"]
 """What the runner's own record says about a workspace's run role."""
 
 
+class PendingRunRoleCheck(BaseModel):
+    """What the runner's record says about the role waiting to replace the current one."""
+
+    role_arn: str
+    connected: bool
+    """True once a verification run proved the runner assumed this role."""
+    status: RunRoleCheckStatus
+    account_id: Optional[str] = None
+    error: Optional[str] = None
+    run_id: Optional[str] = None
+    checked_at: Optional[datetime] = None
+
+
 class RunRoleCheck(BaseModel):
     """Whether the runner can assume a workspace's run role, from its own record.
 
@@ -281,6 +301,8 @@ class RunRoleCheck(BaseModel):
     """The run the answer comes from, or `None` when unverified."""
     checked_at: Optional[datetime] = None
     """When that run reached its verdict."""
+    pending: Optional[PendingRunRoleCheck] = None
+    """The staged role and its own verdict, or `None` when no role is staged."""
 
 
 RunRolePermissions = Literal["administrator", "power_user", "read_only", "none"]
@@ -306,11 +328,14 @@ class RunRoleQuickSetupCreate(BaseModel):
 
 
 class RunRoleQuickSetup(BaseModel):
-    """The quick create link for a workspace's run role, whose ARN is now saved."""
+    """The quick create link for a workspace's run role, whose ARN is now saved or staged."""
 
     account_id: str
     role_arn: str
-    """The ARN saved on the workspace, which the stack's role will carry."""
+    """The ARN the stack's role will carry."""
+    pending: bool = False
+    """True when the workspace already runs as another role, so this one is staged as
+    `pending_run_role_arn` and switched to only once a verification run assumes it."""
     role_name: str
     stack_name: str
     region: str

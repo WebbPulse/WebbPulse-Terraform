@@ -1121,6 +1121,80 @@
         "title": "ModuleVersion",
         "type": "object"
       },
+      "PendingRunRoleCheck": {
+        "description": "What the runner's record says about the role waiting to replace the current one.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "role_arn": {
+            "title": "Role Arn",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "enum": [
+              "connected",
+              "failed",
+              "unverified"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_arn",
+          "connected",
+          "status"
+        ],
+        "title": "PendingRunRoleCheck",
+        "type": "object"
+      },
       "PhaseResult": {
         "description": "What the runner reports when a phase ends.\n\nExtra top level fields the runner sends, such as `run_id` and `has_changes`,\nare ignored: the id comes from the path and the change flag from `changes`.",
         "properties": {
@@ -1546,6 +1620,22 @@
             "title": "Run Id",
             "type": "string"
           },
+          "run_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Arn"
+          },
+          "run_role_check": {
+            "default": false,
+            "title": "Run Role Check",
+            "type": "boolean"
+          },
           "source": {
             "default": "api",
             "enum": [
@@ -1792,6 +1882,11 @@
             "title": "Plan Only",
             "type": "boolean"
           },
+          "run_role_check": {
+            "default": false,
+            "title": "Run Role Check",
+            "type": "boolean"
+          },
           "workspace_id": {
             "maxLength": 64,
             "minLength": 4,
@@ -1918,6 +2013,22 @@
           "run_id": {
             "title": "Run Id",
             "type": "string"
+          },
+          "run_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Arn"
+          },
+          "run_role_check": {
+            "default": false,
+            "title": "Run Role Check",
+            "type": "boolean"
           },
           "run_token": {
             "anyOf": [
@@ -2243,6 +2354,16 @@
             ],
             "title": "Error"
           },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingRunRoleCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "run_id": {
             "anyOf": [
               {
@@ -2272,7 +2393,7 @@
         "type": "object"
       },
       "RunRoleQuickSetup": {
-        "description": "The quick create link for a workspace's run role, whose ARN is now saved.",
+        "description": "The quick create link for a workspace's run role, whose ARN is now saved or staged.",
         "properties": {
           "account_id": {
             "title": "Account Id",
@@ -2285,6 +2406,11 @@
           "expires_in": {
             "title": "Expires In",
             "type": "integer"
+          },
+          "pending": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
           },
           "permissions_policy_arn": {
             "anyOf": [
@@ -2919,6 +3045,17 @@
             "title": "Name",
             "type": "string"
           },
+          "pending_run_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Run Role Arn"
+          },
           "run_role_account_id": {
             "anyOf": [
               {
@@ -3219,6 +3356,19 @@
               }
             ],
             "title": "File Triggers Enabled"
+          },
+          "pending_run_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Run Role Arn"
           },
           "run_role_arn": {
             "anyOf": [
@@ -4928,7 +5078,7 @@
         ]
       },
       "post": {
-        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.\n\nThe actor is taken from the verified claims here, because this request is the\nonly moment the triggering principal is known.",
+        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.\n\n`run_role_check` starts a plan only run that assumes the workspace's staged\n`pending_run_role_arn` rather than its current role. It is a 409 carrying\n`PENDING_RUN_ROLE_MISSING` when no role is staged.\n\nThe actor is taken from the verified claims here, because this request is the\nonly moment the triggering principal is known.",
         "operationId": "create_run_api_v1_runs_post",
         "requestBody": {
           "content": {

@@ -64,6 +64,7 @@ def test_quick_setup_saves_the_derived_arn(auth_client):
     response = _start(auth_client, workspace_id)
     assert response.status_code == 200, response.text
     body = response.json()
+    assert body["pending"] is False
     assert body["role_arn"] == f"arn:aws:iam::{ACCOUNT}:role/{role_name}"
     assert body["role_name"] == role_name
     assert body["stack_name"] == role_name
@@ -181,12 +182,13 @@ def test_reopening_keeps_the_check_outcome(auth_client, settings):
     assert auth_client.get(f"{BASE}/{workspace_id}").json()["run_role_account_id"] == ACCOUNT
 
 
-def test_a_new_account_replaces_the_arn_and_clears_the_check(auth_client, settings):
-    """Another account is another role, so the previous outcome goes with the old ARN."""
+def test_a_new_account_is_staged_and_keeps_the_working_role(auth_client, settings):
+    """Another account is staged, so the role runs use and its check outcome stay put."""
     from app.common.db import repositories
 
     workspace_id = _create(auth_client)["workspace_id"]
-    _start(auth_client, workspace_id)
+    first = _start(auth_client, workspace_id).json()
+    assert first["pending"] is False
     repositories.workspaces(settings).update(
         {"workspace_id": workspace_id},
         update_expression="SET run_role_account_id = :account",
@@ -194,9 +196,23 @@ def test_a_new_account_replaces_the_arn_and_clears_the_check(auth_client, settin
     )
     body = _start(auth_client, workspace_id, account_id="210987654321").json()
     saved = auth_client.get(f"{BASE}/{workspace_id}").json()
-    assert saved["run_role_arn"] == body["role_arn"]
+    assert body["pending"] is True
     assert body["role_arn"].startswith("arn:aws:iam::210987654321:role/")
-    assert saved.get("run_role_account_id") is None
+    assert saved["run_role_arn"] == first["role_arn"]
+    assert saved["pending_run_role_arn"] == body["role_arn"]
+    assert saved["run_role_account_id"] == ACCOUNT
+
+
+def test_returning_to_the_current_account_drops_the_staged_role(auth_client):
+    """Quick setup for the role already in use discards what another account staged."""
+    workspace_id = _create(auth_client)["workspace_id"]
+    first = _start(auth_client, workspace_id).json()
+    _start(auth_client, workspace_id, account_id="210987654321")
+    again = _start(auth_client, workspace_id).json()
+    saved = auth_client.get(f"{BASE}/{workspace_id}").json()
+    assert again["pending"] is False
+    assert saved["run_role_arn"] == first["role_arn"]
+    assert saved["pending_run_role_arn"] is None
 
 
 @pytest.mark.parametrize("account_id", ["1234-5678-9012", "1234 5678 9012"])

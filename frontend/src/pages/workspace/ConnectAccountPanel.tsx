@@ -1,6 +1,7 @@
 /** Everything a person needs to let runs into their AWS account. */
 
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   invalidateQueries,
   useMutationWithRefetch,
@@ -18,6 +19,7 @@ import {
   runRolePrefix,
   snippetFor,
   trustedPrincipals,
+  type PendingRunRoleCheck,
   type RunRoleCheck,
   type RunRolePermissions,
   type RunRoleQuickSetup,
@@ -33,8 +35,10 @@ import {
   INPUT_CLASS,
   SegmentedControl,
   formatDateTime,
+  runPath,
 } from '../../components';
-import type { WorkspaceKeys } from '../workspaceContext';
+import { useOptionalWorkspace, type WorkspaceKeys } from '../workspaceContext';
+import { latestUploaded } from './settings/latestUploaded';
 
 /** Props for {@link ConnectAccountPanel}. */
 export interface ConnectAccountPanelProps {
@@ -60,22 +64,40 @@ export function ConnectAccountPanel({
 }: ConnectAccountPanelProps): React.ReactElement {
   const { run_role_setup: setup } = workspace;
   const savedArn = workspace.run_role_arn ?? null;
+  const pendingArn = workspace.pending_run_role_arn ?? null;
   const [changing, setChanging] = useState(savedArn === null);
+  const pending =
+    pendingArn === null ? null : (
+      <PendingRole
+        workspace={workspace}
+        arn={pendingArn}
+        check={
+          runRoleCheck?.pending?.role_arn === pendingArn
+            ? runRoleCheck.pending
+            : null
+        }
+        keys={keys}
+      />
+    );
   if (savedArn !== null && !changing) {
     return (
-      <ConnectedRole
-        workspace={workspace}
-        arn={savedArn}
-        runRoleCheck={runRoleCheck}
-        keys={keys}
-        onChange={() => {
-          setChanging(true);
-        }}
-      />
+      <div className="space-y-5">
+        {pending}
+        <ConnectedRole
+          workspace={workspace}
+          arn={savedArn}
+          runRoleCheck={runRoleCheck}
+          keys={keys}
+          onChange={() => {
+            setChanging(true);
+          }}
+        />
+      </div>
     );
   }
   return (
     <div className="space-y-5">
+      {pending}
       {savedArn === null ? null : (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2 text-sm">
           <span className="min-w-0 text-text-muted">
@@ -184,6 +206,138 @@ function ConnectedRole({
 }
 
 /**
+ * A role staged beside the working one, as HCP Terraform keeps an integration
+ * in place until the new credentials are proven.
+ *
+ * Runs keep the current role. The verification run is plan only and assumes the
+ * staged role, and the workspace frame switches over once it connects.
+ * Discarding the staged role leaves the current one as it is.
+ */
+function PendingRole({
+  workspace,
+  arn,
+  check,
+  keys,
+}: {
+  workspace: Workspace;
+  arn: string;
+  check: PendingRunRoleCheck | null;
+  keys: WorkspaceKeys;
+}): React.ReactElement {
+  const navigate = useNavigate();
+  const context = useOptionalWorkspace();
+  const latest = latestUploaded(context?.versions ?? []);
+  const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const discard = useMutationWithRefetch(
+    () =>
+      api.updateWorkspace(workspace.workspace_id, {
+        pending_run_role_arn: null,
+      }),
+    keys.workspace
+  );
+  const accountId = accountIdFromArn(arn);
+  const status = check?.status ?? 'unverified';
+
+  const verify = async (): Promise<void> => {
+    if (latest === null) {
+      return;
+    }
+    setVerifying(true);
+    setError(null);
+    try {
+      const run = await api.createRun({
+        workspace_id: workspace.workspace_id,
+        config_version_id: latest.config_version_id,
+        run_role_check: true,
+        message: `Verify the run role in AWS account ${accountId ?? 'unknown'}`,
+      });
+      invalidateQueries(keys.runs);
+      void navigate(
+        runPath({ run_id: run.run_id, workspace_id: workspace.workspace_id })
+      );
+    } catch (thrown) {
+      setError(thrown);
+      setVerifying(false);
+    }
+  };
+
+  return (
+    <section
+      aria-label="Pending AWS account"
+      data-testid="pending-account"
+      className="rounded-lg border border-line bg-panel"
+    >
+      <div className="border-b border-line px-4 py-3">
+        <h3 className="text-sm font-semibold text-text-strong">
+          Switching to AWS account{' '}
+          <span className="font-mono">{accountId ?? 'unknown'}</span>
+        </h3>
+        <p className="mt-0.5 text-xs text-text-muted">
+          Runs keep the current role until a verification run assumes this one.
+          The workspace switches over as soon as it connects.
+        </p>
+      </div>
+      <div className="space-y-4 px-4 py-4">
+        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
+          <ValueRow label="Role ARN" value={arn} />
+        </dl>
+        {status === 'failed' ? (
+          <StatusLine tone="bad" testValue="failed">
+            The verification run could not assume this role.{' '}
+            {check?.error ?? ''}
+          </StatusLine>
+        ) : status === 'connected' ? (
+          <StatusLine tone="ok" testValue="connected">
+            The verification run assumed this role. Switching the workspace
+            over.
+          </StatusLine>
+        ) : (
+          <StatusLine tone="neutral" testValue="unverified">
+            Not verified yet. Once the AWS CloudFormation stack is created,
+            start the verification run. It only plans, and changes nothing.
+          </StatusLine>
+        )}
+        {latest === null ? (
+          <p className="text-xs text-text-faint">
+            Upload a configuration version first, so the verification run has
+            something to plan.
+          </p>
+        ) : null}
+        <ErrorNotice error={error ?? discard.error} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            busy={verifying}
+            busyLabel="Starting the verification run"
+            disabled={latest === null || status === 'connected'}
+            onClick={() => {
+              void verify();
+            }}
+          >
+            Start verification run
+          </Button>
+          <Button
+            variant="secondary"
+            busy={discard.isMutating}
+            busyLabel="Discarding the new role"
+            onClick={() => {
+              void discard
+                .mutate(undefined)
+                .then(() => {
+                  invalidateQueries(keys.runRoleCheck);
+                })
+                .catch(() => undefined);
+            }}
+          >
+            Discard the new role
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
  * The account id and policy form that opens AWS CloudFormation quick create.
  *
  * The tab is opened blank inside the click, before the request, because a
@@ -252,7 +406,8 @@ function QuickSetup({
         </h3>
         <p className="mt-0.5 text-xs text-text-muted">
           Opens AWS CloudFormation with the role filled in. Nothing to copy
-          back: the role ARN is saved here as you open it.
+          back: the role ARN is saved here as you open it. A workspace that
+          already has a role keeps it until the new one is verified.
         </p>
       </div>
       <form
@@ -340,11 +495,17 @@ function LaunchedSteps({
       className="space-y-3 border-t border-line px-4 py-4 text-sm"
     >
       <p role="status" className="text-text">
-        Role ARN saved:{' '}
+        {launched.pending ? 'New role staged: ' : 'Role ARN saved: '}
         <code className="font-mono text-xs break-all text-text-strong">
           {launched.role_arn}
         </code>
       </p>
+      {launched.pending ? (
+        <p className="text-text-muted">
+          Runs keep the current role until a verification run assumes this one,
+          so the workspace keeps working if the stack is never created.
+        </p>
+      ) : null}
       {blocked ? (
         <p className="text-text-muted">
           Your browser blocked the new tab.{' '}
@@ -369,11 +530,19 @@ function LaunchedSteps({
           Tick the acknowledgement that AWS CloudFormation might create IAM
           resources with custom names, then choose Create stack.
         </li>
-        <li>
-          Start a plan only run once the stack reaches CREATE_COMPLETE. The run
-          proves the runner can assume the role, and the connection below turns
-          connected.
-        </li>
+        {launched.pending ? (
+          <li>
+            Start the verification run above once the stack reaches
+            CREATE_COMPLETE. The workspace switches to the new role when it
+            connects.
+          </li>
+        ) : (
+          <li>
+            Start a plan only run once the stack reaches CREATE_COMPLETE. The
+            run proves the runner can assume the role, and the connection below
+            turns connected.
+          </li>
+        )}
       </ol>
       <p className="text-xs text-text-faint">
         The link works for one hour. Open it again here for a fresh one.

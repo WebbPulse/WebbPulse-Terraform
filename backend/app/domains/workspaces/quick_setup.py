@@ -4,8 +4,9 @@ The equivalent of HCP Terraform's AWS quick setup for this control plane's model
 where the runner assumes a role in the customer's account. The person gives the
 account id and picks a permissions policy; the API derives the role ARN from the
 account id and the workspace's deterministic role name, saves it on the workspace,
-and answers with an AWS CloudFormation quick create link. Creating that stack is
-the only thing left to do in AWS, and nothing has to be copied back.
+or stages it beside a role already in use, and answers with an AWS CloudFormation
+quick create link. Creating that stack is the only thing left to do in AWS, and
+nothing has to be copied back.
 
 The template is rendered per environment with the runner task roles baked in as
 the only trusted principals, so a stack cannot be pointed at anything else by
@@ -221,11 +222,13 @@ def start_quick_setup(
     *,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """Save the derived role ARN on the workspace and return the quick create link.
+    """Save or stage the derived role ARN and return the quick create link.
 
-    Saving first is what removes the copy back step: once the stack exists the
-    next run assumes the role, and the run role check turns `connected`. Saving the
-    same ARN again changes nothing, so the link can be reopened freely.
+    Saving first is what removes the copy back step. A workspace with no role takes
+    the ARN at once, and the same ARN again changes nothing, so the link can be
+    reopened freely. A workspace already running as another role only stages it as
+    `pending_run_role_arn`: its runs keep the current role until a verification run
+    assumes the new one, so a stack that is never created breaks nothing.
 
     Raises:
         WorkspaceNotFound: No such workspace.
@@ -238,7 +241,8 @@ def start_quick_setup(
     key = ensure_template(resolved)
     role_name = service.run_role_name(workspace_id, settings=resolved)
     role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
-    service.update_workspace(workspace_id, {"run_role_arn": role_arn}, settings=resolved)
+    updated = service.update_workspace(workspace_id, {"pending_run_role_arn": role_arn}, settings=resolved)
+    pending = str(updated.get("pending_run_role_arn") or "") == role_arn
 
     region = resolved.AWS_REGION_NAME or "us-west-2"
     download = presigned_get(
@@ -253,6 +257,7 @@ def start_quick_setup(
     return {
         "account_id": account_id,
         "role_arn": role_arn,
+        "pending": pending,
         "role_name": role_name,
         "stack_name": name,
         "region": region,

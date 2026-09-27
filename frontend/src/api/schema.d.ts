@@ -747,6 +747,10 @@ export interface paths {
          *     A workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the
          *     runner would have nothing to assume.
          *
+         *     `run_role_check` starts a plan only run that assumes the workspace's staged
+         *     `pending_run_role_arn` rather than its current role. It is a 409 carrying
+         *     `PENDING_RUN_ROLE_MISSING` when no role is staged.
+         *
          *     The actor is taken from the verified claims here, because this request is the
          *     only moment the triggering principal is known.
          */
@@ -1806,6 +1810,29 @@ export interface components {
             version: string;
         };
         /**
+         * PendingRunRoleCheck
+         * @description What the runner's record says about the role waiting to replace the current one.
+         */
+        PendingRunRoleCheck: {
+            /** Account Id */
+            account_id?: string | null;
+            /** Checked At */
+            checked_at?: string | null;
+            /** Connected */
+            connected: boolean;
+            /** Error */
+            error?: string | null;
+            /** Role Arn */
+            role_arn: string;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "connected" | "failed" | "unverified";
+        };
+        /**
          * PhaseResult
          * @description What the runner reports when a phase ends.
          *
@@ -2004,6 +2031,13 @@ export interface components {
             queued_behind?: string | null;
             /** Run Id */
             run_id: string;
+            /** Run Role Arn */
+            run_role_arn?: string | null;
+            /**
+             * Run Role Check
+             * @default false
+             */
+            run_role_check?: boolean;
             /**
              * Source
              * @default api
@@ -2135,6 +2169,11 @@ export interface components {
              * @default false
              */
             plan_only?: boolean;
+            /**
+             * Run Role Check
+             * @default false
+             */
+            run_role_check?: boolean;
             /** Workspace Id */
             workspace_id: string;
         };
@@ -2176,6 +2215,13 @@ export interface components {
             queued_behind?: string | null;
             /** Run Id */
             run_id: string;
+            /** Run Role Arn */
+            run_role_arn?: string | null;
+            /**
+             * Run Role Check
+             * @default false
+             */
+            run_role_check?: boolean;
             /** Run Token */
             run_token?: string | null;
             /**
@@ -2320,6 +2366,7 @@ export interface components {
             connected: boolean;
             /** Error */
             error?: string | null;
+            pending?: components["schemas"]["PendingRunRoleCheck"] | null;
             /** Run Id */
             run_id?: string | null;
             /**
@@ -2330,7 +2377,7 @@ export interface components {
         };
         /**
          * RunRoleQuickSetup
-         * @description The quick create link for a workspace's run role, whose ARN is now saved.
+         * @description The quick create link for a workspace's run role, whose ARN is now saved or staged.
          */
         RunRoleQuickSetup: {
             /** Account Id */
@@ -2339,6 +2386,11 @@ export interface components {
             console_url: string;
             /** Expires In */
             expires_in: number;
+            /**
+             * Pending
+             * @default false
+             */
+            pending?: boolean;
             /** Permissions Policy Arn */
             permissions_policy_arn?: string | null;
             /** Region */
@@ -2665,6 +2717,8 @@ export interface components {
             file_triggers_enabled?: boolean;
             /** Name */
             name: string;
+            /** Pending Run Role Arn */
+            pending_run_role_arn?: string | null;
             /** Run Role Account Id */
             run_role_account_id?: string | null;
             /** Run Role Arn */
@@ -2772,6 +2826,8 @@ export interface components {
             engine_version?: string | null;
             /** File Triggers Enabled */
             file_triggers_enabled?: boolean | null;
+            /** Pending Run Role Arn */
+            pending_run_role_arn?: string | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /** Speculative Plans */

@@ -20,7 +20,7 @@ BASE = "/api/v1/workspaces"
 
 ROLE_ARN = "arn:aws:iam::870550636948:role/webbpulse-terraform-test-workspace-other"
 ROLE_ACCOUNT = "870550636948"
-CHECK_KEYS = {"connected", "status", "account_id", "error", "run_id", "checked_at"}
+CHECK_KEYS = {"connected", "status", "account_id", "error", "run_id", "checked_at", "pending"}
 
 
 @pytest.fixture
