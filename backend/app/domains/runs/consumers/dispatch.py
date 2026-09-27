@@ -11,6 +11,8 @@ confirmation and the EventBridge rule's input transformer stamps on a task stop.
 unknown or missing kind raises, so an unrecognised message parks on its queue's dead
 letter queue rather than being silently acknowledged. A record from the runs table's
 stream has no body at all, and goes to the reports consumer by its `eventSource`.
+A CloudFormation custom resource request arrives raw from the AWS connect topic,
+with no `kind` either, and goes to the connect consumer by its shape.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from webbpulse.events import register_stream_consumer
 
 from ....common.composition.settings import Settings
 from ....common.workspaces import cleanup
-from . import confirmations, ingest, reports, task_failures, webhooks
+from . import aws_connect, confirmations, ingest, reports, task_failures, webhooks
 
 _log = logging.getLogger(__name__)
 
@@ -75,7 +77,8 @@ HANDLERS: dict[str, Handler] = {
 
 
 def route_record(record: Mapping[str, Any], *, settings: Settings | None = None) -> None:
-    """Hand one record to the consumer its `kind` names, or a stream record to reports.
+    """Hand one record to the consumer its `kind` names, a stream record to reports, or a
+    CloudFormation request to the connect consumer.
 
     Raises:
         UnknownRecordKind: The body names no consumer, so the record is retried and
@@ -83,6 +86,9 @@ def route_record(record: Mapping[str, Any], *, settings: Settings | None = None)
     """
     if reports.is_stream_record(record):
         reports.handle_record(record, settings=settings)
+        return
+    if aws_connect.is_connect_request(record):
+        aws_connect.handle_record(record, settings=settings)
         return
     kind = _kind(record)
     handler = HANDLERS.get(kind)

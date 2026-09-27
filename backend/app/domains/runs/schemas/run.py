@@ -26,13 +26,15 @@ Phase = Literal["plan", "apply"]
 RUN_ROLE_DURATION_SECONDS = 3600
 """One hour on the assumed run role, matching the plan timeout plus headroom."""
 
-ActorKind = Literal["user", "agent", "vcs"]
+ActorKind = Literal["user", "agent", "vcs", "system"]
 """How a run was triggered: `user` is a person's JWT, `agent` a `wpk_` API key
 acting for the person who minted it, `vcs` a GitHub Actions upload, named by the
-workflow's actor."""
+workflow's actor, and `system` the control plane itself, such as the verification
+run a Quick setup stack starts when it reports back."""
 
-RunSource = Literal["api", "vcs_push", "vcs_pr"]
-"""Where a run came from: the API, a push to a tracked branch, or a pull request."""
+RunSource = Literal["api", "vcs_push", "vcs_pr", "aws_connect"]
+"""Where a run came from: the API, a push to a tracked branch, a pull request, or a
+Quick setup stack reporting back."""
 
 
 class RunPullRequest(BaseModel):

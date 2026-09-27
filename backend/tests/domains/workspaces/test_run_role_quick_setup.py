@@ -224,12 +224,21 @@ def test_account_id_as_the_console_prints_it(auth_client, account_id):
     assert response.json()["account_id"] == ACCOUNT
 
 
-@pytest.mark.parametrize("account_id", ["12345678901", "1234567890123", "abcdefghijkl", ""])
+@pytest.mark.parametrize("account_id", ["12345678901", "1234567890123", "abcdefghijkl"])
 def test_malformed_account_id_is_refused(auth_client, account_id):
     """Anything but twelve digits is a 422 and saves nothing."""
     workspace_id = _create(auth_client)["workspace_id"]
     assert _start(auth_client, workspace_id, account_id=account_id).status_code == 422
     assert auth_client.get(f"{BASE}/{workspace_id}").json()["run_role_arn"] is None
+
+
+@pytest.mark.parametrize("body", [{"account_id": ""}, {"account_id": None}])
+def test_no_account_without_a_connect_topic_is_503(auth_client, body):
+    """With no stack to report the account back, the account id is the only way to name it."""
+    workspace_id = _create(auth_client)["workspace_id"]
+    response = auth_client.post(f"{BASE}/{workspace_id}/run-role/quick-setup", json=body)
+    assert response.status_code == 503
+    assert auth_client.get(f"{BASE}/{workspace_id}").json()["aws_connection"] is None
 
 
 def test_unknown_permissions_choice_is_refused(auth_client):

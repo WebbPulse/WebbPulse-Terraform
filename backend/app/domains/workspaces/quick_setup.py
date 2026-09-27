@@ -15,6 +15,11 @@ patterns to this environment's role prefix and to a workspace id. CloudFormation
 only reads templates from S3, so the rendered body is written once to the
 artifacts bucket under a key derived from its hash and handed out as a short
 lived presigned GET: the bucket stays private and nothing is made public.
+
+Where the environment has an AWS connect topic, the template also carries a custom
+resource that reports the stack back, and the link carries a one-time connect
+token. The account id is then optional: the stack's own ARN names the account, so
+the person only clicks the link. See `app.common.workspaces.aws_connect`.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from typing import Any, Final, Literal
 from urllib.parse import quote
 
 from ...common.composition.settings import Settings, get_settings
+from ...common.workspaces import aws_connect
 from ...common.workspaces.reads import get_workspace
 from . import service
 
@@ -71,6 +77,53 @@ class QuickSetupUnavailable(Exception):
     """This deployment cannot render a template: no runner principals or no bucket."""
 
 
+CONNECTION_RESOURCE_TYPE: Final = "Custom::WebbPulseTerraformConnection"
+"""The custom resource that reports the stack back to this environment."""
+
+
+def _report_back(template: dict[str, Any], topic_arn: str) -> dict[str, Any]:
+    """The template with the connect token parameter and the reporting custom resource.
+
+    The token defaults to empty and the resource only exists when one is given, so
+    a stack created from an older link or by hand still creates the role.
+    """
+    parameters = template["Parameters"] | {
+        "ConnectToken": {
+            "Type": "String",
+            "Description": "One-time token that reports this stack back to the workspace. Keep the prefilled value.",
+            "Default": "",
+            "NoEcho": True,
+            "AllowedPattern": f"^({aws_connect.TOKEN_PATTERN.strip('^$')})?$",
+            "ConstraintDescription": "must be the token the link carried",
+        }
+    }
+    conditions = template["Conditions"] | {
+        "ReportBack": {"Fn::Not": [{"Fn::Equals": [{"Ref": "ConnectToken"}, ""]}]},
+    }
+    resources = template["Resources"] | {
+        "Connection": {
+            "Type": CONNECTION_RESOURCE_TYPE,
+            "Condition": "ReportBack",
+            "Properties": {
+                "ServiceToken": topic_arn,
+                "ConnectToken": {"Ref": "ConnectToken"},
+                "WorkspaceId": {"Ref": "ExternalId"},
+                "RoleArn": {"Fn::GetAtt": ["RunRole", "Arn"]},
+            },
+        }
+    }
+    interface = template["Metadata"]["AWS::CloudFormation::Interface"]
+    groups = [*interface["ParameterGroups"], {"Label": {"default": "Connection"}, "Parameters": ["ConnectToken"]}]
+    labels = interface["ParameterLabels"] | {"ConnectToken": {"default": "Connect token"}}
+    metadata = {"AWS::CloudFormation::Interface": {"ParameterGroups": groups, "ParameterLabels": labels}}
+    return template | {
+        "Metadata": metadata,
+        "Parameters": parameters,
+        "Conditions": conditions,
+        "Resources": resources,
+    }
+
+
 def template_body(settings: Settings) -> dict[str, Any]:
     """The CloudFormation template for this environment's run roles.
 
@@ -81,7 +134,7 @@ def template_body(settings: Settings) -> dict[str, Any]:
     if not principals or not settings.RUN_ROLE_NAME_PREFIX:
         raise QuickSetupUnavailable("No runner task roles are configured for this environment.")
     policy_values = [arn for arn in PERMISSIONS_POLICY_ARNS.values() if arn is not None]
-    return {
+    template: dict[str, Any] = {
         "AWSTemplateFormatVersion": "2010-09-09",
         "Description": (
             "WebbPulse Terraform run role. Trusts only the WebbPulse Terraform runner, "
@@ -158,6 +211,9 @@ def template_body(settings: Settings) -> dict[str, Any]:
             }
         },
     }
+    if settings.AWS_CONNECT_TOPIC_ARN:
+        return _report_back(template, settings.AWS_CONNECT_TOPIC_ARN)
+    return template
 
 
 def render_template(settings: Settings) -> tuple[str, str]:
@@ -217,32 +273,40 @@ def quick_create_url(*, region: str, template_url: str, name: str, parameters: d
 
 def start_quick_setup(
     workspace_id: str,
-    account_id: str,
+    account_id: str | None,
     permissions: PermissionsChoice,
     *,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """Save or stage the derived role ARN and return the quick create link.
+    """Issue a connect token, stage the role for a given account, and return the link.
 
-    Saving first is what removes the copy back step. A workspace with no role takes
-    the ARN at once, and the same ARN again changes nothing, so the link can be
-    reopened freely. A workspace already running as another role only stages it as
-    `pending_run_role_arn`: its runs keep the current role until a verification run
-    assumes the new one, so a stack that is never created breaks nothing.
+    With a connect topic the link carries a fresh one-time token, replacing any
+    earlier one, and the stack reports its account and role back when it is
+    created, so no account id is needed. A given account id still saves or stages
+    the derived ARN at once, as it did before the topic existed: a workspace with
+    no role takes it, and one already running as another role stages it as
+    `pending_run_role_arn` until a verification run assumes it.
 
     Raises:
         WorkspaceNotFound: No such workspace.
-        QuickSetupUnavailable: This deployment cannot serve the template.
+        QuickSetupUnavailable: This deployment cannot serve the template, or has no
+            topic to report back to and no account id was given.
     """
     from webbpulse.storage import presigned_get
 
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
+    reports_back = bool(resolved.AWS_CONNECT_TOPIC_ARN)
+    if not reports_back and not account_id:
+        raise QuickSetupUnavailable("No connect topic is configured, so the account id is required.")
     key = ensure_template(resolved)
     role_name = service.run_role_name(workspace_id, settings=resolved)
-    role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
-    updated = service.update_workspace(workspace_id, {"pending_run_role_arn": role_arn}, settings=resolved)
-    pending = str(updated.get("pending_run_role_arn") or "") == role_arn
+    role_arn: str | None = None
+    pending = False
+    if account_id:
+        role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
+        updated = service.update_workspace(workspace_id, {"pending_run_role_arn": role_arn}, settings=resolved)
+        pending = str(updated.get("pending_run_role_arn") or "") == role_arn
 
     region = resolved.AWS_REGION_NAME or "us-west-2"
     download = presigned_get(
@@ -253,24 +317,30 @@ def start_quick_setup(
         endpoint_url=resolved.s3_endpoint_url,
     )
     policy_arn = PERMISSIONS_POLICY_ARNS[permissions]
-    name = role_name
+    parameters = {
+        "RoleName": role_name,
+        "ExternalId": workspace_id,
+        "PermissionsPolicyArn": policy_arn or NO_POLICY,
+    }
+    connect_expires_at: str | None = None
+    if reports_back:
+        token, connect_expires_at = aws_connect.issue_token(workspace_id, settings=resolved)
+        parameters["ConnectToken"] = token
     return {
         "account_id": account_id,
         "role_arn": role_arn,
         "pending": pending,
         "role_name": role_name,
-        "stack_name": name,
+        "stack_name": role_name,
         "region": region,
         "permissions_policy_arn": policy_arn,
         "expires_in": TEMPLATE_URL_EXPIRES_IN,
+        "reports_back": reports_back,
+        "connect_expires_at": connect_expires_at,
         "console_url": quick_create_url(
             region=region,
             template_url=download.url,
-            name=name,
-            parameters={
-                "RoleName": role_name,
-                "ExternalId": workspace_id,
-                "PermissionsPolicyArn": policy_arn or NO_POLICY,
-            },
+            name=role_name,
+            parameters=parameters,
         ),
     }

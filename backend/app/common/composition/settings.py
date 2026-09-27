@@ -80,6 +80,9 @@ class Settings(BaseServiceSettings):
     """The queue a workspace delete sends its S3 purge to. Unset, the delete purges inline."""
     GITHUB_WEBHOOKS_QUEUE_URL: str = ""
     """The queue the webhook route sends each verified delivery to, for the runs function."""
+    AWS_CONNECT_TOPIC_ARN: str = ""
+    """The SNS topic a Quick setup stack's custom resource reports to. Unset, the
+    template carries no custom resource and the link needs the account id."""
     API_BASE_URL: str = ""
     """The API's public origin, which the App's webhook URL is built on."""
     APP_SECRETS_ARN: str = ""

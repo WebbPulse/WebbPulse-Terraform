@@ -28,7 +28,7 @@ from ...common.runs.workspace_runs import (
     require_no_active_run,
     workspace_run_ids,
 )
-from ...common.workspaces import cleanup, reads
+from ...common.workspaces import aws_connect, cleanup, reads
 from ...common.workspaces import vcs as workspace_vcs
 from ...common.workspaces.reads import (
     CONFIG_VERSION_ID_PREFIX,
@@ -77,6 +77,9 @@ CONFIG_CONTENT_TYPE: Final = "application/gzip"
 CONFIG_UPLOAD_EXPIRES_IN: Final = 900
 """Fifteen minutes for the client to start its upload, the package's own default."""
 
+_PRIVATE_WORKSPACE_FIELDS: Final = frozenset({aws_connect.TOKEN_HASH_ATTRIBUTE, aws_connect.TOKEN_EXPIRES_ATTRIBUTE})
+"""Row attributes no response carries, the connect token's hash above all."""
+
 IAM_ROLE_NAME_MAX_LENGTH: Final = 64
 """The IAM ceiling on a role name. The derived name has to fit inside it."""
 
@@ -96,13 +99,8 @@ class HclNotAllowed(Exception):
 
 
 def run_role_name(workspace_id: str, *, settings: Settings | None = None) -> str:
-    """The role name for one workspace, inside the runner's AssumeRole grant.
-
-    The `ws-` prefix is dropped so the ULID alone follows the stack prefix, which
-    keeps the name inside the IAM ceiling of sixty four characters.
-    """
-    resolved = settings or get_settings()
-    return f"{resolved.RUN_ROLE_NAME_PREFIX}{workspace_id.removeprefix(WORKSPACE_ID_PREFIX)}"
+    """The role name for one workspace, shared with the runs function's connect check."""
+    return aws_connect.run_role_name(workspace_id, settings=settings)
 
 
 def run_role_setup(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
@@ -121,7 +119,8 @@ def render_workspace(item: dict[str, Any], *, settings: Settings | None = None) 
     """One stored workspace row as the API returns it, with its run role setup."""
     resolved = settings or get_settings()
     workspace_id = str(item["workspace_id"])
-    return dict(item) | {"run_role_setup": run_role_setup(workspace_id, settings=resolved)}
+    rendered = {key: value for key, value in item.items() if key not in _PRIVATE_WORKSPACE_FIELDS}
+    return rendered | {"run_role_setup": run_role_setup(workspace_id, settings=resolved)}
 
 
 def _connection(
@@ -252,7 +251,9 @@ def update_workspace(
     current role until the run role check sees a verification run assume the new
     one. A workspace with no role, or already on that role, takes it at once
     instead, since there is nothing to keep working. Setting `run_role_arn`
-    directly switches at once and discards whatever was staged.
+    directly switches at once and discards whatever was staged, and a role other
+    than the one a Quick setup stack connected also drops that connection and any
+    waiting connect token, since the person chose another role by hand.
 
     A change to `vcs_repo` rewrites the lowercased `vcs_repo_key` the binding
     index reads and resolves the repository through the GitHub App, which records
@@ -278,6 +279,15 @@ def update_workspace(
     removals = [*clears]
     if role_changed:
         removals.extend(("run_role_checked_at", "run_role_account_id"))
+        connected = existing.get(aws_connect.CONNECTION_ATTRIBUTE) or {}
+        if connected and connected.get("role_arn") != changes["run_role_arn"]:
+            removals.extend(
+                (
+                    aws_connect.CONNECTION_ATTRIBUTE,
+                    aws_connect.TOKEN_HASH_ATTRIBUTE,
+                    aws_connect.TOKEN_EXPIRES_ATTRIBUTE,
+                )
+            )
     if "vcs_repo" in changes and not _repository_changed(changes["vcs_repo"], existing):
         assignments.pop("vcs_repo", None)
     elif "vcs_repo" in changes:
