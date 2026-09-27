@@ -21,10 +21,34 @@ class RunnerApi:
     def __init__(self, env: RunnerEnv, client: httpx.Client) -> None:
         self._env = env
         self._client = client
+        self._token = env.run_token.get_secret_value() if env.run_token is not None else ""
 
     @property
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._env.run_token.get_secret_value()}"}
+        return {"Authorization": f"Bearer {self._token}"}
+
+    @property
+    def has_token(self) -> bool:
+        """Whether the runner holds a run token to call the runner routes with."""
+        return bool(self._token)
+
+    def exchange_token(self, signed_headers: dict[str, str]) -> str:
+        """Trade the task's signed identity for the run token and use it from now on."""
+        url = f"{self._env.api_base_url}/api/v1/runs/{self._env.run_id}/runner-token"
+        try:
+            response = self._client.post(url, json={"headers": signed_headers})
+        except httpx.HTTPError as error:
+            raise ApiError(f"run token exchange failed: {type(error).__name__}") from error
+        if response.status_code != 200:
+            raise ApiError(f"run token exchange returned {response.status_code}")
+        try:
+            token = str(response.json()["run_token"])
+        except (ValueError, KeyError, TypeError) as error:
+            raise ApiError("run token exchange returned no token") from error
+        if not token:
+            raise ApiError("run token exchange returned no token")
+        self._token = token
+        return token
 
     def fetch_bundle(self) -> Bundle:
         """Read the phase bundle, raising `ApiError` on any non success response."""
