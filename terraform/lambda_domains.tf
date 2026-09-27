@@ -59,6 +59,21 @@ locals {
       sqs_event_sources = {}
       stream_sources    = {}
     }
+    registry = {
+      memory        = 512
+      tables        = ["registry"]
+      read_tables   = []
+      buckets       = false
+      own_image_tag = true
+      sqs_event_sources = {
+        registry_ingest = {
+          queue_arn                       = module.registry_ingest.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
+      }
+      stream_sources = {}
+    }
   }
 
   domain_functions_enabled = var.bootstrap_image_tag != ""
@@ -157,9 +172,13 @@ module "lambda_domain" {
       USERS_TABLE           = module.dynamodb.table_names["users"]
       GITHUB_TABLE          = module.dynamodb.table_names["github"]
       VCS_UPLOADS_TABLE     = module.dynamodb.table_names["vcs-uploads"]
+      REGISTRY_TABLE        = module.dynamodb.table_names["registry"]
 
       GITHUB_APP_SLUG   = var.github_app_slug
       VCS_OIDC_AUDIENCE = var.vcs_oidc_audience
+
+      REGISTRY_REPOSITORIES = jsonencode(local.registry_repositories)
+      REGISTRY_API_URL      = "https://${local.api_host}"
 
       IDENTITY_TABLE_PREFIX = local.prefix
 
@@ -238,6 +257,7 @@ locals {
         Resource = [module.app_secrets.arns["app"]]
       },
     ]
+    registry = local.bucket_statements["Artifacts"]
     runs = [
       {
         Sid      = "StartAndStopRunExecutions"

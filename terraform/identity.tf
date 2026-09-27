@@ -91,6 +91,12 @@ locals {
       tables    = ["api-keys"]
       actions   = concat(local.dynamodb_read_actions, ["dynamodb:UpdateItem"])
     }
+    } : {}, contains(keys(local.lambda_domains), "registry") ? {
+    registry = {
+      role_name = module.lambda_domain["registry"].role_id
+      tables    = ["api-keys"]
+      actions   = concat(local.dynamodb_read_actions, ["dynamodb:UpdateItem"])
+    }
   } : {}) : {}
 }
 

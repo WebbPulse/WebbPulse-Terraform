@@ -71,6 +71,16 @@ locals {
       ]
     }
 
+    registry = {
+      hash_key      = "pk"
+      range_key     = "sk"
+      ttl_attribute = "expires_at"
+      attributes = [
+        { name = "pk", type = "S" },
+        { name = "sk", type = "S" },
+      ]
+    }
+
     github = {
       hash_key      = "pk"
       range_key     = "sk"
