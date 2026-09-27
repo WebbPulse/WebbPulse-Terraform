@@ -2124,6 +2124,16 @@ export interface components {
             terraform_version?: string;
         };
         /**
+         * RunPullRequest
+         * @description The pull request a push run's commit was merged from.
+         */
+        RunPullRequest: {
+            /** Number */
+            number: number;
+            /** Url */
+            url: string;
+        };
+        /**
          * RunRole
          * @description The per workspace role the engine runs as, with the phase session policy.
          *
@@ -2253,6 +2263,7 @@ export interface components {
             head_sha?: string | null;
             /** Pr Number */
             pr_number?: number | null;
+            pull_request?: components["schemas"]["RunPullRequest"] | null;
             /** Ref */
             ref: string;
             /** Repo */

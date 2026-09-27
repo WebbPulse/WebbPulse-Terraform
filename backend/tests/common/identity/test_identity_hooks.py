@@ -19,6 +19,7 @@ from app.common.identity.identity_hooks import (
     READ_SCOPES,
     ControlPlaneIdentityHooks,
 )
+from app.domains.runs.actor import actor_from_claims
 
 EMAIL = "Someone@Example.COM"
 
@@ -88,6 +89,16 @@ def test_an_admin_carries_the_admin_role(hooks: ControlPlaneIdentityHooks) -> No
     claims = hooks.claims_for(user)
     assert claims["roles"] == [ADMIN_ROLE]
     assert claims["display_name"] == "Someone"
+
+
+def test_the_email_rides_along_so_an_unnamed_actor_still_reads_as_a_person(hooks: ControlPlaneIdentityHooks) -> None:
+    """An account with no display name is attributed by its email on a run decision."""
+    _store(hooks, display_name="")
+    user = hooks.load_user_by_id("user-1")
+    assert user is not None
+    claims = hooks.claims_for(user)
+    assert claims["email"] == EMAIL
+    assert actor_from_claims({"sub": "user-1", **claims}) == {"kind": "user", "id": "user-1", "display_name": EMAIL}
 
 
 def test_a_plain_user_carries_an_empty_roles_list(hooks: ControlPlaneIdentityHooks) -> None:

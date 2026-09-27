@@ -10,6 +10,7 @@ got there.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ INSTALLATION_ID = 777
 FRONTEND = "https://staging.terraform.example.com"
 PUSH_SHA = "d" * 40
 OTHER_SHA = "e" * 40
+CHECK = reporting.CHECK_NAME
 
 
 @dataclass
@@ -47,10 +49,10 @@ class FakeGitHub:
     comments: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     messages: dict[str, str] = field(default_factory=dict)
     requests: list[httpx.Request] = field(default_factory=list)
+    pulls: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     failure: int | None = None
-    reopen: str = "accept"
-    """How a PATCH moving a completed check run back to progress is answered:
-    `accept` clears the conclusion, `ignore` leaves it completed, `refuse` is a 422."""
+    retire_failure: int | None = None
+    """Answers a PATCH that only rewrites a completed check's output with this status."""
 
     def writes(self) -> list[tuple[str, str]]:
         """Every non-GET call against a repository, as method and path."""
@@ -78,6 +80,9 @@ class FakeGitHub:
             name = request.url.params.get("check_name")
             found = [run for run in self.check_runs if run["head_sha"] == match.group(1) and run["name"] == name]
             return httpx.Response(200, json={"total_count": len(found), "check_runs": found})
+        if match := re.fullmatch(rf"{base}/commits/(\w+)/pulls", path):
+            listed = self.pulls.get(match.group(1))
+            return httpx.Response(200, json=listed) if listed is not None else httpx.Response(404, json={})
         if match := re.fullmatch(rf"{base}/commits/(\w+)", path):
             sha = match.group(1)
             parents = self.parents.get(sha)
@@ -104,14 +109,11 @@ class FakeGitHub:
         if (match := re.fullmatch(rf"{base}/check-runs/(\d+)", path)) and request.method == "PATCH":
             [found] = [run for run in self.check_runs if run["id"] == int(match.group(1))]
             body = json.loads(request.content)
-            reopening = found["status"] == "completed" and body.get("status") not in (None, "completed")
-            if reopening and self.reopen == "refuse":
-                return httpx.Response(422, json={"message": "Validation Failed"})
-            if reopening and self.reopen == "ignore":
-                return httpx.Response(200, json=found)
+            if found["status"] == "completed":
+                if self.retire_failure is not None and set(body) == {"output"}:
+                    return httpx.Response(self.retire_failure, json={"message": "failed"})
+                body = {key: value for key, value in body.items() if key not in ("status", "conclusion")}
             found.update(body)
-            if reopening and "conclusion" not in body:
-                found["conclusion"] = None
             return httpx.Response(200, json=found)
         if match := re.fullmatch(rf"{base}/issues/(\d+)/comments", path):
             listed = self.comments.setdefault(int(match.group(1)), [])
@@ -291,8 +293,14 @@ def test_each_transition_updates_the_same_check(push_ready, settings):
     assert (overall["status"], overall["conclusion"]) == ("completed", "success")
 
 
-def test_a_held_push_run_asks_for_action_then_the_same_check_reopens(push_ready, settings):
-    """`action_required` while held; once applying, that check run shows progress again."""
+def test_a_held_push_run_asks_for_action_then_a_new_check_carries_the_apply(push_ready, settings, caplog):
+    """`action_required` while held; once confirmed, new checks of the same names show progress.
+
+    GitHub keeps a completed check completed, so the held checks keep their
+    conclusion, are retired with a pointer to their successors, and the apply's
+    later transitions update the new checks in place.
+    """
+    caplog.set_level(logging.INFO, logger=reporting.__name__)
     store_run(settings, "run-1", "ws-1", "awaiting_confirmation", changes={"add": 3, "change": 0, "destroy": 1})
     reporting.report_run("run-1", settings=settings)
     [held] = push_ready.named("webbpulse-terraform/network")
@@ -303,31 +311,38 @@ def test_a_held_push_run_asks_for_action_then_the_same_check_reopens(push_ready,
     assert overall["conclusion"] == "action_required"
 
     set_status(settings, "run-1", "applying")
-    reporting.report_run("run-1", settings=settings)
-    [applying] = push_ready.named("webbpulse-terraform/network")
-    assert applying["id"] == held["id"]
-    assert (applying["status"], applying["conclusion"]) == ("in_progress", None)
-    [overall] = push_ready.named("webbpulse-terraform")
-    assert (overall["status"], overall["conclusion"]) == ("in_progress", None)
+    assert reporting.report_run("run-1", settings=settings) is True
+    old, applying = push_ready.named("webbpulse-terraform/network")
+    assert old["id"] == held["id"]
+    assert (old["status"], old["conclusion"]) == ("completed", "action_required")
+    assert old["output"]["title"] == reporting.SUPERSEDED.title
+    assert (applying["status"], applying["conclusion"], applying["external_id"]) == ("in_progress", None, "run-1")
+    assert applying["output"]["title"] == "Applying"
+    old_overall, new_overall = push_ready.named("webbpulse-terraform")
+    assert (old_overall["status"], old_overall["conclusion"]) == ("completed", "action_required")
+    assert (new_overall["status"], new_overall["conclusion"]) == ("in_progress", None)
+    replaced = [record for record in caplog.records if getattr(record, "event", "") == "runs.report.check_replaced"]
+    assert {getattr(record, "check_name", "") for record in replaced} == {"webbpulse-terraform/network", CHECK}
 
     set_status(settings, "run-1", "applied", apply_changes={"add": 3, "change": 0, "destroy": 1})
     reporting.report_run("run-1", settings=settings)
-    [applied] = push_ready.named("webbpulse-terraform/network")
-    assert (applied["id"], applied["conclusion"]) == (held["id"], "success")
-    assert [method for method, path in push_ready.writes() if path.endswith("/check-runs")] == ["POST", "POST"]
+    _, applied = push_ready.named("webbpulse-terraform/network")
+    assert (applied["id"], applied["status"], applied["conclusion"]) == (applying["id"], "completed", "success")
+    _, finished = push_ready.named("webbpulse-terraform")
+    assert (finished["id"], finished["conclusion"]) == (new_overall["id"], "success")
+    assert [method for method, path in push_ready.writes() if path.endswith("/check-runs")] == ["POST"] * 4
 
 
-@pytest.mark.parametrize("answer", ["ignore", "refuse"])
-def test_a_check_github_will_not_reopen_is_followed_by_a_new_one(push_ready, settings, answer):
-    """When the reopen does not take, a fresh check run of the same name shows progress."""
-    push_ready.reopen = answer
+def test_a_retirement_github_refuses_still_reports(push_ready, settings):
+    """The new check is what matters, so a refused retirement of the old one is dropped."""
+    push_ready.retire_failure = 422
     store_run(settings, "run-1", "ws-1", "awaiting_confirmation", changes={"add": 1, "change": 0, "destroy": 0})
     reporting.report_run("run-1", settings=settings)
     set_status(settings, "run-1", "applying")
     assert reporting.report_run("run-1", settings=settings) is True
     held, applying = push_ready.named("webbpulse-terraform/network")
-    assert held["conclusion"] == "action_required"
-    assert (applying["status"], applying["external_id"]) == ("in_progress", "run-1")
+    assert held["output"]["title"] == "Run pending confirmation"
+    assert applying["status"] == "in_progress"
 
 
 def test_the_aggregate_sums_every_bound_workspace(push_ready, settings):
@@ -550,3 +565,43 @@ def test_an_unreadable_commit_still_reports(push_ready, settings):
     assert reporting.report_run("run-1", settings=settings) is True
     stored = repositories.runs(settings).get({"run_id": "run-1"}) or {}
     assert "commit_message" not in stored["vcs"]
+
+
+def test_a_push_merged_from_a_pull_request_links_it(push_ready, settings):
+    """The pull request whose merge commit is the pushed commit is kept on the run, once."""
+    push_ready.pulls[PUSH_SHA] = [
+        {"number": 3, "html_url": f"https://github.com/{REPO}/pull/3", "merged_at": None, "merge_commit_sha": "x"},
+        {
+            "number": 4,
+            "html_url": f"https://github.com/{REPO}/pull/4",
+            "merged_at": "2026-09-26T00:00:00Z",
+            "merge_commit_sha": PUSH_SHA,
+        },
+    ]
+    store_run(settings, "run-1", "ws-1", "planning")
+    reporting.report_run("run-1", settings=settings)
+    stored = repositories.runs(settings).get({"run_id": "run-1"}) or {}
+    assert stored["vcs"]["pull_request"] == {"number": 4, "url": f"https://github.com/{REPO}/pull/4"}
+    assert stored["status"] == "planning"
+
+    reads = len([r for r in push_ready.requests if r.url.path.endswith("/pulls")])
+    reporting.report_run("run-1", settings=settings)
+    assert len([r for r in push_ready.requests if r.url.path.endswith("/pulls")]) == reads
+
+
+@pytest.mark.parametrize("pulls", [None, []])
+def test_a_direct_push_or_an_unreadable_listing_links_nothing(push_ready, settings, pulls):
+    """No pull request, or a listing GitHub will not answer, leaves no link and still reports."""
+    if pulls is not None:
+        push_ready.pulls[PUSH_SHA] = pulls
+    store_run(settings, "run-1", "ws-1", "planning")
+    assert reporting.report_run("run-1", settings=settings) is True
+    stored = repositories.runs(settings).get({"run_id": "run-1"}) or {}
+    assert "pull_request" not in stored["vcs"]
+
+
+def test_a_pull_request_run_does_not_look_up_pull_requests(pr_ready, settings):
+    """A pull request run already names its pull request."""
+    store_run(settings, "run-1", "ws-1", "planning", source="vcs_pr")
+    reporting.report_run("run-1", settings=settings)
+    assert not [r for r in pr_ready.requests if r.url.path.endswith("/pulls")]

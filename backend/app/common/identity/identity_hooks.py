@@ -64,7 +64,10 @@ class ControlPlaneIdentityHooks:
             raise AuthenticationRefused(REFUSAL_MESSAGE, error_code="EMAIL_NOT_VERIFIED")
 
     def claims_for(self, user: Mapping[str, Any]) -> Mapping[str, Any]:
-        """This product's claims: the roles list, the display name and the scopes.
+        """This product's claims: the roles list, the display name, the email and the scopes.
+
+        The email is what a run's actor renders when the account has no display name,
+        so a confirmation reads as a person rather than an opaque id.
 
         `roles` is always a list so a consumer's check is one shape. Consumers must
         test membership and never index. `scope` is the space-joined string the JWT
@@ -76,6 +79,7 @@ class ControlPlaneIdentityHooks:
         return {
             "roles": roles,
             "display_name": user.get("display_name", ""),
+            "email": user.get("email", ""),
             "scope": scope_claim_for_roles(roles),
         }
 

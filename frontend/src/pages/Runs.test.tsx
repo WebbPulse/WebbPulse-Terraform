@@ -111,4 +111,43 @@ describe('Runs', () => {
       screen.getByRole('link', { name: 'Add the logs bucket' })
     ).toBeInTheDocument();
   });
+
+  it('titles a push run by its commit and links the pull request it merged', async () => {
+    apiMock.listRuns.mockResolvedValue({
+      items: [
+        aRun('applied', {
+          message: 'Push of abcdef1 to main',
+          source: 'vcs_push',
+          vcs: {
+            repo: 'WebbPulse/infra',
+            repository_id: '42',
+            ref: 'refs/heads/main',
+            branch: 'main',
+            sha: 'abcdef1234567890abcdef1234567890abcdef12',
+            commit_message: 'Lengthen the pet (#12)\n\nBody.',
+            pull_request: {
+              number: 12,
+              url: 'https://github.com/WebbPulse/infra/pull/12',
+            },
+          },
+        }),
+      ],
+    });
+
+    renderWithAuth(<Runs />, signedInAuthClient());
+
+    expect(
+      await screen.findByRole('link', { name: 'Lengthen the pet (#12)' })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Push of abcdef1 to main')
+    ).not.toBeInTheDocument();
+    const source = screen.getByTestId('run-source');
+    expect(source).toHaveTextContent(
+      'Triggered via GitHub from a push to main'
+    );
+    expect(
+      within(source).getByRole('link', { name: 'PR #12' })
+    ).toHaveAttribute('href', 'https://github.com/WebbPulse/infra/pull/12');
+  });
 });

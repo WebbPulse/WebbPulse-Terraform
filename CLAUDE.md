@@ -263,11 +263,14 @@ The runs table streams (filtered to `vcs_*` runs) to the runs function, and
 `app/domains/runs/consumers/reports.py` reports each status change through the App
 (`app/domains/runs/reporting.py`): a `webbpulse-terraform/<workspace>` check run
 (external id = run id), a `webbpulse-terraform` aggregate check for the commit, and
-one marker-found comment per pull request. Nothing is stored; everything is found
-again on GitHub. A push reports on the signed commit once the branch contains it,
-a pull request on its unsigned head only once it is a parent of the signed merge
-commit and a commit of that pull request. A held push run is `action_required`.
-Reporting never raises, so it cannot fail or retry a run.
+one marker-found comment per pull request. Checks and comments are found again on
+GitHub; the only writes back are the commit message and, for a push, the pull
+request it was merged from (`vcs.pull_request`). A push reports on the signed
+commit once the branch contains it, a pull request on its unsigned head only once
+it is a parent of the signed merge commit and a commit of that pull request. A
+held push run is `action_required`; GitHub never reopens a completed check, so a
+confirmation creates new checks of the same names and the held ones are left
+completed. Reporting never raises, so it cannot fail or retry a run.
 
 ### HCL variables
 
