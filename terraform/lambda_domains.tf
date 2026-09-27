@@ -41,6 +41,11 @@ locals {
           batch_size                      = 1
           maximum_batching_window_seconds = 0
         }
+        aws_connect = {
+          queue_arn                       = module.aws_connect.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
       }
       stream_sources = {
         vcs_run_reports = {
@@ -196,6 +201,7 @@ module "lambda_domain" {
 
       WORKSPACE_CLEANUP_QUEUE_URL = module.workspace_cleanup.queue_url
       GITHUB_WEBHOOKS_QUEUE_URL   = module.github_webhooks.queue_url
+      AWS_CONNECT_TOPIC_ARN       = aws_sns_topic.aws_connect.arn
 
       RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
       RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
