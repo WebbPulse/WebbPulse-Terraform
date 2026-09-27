@@ -117,3 +117,16 @@ class RepositoryList(BaseModel):
     """Every repository an installation covers."""
 
     items: list[Repository]
+
+
+class WebhookConfig(BaseModel):
+    """Where the App's webhook now delivers, and the events the bridge expects it to carry.
+
+    The secret is set but never echoed.
+    """
+
+    url: str
+    content_type: str
+    insecure_ssl: str
+    events: list[str]
+    """The events to subscribe on the App's settings page, which GitHub has no API for."""

@@ -298,6 +298,12 @@ installation token and writes the same record and `ingest/` object, repacked wit
 `.webbpulse/changed-paths.txt`. A delivery no workspace would run on is reported
 "No runs needed" without a fetch. The upload id derives from the delivery id.
 
+A new App's manifest subscribes to `push` and `pull_request` and points its hook
+at `API_BASE_URL`. For an existing App, the admin `POST /api/v1/github/app/webhook`
+sets the hook URL and secret through `PATCH /app/hook/config` with the App JWT.
+GitHub has no API for the Active flag or the event subscriptions, so those are
+set on the App's settings page.
+
 ### VCS run reporting
 
 The runs table streams (filtered to `vcs_*` runs) to the runs function, and
