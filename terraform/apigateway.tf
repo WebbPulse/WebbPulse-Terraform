@@ -196,7 +196,7 @@ locals {
 
 module "api" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/http-api"
-  version = "~> 2.27"
+  version = "~> 2.31"
 
   name = "${local.prefix}-api"
 
@@ -237,15 +237,17 @@ module "api" {
     max_age           = 86400
   }
 
-  disable_execute_api_endpoint = local.staging_gate_authorizer_attached
+  disable_execute_api_endpoint = local.custom_domains_enabled
   authorizer_id                = local.staging_gate_authorizer_attached ? one(module.staging_access_gate[*].http_api_authorizer_id) : null
 
-  identity_jwt = local.identity_jwt_native_enforced ? {
-    issuer   = local.identity_issuer
-    audience = local.identity_audience
+  identity_jwt = local.identity_jwt_api_enforced ? {
+    issuer           = local.identity_issuer
+    audience         = local.identity_audience
+    mode             = var.identity_jwt_mode
+    api_key_prefixes = local.identity_jwt_lambda_enforced ? [local.api_key_prefix] : []
   } : null
 
-  identity_jwt_depends_on = local.identity_jwt_native_enforced && local.domain_functions_enabled ? [module.lambda_domain["workspaces"]] : []
+  identity_jwt_depends_on = local.identity_jwt_api_enforced && local.domain_functions_enabled ? [module.lambda_domain["workspaces"]] : []
 
   domain_name     = local.custom_domains_enabled ? local.api_host : null
   certificate_arn = module.api_certificate.certificate_arn

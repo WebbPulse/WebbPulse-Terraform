@@ -125,18 +125,23 @@ variable "artifact_retention_days" {
 }
 
 variable "identity_jwt_mode" {
-  description = "Which mechanism enforces identity access tokens at the gateway: the staging gate's Lambda authorizer (gate), API Gateway's own JWT authorizer (native), or nothing (off)."
+  description = "Which mechanism enforces identity access tokens at the gateway: the staging gate's Lambda authorizer (gate), a REQUEST authorizer built from the same source that also passes wpk_ agent keys through (lambda), API Gateway's own JWT authorizer (native), or nothing (off). Production must use lambda or native."
   type        = string
   default     = "off"
 
   validation {
-    condition     = contains(["native", "gate", "off"], var.identity_jwt_mode)
-    error_message = "identity_jwt_mode must be one of native, gate or off."
+    condition     = contains(["lambda", "native", "gate", "off"], var.identity_jwt_mode)
+    error_message = "identity_jwt_mode must be one of lambda, native, gate or off."
   }
 
   validation {
-    condition     = var.identity_jwt_mode != "native" || var.environment != "staging"
-    error_message = "identity_jwt_mode must not be native in staging. Every route there carries the staging access gate's REQUEST authorizer and a route takes exactly one authorizer, so a native JWT authorizer has no slot to occupy. Use gate, which moves the same check into the gate's own Lambda."
+    condition     = !contains(["native", "lambda"], var.identity_jwt_mode) || var.environment != "staging"
+    error_message = "identity_jwt_mode must not be native or lambda in staging. Every route there carries the staging access gate's REQUEST authorizer and a route takes exactly one authorizer, so a second authorizer has no slot to occupy. Use gate, which moves the same check into the gate's own Lambda."
+  }
+
+  validation {
+    condition     = var.environment != "production" || contains(["lambda", "native"], var.identity_jwt_mode)
+    error_message = "identity_jwt_mode must be lambda or native in production. The staging gate does not exist there, so gate and off both leave every product route open at the gateway. Use lambda, which also admits wpk_ agent keys."
   }
 }
 

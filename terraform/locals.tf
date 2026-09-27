@@ -36,6 +36,8 @@ locals {
 
   identity_jwt_gate_enforced   = var.identity_jwt_mode == "gate" && local.staging_gate_enabled
   identity_jwt_native_enforced = var.identity_jwt_mode == "native"
+  identity_jwt_lambda_enforced = var.identity_jwt_mode == "lambda"
+  identity_jwt_api_enforced    = local.identity_jwt_native_enforced || local.identity_jwt_lambda_enforced
   api_key_prefix               = "wpk_"
 
   production_alarms = var.environment == "production"
