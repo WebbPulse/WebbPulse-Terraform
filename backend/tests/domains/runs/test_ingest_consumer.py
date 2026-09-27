@@ -10,12 +10,15 @@ import json
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 from vcs_helpers import BASE_SHA, HEAD_SHA, REPO, FakeVerifier, claims, pr_claims, tarball, token_for
+from webbpulse.dynamodb import Repository
 from webbpulse.events import BATCH_FAILURES_KEY, events_path
 
 from app.common.composition.wiring import build_domain_app
 from app.common.db import repositories
+from app.common.db.tables import CONFIG_VERSIONS, local_table_name, table_definition
 from app.domains.runs import service as runs_service
 from app.domains.runs import vcs
 from app.domains.runs.consumers import ingest
@@ -30,6 +33,43 @@ def verifier(monkeypatch):
     fake = FakeVerifier()
     monkeypatch.setattr(vcs, "_verifier", lambda audience: fake)
     return fake
+
+
+@pytest.fixture(autouse=True)
+def primary_keys_only(monkeypatch):
+    """Refuse a key that is not exactly its table's primary key, as DynamoDB does.
+
+    moto checks a `GetItem`, `UpdateItem` or `DeleteItem` key against every key
+    attribute of the table and its indexes, so a secondary index key passed
+    alongside the primary one is accepted and ignored. DynamoDB rejects it with a
+    ValidationException, which is how a lookup on the config versions table with
+    `workspace_id` added passed here and failed every ingest in staging. Returns
+    the `(table, key names)` of every checked call.
+    """
+    seen: list[tuple[str, frozenset[str]]] = []
+
+    def checked(method, operation: str):
+        def call(self, key, *args, **kwargs):
+            names = frozenset(key)
+            expected = frozenset(part["AttributeName"] for part in self.table.key_schema)
+            seen.append((self.table_name, names))
+            if names != expected:
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "ValidationException",
+                            "Message": "The provided key element does not match the schema",
+                        }
+                    },
+                    operation,
+                )
+            return method(self, key, *args, **kwargs)
+
+        return call
+
+    for name, operation in (("get", "GetItem"), ("update", "UpdateItem"), ("delete", "DeleteItem")):
+        monkeypatch.setattr(Repository, name, checked(getattr(Repository, name), operation))
+    return seen
 
 
 @pytest.fixture
@@ -101,6 +141,22 @@ def test_the_config_version_is_copied_and_uploaded(client, settings, bind, state
     assert row["status"] == "uploaded"
     copied = boto3.client("s3", region_name="us-west-2").get_object(Bucket=settings.ARTIFACTS_BUCKET, Key=row["key"])
     assert copied["Body"].read() == data
+
+
+def test_the_config_version_is_read_by_its_table_key_alone(client, settings, bind, state_machine, primary_keys_only):
+    """The existence check names `config_version_id` only, the one key the table has.
+
+    The table's `by_workspace` index is keyed on `workspace_id`, which is what let
+    moto accept the extra key; the real schema in `terraform/dynamodb.tf` does not.
+    """
+    physical = local_table_name(CONFIG_VERSIONS, "test")
+    definition = table_definition(CONFIG_VERSIONS, physical)
+    assert [part["AttributeName"] for part in definition["KeySchema"]] == ["config_version_id"]
+    bind()
+    [run_id] = deliver(upload(client, settings, claims(), tarball()), settings)
+    assert runs_service.get_run(run_id, settings=settings)["status"] == "planning"
+    config_reads = {names for table, names in primary_keys_only if table == settings.CONFIG_VERSIONS_TABLE}
+    assert config_reads == {frozenset({"config_version_id"})}
 
 
 def test_a_pull_request_starts_a_plan_only_run(client, settings, bind, state_machine):
