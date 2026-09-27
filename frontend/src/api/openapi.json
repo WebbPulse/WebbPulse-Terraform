@@ -404,6 +404,45 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "verified",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification"
+          },
+          "verification_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Error"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
           }
         },
         "required": [
