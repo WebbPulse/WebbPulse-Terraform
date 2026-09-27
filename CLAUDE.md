@@ -424,7 +424,7 @@ its own login user per run through `/api/auth/e2e/users`, which is gated by
 the staging end-to-end test repository, part of the staging environment in the
 same way as the `webbpulse-terraform-staging-e2e` AWS account. It is declared in
 the WebbPulse-Platform repository factory with the topics `webbpulse-terraform`,
-`staging` and `e2e`, is load bearing for staging e2e and holds nothing durable.
+`staging` and `e2e`, is load bearing for staging e2e; its `registry-proof` branch and `v0.1.0` tag are the durable registry fixture `backend/e2e/test_registry.py` installs.
 The staging GitHub App is installed on it and not on this repository, it carries
 the caller workflow and a copy of `examples/first-run`, and the staging
 `first-run` workspace is bound to it. VCS runs, check runs and the pull request

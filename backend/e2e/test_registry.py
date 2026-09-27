@@ -18,12 +18,17 @@ is minted. No key, token or presigned URL is ever printed.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
+import platform
 import shutil
+import stat
 import subprocess
+import sys
 import tarfile
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -45,6 +50,9 @@ TOKEN_VARIABLE = "TF_TOKEN_" + REGISTRY_HOST.replace(".", "_").replace("-", "__"
 MODULES_URL = f"https://{API_HOST}/v1/modules/{NAMESPACE}/{NAME}/{PROVIDER}"
 TIMEOUT_SECONDS = 30
 INIT_TIMEOUT_SECONDS = 300
+DOWNLOAD_TIMEOUT_SECONDS = 120
+VERSIONS_FILE = Path(__file__).resolve().parents[2] / "runner" / "versions.env"
+ARCHITECTURES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
 pytestmark = [
     pytest.mark.e2e_writes,
@@ -120,6 +128,49 @@ def _terraform_files(payload: bytes) -> dict[str, bytes]:
     return files
 
 
+def _pinned_versions() -> dict[str, str]:
+    """The `KEY=value` pins in `runner/versions.env`."""
+    pins: dict[str, str] = {}
+    for line in VERSIONS_FILE.read_text().splitlines():
+        name, separator, value = line.strip().partition("=")
+        if separator and not name.startswith("#"):
+            pins[name.strip()] = value.strip()
+    return pins
+
+
+@pytest.fixture(scope="session")
+def terraform_binary(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """A `terraform` executable: the one on PATH, else the pinned release, SHA256 checked.
+
+    The download is the version `runner/versions.env` pins, for this machine's OS and
+    architecture, verified against the sum pinned there before it is unzipped.
+    """
+    found = shutil.which("terraform")
+    if found is not None:
+        return found
+    architecture = ARCHITECTURES.get(platform.machine().lower())
+    if sys.platform != "linux" or architecture is None:
+        pytest.skip(f"no terraform on PATH and no pinned sum for {sys.platform} {platform.machine()}")
+    pins = _pinned_versions()
+    version = pins["TERRAFORM_VERSION"]
+    expected = pins[f"TERRAFORM_SHA256_{architecture.upper()}"]
+    archive = f"terraform_{version}_linux_{architecture}.zip"
+    response = httpx.get(
+        f"https://releases.hashicorp.com/terraform/{version}/{archive}",
+        timeout=DOWNLOAD_TIMEOUT_SECONDS,
+        follow_redirects=True,
+    )
+    assert response.status_code == 200, f"downloading {archive} answered {response.status_code}"
+    actual = hashlib.sha256(response.content).hexdigest()
+    assert actual == expected, f"{archive} hashed {actual}, versions.env pins {expected}"
+    directory = tmp_path_factory.mktemp("terraform-bin")
+    with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
+        bundle.extract("terraform", directory)
+    binary = directory / "terraform"
+    binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
+    return str(binary)
+
+
 def test_discovery_is_anonymous_and_points_at_the_api_host() -> None:
     """Service discovery on the SPA host answers without credentials or a gate cookie."""
     response = _get(f"https://{REGISTRY_HOST}/.well-known/terraform.json")
@@ -175,16 +226,17 @@ def test_protocol_refuses_without_registry_read(registry_keys: dict[str, dict[st
     assert "X-Terraform-Get" not in unscoped.headers
 
 
-def test_terraform_init_resolves_the_module(registry_keys: dict[str, dict[str, Any]], tmp_path: Path) -> None:
+def test_terraform_init_resolves_the_module(
+    registry_keys: dict[str, dict[str, Any]], terraform_binary: str, tmp_path: Path
+) -> None:
     """A real `terraform init` installs the fixture from the SPA host's module source.
 
-    The token is set only as `TF_TOKEN_<SPA host>`, so a pass proves Terraform carries
-    that host's credential to the API host discovery named. The CLI config is an empty
-    file so no credential from the runner's home can stand in for it.
+    The token is set only as `TF_TOKEN_<SPA host>`, and the protocol routes on the API
+    host refuse a request without a `registry:read` key, so an install proves Terraform
+    carried that host's credential to the API host discovery named. The CLI config is an
+    empty file so no credential from the runner's home can stand in for it. The module
+    must land under `.terraform/modules` with the tagged fixture's exact bytes.
     """
-    binary = shutil.which("terraform")
-    if binary is None:
-        pytest.skip("the e2e runner has no terraform binary, so the real init is not exercised")
     key = registry_keys["read"]["key"]
     workdir = tmp_path / "root"
     workdir.mkdir()
@@ -197,7 +249,7 @@ def test_terraform_init_resolves_the_module(registry_keys: dict[str, dict[str, A
     env.update({"TF_CLI_CONFIG_FILE": str(config), "TF_IN_AUTOMATION": "1", TOKEN_VARIABLE: key})
 
     result = subprocess.run(
-        [binary, "init", "-input=false", "-no-color"],
+        [terraform_binary, "init", "-input=false", "-no-color"],
         cwd=workdir,
         env=env,
         capture_output=True,
@@ -208,9 +260,14 @@ def test_terraform_init_resolves_the_module(registry_keys: dict[str, dict[str, A
     output = (result.stdout + result.stderr).replace(key, "[redacted]")
     assert result.returncode == 0, f"terraform init exited {result.returncode}: {output[-2000:]}"
 
-    manifest = json.loads((workdir / ".terraform" / "modules" / "modules.json").read_text())
+    modules_root = (workdir / ".terraform" / "modules").resolve()
+    manifest = json.loads((modules_root / "modules.json").read_text())
     installed = [module for module in manifest["Modules"] if module.get("Key") == "proof"]
     assert installed, f"terraform init installed no proof module: {output[-2000:]}"
     assert installed[0]["Source"] == f"{REGISTRY_HOST}/{NAMESPACE}/{NAME}/{PROVIDER}"
     assert installed[0]["Version"] == VERSION
-    assert (workdir / installed[0]["Dir"] / "main.tf").read_bytes() == _fixture_source()
+    module_dir = (workdir / installed[0]["Dir"]).resolve()
+    assert module_dir.is_relative_to(modules_root), f"the module landed at {installed[0]['Dir']}"
+    tf_files = sorted(path.relative_to(module_dir).as_posix() for path in module_dir.rglob("*.tf"))
+    assert tf_files == ["main.tf"], f"the installed module holds {tf_files}"
+    assert (module_dir / "main.tf").read_bytes() == _fixture_source(), "the installed main.tf differs from the fixture"
