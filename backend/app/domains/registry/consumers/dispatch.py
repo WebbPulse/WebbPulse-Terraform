@@ -18,7 +18,7 @@ from fastapi import APIRouter
 from webbpulse.events import register_stream_consumer
 
 from ....common.composition.settings import Settings
-from . import tags
+from . import sync, tags
 
 Handler = Callable[[Mapping[str, Any], Settings | None], None]
 
@@ -46,7 +46,12 @@ def _tag(record: Mapping[str, Any], settings: Settings | None) -> None:
     tags.handle_record(record, settings=settings)
 
 
-HANDLERS: dict[str, Handler] = {tags.KIND: _tag}
+def _sync(record: Mapping[str, Any], settings: Settings | None) -> None:
+    """Hand one tag sync request to the sync consumer, discarding its outcome."""
+    sync.handle_record(record, settings=settings)
+
+
+HANDLERS: dict[str, Handler] = {tags.KIND: _tag, sync.KIND: _sync}
 """Each `kind` this function consumes, against the consumer that owns it."""
 
 

@@ -290,7 +290,14 @@ locals {
         Resource = [module.registry_ingest.queue_arn]
       },
     ]
-    registry = local.bucket_statements["Artifacts"]
+    registry = concat(local.bucket_statements["Artifacts"], [
+      {
+        Sid      = "QueueTagSyncsAndTheirTagsForTheRegistry"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [module.registry_ingest.queue_arn]
+      },
+    ])
     runs = [
       {
         Sid      = "StartAndStopRunExecutions"
