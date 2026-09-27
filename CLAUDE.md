@@ -342,7 +342,8 @@ the only reader.
 Step Functions starts the runner with `runTask.waitForTaskToken`. It fetches the
 bundle, unpacks the config tarball, writes the S3 backend override and the auto
 loaded tfvars files, assumes the workspace's run role with the phase session policy,
-runs the engine (`terraform` or `tofu`, from the bundle), streams redacted output
+points the S3 backend at the task role through the `webbpulse-state` profile so
+the run role only reaches the providers, runs the engine (`terraform` or `tofu`, from the bundle), streams redacted output
 to CloudWatch Logs, uploads its artifacts to presigned URLs and reports back
 through the task token. Every line passes through `app.logs.Redactor` first, and
 the engine's environment is built without the runner's own tokens.

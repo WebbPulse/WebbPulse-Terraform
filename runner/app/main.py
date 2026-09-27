@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, cast
 import boto3
 import httpx
 
-from app import callback, credentials, engine, install, workspace
+from app import callback, credentials, engine, install, state_credentials, workspace
 from app.api import ApiError, RunnerApi, build_client
 from app.logs import CloudWatchLogSink, Redactor
 from app.models import Bundle, Changes, PhaseResult, RunnerEnv, RunnerEnvError
@@ -163,12 +163,14 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
             raise PhaseFailure("AssumeRoleFailed", str(error)) from error
         redactor.extend(aws_credentials.values())
 
+        backend_environment = state_credentials.write_profile(directory / "aws", os.environ, sys.executable)
         environment = engine.build_environment(
             dict(os.environ),
             aws_credentials,
             bundle.environment_variables,
             bundle.backend.region,
             engine_directory,
+            backend_environment,
         )
 
         try:
