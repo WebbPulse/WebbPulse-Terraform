@@ -8,12 +8,15 @@ a pull request gets one comment, found again by a hidden marker and edited in pl
 Nothing is stored for any of it. The check runs are found through GitHub by name and
 by `external_id`, which is the run id, and the comment by its marker, so a report can
 be retried or replayed from any point and lands on the same objects. The one thing
-reporting writes back is the commit's message, read through the App on the first
-report, because the upload does not carry it and the run pages show it.
+reporting writes back is what the upload does not carry and the run pages show: the
+commit's message and, for a push, the pull request it was merged from, both read
+through the App on the first report.
 
-A held run's check completes as `action_required`. Once the run is confirmed the same
-check run is patched back to `in_progress`, so the commit keeps one check per
-workspace; if GitHub refuses to reopen it, a new check run of the same name follows.
+A held run's check completes as `action_required`. GitHub never reopens a completed
+check run, so once the run is confirmed a new check run of the same name carries the
+apply, and the held one keeps its conclusion with a summary pointing at its successor.
+The aggregate follows the same way. The newest check of a name is the one GitHub
+shows and the one every later report finds.
 
 The commit a report lands on is checked through the App first. A push reports on the
 token's signed commit once the branch is confirmed to contain it. A pull request
@@ -44,7 +47,6 @@ from webbpulse.integrations.github import (
     GitHubAppClient,
     GitHubError,
     GitHubNotConfigured,
-    GitHubUnprocessable,
 )
 
 from ...common.composition.settings import Settings, get_settings
@@ -275,18 +277,27 @@ def find_check_run(reader: GitHubReader, sha: str, name: str, external_id: str |
     return max(found) if found else None
 
 
-def reopen_check_run(reader: GitHubReader, check_run_id: int, state: CheckState, fields: Mapping[str, Any]) -> bool:
-    """Patch a completed check run back to showing progress. Returns whether it took.
+SUPERSEDED: Final = CheckRunOutput(
+    title="Continued in a newer check",
+    summary=(
+        "Progress moved on after this check completed, and GitHub does not reopen a completed check, "
+        "so it continues on a newer check run of the same name."
+    ),
+)
+"""What a completed check says once a newer one of its name takes over."""
 
-    GitHub's update endpoint takes any status, and a status without a conclusion is
-    what clears one, but its documentation does not promise a completed run
-    reopens, so the answer is read back rather than assumed.
+
+def retire_check_run(reader: GitHubReader, check_run_id: int) -> None:
+    """Point a completed check run at its successor, leaving its conclusion alone.
+
+    Best effort: the successor is what matters, so a refusal here is dropped.
     """
     try:
-        updated = reader.client.update_check_run(reader.repository, check_run_id, status=state.status, **fields)
-    except GitHubUnprocessable:
-        return False
-    return updated.status == state.status and updated.conclusion is None
+        reader.client.update_check_run(
+            reader.repository, check_run_id, output=SUPERSEDED, installation_id=reader.installation
+        )
+    except GitHubError:
+        return
 
 
 def upsert_check_run(
@@ -302,8 +313,9 @@ def upsert_check_run(
     """Create the named check run on `sha`, or update the one already there.
 
     A completed check that has to show progress again, a held run that was
-    confirmed, is reopened in place. Only when GitHub will not reopen it is a new
-    one of the same name created, and the newest of a name is always the one found.
+    confirmed, is never patched back open: GitHub keeps a completed check
+    completed. A new one of the same name is created instead and the old one is
+    retired, and the newest of a name is always the one found.
     """
     existing = find_check_run(reader, sha, name, external_id)
     fields: dict[str, Any] = {
@@ -314,14 +326,13 @@ def upsert_check_run(
         "installation_id": reader.installation,
     }
     if existing is not None and existing[1] == "completed" and state.status != "completed":
-        if reopen_check_run(reader, existing[0], state, fields):
-            return
         _log.info(
-            "GitHub did not reopen a completed check run, so a new one follows it.",
-            extra={"event": "runs.report.check_replaced", "check_run_id": existing[0], "name": name},
+            "A completed check run was followed by a new one of the same name.",
+            extra={"event": "runs.report.check_replaced", "check_run_id": existing[0], "check_name": name},
         )
-        existing = None
-    if existing is None:
+        reader.client.create_check_run(reader.repository, name=name, head_sha=sha, status=state.status, **fields)
+        retire_check_run(reader, existing[0])
+    elif existing is None:
         reader.client.create_check_run(reader.repository, name=name, head_sha=sha, status=state.status, **fields)
     else:
         reader.client.update_check_run(reader.repository, existing[0], status=state.status, **fields)
@@ -463,6 +474,35 @@ def record_message(reader: GitHubReader, run: Mapping[str, Any], sha: str, *, se
         service.record_commit_message(str(run["run_id"]), message, settings=settings)
 
 
+def record_pull_request(reader: GitHubReader, run: Mapping[str, Any], sha: str, *, settings: Settings) -> None:
+    """Find the pull request a push run's commit was merged from and keep it on the run, once.
+
+    The merged pull request whose merge commit is the pushed commit wins, then any
+    merged one, then the first listed. Best effort: a commit GitHub will not answer
+    for, or one no pull request produced, leaves the run without a link.
+    """
+    if str(run.get("source")) != SOURCE_PUSH or (run.get("vcs") or {}).get("pull_request"):
+        return
+    try:
+        listed = reader.get(f"/commits/{sha}/pulls")
+    except GitHubError:
+        return
+    pulls = (
+        [item for item in listed if isinstance(item, Mapping) and item.get("number")]
+        if isinstance(listed, list)
+        else []
+    )
+    if not pulls:
+        return
+    chosen = next(
+        (item for item in pulls if item.get("merge_commit_sha") == sha and item.get("merged_at")),
+        next((item for item in pulls if item.get("merged_at")), pulls[0]),
+    )
+    number = int(chosen["number"])
+    url = str(chosen.get("html_url") or f"https://github.com/{reader.repository}/pull/{number}")
+    service.record_pull_request(str(run["run_id"]), number, url, settings=settings)
+
+
 def publish(reader: GitHubReader, run: Mapping[str, Any], *, settings: Settings) -> str:
     """Report one run: its own check, the commit's aggregate and the pull request comment.
 
@@ -470,6 +510,7 @@ def publish(reader: GitHubReader, run: Mapping[str, Any], *, settings: Settings)
     """
     sha = verified_commit(reader, run)
     record_message(reader, run, sha, settings=settings)
+    record_pull_request(reader, run, sha, settings=settings)
     workspace = workspace_reads.get_workspace(str(run["workspace_id"]), settings=settings)
     workspace_name = str(workspace.get("name", run["workspace_id"]))
     name = f"{CHECK_NAME}/{workspace_name}"
@@ -563,7 +604,8 @@ __all__ = [
     "http_client",
     "publish",
     "record_message",
-    "reopen_check_run",
+    "record_pull_request",
+    "retire_check_run",
     "report_run",
     "run_url",
     "sibling_runs",

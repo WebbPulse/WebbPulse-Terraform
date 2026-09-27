@@ -1933,6 +1933,25 @@
         "title": "RunPlan",
         "type": "object"
       },
+      "RunPullRequest": {
+        "description": "The pull request a push run's commit was merged from.",
+        "properties": {
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "url"
+        ],
+        "title": "RunPullRequest",
+        "type": "object"
+      },
       "RunRole": {
         "description": "The per workspace role the engine runs as, with the phase session policy.\n\nThe external id is the workspace id, so a role trusted for one workspace\ncannot be assumed by a run against another.",
         "properties": {
@@ -2210,6 +2229,16 @@
               }
             ],
             "title": "Pr Number"
+          },
+          "pull_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunPullRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "ref": {
             "title": "Ref",

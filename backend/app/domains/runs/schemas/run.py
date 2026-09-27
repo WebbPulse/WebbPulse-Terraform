@@ -35,6 +35,13 @@ RunSource = Literal["api", "vcs_push", "vcs_pr"]
 """Where a run came from: the API, a push to a tracked branch, or a pull request."""
 
 
+class RunPullRequest(BaseModel):
+    """The pull request a push run's commit was merged from."""
+
+    number: int
+    url: str
+
+
 class RunVcs(BaseModel):
     """The commit a VCS run was started from.
 
@@ -56,6 +63,9 @@ class RunVcs(BaseModel):
     commit_message: Optional[str] = None
     """The reported commit's message, read through the GitHub App when the run is
     first reported. `None` until then, and when no App is configured."""
+    pull_request: Optional[RunPullRequest] = None
+    """For a push run, the pull request its commit came from, found through the
+    GitHub App when the run is first reported. `None` for a direct push."""
 
 
 class RunActor(BaseModel):

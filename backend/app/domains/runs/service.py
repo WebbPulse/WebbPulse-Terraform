@@ -1470,6 +1470,26 @@ def record_commit_message(run_id: str, message: str, *, settings: Settings | Non
         return
 
 
+def record_pull_request(run_id: str, number: int, url: str, *, settings: Settings | None = None) -> None:
+    """Store the pull request a push run's commit came from on its `vcs` block.
+
+    A push from merging a pull request links back to it on the run pages, the way
+    HCP Terraform does. Reporting finds it through the App; the status is untouched,
+    so the stream record this write makes is dropped by the reports consumer.
+    """
+    resolved = settings or get_settings()
+    try:
+        _runs(resolved).update(
+            {"run_id": run_id},
+            update_expression="SET #vcs.#pull = :pull",
+            expression_values={":pull": {"number": int(number), "url": url}},
+            expression_names={"#vcs": "vcs", "#pull": "pull_request"},
+            condition=Attr("vcs").exists(),
+        )
+    except ConditionFailed:
+        return
+
+
 def render_run(item: dict[str, Any]) -> dict[str, Any]:
     """Strip the stored-only fields a run row carries.
 
@@ -1511,6 +1531,7 @@ __all__ = [
     "confirm_run",
     "decision",
     "record_commit_message",
+    "record_pull_request",
     "create_run",
     "discard_run",
     "fail_phase_task",

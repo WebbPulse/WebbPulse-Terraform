@@ -17,12 +17,19 @@ export function runPath(run: Pick<Run, 'run_id' | 'workspace_id'>): string {
   return `/workspaces/${run.workspace_id}/runs/${run.run_id}`;
 }
 
-/** The run's title: its message, its commit's first line, or its id. */
+/**
+ * The run's title. A VCS run is titled by its commit's first line, as HCP
+ * Terraform's run list does; any other run by its message, or its id.
+ */
 export function runTitle(run: Run): string {
+  const headline = commitHeadline(run);
+  if (headline !== null) {
+    return headline;
+  }
   if (run.message !== undefined && run.message !== '') {
     return run.message;
   }
-  return commitHeadline(run) ?? `Run ${shortRunId(run.run_id)}`;
+  return `Run ${shortRunId(run.run_id)}`;
 }
 
 /** The first line of the commit message a VCS run was started from, if known. */
@@ -42,6 +49,7 @@ export interface RunSource {
   sha: string;
   shortSha: string;
   commitUrl: string;
+  /** The pull request a pull request run plans, or the one a push was merged from. */
   prNumber: number | null;
   prUrl: string | null;
 }
@@ -54,6 +62,7 @@ export function runSource(run: Pick<Run, 'vcs'>): RunSource | null {
   }
   const repoUrl = `https://github.com/${vcs.repo}`;
   const prNumber = vcs.pr_number ?? null;
+  const merged = vcs.pull_request ?? null;
   const sha =
     prNumber !== null && vcs.head_sha !== undefined && vcs.head_sha !== null
       ? vcs.head_sha
@@ -67,8 +76,11 @@ export function runSource(run: Pick<Run, 'vcs'>): RunSource | null {
     sha,
     shortSha: sha.slice(0, 7),
     commitUrl: `${repoUrl}/commit/${sha}`,
-    prNumber,
-    prUrl: prNumber === null ? null : `${repoUrl}/pull/${String(prNumber)}`,
+    prNumber: prNumber ?? merged?.number ?? null,
+    prUrl:
+      prNumber !== null
+        ? `${repoUrl}/pull/${String(prNumber)}`
+        : (merged?.url ?? null),
   };
 }
 

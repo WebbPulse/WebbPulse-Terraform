@@ -568,9 +568,37 @@ describe('RunDetail', () => {
     expect(
       within(source).getByRole('link', { name: 'Commit 1234567 on GitHub' })
     ).toBeInTheDocument();
-    expect(screen.getByTestId('run-commit-message')).toHaveTextContent(
-      'Add the logs bucket'
+    expect(
+      screen.getByRole('heading', { name: 'Add the logs bucket' })
+    ).toBeInTheDocument();
+  });
+
+  it('links the pull request a push run was merged from', async () => {
+    apiMock.getRun.mockResolvedValue(
+      aVcsRun(
+        'applied',
+        {
+          pull_request: {
+            number: 12,
+            url: 'https://github.com/WebbPulse/infra/pull/12',
+          },
+        },
+        { message: 'Push of abcdef1 to staging' }
+      )
     );
+
+    renderRun();
+
+    const source = await screen.findByTestId('run-source');
+    expect(source).toHaveTextContent(
+      'Triggered via GitHub from a push to staging'
+    );
+    expect(
+      within(source).getByRole('link', { name: 'PR #12' })
+    ).toHaveAttribute('href', 'https://github.com/WebbPulse/infra/pull/12');
+    expect(
+      screen.getByRole('heading', { name: 'Add the logs bucket' })
+    ).toBeInTheDocument();
   });
 
   it('shows no source line for a run started by hand', async () => {

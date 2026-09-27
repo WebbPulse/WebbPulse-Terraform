@@ -29,7 +29,6 @@ import {
   Spinner,
   StateBadge,
   Tabs,
-  commitHeadline,
   elapsedBetween,
   formatDuration,
   isDestroyRun,
@@ -166,7 +165,6 @@ function RunHeader({
   inWorkspace: boolean;
 }): React.ReactElement {
   const title = runTitle(run);
-  const headline = commitHeadline(run);
   return (
     <div className="space-y-2 border-b border-line pb-4">
       {inWorkspace ? (
@@ -184,7 +182,12 @@ function RunHeader({
         </nav>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-base font-semibold text-text-strong">{title}</h2>
+        <h2
+          className="text-base font-semibold text-text-strong"
+          title={run.vcs?.commit_message ?? undefined}
+        >
+          {title}
+        </h2>
         <StateBadge state={run.status} />
         {isDestroyRun(run) ? <DestroyBadge /> : null}
         {run.plan_only ? (
@@ -193,15 +196,6 @@ function RunHeader({
           </span>
         ) : null}
       </div>
-      {headline === null || headline === title ? null : (
-        <p
-          data-testid="run-commit-message"
-          className="truncate text-sm text-text-muted"
-          title={run.vcs?.commit_message ?? undefined}
-        >
-          {headline}
-        </p>
-      )}
       <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-text-faint">
         <span className="font-mono" title={run.run_id}>
           #{shortRunId(run.run_id)}
