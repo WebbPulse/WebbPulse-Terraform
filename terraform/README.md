@@ -37,7 +37,7 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `registry.tf` | The module registry: the repository allowlist, the EventBridge rule on Object Created under `registry/incoming/`, and the queue it feeds the `registry` function as `module_ingested` messages |
 | `workspace_cleanup.tf` | The queue a workspace delete sends its run artifacts, config tarballs and state history purge to, consumed by the `runs` function as `workspace_cleanup` messages |
 | `task_failures.tf` | The EventBridge rule on runner tasks that failed to start, and the queue it feeds so a run fails without waiting out its phase heartbeat |
-| `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, the certificates, the staging child zone with its NS delegation, and the alias records |
+| `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, whose `/.well-known/terraform.json` (emitted by the Vite build, `modules.v1` on the API host) is a public path past the staging gate, the certificates, the staging child zone with its NS delegation, and the alias records |
 | `staging_access_gate.tf` | Staging only, the email gate in front of the site and the API |
 | `iam_github_actions.tf` | The deploy and CI OIDC roles |
 | `monitoring.tf`, `management.tf` | The three aggregate alarms in production, budgets |
