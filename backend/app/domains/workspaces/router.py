@@ -306,16 +306,20 @@ def check_run_role(workspace_id: str = WorkspaceId) -> dict[str, Any]:
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
 def start_run_role_quick_setup(payload: RunRoleQuickSetupCreate, workspace_id: str = WorkspaceId) -> dict[str, Any]:
-    """Save the run role ARN for an account and return an AWS CloudFormation quick create link.
+    """Return an AWS CloudFormation quick create link for the workspace's run role.
 
-    The role name is derived from the workspace, so the account id is all the ARN
-    needs: it is saved here and nothing has to be copied back from AWS. The link
-    opens a stack whose template trusts only the runner task roles with this
-    workspace id as the external id. It embeds a template URL that expires after
-    `expires_in` seconds, so ask for a fresh link rather than storing one. Calling
-    again with the same account keeps the saved ARN and its check outcome.
+    Where `reports_back` is true the link carries a one-time connect token, valid
+    until `connect_expires_at`, and the stack reports its account and role back when
+    it is created: the role is saved or staged and a verification run starts, with
+    nothing to type or copy. Each call replaces the previous token. An `account_id`
+    is then optional; given, the derived ARN is saved or staged at once as well.
 
-    A deployment with no runner task roles or no artifacts bucket answers 503.
+    The template trusts only the runner task roles with this workspace id as the
+    external id. The link embeds a template URL that expires after `expires_in`
+    seconds, so ask for a fresh link rather than storing one.
+
+    A deployment with no runner task roles or no artifacts bucket answers 503, as
+    does one with no connect topic when no account id is given.
     """
     try:
         return quick_setup.start_quick_setup(workspace_id, payload.account_id, payload.permissions)

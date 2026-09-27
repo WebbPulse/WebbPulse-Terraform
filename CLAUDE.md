@@ -189,11 +189,21 @@ POST gives the same answer and stamps `run_role_checked_at` and
 `run_role_account_id`. The API holds no `sts:AssumeRole` on run roles. A run
 created against a workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`.
 
-`POST /workspaces/{id}/run-role/quick-setup` takes an account id, saves the
-derived ARN and returns an AWS CloudFormation quick create link. The template
+`POST /workspaces/{id}/run-role/quick-setup` takes an optional account id, saves the
+derived ARN when one is given and returns an AWS CloudFormation quick create link. The template
 (`app/domains/workspaces/quick_setup.py`) trusts only the runner task roles with
 the workspace id as the external id, and is stored content addressed under
 `templates/run-role/` in the artifacts bucket, served by presigned GET.
+
+Quick setup needs no account id when `AWS_CONNECT_TOPIC_ARN` is set. The link
+carries a one-time connect token (stored only as its SHA-256, one hour, single
+use) and the stack's `Connection` custom resource publishes to that SNS topic.
+The runs function consumes it (`consumers/aws_connect.py`): the account comes
+from the stack ARN, the role must be the workspace's derived one, a valid create
+stages it with the same rules as an edit and starts a plan only verification
+run, and a bad or expired token answers FAILED so the stack rolls back. A delete
+always answers SUCCESS and forgets the role only if that stack still provides
+it. The workspace's `aws_connection` records what the UI shows.
 
 ### Runs
 

@@ -232,6 +232,33 @@ class WorkspaceUpdate(BaseModel):
         return data
 
 
+AwsConnectionStatus = Literal["waiting", "connected", "expired", "disconnected"]
+"""Where a Quick setup stack is: link handed out, stack reported back, link unused
+past its expiry, or stack deleted."""
+
+
+class AwsConnection(BaseModel):
+    """What the last Quick setup link and its stack reported, for the UI to follow live."""
+
+    status: AwsConnectionStatus
+    requested_at: Optional[datetime] = None
+    """When the link was handed out."""
+    expires_at: Optional[datetime] = None
+    """When the link's connect token stops being accepted."""
+    account_id: Optional[str] = None
+    """The account the stack was created in, from the stack's own ARN."""
+    role_arn: Optional[str] = None
+    """The role the stack created."""
+    pending: bool = False
+    """True when the role was staged beside a working one, waiting on its verification run."""
+    stack_id: Optional[str] = None
+    reported_at: Optional[datetime] = None
+    """When the stack reported back."""
+    run_id: Optional[str] = None
+    """The verification run started when the stack reported back."""
+    disconnected_at: Optional[datetime] = None
+
+
 class Workspace(WorkspaceBase):
     """A stored workspace, with everything the run role setup needs."""
 
@@ -255,6 +282,8 @@ class Workspace(WorkspaceBase):
     changes to a repository that is not resolved."""
     vcs_installation_id: Optional[str] = None
     """The GitHub App installation that covered the repository when it was connected."""
+    aws_connection: Optional[AwsConnection] = None
+    """The last Quick setup link's progress, or `None` when none was handed out."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -313,26 +342,28 @@ PowerUserAccess, ReadOnlyAccess, or none so a narrower policy can be attached by
 class RunRoleQuickSetupCreate(BaseModel):
     """Start AWS quick setup for one workspace."""
 
-    account_id: str = Field(pattern=r"^\d{12}$")
-    """The twelve digit AWS account the role is created in."""
+    account_id: Optional[str] = Field(default=None, pattern=r"^\d{12}$")
+    """The twelve digit AWS account the role is created in. Optional where the stack
+    reports back, since the stack's own ARN names the account."""
     permissions: RunRolePermissions = "administrator"
 
     @model_validator(mode="before")
     @classmethod
     def _strip_separators(cls, data: Any) -> Any:
-        """Accept the account id as the AWS console prints it, with dashes or spaces."""
+        """Accept the account id as the AWS console prints it, with dashes or spaces, and blank as none."""
         if isinstance(data, dict) and isinstance(data.get("account_id"), str):
-            account_id: str = data["account_id"]
-            return {**data, "account_id": account_id.replace("-", "").replace(" ", "")}
+            account_id: str = data["account_id"].replace("-", "").replace(" ", "")
+            return {**data, "account_id": account_id or None}
         return data
 
 
 class RunRoleQuickSetup(BaseModel):
-    """The quick create link for a workspace's run role, whose ARN is now saved or staged."""
+    """The quick create link for a workspace's run role."""
 
-    account_id: str
-    role_arn: str
-    """The ARN the stack's role will carry."""
+    account_id: Optional[str] = None
+    """The account given, or `None` when the stack reports its own."""
+    role_arn: Optional[str] = None
+    """The ARN saved or staged for the given account, or `None` until the stack reports back."""
     pending: bool = False
     """True when the workspace already runs as another role, so this one is staged as
     `pending_run_role_arn` and switched to only once a verification run assumes it."""
@@ -346,6 +377,11 @@ class RunRoleQuickSetup(BaseModel):
     """The AWS CloudFormation quick create link. It embeds a presigned template URL."""
     expires_in: int
     """Seconds the embedded template URL stays readable, so the link must be used soon."""
+    reports_back: bool = False
+    """True when the stack reports its account and role back, so the workspace connects
+    itself once the stack is created."""
+    connect_expires_at: Optional[datetime] = None
+    """When the link's one-time connect token stops being accepted."""
 
 
 class VariableWrite(BaseModel):

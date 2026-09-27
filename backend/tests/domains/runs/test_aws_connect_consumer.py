@@ -1,0 +1,544 @@
+"""The AWS connect consumer: a Quick setup stack reporting its account and role back.
+
+Driven through the runs function's event route where the dispatch matters, and
+through `handle_record` otherwise. CloudFormation's answer is a PUT to a presigned
+URL, so the HTTP client is replaced with a mock transport that records each answer.
+"""
+
+import json
+import os
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from urllib.parse import parse_qsl, urlsplit
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+from webbpulse.events import BATCH_FAILURES_KEY, FAILURE_ITEM_KEY, events_path
+
+from app.common.composition import settings as settings_module
+from app.common.composition.wiring import build_domain_app
+from app.common.db import repositories
+from app.common.workspaces import aws_connect
+from app.domains.runs.consumers import aws_connect as consumer
+from app.domains.workspaces import quick_setup
+from tests.conftest import RUN_ROLE_NAME_PREFIX, WORKSPACE_PAYLOAD
+
+TOPIC_ARN = "arn:aws:sns:us-west-2:870550636948:webbpulse-terraform-test-aws-connect"
+ACCOUNT = "123456789012"
+OTHER_ACCOUNT = "210987654321"
+RESPONSE_URL = (
+    "https://cloudformation-custom-resource-response-uswest2.s3-us-west-2.amazonaws.com/answer?X-Amz-Signature=x"
+)
+
+
+@pytest.fixture(autouse=True)
+def connect_topic():
+    """A deployment with a connect topic, so templates and quick setup report back."""
+    quick_setup.reset_template_cache()
+    os.environ["AWS_CONNECT_TOPIC_ARN"] = TOPIC_ARN
+    settings_module.reset_settings_cache()
+    yield TOPIC_ARN
+    os.environ.pop("AWS_CONNECT_TOPIC_ARN", None)
+    settings_module.reset_settings_cache()
+    quick_setup.reset_template_cache()
+
+
+@pytest.fixture
+def answers(monkeypatch):
+    """Every answer PUT, in order, with the status the mock bucket replies with settable."""
+    sent: list[dict[str, Any]] = []
+    reply = {"status": 200}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        """Record the answer and reply as the bucket would."""
+        sent.append({"url": str(request.url), "method": request.method, "body": json.loads(request.content)})
+        return httpx.Response(reply["status"])
+
+    monkeypatch.setattr(consumer, "http_client", lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    return {"sent": sent, "reply": reply}
+
+
+def _workspace(auth_client, *, with_role: bool = False, name: str = "example") -> dict[str, Any]:
+    """A workspace, without a run role unless asked."""
+    payload = {**WORKSPACE_PAYLOAD, "name": name}
+    if not with_role:
+        payload.pop("run_role_arn")
+    response = auth_client.post("/api/v1/workspaces", json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _token(auth_client, workspace_id: str) -> str:
+    """Start Quick setup with no account and return the token its link carries."""
+    response = auth_client.post(f"/api/v1/workspaces/{workspace_id}/run-role/quick-setup", json={})
+    assert response.status_code == 200, response.text
+    fragment = urlsplit(response.json()["console_url"]).fragment
+    return dict(parse_qsl(fragment.partition("?")[2]))["param_ConnectToken"]
+
+
+def _stack(account: str = ACCOUNT) -> str:
+    """A stack ARN in `account`."""
+    return f"arn:aws:cloudformation:us-west-2:{account}:stack/webbpulse-run-role/1b2c3d4e-0000-0000-0000-000000000000"
+
+
+def _role(workspace_id: str, account: str = ACCOUNT) -> str:
+    """The run role ARN the workspace's stack creates in `account`."""
+    return f"arn:aws:iam::{account}:role/{RUN_ROLE_NAME_PREFIX}{workspace_id.removeprefix('ws-')}"
+
+
+def _request(
+    kind: str,
+    workspace_id: str,
+    token: str,
+    *,
+    account: str = ACCOUNT,
+    role_arn: str | None = None,
+    request_id: str = "req-1",
+    physical_id: str | None = None,
+    old: dict[str, str] | None = None,
+    response_url: str = RESPONSE_URL,
+) -> dict[str, Any]:
+    """One CloudFormation custom resource request as the topic delivers it."""
+    body: dict[str, Any] = {
+        "RequestType": kind,
+        "ServiceToken": TOPIC_ARN,
+        "ResponseURL": response_url,
+        "StackId": _stack(account),
+        "RequestId": request_id,
+        "LogicalResourceId": "Connection",
+        "ResourceType": quick_setup.CONNECTION_RESOURCE_TYPE,
+        "ResourceProperties": {
+            "ServiceToken": TOPIC_ARN,
+            "ConnectToken": token,
+            "WorkspaceId": workspace_id,
+            "RoleArn": role_arn or _role(workspace_id, account),
+        },
+    }
+    if physical_id is not None:
+        body["PhysicalResourceId"] = physical_id
+    if old is not None:
+        body["OldResourceProperties"] = old
+    return body
+
+
+def _record(body: dict[str, Any], message_id: str = "msg-1") -> dict[str, Any]:
+    """An SQS record carrying `body` raw, as the subscription delivers it."""
+    return {"messageId": message_id, "body": json.dumps(body)}
+
+
+def _handle(body: dict[str, Any]) -> None:
+    """Hand one request to the consumer."""
+    consumer.handle_record(_record(body), settings=settings_module.get_settings())
+
+
+def _row(workspace_id: str) -> dict[str, Any]:
+    """The stored workspace row, private attributes included."""
+    item = repositories.workspaces(settings_module.get_settings()).get({"workspace_id": workspace_id})
+    assert item is not None
+    return dict(item)
+
+
+def test_issue_stores_only_the_hash(auth_client):
+    """The link carries the token; the row keeps its hash, and the API returns neither."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+
+    assert token.startswith(aws_connect.TOKEN_PREFIX)
+    row = _row(workspace_id)
+    assert row[aws_connect.TOKEN_HASH_ATTRIBUTE] == aws_connect.hash_token(token)
+    assert token not in json.dumps(row, default=str)
+
+    rendered = auth_client.get(f"/api/v1/workspaces/{workspace_id}").json()
+    assert aws_connect.TOKEN_HASH_ATTRIBUTE not in rendered
+    assert aws_connect.TOKEN_EXPIRES_ATTRIBUTE not in rendered
+    assert rendered["aws_connection"]["status"] == "waiting"
+
+
+def test_quick_setup_without_an_account_reports_back(auth_client):
+    """No account id is needed: the link carries a token and nothing is staged yet."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    body = auth_client.post(f"/api/v1/workspaces/{workspace_id}/run-role/quick-setup", json={}).json()
+
+    assert body["reports_back"] is True
+    assert body["account_id"] is None
+    assert body["role_arn"] is None
+    assert body["connect_expires_at"]
+    assert auth_client.get(f"/api/v1/workspaces/{workspace_id}").json()["run_role_arn"] in (None, "")
+
+
+def test_template_carries_the_connection_resource(settings):
+    """With a topic configured the template reports back to it through a custom resource."""
+    template = quick_setup.template_body(settings_module.get_settings())
+    resource = template["Resources"]["Connection"]
+    assert resource["Type"] == quick_setup.CONNECTION_RESOURCE_TYPE
+    assert resource["Properties"]["ServiceToken"] == TOPIC_ARN
+    assert resource["Properties"]["RoleArn"] == {"Fn::GetAtt": ["RunRole", "Arn"]}
+    assert template["Parameters"]["ConnectToken"]["NoEcho"] is True
+
+
+def test_template_without_a_topic_has_no_connection(monkeypatch):
+    """Unset, the template is the plain one and asks for no token."""
+    monkeypatch.delenv("AWS_CONNECT_TOPIC_ARN")
+    settings_module.reset_settings_cache()
+    template = quick_setup.template_body(settings_module.get_settings())
+    assert "Connection" not in template["Resources"]
+    assert "ConnectToken" not in template["Parameters"]
+
+
+def test_create_connects_and_starts_the_verification_run(auth_client, answers, state_machine):
+    """A valid create takes the role at once, consumes the token and verifies with a plan only run."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+
+    _handle(_request("Create", workspace_id, token))
+
+    (answer,) = answers["sent"]
+    assert answer["method"] == "PUT"
+    assert answer["url"] == RESPONSE_URL
+    assert answer["body"]["Status"] == "SUCCESS"
+    assert answer["body"]["PhysicalResourceId"].startswith(aws_connect.PHYSICAL_ID_PREFIX)
+    assert answer["body"]["Data"] == {"WorkspaceId": workspace_id, "AccountId": ACCOUNT}
+
+    row = _row(workspace_id)
+    assert row["run_role_arn"] == _role(workspace_id)
+    assert aws_connect.TOKEN_HASH_ATTRIBUTE not in row
+    connection = row["aws_connection"]
+    assert connection["status"] == "connected"
+    assert connection["account_id"] == ACCOUNT
+    assert connection["pending"] is False
+
+    run = auth_client.get(f"/api/v1/runs/{connection['run_id']}").json()
+    assert run["plan_only"] is True
+    assert run["source"] == "aws_connect"
+    assert ACCOUNT in run["message"]
+
+
+def test_create_beside_a_working_role_stages_it(auth_client, answers, state_machine):
+    """A workspace already running as another role keeps it until the check run proves the new one."""
+    workspace_id = _workspace(auth_client, with_role=True)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+
+    _handle(_request("Create", workspace_id, token))
+
+    assert answers["sent"][0]["body"]["Status"] == "SUCCESS"
+    row = _row(workspace_id)
+    assert row["run_role_arn"] == WORKSPACE_PAYLOAD["run_role_arn"]
+    assert row["pending_run_role_arn"] == _role(workspace_id)
+    assert row["aws_connection"]["pending"] is True
+    run = auth_client.get(f"/api/v1/runs/{row['aws_connection']['run_id']}").json()
+    assert run["run_role_check"] is True
+
+
+def test_create_with_no_config_uses_a_starter(auth_client, answers, state_machine):
+    """A workspace with no upload still verifies, from a starter config the consumer writes."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    _handle(_request("Create", workspace_id, token))
+
+    run_id = _row(workspace_id)["aws_connection"]["run_id"]
+    run = auth_client.get(f"/api/v1/runs/{run_id}").json()
+    config = repositories.config_versions(settings_module.get_settings()).get(
+        {"config_version_id": run["config_version_id"]}
+    )
+    assert config is not None
+    assert config["source"] == "aws_connect"
+
+
+def test_create_uses_the_latest_upload(auth_client, answers, state_machine, uploaded_config_version, workspace):
+    """A workspace with an upload verifies against it rather than a starter."""
+    workspace_id = workspace["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    _handle(_request("Create", workspace_id, token))
+
+    run_id = _row(workspace_id)["aws_connection"]["run_id"]
+    run = auth_client.get(f"/api/v1/runs/{run_id}").json()
+    assert run["config_version_id"] == uploaded_config_version["config_version_id"]
+
+
+def test_a_retried_create_answers_again_without_reconnecting(auth_client, answers, state_machine):
+    """The same request delivered twice answers SUCCESS with the same id and starts one run."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    request = _request("Create", workspace_id, token)
+
+    _handle(request)
+    run_id = _row(workspace_id)["aws_connection"]["run_id"]
+    _handle(request)
+
+    first, second = answers["sent"]
+    assert second["body"]["Status"] == "SUCCESS"
+    assert second["body"]["PhysicalResourceId"] == first["body"]["PhysicalResourceId"]
+    assert _row(workspace_id)["aws_connection"]["run_id"] == run_id
+
+
+def test_a_used_token_cannot_connect_another_stack(auth_client, answers, state_machine):
+    """The token is single use: a second stack carrying it is refused and rolls back."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    _handle(_request("Create", workspace_id, token))
+
+    _handle(_request("Create", workspace_id, token, account=OTHER_ACCOUNT, request_id="req-2"))
+
+    refused = answers["sent"][1]["body"]
+    assert refused["Status"] == "FAILED"
+    assert not refused["PhysicalResourceId"].startswith(aws_connect.PHYSICAL_ID_PREFIX)
+    assert _row(workspace_id)["aws_connection"]["account_id"] == ACCOUNT
+
+
+def test_an_unknown_token_is_refused(auth_client, answers):
+    """A token the workspace never issued answers FAILED and changes nothing."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    _token(auth_client, workspace_id)
+    forged = f"{aws_connect.TOKEN_PREFIX}{'A' * 43}"
+
+    _handle(_request("Create", workspace_id, forged))
+
+    assert answers["sent"][0]["body"]["Status"] == "FAILED"
+    row = _row(workspace_id)
+    assert row.get("run_role_arn") in (None, "")
+    assert row["aws_connection"]["status"] == "waiting"
+
+
+def test_an_expired_token_is_refused(auth_client, answers):
+    """A token past its expiry answers FAILED and the connection reads expired."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    past = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    repositories.workspaces(settings_module.get_settings()).update(
+        {"workspace_id": workspace_id},
+        update_expression="SET #expires = :past",
+        expression_names={"#expires": aws_connect.TOKEN_EXPIRES_ATTRIBUTE},
+        expression_values={":past": past},
+    )
+
+    _handle(_request("Create", workspace_id, token))
+
+    answer = answers["sent"][0]["body"]
+    assert answer["Status"] == "FAILED"
+    assert "expired" in answer["Reason"]
+    row = _row(workspace_id)
+    assert row["aws_connection"]["status"] == "expired"
+    assert aws_connect.TOKEN_HASH_ATTRIBUTE not in row
+    assert row.get("run_role_arn") in (None, "")
+
+
+def test_a_reissued_token_replaces_the_old_one(auth_client, answers):
+    """Starting Quick setup again invalidates the earlier link."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    first = _token(auth_client, workspace_id)
+    _token(auth_client, workspace_id)
+
+    _handle(_request("Create", workspace_id, first))
+    assert answers["sent"][0]["body"]["Status"] == "FAILED"
+
+
+@pytest.mark.parametrize(
+    "role_arn",
+    [
+        "arn:aws:iam::123456789012:role/somebody-else",
+        "arn:aws:iam::210987654321:role/{name}",
+    ],
+)
+def test_a_role_that_is_not_the_workspaces_is_refused(auth_client, answers, role_arn):
+    """The role must be this workspace's, in the stack's own account."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    name = f"{RUN_ROLE_NAME_PREFIX}{workspace_id.removeprefix('ws-')}"
+
+    _handle(_request("Create", workspace_id, token, role_arn=role_arn.format(name=name)))
+
+    assert answers["sent"][0]["body"]["Status"] == "FAILED"
+    assert aws_connect.TOKEN_HASH_ATTRIBUTE in _row(workspace_id)
+
+
+def test_an_unknown_workspace_is_refused(answers):
+    """A workspace id nobody holds answers FAILED."""
+    _handle(_request("Create", "ws-01J0000000000000000000000Z", f"wct_{'A' * 43}"))
+    assert answers["sent"][0]["body"]["Status"] == "FAILED"
+
+
+def _connected(auth_client, answers) -> tuple[str, str, str]:
+    """A workspace connected by one stack: its id, token and the physical id answered."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    _handle(_request("Create", workspace_id, token))
+    return workspace_id, token, answers["sent"][-1]["body"]["PhysicalResourceId"]
+
+
+def test_delete_disconnects_the_stack_that_connected(auth_client, answers, state_machine):
+    """Deleting the connecting stack forgets its role and reads disconnected."""
+    workspace_id, token, physical_id = _connected(auth_client, answers)
+
+    _handle(_request("Delete", workspace_id, token, physical_id=physical_id, request_id="req-del"))
+
+    assert answers["sent"][-1]["body"]["Status"] == "SUCCESS"
+    row = _row(workspace_id)
+    assert "run_role_arn" not in row
+    assert row["aws_connection"]["status"] == "disconnected"
+
+
+def test_delete_after_the_role_changed_keeps_the_new_role(auth_client, answers, state_machine):
+    """A person who moved the workspace to another role does not lose it when the old stack goes."""
+    workspace_id, token, physical_id = _connected(auth_client, answers)
+    replacement = WORKSPACE_PAYLOAD["run_role_arn"]
+    assert (
+        auth_client.patch(f"/api/v1/workspaces/{workspace_id}", json={"run_role_arn": replacement}).status_code == 200
+    )
+
+    _handle(_request("Delete", workspace_id, token, physical_id=physical_id, request_id="req-del"))
+
+    assert answers["sent"][-1]["body"]["Status"] == "SUCCESS"
+    assert _row(workspace_id)["run_role_arn"] == replacement
+
+
+def test_delete_of_an_unrelated_stack_changes_nothing(auth_client, answers, state_machine):
+    """A physical id this workspace never answered is a no-op SUCCESS."""
+    workspace_id, token, _ = _connected(auth_client, answers)
+
+    _handle(_request("Delete", workspace_id, token, physical_id="wpc-somebody-else", request_id="req-del"))
+
+    assert answers["sent"][-1]["body"]["Status"] == "SUCCESS"
+    assert _row(workspace_id)["aws_connection"]["status"] == "connected"
+
+
+def test_delete_of_a_refused_create_answers_success(auth_client, answers):
+    """The rollback of a refused create deletes a resource that never existed, which must not fail."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    _handle(_request("Delete", workspace_id, "", physical_id="failed-req-1"))
+    assert answers["sent"][0]["body"]["Status"] == "SUCCESS"
+
+
+def test_an_unchanged_update_keeps_the_connection(auth_client, answers, state_machine):
+    """A stack update that leaves the connection as recorded answers SUCCESS with the same id."""
+    workspace_id, token, physical_id = _connected(auth_client, answers)
+    properties = _request("Create", workspace_id, token)["ResourceProperties"]
+
+    _handle(
+        _request("Update", workspace_id, token, physical_id=physical_id, old=properties, request_id="req-up"),
+    )
+
+    answer = answers["sent"][-1]["body"]
+    assert answer["Status"] == "SUCCESS"
+    assert answer["PhysicalResourceId"] == physical_id
+
+
+def test_an_update_to_another_account_is_refused(auth_client, answers, state_machine):
+    """The same token cannot carry the connection to a role in another account."""
+    workspace_id, token, physical_id = _connected(auth_client, answers)
+    old = _request("Create", workspace_id, token)["ResourceProperties"]
+
+    _handle(
+        _request(
+            "Update",
+            workspace_id,
+            token,
+            role_arn=_role(workspace_id, OTHER_ACCOUNT),
+            physical_id=physical_id,
+            old=old,
+            request_id="req-up",
+        ),
+    )
+
+    assert answers["sent"][-1]["body"]["Status"] == "FAILED"
+    assert _row(workspace_id)["run_role_arn"] == _role(workspace_id)
+
+
+def test_an_update_to_another_workspace_is_refused(auth_client, answers, state_machine):
+    """A connected stack cannot be pointed at a different workspace."""
+    workspace_id, token, physical_id = _connected(auth_client, answers)
+    other_id = _workspace(auth_client, name="other")["workspace_id"]
+    other_token = _token(auth_client, other_id)
+    old = _request("Create", workspace_id, token)["ResourceProperties"]
+
+    _handle(
+        _request("Update", other_id, other_token, physical_id=physical_id, old=old, request_id="req-up"),
+    )
+
+    assert answers["sent"][-1]["body"]["Status"] == "FAILED"
+    assert _row(other_id)["aws_connection"]["status"] == "waiting"
+
+
+def test_an_update_with_a_fresh_token_reconnects(auth_client, answers, state_machine):
+    """A new link applied as an update to the same stack connects again under the same id."""
+    workspace_id, token, physical_id = _connected(auth_client, answers)
+    old = _request("Create", workspace_id, token)["ResourceProperties"]
+    auth_client.patch(f"/api/v1/workspaces/{workspace_id}", json={"run_role_arn": WORKSPACE_PAYLOAD["run_role_arn"]})
+    fresh = _token(auth_client, workspace_id)
+
+    _handle(_request("Update", workspace_id, fresh, physical_id=physical_id, old=old, request_id="req-up"))
+
+    answer = answers["sent"][-1]["body"]
+    assert answer["Status"] == "SUCCESS"
+    assert answer["PhysicalResourceId"] == physical_id
+    assert _row(workspace_id)["pending_run_role_arn"] == _role(workspace_id)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://cloudformation-custom-resource-response-uswest2.s3-us-west-2.amazonaws.com/x",
+        "https://attacker.example.com/cloudformation-custom-resource-response-uswest2.amazonaws.com",
+        "https://cloudformation-custom-resource-response-uswest2.s3.amazonaws.com.evil.example/x",
+        "https://user@cloudformation-custom-resource-response-uswest2.s3.amazonaws.com/x",
+        "https://cloudformation-custom-resource-response-uswest2.s3.amazonaws.com:8443/x",
+    ],
+)
+def test_a_response_url_outside_cloudformation_is_dropped(auth_client, answers, url):
+    """Nothing is sent anywhere but a CloudFormation response bucket, and nothing is connected."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+
+    _handle(_request("Create", workspace_id, token, response_url=url))
+
+    assert answers["sent"] == []
+    assert _row(workspace_id)["aws_connection"]["status"] == "waiting"
+
+
+def test_a_refused_answer_raises_for_a_retry(auth_client, answers):
+    """A bucket that refuses the PUT raises, so SQS redelivers the request."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    answers["reply"]["status"] = 403
+    with pytest.raises(consumer.ResponseFailed):
+        _handle(_request("Create", workspace_id, "wct_bad"))
+
+
+@pytest.fixture
+def events_client(settings):
+    """A client over the runs function, where the consumer route lives."""
+    with TestClient(build_domain_app("runs", settings=settings_module.get_settings())) as client:
+        yield client
+
+
+def test_the_event_route_dispatches_connect_requests(auth_client, answers, state_machine, events_client):
+    """A raw CloudFormation request on the shared route reaches this consumer."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+
+    response = events_client.post(events_path(), json={"Records": [_record(_request("Create", workspace_id, token))]})
+
+    assert response.status_code == 200
+    assert response.json()[BATCH_FAILURES_KEY] == []
+    assert answers["sent"][0]["body"]["Status"] == "SUCCESS"
+    assert _row(workspace_id)["aws_connection"]["status"] == "connected"
+
+
+def test_an_undelivered_answer_is_retried_through_the_route(auth_client, answers, events_client):
+    """A failed PUT names the record in the batch failures, so SQS keeps it."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    answers["reply"]["status"] = 500
+
+    response = events_client.post(
+        events_path(), json={"Records": [_record(_request("Create", workspace_id, "wct_bad"), "msg-retry")]}
+    )
+
+    assert {item[FAILURE_ITEM_KEY] for item in response.json()[BATCH_FAILURES_KEY]} == {"msg-retry"}
+
+
+def test_is_connect_request_recognises_only_the_shape():
+    """Other queue bodies, which carry a `kind`, are never mistaken for a stack request."""
+    body = _request("Create", "ws-x", "wct_x")
+    assert consumer.is_connect_request(_record(body))
+    assert not consumer.is_connect_request(_record({**body, "kind": "confirmation"}))
+    assert not consumer.is_connect_request({"messageId": "m", "body": "not json"})
+    assert not consumer.is_connect_request(_record({"RequestType": "Create"}))

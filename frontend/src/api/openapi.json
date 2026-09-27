@@ -295,6 +295,123 @@
         "title": "Artifacts",
         "type": "object"
       },
+      "AwsConnection": {
+        "description": "What the last Quick setup link and its stack reported, for the UI to follow live.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "disconnected_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disconnected At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "pending": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "reported_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported At"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Arn"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "stack_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stack Id"
+          },
+          "status": {
+            "enum": [
+              "waiting",
+              "connected",
+              "expired",
+              "disconnected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "AwsConnection",
+        "type": "object"
+      },
       "BackendConfig": {
         "description": "The S3 backend the runner initialises against.\n\n`kms_key_id` carries the key ARN. The name is the backend block's own\nargument name, so the runner writes it into the override verbatim.",
         "properties": {
@@ -1641,7 +1758,8 @@
             "enum": [
               "api",
               "vcs_push",
-              "vcs_pr"
+              "vcs_pr",
+              "aws_connect"
             ],
             "title": "Source",
             "type": "string"
@@ -1732,7 +1850,8 @@
             "enum": [
               "user",
               "agent",
-              "vcs"
+              "vcs",
+              "system"
             ],
             "title": "Kind",
             "type": "string"
@@ -2046,7 +2165,8 @@
             "enum": [
               "api",
               "vcs_push",
-              "vcs_pr"
+              "vcs_pr",
+              "aws_connect"
             ],
             "title": "Source",
             "type": "string"
@@ -2393,11 +2513,30 @@
         "type": "object"
       },
       "RunRoleQuickSetup": {
-        "description": "The quick create link for a workspace's run role, whose ARN is now saved or staged.",
+        "description": "The quick create link for a workspace's run role.",
         "properties": {
           "account_id": {
-            "title": "Account Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "connect_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connect Expires At"
           },
           "console_url": {
             "title": "Console Url",
@@ -2427,9 +2566,21 @@
             "title": "Region",
             "type": "string"
           },
+          "reports_back": {
+            "default": false,
+            "title": "Reports Back",
+            "type": "boolean"
+          },
           "role_arn": {
-            "title": "Role Arn",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Arn"
           },
           "role_name": {
             "title": "Role Name",
@@ -2441,8 +2592,6 @@
           }
         },
         "required": [
-          "account_id",
-          "role_arn",
           "role_name",
           "stack_name",
           "region",
@@ -2456,9 +2605,16 @@
         "description": "Start AWS quick setup for one workspace.",
         "properties": {
           "account_id": {
-            "pattern": "^\\d{12}$",
-            "title": "Account Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^\\d{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
           },
           "permissions": {
             "default": "administrator",
@@ -2472,9 +2628,6 @@
             "type": "string"
           }
         },
-        "required": [
-          "account_id"
-        ],
         "title": "RunRoleQuickSetupCreate",
         "type": "object"
       },
@@ -3044,6 +3197,16 @@
       "Workspace": {
         "description": "A stored workspace, with everything the run role setup needs.",
         "properties": {
+          "aws_connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AwsConnection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
@@ -6181,7 +6344,7 @@
     },
     "/api/v1/workspaces/{workspace_id}/run-role/quick-setup": {
       "post": {
-        "description": "Save the run role ARN for an account and return an AWS CloudFormation quick create link.\n\nThe role name is derived from the workspace, so the account id is all the ARN\nneeds: it is saved here and nothing has to be copied back from AWS. The link\nopens a stack whose template trusts only the runner task roles with this\nworkspace id as the external id. It embeds a template URL that expires after\n`expires_in` seconds, so ask for a fresh link rather than storing one. Calling\nagain with the same account keeps the saved ARN and its check outcome.\n\nA deployment with no runner task roles or no artifacts bucket answers 503.",
+        "description": "Return an AWS CloudFormation quick create link for the workspace's run role.\n\nWhere `reports_back` is true the link carries a one-time connect token, valid\nuntil `connect_expires_at`, and the stack reports its account and role back when\nit is created: the role is saved or staged and a verification run starts, with\nnothing to type or copy. Each call replaces the previous token. An `account_id`\nis then optional; given, the derived ARN is saved or staged at once as well.\n\nThe template trusts only the runner task roles with this workspace id as the\nexternal id. The link embeds a template URL that expires after `expires_in`\nseconds, so ask for a fresh link rather than storing one.\n\nA deployment with no runner task roles or no artifacts bucket answers 503, as\ndoes one with no connect topic when no account id is given.",
         "operationId": "start_run_role_quick_setup_api_v1_workspaces__workspace_id__run_role_quick_setup_post",
         "parameters": [
           {

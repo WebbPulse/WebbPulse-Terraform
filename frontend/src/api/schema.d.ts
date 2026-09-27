@@ -1183,16 +1183,20 @@ export interface paths {
         put?: never;
         /**
          * Start Run Role Quick Setup
-         * @description Save the run role ARN for an account and return an AWS CloudFormation quick create link.
+         * @description Return an AWS CloudFormation quick create link for the workspace's run role.
          *
-         *     The role name is derived from the workspace, so the account id is all the ARN
-         *     needs: it is saved here and nothing has to be copied back from AWS. The link
-         *     opens a stack whose template trusts only the runner task roles with this
-         *     workspace id as the external id. It embeds a template URL that expires after
-         *     `expires_in` seconds, so ask for a fresh link rather than storing one. Calling
-         *     again with the same account keeps the saved ARN and its check outcome.
+         *     Where `reports_back` is true the link carries a one-time connect token, valid
+         *     until `connect_expires_at`, and the stack reports its account and role back when
+         *     it is created: the role is saved or staged and a verification run starts, with
+         *     nothing to type or copy. Each call replaces the previous token. An `account_id`
+         *     is then optional; given, the derived ARN is saved or staged at once as well.
          *
-         *     A deployment with no runner task roles or no artifacts bucket answers 503.
+         *     The template trusts only the runner task roles with this workspace id as the
+         *     external id. The link embeds a template URL that expires after `expires_in`
+         *     seconds, so ask for a fresh link rather than storing one.
+         *
+         *     A deployment with no runner task roles or no artifacts bucket answers 503, as
+         *     does one with no connect topic when no account id is given.
          */
         post: operations["start_run_role_quick_setup_api_v1_workspaces__workspace_id__run_role_quick_setup_post"];
         delete?: never;
@@ -1462,6 +1466,38 @@ export interface components {
         Artifacts: {
             /** Plan Get Url */
             plan_get_url: string;
+        };
+        /**
+         * AwsConnection
+         * @description What the last Quick setup link and its stack reported, for the UI to follow live.
+         */
+        AwsConnection: {
+            /** Account Id */
+            account_id?: string | null;
+            /** Disconnected At */
+            disconnected_at?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /**
+             * Pending
+             * @default false
+             */
+            pending?: boolean;
+            /** Reported At */
+            reported_at?: string | null;
+            /** Requested At */
+            requested_at?: string | null;
+            /** Role Arn */
+            role_arn?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Stack Id */
+            stack_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "waiting" | "connected" | "expired" | "disconnected";
         };
         /**
          * BackendConfig
@@ -2063,7 +2099,7 @@ export interface components {
              * @default api
              * @enum {string}
              */
-            source?: "api" | "vcs_push" | "vcs_pr";
+            source?: "api" | "vcs_push" | "vcs_pr" | "aws_connect";
             /** Started At */
             started_at?: string | null;
             /**
@@ -2090,7 +2126,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "user" | "agent" | "vcs";
+            kind: "user" | "agent" | "vcs" | "system";
         };
         /**
          * RunBundle
@@ -2249,7 +2285,7 @@ export interface components {
              * @default api
              * @enum {string}
              */
-            source?: "api" | "vcs_push" | "vcs_pr";
+            source?: "api" | "vcs_push" | "vcs_pr" | "aws_connect";
             /** Started At */
             started_at?: string | null;
             /**
@@ -2397,11 +2433,13 @@ export interface components {
         };
         /**
          * RunRoleQuickSetup
-         * @description The quick create link for a workspace's run role, whose ARN is now saved or staged.
+         * @description The quick create link for a workspace's run role.
          */
         RunRoleQuickSetup: {
             /** Account Id */
-            account_id: string;
+            account_id?: string | null;
+            /** Connect Expires At */
+            connect_expires_at?: string | null;
             /** Console Url */
             console_url: string;
             /** Expires In */
@@ -2415,8 +2453,13 @@ export interface components {
             permissions_policy_arn?: string | null;
             /** Region */
             region: string;
+            /**
+             * Reports Back
+             * @default false
+             */
+            reports_back?: boolean;
             /** Role Arn */
-            role_arn: string;
+            role_arn?: string | null;
             /** Role Name */
             role_name: string;
             /** Stack Name */
@@ -2428,7 +2471,7 @@ export interface components {
          */
         RunRoleQuickSetupCreate: {
             /** Account Id */
-            account_id: string;
+            account_id?: string | null;
             /**
              * Permissions
              * @default administrator
@@ -2731,6 +2774,7 @@ export interface components {
          * @description A stored workspace, with everything the run role setup needs.
          */
         Workspace: {
+            aws_connection?: components["schemas"]["AwsConnection"] | null;
             /** Created At */
             created_at: string;
             /**
