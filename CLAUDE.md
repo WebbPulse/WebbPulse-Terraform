@@ -386,8 +386,8 @@ the only reader.
 ### Runner protocol
 
 Step Functions starts the runner with `runTask.waitForTaskToken`. It exchanges
-its task identity for the run token (`app/identity.py`), falling back to a
-`RUN_TOKEN` override if the task has one, then fetches the
+its task identity for the run token (`app/identity.py`), failing the phase if
+the exchange is refused (no `RUN_TOKEN` override is read), then fetches the
 bundle, unpacks the config tarball, writes the S3 backend override and the auto
 loaded tfvars files, assumes the workspace's run role with the phase session policy,
 points the S3 backend at the task role through the `webbpulse-state` profile so

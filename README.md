@@ -243,8 +243,9 @@ A linux/arm64 image on Fargate, one task per phase, launched into the public
 subnets of the runner VPC. The task definition supplies `TF_IN_AUTOMATION`,
 `ENVIRONMENT`, `AWS_REGION_NAME`, `PHASE` and `RUNNER_LOG_GROUP`; the state
 machine's container overrides add `RUN_ID`, `WORKSPACE_ID`, `PHASE`,
-`TASK_TOKEN`, `RUN_TOKEN` and `API_BASE_URL`. `RunnerEnv` requires `RUN_ID`,
-`PHASE`, `TASK_TOKEN`, `API_BASE_URL`, `RUN_TOKEN` and `RUNNER_LOG_GROUP`.
+`TASK_TOKEN` and `API_BASE_URL`. `RunnerEnv` requires `RUN_ID`, `PHASE`,
+`TASK_TOKEN`, `API_BASE_URL` and `RUNNER_LOG_GROUP`. The run token comes only from
+the runner token exchange; a failed exchange fails the phase.
 
 The runner fetches `GET /api/v1/runs/{run_id}/bundle` with the run token as
 bearer. The bundle is the only response in the API carrying decrypted variable
