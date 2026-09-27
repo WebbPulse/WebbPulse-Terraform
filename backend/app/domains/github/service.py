@@ -16,13 +16,17 @@ import logging
 import secrets
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final
 from urllib.parse import quote, urlencode
 
 import boto3
+import httpx
 from boto3.dynamodb.conditions import Key
 from webbpulse.dynamodb import Repository
 from webbpulse.integrations.github import (
+    ACCEPT,
+    API_ROOT,
+    API_VERSION,
     AppInstallation,
     GitHubAppClient,
     GitHubAppSettings,
@@ -37,9 +41,6 @@ from ...common.composition.settings import Settings, get_settings
 from ...common.db import repositories
 from ...common.github.loader import github_app_settings, invalidate
 
-if TYPE_CHECKING:  # pragma: no cover
-    import httpx
-
 logger = logging.getLogger(__name__)
 
 MANIFEST: Final = "manifest"
@@ -51,6 +52,10 @@ an install redirect is quicker."""
 APP_KEY: Final = {"pk": "app", "sk": "app"}
 STATE_PK: Final = "state"
 INSTALLATION_PK: Final = "installation"
+
+APP_REFRESH_SECONDS: Final = 60
+"""How long the stored name, slug and links are trusted before `GET /app` is asked again."""
+APP_READ_TIMEOUT_SECONDS: Final = 10.0
 
 CREATED_PATH: Final = "/settings/github/created"
 """The SPA route GitHub redirects to after creating the App, the manifest `redirect_url`."""
@@ -134,6 +139,58 @@ def _app_settings(settings: Settings) -> GitHubAppSettings:
 def _app_client(settings: Settings) -> GitHubAppClient:
     """A client for this environment's App, built from the cached credentials."""
     return GitHubAppClient.from_settings(_app_settings(settings), client=http_client())
+
+
+def _fetch_app(settings: GitHubAppSettings) -> dict[str, Any]:
+    """The App as `GET /app` describes it, read with the App JWT."""
+    with GitHubAppClient.from_settings(settings) as app:
+        jwt = app.app_jwt()
+    http = http_client() or httpx.Client(timeout=APP_READ_TIMEOUT_SECONDS, follow_redirects=False)
+    with http:
+        try:
+            response = http.get(
+                f"{API_ROOT}/app",
+                headers={"Accept": ACCEPT, "X-GitHub-Api-Version": API_VERSION, "Authorization": f"Bearer {jwt}"},
+            )
+        except httpx.HTTPError as exc:
+            raise GitHubError("GET /app did not answer", method="GET", path="/app") from exc
+    if response.status_code >= 400:
+        raise GitHubError(
+            f"GET /app answered {response.status_code}", method="GET", path="/app", status_code=response.status_code
+        )
+    body = response.json()
+    return body if isinstance(body, dict) else {}
+
+
+def refresh_app(settings: Settings | None = None) -> None:
+    """Re-read the App's name, slug and links from GitHub, at most once a minute.
+
+    GitHub has no API to rename an App, so a rename happens in its settings and shows
+    up here on the next refresh. A failure keeps the stored row.
+    """
+    resolved = settings or get_settings()
+    configured = _settings_or_none(resolved)
+    if configured is None:
+        return
+    table = _table(resolved)
+    row = table.get(APP_KEY) or {**APP_KEY, "app_id": str(configured.app_id)}
+    now = int(time.time())
+    if now - int(str(row.get("refreshed_at") or 0)) < APP_REFRESH_SECONDS:
+        return
+    try:
+        body = _fetch_app(configured)
+    except GitHubError:
+        logger.warning("Could not refresh the GitHub App", extra={"event": "github.app.refresh_failed"})
+        return
+    owner = body.get("owner") or {}
+    fresh = {
+        "slug": body.get("slug"),
+        "name": body.get("name"),
+        "html_url": body.get("html_url"),
+        "owner_login": owner.get("login"),
+        "owner_type": owner.get("type"),
+    }
+    table.put({**row, **{key: value for key, value in fresh.items() if value}, "refreshed_at": now})
 
 
 def app_status(settings: Settings | None = None) -> dict[str, Any]:
@@ -235,9 +292,9 @@ def manifest_for(name: str, settings: Settings) -> dict[str, Any]:
 
 
 def default_app_name(settings: Settings) -> str:
-    """The App's name: the product, suffixed with the environment outside production."""
-    environment = settings.environment
-    return "webbpulse-terraform" if environment == "production" else f"webbpulse-terraform-{environment}"
+    """The App's name: the product, with the environment in brackets outside production."""
+    environment = settings.environment.lower()
+    return "WebbPulse Terraform" if environment == "production" else f"WebbPulse Terraform ({environment})"
 
 
 def start_manifest(
@@ -493,6 +550,7 @@ __all__ = [
     "list_installations",
     "list_repositories",
     "record_installation",
+    "refresh_app",
     "refresh_installation",
     "remove_installation",
     "start_install",

@@ -44,6 +44,7 @@ class FakeGitHub:
     installations: dict[int, dict[str, Any]] = field(default_factory=dict)
     repositories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     conversions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    app: dict[str, Any] | None = None
     requests: list[httpx.Request] = field(default_factory=list)
     failure: int | None = None
 
@@ -53,6 +54,10 @@ class FakeGitHub:
         if self.failure is not None:
             return httpx.Response(self.failure, json={"message": "failed"})
         path = request.url.path
+        if path == "/app":
+            return (
+                httpx.Response(200, json=self.app) if self.app else httpx.Response(404, json={"message": "Not Found"})
+            )
         if match := re.fullmatch(r"/app-manifests/([^/]+)/conversions", path):
             body = self.conversions.get(match.group(1))
             return httpx.Response(201, json=body) if body else httpx.Response(404, json={"message": "Not Found"})

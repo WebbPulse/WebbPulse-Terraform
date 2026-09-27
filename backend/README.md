@@ -320,6 +320,12 @@ converts the code with `webbpulse.integrations.github.convert_manifest_code`,
 writes the `GITHUB_*` keys into the `app` secret in one version with
 `SecretStore.set_many`, and stores the slug and App id in the `github` table.
 The manifest has no webhook, so no `GITHUB_WEBHOOK_SECRET` is written.
+The App is named `WebbPulse Terraform` in production and
+`WebbPulse Terraform (<environment>)` elsewhere, which GitHub slugs to
+`webbpulse-terraform-<environment>`. GitHub has no API to rename an App, so a
+rename happens in its settings: `GET /github/app` re-reads `GET /app` with the
+App JWT at most once a minute and stores the new name, slug and links, which the
+install and settings URLs follow.
 
 **Finish setup.** GitHub has no API for an App's logo. The created page links to
 the App's settings, offers `/github-app-logo.png` (512x512 PNG of the mark,

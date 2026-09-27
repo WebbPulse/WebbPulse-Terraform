@@ -40,7 +40,7 @@ describe('GitHubSettings', () => {
 
   it('offers creation when there is no App, and posts the manifest to GitHub', async () => {
     apiMock.getGitHubApp.mockResolvedValue(noApp());
-    const manifest = { name: 'webbpulse-terraform-staging' };
+    const manifest = { name: 'WebbPulse Terraform (staging)' };
     apiMock.startGitHubManifest.mockResolvedValue({
       action_url:
         'https://github.com/organizations/WebbPulse/settings/apps/new?state=s1',
