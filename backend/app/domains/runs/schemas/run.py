@@ -434,3 +434,25 @@ class PhaseResultAccepted(BaseModel):
 
     run_id: str
     status: RunStatus
+
+
+class RunnerTokenRequest(BaseModel):
+    """A runner task's signed STS `GetCallerIdentity` headers, traded for its run token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    headers: dict[str, str] = Field(max_length=16)
+
+    @field_validator("headers")
+    @classmethod
+    def _headers_are_bounded(cls, value: dict[str, str]) -> dict[str, str]:
+        """Refuse oversized names or values before anything is sent to STS."""
+        if any(len(name) > 64 or len(item) > 4096 for name, item in value.items()):
+            raise ValueError("a header name or value is too long")
+        return value
+
+
+class RunnerToken(BaseModel):
+    """The run token a runner task holds for its phase."""
+
+    run_token: str

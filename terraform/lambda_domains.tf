@@ -213,6 +213,7 @@ module "lambda_domain" {
       AWS_CONNECT_TOPIC_ARN       = aws_sns_topic.aws_connect.arn
 
       RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
+      RUNNER_CLUSTER_ARN   = module.runner.cluster_arn
       RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
 
       APP_SECRETS_ARN = module.app_secrets.arns["app"]
@@ -321,6 +322,12 @@ locals {
         Effect   = "Allow"
         Action   = ["dynamodb:UpdateItem"]
         Resource = [module.dynamodb.table_arns["workspaces"]]
+      },
+      {
+        Sid      = "DescribeRunnerTasksForTokenExchange"
+        Effect   = "Allow"
+        Action   = ["ecs:DescribeTasks"]
+        Resource = ["${replace(module.runner.cluster_arn, ":cluster/", ":task/")}/*"]
       },
     ]
   }

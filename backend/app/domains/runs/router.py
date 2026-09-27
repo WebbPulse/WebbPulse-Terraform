@@ -1,10 +1,12 @@
 """The runs domain's routes, including the three the runner owns.
 
-Eleven routes on two different credentials. Eight are guarded by
-`require_scopes` and reached by a person through the JWT authorizer or an agent
-through a `wpk_` key. Three, the bundle, the artifact upload and the phase
-result, are guarded by a run token bound to the run in the path, because the
-bundle carries decrypted variables and no human scope should open it.
+Routes on three different credentials. Most are guarded by `require_scopes`
+and reached by a person through the JWT authorizer or an agent through a `wpk_`
+key. Three, the bundle, the artifact upload and the phase result, are guarded by
+a run token bound to the run in the path, because the bundle carries decrypted
+variables and no human scope should open it. The runner token route is guarded
+by nothing but the runner task's own signed AWS identity, which is how the
+runner gets that run token without it passing through the execution input.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from ...common.core.auth import (
     scopes,
 )
 from ...common.workspaces import reads as workspace_reads
-from . import service
+from . import runner_tokens, service
 from .actor import actor_from_claims
 from .schemas.run import (
     ArtifactUpload,
@@ -37,6 +39,8 @@ from .schemas.run import (
     RunCreated,
     RunDecisionRequest,
     RunList,
+    RunnerToken,
+    RunnerTokenRequest,
     RunPlan,
 )
 
@@ -333,3 +337,19 @@ def phase_result(payload: PhaseResult, run_id: str = RunId) -> dict[str, Any]:
     except service.PhaseMismatch as error:
         raise _conflict("That run is not in the reported phase.") from error
     return {"run_id": run_id, "status": updated["status"]}
+
+
+@router.post("/runs/{run_id}/runner-token", response_model=RunnerToken)
+def runner_token(payload: RunnerTokenRequest, run_id: str = RunId) -> dict[str, Any]:
+    """Trade a runner task's signed identity for its run token. Runner only.
+
+    Every refusal is the same 401, so a caller learns nothing about which check
+    failed; the reason is logged instead.
+    """
+    try:
+        return {"run_token": runner_tokens.exchange(run_id, payload.headers)}
+    except runner_tokens.ExchangeRefused as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="That request does not prove a runner task of this run.",
+        ) from error
