@@ -43,7 +43,7 @@ def conversion_body(pem: str, *, webhook_secret: str | None = None) -> dict:
     body = {
         "id": APP_ID,
         "slug": SLUG,
-        "name": SLUG,
+        "name": "WebbPulse Terraform (test)",
         "html_url": f"https://github.com/apps/{SLUG}",
         "owner": {"login": "WebbPulse", "type": "Organization"},
         "client_id": "Iv23liexample",
@@ -74,7 +74,7 @@ def test_the_manifest_carries_both_callbacks(auth_client):
     assert manifest["redirect_url"] == f"{FRONTEND}/settings/github/created"
     assert manifest["setup_url"] == f"{FRONTEND}/settings/github/setup"
     assert manifest["public"] is False
-    assert manifest["name"] == "webbpulse-terraform-test"
+    assert manifest["name"] == "WebbPulse Terraform (test)"
     assert "hook_attributes" not in manifest
     assert manifest["default_permissions"]["checks"] == "write"
     action = urlparse(body["action_url"])
@@ -201,3 +201,86 @@ def test_a_code_github_rejects_is_a_400(auth_client, github, app_secret):
     assert response.status_code == 400
     assert response.json()["error_code"] == "GITHUB_MANIFEST_CODE_REJECTED"
     assert "GITHUB_APP_ID" not in secret_values(app_secret)
+
+
+def test_the_app_name_matches_the_environment(monkeypatch):
+    """Production is the bare product name; every other environment is bracketed."""
+    expected = {"production": "WebbPulse Terraform", "staging": "WebbPulse Terraform (staging)"}
+    for environment, name in expected.items():
+        monkeypatch.setenv("ENVIRONMENT", environment)
+        settings_module.reset_settings_cache()
+        assert service.default_app_name(settings_module.get_settings()) == name
+
+
+def stored_app(**fields):
+    """Store the App row as the conversion left it."""
+    row = {
+        **service.APP_KEY,
+        "app_id": str(APP_ID),
+        "slug": SLUG,
+        "name": SLUG,
+        "html_url": f"https://github.com/apps/{SLUG}",
+        "owner_login": "WebbPulse",
+        "owner_type": "Organization",
+        "created_at": "2026-09-01T00:00:00+00:00",
+        **fields,
+    }
+    repositories.github().put(row)
+
+
+def renamed_app(slug="webbpulse-terraform-renamed", name="WebbPulse Terraform (renamed)"):
+    """The App as `GET /app` describes it after a rename on GitHub."""
+    return {
+        "id": APP_ID,
+        "slug": slug,
+        "name": name,
+        "html_url": f"https://github.com/apps/{slug}",
+        "owner": {"login": "WebbPulse", "type": "Organization"},
+    }
+
+
+def test_loading_the_status_picks_up_a_rename_on_github(auth_client, github, configure_app):
+    """The name, slug and links follow GitHub, and so do the install and settings URLs."""
+    configure_app()
+    stored_app()
+    github.app = renamed_app()
+
+    body = auth_client.get("/api/v1/github/app").json()
+
+    assert body["name"] == "WebbPulse Terraform (renamed)"
+    assert body["slug"] == "webbpulse-terraform-renamed"
+    assert body["html_url"] == "https://github.com/apps/webbpulse-terraform-renamed"
+    assert body["settings_url"] == (
+        "https://github.com/organizations/WebbPulse/settings/apps/webbpulse-terraform-renamed"
+    )
+    request = next(request for request in github.requests if request.url.path == "/app")
+    assert request.headers["authorization"].startswith("Bearer ey")
+    install_url = auth_client.post("/api/v1/github/install-state").json()["install_url"]
+    assert install_url.startswith("https://github.com/apps/webbpulse-terraform-renamed/installations/new?")
+    assert (repositories.github().get(service.APP_KEY) or {}).get("created_at") == "2026-09-01T00:00:00+00:00"
+
+
+def test_the_refresh_asks_github_at_most_once_a_minute(auth_client, github, configure_app, monkeypatch):
+    """A second load inside the window answers from the table."""
+    configure_app()
+    stored_app()
+    github.app = renamed_app()
+    auth_client.get("/api/v1/github/app")
+    github.app = renamed_app(name="WebbPulse Terraform (again)")
+    assert auth_client.get("/api/v1/github/app").json()["name"] == "WebbPulse Terraform (renamed)"
+    assert sum(request.url.path == "/app" for request in github.requests) == 1
+
+    later = time.time() + service.APP_REFRESH_SECONDS + 1
+    monkeypatch.setattr(service.time, "time", lambda: later)
+    assert auth_client.get("/api/v1/github/app").json()["name"] == "WebbPulse Terraform (again)"
+
+
+def test_a_failed_refresh_keeps_the_stored_app(auth_client, github, configure_app):
+    """GitHub being down never breaks the settings page."""
+    configure_app()
+    stored_app()
+    github.failure = 502
+    response = auth_client.get("/api/v1/github/app")
+    assert response.status_code == 200
+    assert response.json()["name"] == SLUG
+    assert response.json()["slug"] == SLUG

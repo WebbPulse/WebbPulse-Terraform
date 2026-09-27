@@ -75,7 +75,7 @@ describe('GitHubCreated', () => {
       );
     });
     const created = screen.getByRole('region', { name: 'App created' });
-    expect(created).toHaveTextContent('webbpulse-terraform-staging');
+    expect(created).toHaveTextContent('WebbPulse Terraform (staging)');
     expect(created).toHaveTextContent('App ID424242');
     expect(
       screen.getByRole('link', { name: 'Open App settings' })

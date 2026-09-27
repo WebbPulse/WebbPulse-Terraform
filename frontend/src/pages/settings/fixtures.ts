@@ -26,7 +26,7 @@ export function anApp(
     can_install: true,
     slug: 'webbpulse-terraform-staging',
     app_id: '424242',
-    name: 'webbpulse-terraform-staging',
+    name: 'WebbPulse Terraform (staging)',
     owner_login: 'WebbPulse',
     html_url: 'https://github.com/apps/webbpulse-terraform-staging',
     settings_url:

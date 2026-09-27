@@ -94,6 +94,7 @@ def _github_errors() -> Iterator[None]:
 @router.get("/app", response_model=GitHubAppStatus)
 def get_app() -> dict[str, Any]:
     """This environment's App, or the fact that there is none yet."""
+    service.refresh_app()
     return service.app_status()
 
 
