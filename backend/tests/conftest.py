@@ -10,8 +10,14 @@ the same claims object, so a key-authenticated test covers `require_scopes` as i
 runs in production, and the run token gate can only be tested this way.
 """
 
+from __future__ import annotations
+
 import base64
 import os
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from webbpulse.testing import CheckedKey
 
 pytest_plugins = ["webbpulse.testing"]
 """The package's own fixtures."""
@@ -100,6 +106,12 @@ def create_buckets() -> None:
             Bucket=bucket,
             CreateBucketConfiguration={"LocationConstraint": REGION},
         )
+
+
+@pytest.fixture(autouse=True)
+def _primary_keys_only(primary_keys_only: list[CheckedKey]) -> list[CheckedKey]:
+    """Hold every DynamoDB key in the suite to its table's primary key, as DynamoDB does."""
+    return primary_keys_only
 
 
 @pytest.fixture(autouse=True)
