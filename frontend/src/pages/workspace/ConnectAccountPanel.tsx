@@ -569,11 +569,14 @@ function QuickSetup({
 
   return (
     <section
-      aria-label="Connect AWS"
+      aria-labelledby="connect-aws-title"
       className="rounded-lg border border-line bg-panel"
     >
       <div className="border-b border-line px-4 py-3">
-        <h3 className="text-sm font-semibold text-text-strong">
+        <h3
+          id="connect-aws-title"
+          className="text-sm font-semibold text-text-strong"
+        >
           Connect an AWS account
         </h3>
         <p className="mt-0.5 text-xs text-text-muted">
