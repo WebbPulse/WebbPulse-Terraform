@@ -153,15 +153,13 @@ def test_a_runner_token_cannot_reach_a_human_route(runner_client, workspace):
 
 
 def test_a_revoked_key_stops_working(app, scoped_client, workspace):
-    """Revoking a key takes effect on the next request.
-
-    Scopes are not intersected against a membership store, so revocation is the
-    only way to withdraw a key's authority and it has to be immediate.
-    """
+    """Revoking a key takes effect on the next request."""
     from webbpulse.identity.api_keys import mint, verify
 
     from app.common.core.auth import RUN_TOKEN_TENANT, api_key_store
+    from tests.conftest import seed_user
 
+    seed_user("user-revoked")
     store = api_key_store()
     minted = mint(
         user_id="user-revoked",
@@ -190,3 +188,43 @@ def test_a_malformed_bearer_is_refused(app):
 def test_the_health_route_needs_no_credential(client):
     """Health is unguarded, because the readiness check has no credential."""
     assert client.get("/health").status_code == 200
+
+
+def _key_client(app, user_id: str, *scopes: str):
+    """A client presenting a freshly minted key for `user_id` carrying `scopes`."""
+    from fastapi.testclient import TestClient
+    from webbpulse.identity.api_keys import mint
+
+    from app.common.core.auth import RUN_TOKEN_TENANT, api_key_store
+
+    minted = mint(user_id=user_id, tenant_id=RUN_TOKEN_TENANT, scopes=scopes, store=api_key_store())
+    return TestClient(app, headers={"Authorization": f"Bearer {minted.plaintext}"})
+
+
+def test_a_key_loses_write_scopes_when_its_owner_is_demoted(app):
+    """A demoted admin's key falls to the read scopes the owner now holds."""
+    from app.common.db.users import UserRepository
+    from tests.conftest import seed_user
+
+    seed_user("user-demoted")
+    with _key_client(app, "user-demoted", WORKSPACES_READ, WORKSPACES_WRITE) as caller:
+        assert caller.post("/api/v1/workspaces", json=WORKSPACE_BODY).status_code == 201
+        UserRepository().update("user-demoted", is_admin=False)
+        assert caller.get("/api/v1/workspaces").status_code == 200
+        assert caller.post("/api/v1/workspaces", json=WORKSPACE_BODY | {"name": "again"}).status_code == 403
+
+
+@pytest.mark.parametrize("change", [{"disabled": True}, {"email_verified": False}, None])
+def test_a_key_holds_nothing_once_its_owner_cannot_sign_in(app, change):
+    """A disabled, unverified or deleted owner's key reaches no guarded route."""
+    from app.common.db.users import UserRepository
+    from tests.conftest import seed_user
+
+    seed_user("user-gone")
+    with _key_client(app, "user-gone", WORKSPACES_READ) as caller:
+        assert caller.get("/api/v1/workspaces").status_code == 200
+        if change is None:
+            UserRepository().delete("user-gone")
+        else:
+            UserRepository().update("user-gone", **change)
+        assert caller.get("/api/v1/workspaces").status_code in (401, 403)

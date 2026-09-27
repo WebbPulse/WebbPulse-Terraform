@@ -54,7 +54,6 @@ class RunnerEnv(BaseModel):
     task_token: SecretStr
     api_base_url: str
     log_group: str
-    run_token: SecretStr | None = None
     region: str = "us-west-2"
 
     @classmethod
@@ -81,7 +80,6 @@ class RunnerEnv(BaseModel):
             phase=phase,
             task_token=SecretStr(required("TASK_TOKEN")),
             api_base_url=required("API_BASE_URL").rstrip("/"),
-            run_token=SecretStr(source["RUN_TOKEN"].strip()) if source.get("RUN_TOKEN", "").strip() else None,
             log_group=required("RUNNER_LOG_GROUP"),
             region=source.get("AWS_REGION", "").strip() or "us-west-2",
         )

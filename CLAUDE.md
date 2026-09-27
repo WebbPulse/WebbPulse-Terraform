@@ -161,7 +161,9 @@ runner routes, `POST /github/webhooks` (a webhook signature), the registry proto
 under `/v1/modules` (a `wpk_` key only) and the anonymous identity documents do not.
 The scopes are `workspaces:{read,write}`, `variables:{read,write}`,
 `configs:{read,write}`, `runs:{read,write,apply}`, `state:download` and
-`registry:{read,write}`.
+`registry:{read,write}`. A key's stored scopes are intersected per request with
+its owner's current ones (`key_owner_scopes`, so every domain function reads the
+`users` table), and a new key expires in 90 days by default, 365 at most.
 
 State history and metadata require `workspaces:read`. Raw state downloads also
 require `state:download`, granted to admin sessions and explicitly delegated agent
@@ -184,6 +186,8 @@ requires `ecs:DescribeTasks` on `RUNNER_CLUSTER_ARN` to show that task still
 running with this `RUN_ID` and a `PHASE` matching the run's status. It mints a
 token, swaps `run_token_hash` conditionally on that status and revokes the one
 it replaced; every refusal is the same 401 and logs `runs.runner_token.refused`.
+The four runner routes use `RunnerRoute`, so a malformed request answers that
+401 rather than a 422 naming the schema, unless it carries the run's own token.
 So the token never has to travel in the Step Functions execution input.
 
 ### The run role
@@ -400,8 +404,8 @@ the only reader.
 ### Runner protocol
 
 Step Functions starts the runner with `runTask.waitForTaskToken`. It exchanges
-its task identity for the run token (`app/identity.py`), falling back to a
-`RUN_TOKEN` override if the task has one, then fetches the
+its task identity for the run token (`app/identity.py`), failing the phase if
+the exchange is refused (no `RUN_TOKEN` override is read), then fetches the
 bundle, which carries the vended run role keys (`aws_credentials`) and state keys
 (`backend.credentials`), unpacks the config tarball, writes the S3 backend
 override (`workspace_key_prefix = "workspaces/<id>/env"`) and the auto loaded

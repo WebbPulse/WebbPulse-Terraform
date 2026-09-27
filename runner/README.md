@@ -47,9 +47,11 @@ checks, so an unannotated parameter or a wrong return type still fails.
 
 The task definition supplies `RUNNER_LOG_GROUP` and the state machine's
 container overrides supply `RUN_ID`, `WORKSPACE_ID`, `PHASE` (`plan` or
-`apply`), `TASK_TOKEN`, `RUN_TOKEN` and `API_BASE_URL`. `RUN_TOKEN` comes from
-`$.run_token` on the execution input, which the runs domain sets when it mints
-the token. The runner then:
+`apply`), `TASK_TOKEN` and `API_BASE_URL`. The run token is never passed in:
+the runner signs an STS `GetCallerIdentity` with its task role, binding the run
+id in the signed `x-webbpulse-run-id` header, and trades it at
+`POST {API_BASE_URL}/api/v1/runs/{RUN_ID}/runner-token`. A refused exchange fails
+the phase, and a `RUN_TOKEN` in the environment is ignored. The runner then:
 
 1. `GET {API_BASE_URL}/api/v1/runs/{RUN_ID}/bundle` with the run token as
    bearer, validating the response as `Bundle`: `run_id`, `workspace_id`,

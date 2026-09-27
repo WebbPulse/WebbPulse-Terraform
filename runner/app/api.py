@@ -49,16 +49,16 @@ class RunnerApi:
     def __init__(self, env: RunnerEnv, client: httpx.Client) -> None:
         self._env = env
         self._client = client
-        self._token = env.run_token.get_secret_value() if env.run_token is not None else ""
+        self._token = ""
+
+    @property
+    def has_token(self) -> bool:
+        """Whether the exchange has given this client a run token to call the API with."""
+        return bool(self._token)
 
     @property
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
-
-    @property
-    def has_token(self) -> bool:
-        """Whether the runner holds a run token to call the runner routes with."""
-        return bool(self._token)
 
     def exchange_token(self, signed_headers: dict[str, str]) -> str:
         """Trade the task's signed identity for the run token and use it from now on."""

@@ -614,3 +614,26 @@ def test_an_unknown_phase_is_422(runner_client, created_run):
         json={"phase": "destroy", "exit_code": 0, "changes": {}, "error": ""},
     )
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "body"),
+    [
+        ("GET", "bundle", None),
+        ("POST", "artifact-uploads", {"artifact": "nonsense"}),
+        ("POST", "phase-result", {"phase": 7}),
+    ],
+)
+def test_a_malformed_request_without_a_token_is_a_401(client, method, suffix, body):
+    """A stranger gets the 401, not a 422 describing the route's schema."""
+    response = client.request(method, f"{BASE}/x/{suffix}", json=body)
+
+    assert response.status_code == 401
+    assert "loc" not in response.text
+
+
+def test_a_malformed_request_with_the_run_token_is_still_a_422(runner_client, created_run):
+    """The run's own runner sees the validation error it needs to diagnose itself."""
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/phase-result", json={"phase": 7})
+
+    assert response.status_code == 422

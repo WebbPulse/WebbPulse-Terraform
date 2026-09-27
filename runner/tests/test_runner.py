@@ -595,14 +595,14 @@ def test_an_unknown_failure_keeps_its_message(
     clients = make_clients(make_transport(None, config_tarball, recorder))
 
     def explode(*_: object, **__: object) -> None:
-        raise RuntimeError(f"boom with {RUN_TOKEN} in it")
+        raise RuntimeError(f"boom with {TASK_TOKEN} in it")
 
     monkeypatch.setattr("app.main.execute", explode)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
     captured = capsys.readouterr().err
     assert "RuntimeError: boom with" in captured
-    assert RUN_TOKEN not in captured
+    assert TASK_TOKEN not in captured
 
 
 def test_the_plan_artifacts_are_uploaded_at_their_real_size(

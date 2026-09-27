@@ -205,8 +205,36 @@ def runner_token(run_id: str) -> str:
     return minted.plaintext
 
 
+def seed_user(user_id: str, *, is_admin: bool = True, disabled: bool = False) -> None:
+    """Write an enabled, verified `users` row for `user_id`, unless one is there.
+
+    A key's scopes are intersected with its owner's on every request, so a key
+    whose owner has no row holds nothing. An admin by default, so a key's own
+    scopes are what a test asserts on.
+    """
+    from app.common.db.users import User, UserRepository
+
+    users = UserRepository()
+    if users.get(user_id) is None:
+        users.create(
+            User(
+                id=user_id,
+                email=f"{user_id}@example.test",
+                email_verified=True,
+                is_admin=is_admin,
+                disabled=disabled,
+            )
+        )
+
+
 def mint_key(*scopes: str, user_id: str = "user-test") -> str:
-    """Mint a `wpk_` key carrying `scopes` and return its plaintext."""
+    """Mint a `wpk_` key carrying `scopes` and return its plaintext.
+
+    Seeds the owner's `users` row too, except for a run token, whose subject is
+    a run id rather than a person.
+    """
+    if RUNNER_SCOPE not in scopes:
+        seed_user(user_id)
     minted = mint(
         user_id=user_id,
         tenant_id=RUN_TOKEN_TENANT,

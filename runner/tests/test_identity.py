@@ -1,4 +1,4 @@
-"""The run token exchange: the signed identity proof and the runner's fallback to `RUN_TOKEN`."""
+"""The run token exchange: the signed identity proof, and that it is the only source of a token."""
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ from tests.conftest import (
     ApiRecorder,
     bundle_payload,
     make_clients,
-    make_env,
     make_transport,
 )
 
@@ -112,14 +111,14 @@ def test_the_exchanged_token_is_used_for_every_runner_call(
     assert EXCHANGED_TOKEN not in recorder.uploads["/runs/plan.log"].decode()
 
 
-def test_a_refused_exchange_falls_back_to_the_task_override(
+def test_a_refused_exchange_fails_the_task_even_with_a_run_token_override(
     aws: None,
     run_role_arn: str,
     config_tarball: bytes,
     fake_engine: Callable[..., Path],
     tmp_path: Path,
 ) -> None:
-    """While the state machine still passes `RUN_TOKEN`, a refused exchange does not fail the run."""
+    """A `RUN_TOKEN` in the environment is ignored, so a refused exchange fails before the bundle."""
     fake_engine()
     recorder = ApiRecorder()
     seen: dict[str, list[str]] = {}
@@ -127,26 +126,35 @@ def test_a_refused_exchange_falls_back_to_the_task_override(
         make_transport(bundle_payload(run_role_arn), config_tarball, recorder), status=401, seen=seen
     )
     clients = replace(make_clients(transport), identity=_signer)
+    environment = RunnerEnv.from_environ(
+        {
+            "RUN_ID": RUN_ID,
+            "PHASE": "plan",
+            "TASK_TOKEN": TASK_TOKEN,
+            "API_BASE_URL": API_BASE_URL,
+            "RUNNER_LOG_GROUP": LOG_GROUP,
+            "RUN_TOKEN": RUN_TOKEN,
+        }
+    )
 
-    assert run(make_env("plan"), clients, tmp_path) == 0
-    assert set(seen["bearer"]) == {f"Bearer {RUN_TOKEN}"}
+    assert run(environment, clients, tmp_path) == 1
+    assert recorder.bundle_requests == 0
+    assert "bearer" not in seen
 
 
-def test_no_exchange_and_no_override_fails_the_task(
+def test_a_task_with_no_identity_fails_before_the_bundle(
     aws: None,
     run_role_arn: str,
     config_tarball: bytes,
     fake_engine: Callable[..., Path],
     tmp_path: Path,
 ) -> None:
-    """With neither source of a token the phase fails before it asks for the bundle."""
+    """With no signer there is nothing to exchange, and the phase fails before it asks for the bundle."""
     fake_engine()
     recorder = ApiRecorder()
-    seen: dict[str, list[str]] = {}
-    transport = _exchanging(
-        make_transport(bundle_payload(run_role_arn), config_tarball, recorder), status=401, seen=seen
+    clients = replace(
+        make_clients(make_transport(bundle_payload(run_role_arn), config_tarball, recorder)), identity=None
     )
-    clients = replace(make_clients(transport), identity=_signer)
 
     assert run(_env_without_token(), clients, tmp_path) == 1
     assert recorder.bundle_requests == 0
