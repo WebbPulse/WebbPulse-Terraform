@@ -8,9 +8,11 @@ the App's installation token and writes the same ingest record and the same
 the runs and the existing reporting posts the checks, so nothing downstream can
 tell a webhook upload from a workflow one.
 
-A delivery no bound workspace would run on never fetches anything. Its record is
-written and it is reported straight away as "No runs needed", so every push and
-pull request on an installed repository still gets the aggregate check.
+A delivery no bound workspace would run on never fetches anything. A push to a
+branch that some bound workspace tracks, and every pull request, has its record
+written and is reported straight away as "No runs needed". A push to a branch no
+bound workspace tracks posts no check at all, as HCP Terraform does, since the pull
+request delivery owns the aggregate on a pull request's head commit.
 
 A pull request is planned against GitHub's merge commit, exactly as the workflow's
 `refs/pull/<n>/merge` checkout was. GitHub computes that commit after the event, so
@@ -169,6 +171,11 @@ def _matched(workspaces: Iterable[Mapping[str, Any]], upload: Mapping[str, Any],
         for workspace in workspaces
         if ingest._eligible(workspace, upload)  # pyright: ignore[reportPrivateUsage]
     )
+
+
+def _tracked(workspaces: Iterable[Mapping[str, Any]], branch: str) -> bool:
+    """Whether any bound workspace tracks `branch`."""
+    return any(str(workspace.get("tracked_branch") or "") == branch for workspace in workspaces if branch)
 
 
 def _download(reader: reporting.GitHubReader, sha: str, target: Path) -> None:
@@ -355,6 +362,11 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
                 workspace_vcs.record_repository_id(
                     str(workspace["workspace_id"]), str(message["repository_id"]), settings=resolved_settings
                 )
+        if message["event"] == PUSH and not _tracked(bound, str(message["branch"])):
+            _log.info(
+                "Dropped a push to a branch no workspace tracks.", extra={"event": "runs.webhook.untracked", **extra}
+            )
+            return None
         if not _matched(bound, item, resolved["paths"]):
             item["report_only"] = True
             if _put_record(item, resolved_settings):

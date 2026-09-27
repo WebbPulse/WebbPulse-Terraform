@@ -261,21 +261,41 @@ def test_a_redelivered_message_writes_nothing_twice(settings, bind, github, stat
     assert fake.tarball_fetches() == 1
 
 
-def test_a_push_no_workspace_runs_on_is_reported_without_a_fetch(settings, bind, github, reported):
-    """A branch no workspace tracks gets "No runs needed" and no archive is fetched."""
+def test_a_push_to_an_untracked_branch_posts_no_check(settings, bind, github, reported):
+    """A branch no workspace tracks gets no aggregate, no record and no fetch."""
     bind()
     fake = github()
-    upload_id = consumed(push_message(branch="feature", ref="refs/heads/feature"), settings)
+    message = push_message(branch="feature", ref="refs/heads/feature")
+    assert consume(message, settings) is None
+    assert reported == []
+    assert fake.tarball_fetches() == 0
+    assert repositories.vcs_uploads(settings).get({"upload_id": webhooks.upload_id_for("d-push")}) is None
+
+
+def test_a_push_to_a_tracked_branch_touching_no_watched_path_is_reported(settings, bind, github, reported):
+    """The tracked branch still gets "No runs needed" when the push starts no run."""
+    bind(working_directory="infra")
+    fake = github()
+    upload_id = consumed(push_message(paths=["README.md"]), settings)
     assert reported == [(upload_id, [])]
     assert fake.tarball_fetches() == 0
-    assert consume(push_message(branch="feature", ref="refs/heads/feature"), settings) == upload_id
+    assert consume(push_message(paths=["README.md"]), settings) == upload_id
     assert len(reported) == 1
 
 
-def test_an_unbound_repository_is_still_reported(settings, github, reported):
-    """Every event from an installed repository gets the aggregate, bound or not."""
+def test_an_unbound_repository_push_posts_no_check(settings, github, reported):
+    """With no bound workspace no branch is tracked, so a push posts nothing."""
     github()
-    upload_id = consumed(push_message(), settings)
+    assert consume(push_message(), settings) is None
+    assert reported == []
+
+
+def test_an_unbound_repository_pull_request_is_still_reported(settings, github, reported):
+    """A pull request always gets the aggregate, bound or not."""
+    fake = github()
+    fake.pulls = [{"state": "open", "head": {"sha": HEAD_SHA}, "mergeable": True, "merge_commit_sha": MERGE_SHA}]
+    fake.files = [{"filename": "README.md"}]
+    upload_id = consumed(pr_message(), settings)
     assert reported == [(upload_id, [])]
 
 

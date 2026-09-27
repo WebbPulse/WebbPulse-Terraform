@@ -289,7 +289,8 @@ for GitHub's merge commit and uses it, reporting on the head), takes the changed
 paths from the push payload or `/pulls/{n}/files`, fetches the tarball with an
 installation token and writes the same record and `ingest/` object, repacked with
 `.webbpulse/changed-paths.txt`. A delivery no workspace would run on is reported
-"No runs needed" without a fetch. The upload id derives from the delivery id.
+"No runs needed" without a fetch, except a push to a branch no bound workspace
+tracks, which posts no check since the pull request delivery owns its head commit. The upload id derives from the delivery id.
 
 A new App's manifest subscribes to `push` and `pull_request` and points its hook
 at `API_BASE_URL`. For an existing App, the admin `POST /api/v1/github/app/webhook`
