@@ -7,18 +7,29 @@ from urllib.parse import urlparse
 import pytest
 
 from app.common.core.auth import REGISTRY_READ, WORKSPACES_READ
-from tests.domains.registry.conftest import OVERRIDE_REPO, claims, tarball
+from app.common.db import repositories
+from app.domains.registry import service
 
 VERSIONS = "/v1/modules/WebbPulse/example/aws/versions"
 
 
 @pytest.fixture
-def published(upload, ingest):
+def published(module, publish, settings):
     """Publish 1.2.3 and 1.10.0 of the example module and leave 2.0.0 pending."""
     for version in ("1.2.3", "1.10.0"):
-        upload_id = upload(claims(ref=f"refs/tags/v{version}")).json()["upload_id"]
-        assert ingest(upload_id, tarball()) == "published"
-    upload(claims(ref="refs/tags/v2.0.0"))
+        assert publish(version) == {"WebbPulse/example/aws": "published"}
+    repositories.registry(settings).put(
+        {
+            "pk": service.module_pk("WebbPulse", "example", "aws"),
+            "sk": service.version_sk("2.0.0"),
+            "namespace": "WebbPulse",
+            "name": "example",
+            "provider": "aws",
+            "version": "2.0.0",
+            "status": service.PENDING,
+            "sha": "e" * 40,
+        }
+    )
 
 
 @pytest.fixture
@@ -81,23 +92,34 @@ def test_protocol_requires_the_registry_scope(published, scoped_client):
         assert client.get(VERSIONS).status_code == 403
 
 
-def test_listing_groups_versions_by_module(published, upload, ingest, reader):
-    """The SPA listing shows every module with its source address and each version's status."""
-    upload_id = upload(claims(repository=OVERRIDE_REPO, ref="refs/tags/v0.1.0")).json()["upload_id"]
-    ingest(upload_id, tarball())
+def test_listing_groups_versions_by_module(published, settings, reader):
+    """The listing shows every module with its source address, its repository and each version's status."""
+    repositories.registry(settings).put(
+        {
+            "pk": service.module_pk("WebbPulse", "legacy", "null"),
+            "sk": service.version_sk("0.1.0"),
+            "namespace": "WebbPulse",
+            "name": "legacy",
+            "provider": "null",
+            "version": "0.1.0",
+            "status": service.PUBLISHED,
+        }
+    )
 
     response = reader.get("/api/v1/registry/modules")
 
     assert response.status_code == 200
     modules = {module["name"]: module for module in response.json()["modules"]}
-    assert set(modules) == {"example", "registry-proof"}
+    assert set(modules) == {"example", "legacy"}
     example = modules["example"]
     assert example["source"].endswith("WebbPulse/example/aws")
+    assert example["vcs_repo"] == "WebbPulse/terraform-aws-example"
     assert [(v["version"], v["status"]) for v in example["versions"]] == [
         ("2.0.0", "pending"),
         ("1.10.0", "published"),
         ("1.2.3", "published"),
     ]
+    assert modules["legacy"]["vcs_repo"] is None
 
 
 def test_listing_requires_the_registry_scope(scoped_client):

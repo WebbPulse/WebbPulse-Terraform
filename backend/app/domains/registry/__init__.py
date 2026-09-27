@@ -1,1 +1,1 @@
-"""The registry domain: a private Terraform module registry fed by GitHub Actions uploads."""
+"""The registry domain: a private Terraform module registry published from GitHub tags."""

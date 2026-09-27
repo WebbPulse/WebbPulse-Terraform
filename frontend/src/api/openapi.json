@@ -1027,8 +1027,19 @@
         "type": "object"
       },
       "Module": {
-        "description": "One module and every version uploaded for it, newest first.",
+        "description": "One module and every version published or attempted for it, newest first.",
         "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -1044,6 +1055,17 @@
           "source": {
             "title": "Source",
             "type": "string"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
           },
           "versions": {
             "items": {
@@ -1063,33 +1085,47 @@
         "title": "Module",
         "type": "object"
       },
-      "ModuleAddress": {
-        "description": "One module version's registry address.",
+      "ModuleCreate": {
+        "description": "A module to connect to a GitHub repository the App is installed on.\n\nLike HCP Terraform's publish from VCS: from then on a push of a `vX.Y.Z` or\n`X.Y.Z` tag to the repository publishes that version. The namespace is the\nrepository owner. A name and provider left out come from a\n`terraform-<provider>-<name>` repository name.",
         "properties": {
           "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "namespace": {
-            "title": "Namespace",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
           },
           "provider": {
-            "title": "Provider",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
           },
-          "version": {
-            "title": "Version",
+          "vcs_repo": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+            "title": "Vcs Repo",
             "type": "string"
           }
         },
         "required": [
-          "namespace",
-          "name",
-          "provider",
-          "version"
+          "vcs_repo"
         ],
-        "title": "ModuleAddress",
+        "title": "ModuleCreate",
         "type": "object"
       },
       "ModuleList": {
@@ -1109,60 +1145,8 @@
         "title": "ModuleList",
         "type": "object"
       },
-      "ModuleUpload": {
-        "description": "Where to PUT the tarball.\n\nA retry of the same workflow run attempt gets the same `upload_id` and a freshly\nsigned URL for the same key. Every header is inside the signature and has to be\nsent verbatim.",
-        "properties": {
-          "expires_in": {
-            "title": "Expires In",
-            "type": "integer"
-          },
-          "headers": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Headers",
-            "type": "object"
-          },
-          "module": {
-            "$ref": "#/components/schemas/ModuleAddress"
-          },
-          "upload_id": {
-            "title": "Upload Id",
-            "type": "string"
-          },
-          "upload_url": {
-            "title": "Upload Url",
-            "type": "string"
-          }
-        },
-        "required": [
-          "upload_id",
-          "upload_url",
-          "headers",
-          "expires_in",
-          "module"
-        ],
-        "title": "ModuleUpload",
-        "type": "object"
-      },
-      "ModuleUploadCreate": {
-        "description": "What the publishing workflow reports alongside its GitHub Actions OIDC token.\n\nThe module and its version come from the verified token: the namespace is the\nrepository owner, the name and provider come from the repository, and the\nversion from the pushed tag.",
-        "properties": {
-          "size_bytes": {
-            "exclusiveMinimum": 0.0,
-            "maximum": 100000000.0,
-            "title": "Size Bytes",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "size_bytes"
-        ],
-        "title": "ModuleUploadCreate",
-        "type": "object"
-      },
       "ModuleVersion": {
-        "description": "One version of a module and where its ingest stands.",
+        "description": "One version of a module and where its publishing stands.",
         "properties": {
           "actor": {
             "title": "Actor",
@@ -1221,6 +1205,17 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
           },
           "version": {
             "title": "Version",
@@ -5065,7 +5060,7 @@
     },
     "/api/v1/registry/modules": {
       "get": {
-        "description": "Every module and every version, with pending and failed ingests shown.",
+        "description": "Every module and every version, with pending and failed versions shown.",
         "operationId": "list_modules_api_v1_registry_modules_get",
         "responses": {
           "200": {
@@ -5093,17 +5088,15 @@
         "tags": [
           "registry"
         ]
-      }
-    },
-    "/api/v1/registry/uploads": {
+      },
       "post": {
-        "description": "Issue a presigned PUT for a module version's tarball.\n\nThe caller sends `Authorization: Bearer <GitHub Actions OIDC token>` from a\nworkflow running on a `v<semver>` tag push. The module and version come from\nits verified claims. A retry of the same workflow run attempt returns the same\n`upload_id` with a new URL for the same key.",
-        "operationId": "create_module_upload_api_v1_registry_uploads_post",
+        "description": "Connect a module to a repository; each `vX.Y.Z` or `X.Y.Z` tag pushed there publishes it.\n\nTags pushed before the module existed are not published. Push a new tag, or\ndelete and push an existing one again.",
+        "operationId": "create_module_api_v1_registry_modules_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ModuleUploadCreate"
+                "$ref": "#/components/schemas/ModuleCreate"
               }
             }
           },
@@ -5114,26 +5107,157 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ModuleUpload"
+                  "$ref": "#/components/schemas/Module"
                 }
               }
             },
             "description": "Successful Response"
           },
-          "401": {
-            "description": "The GitHub Actions OIDC token is missing or did not verify."
-          },
-          "403": {
-            "description": "The repository may not publish modules. `error_code` is `REGISTRY_REPO_NOT_ALLOWED`."
-          },
           "409": {
-            "description": "The version is already published. `error_code` is `REGISTRY_VERSION_EXISTS`."
+            "description": "A module already sits at the address, or there is no GitHub App."
           },
           "422": {
-            "description": "The token is not for a version tag push, or the repository names no valid module."
+            "description": "The App is not installed on the repository, or the address is not valid."
           }
         },
-        "summary": "Create Module Upload",
+        "summary": "Create Module",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}": {
+      "delete": {
+        "description": "Remove a module with every version and stored tarball. Configurations pinned to it stop resolving.",
+        "operationId": "delete_module_api_v1_registry_modules__namespace___name___provider__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No module sits at the address."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Delete Module",
+        "tags": [
+          "registry"
+        ]
+      },
+      "get": {
+        "description": "One module and every version of it.",
+        "operationId": "get_module_api_v1_registry_modules__namespace___name___provider__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Module"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No module sits at the address."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Module",
         "tags": [
           "registry"
         ]

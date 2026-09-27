@@ -697,37 +697,43 @@ export interface paths {
         };
         /**
          * List Modules
-         * @description Every module and every version, with pending and failed ingests shown.
+         * @description Every module and every version, with pending and failed versions shown.
          */
         get: operations["list_modules_api_v1_registry_modules_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Module
+         * @description Connect a module to a repository; each `vX.Y.Z` or `X.Y.Z` tag pushed there publishes it.
+         *
+         *     Tags pushed before the module existed are not published. Push a new tag, or
+         *     delete and push an existing one again.
+         */
+        post: operations["create_module_api_v1_registry_modules_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/registry/uploads": {
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /**
-         * Create Module Upload
-         * @description Issue a presigned PUT for a module version's tarball.
-         *
-         *     The caller sends `Authorization: Bearer <GitHub Actions OIDC token>` from a
-         *     workflow running on a `v<semver>` tag push. The module and version come from
-         *     its verified claims. A retry of the same workflow run attempt returns the same
-         *     `upload_id` with a new URL for the same key.
+         * Get Module
+         * @description One module and every version of it.
          */
-        post: operations["create_module_upload_api_v1_registry_uploads_post"];
-        delete?: never;
+        get: operations["get_module_api_v1_registry_modules__namespace___name___provider__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Module
+         * @description Remove a module with every version and stored tarball. Configurations pinned to it stop resolving.
+         */
+        delete: operations["delete_module_api_v1_registry_modules__namespace___name___provider__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1744,9 +1750,11 @@ export interface components {
         };
         /**
          * Module
-         * @description One module and every version uploaded for it, newest first.
+         * @description One module and every version published or attempted for it, newest first.
          */
         Module: {
+            /** Created At */
+            created_at?: string | null;
             /** Name */
             name: string;
             /** Namespace */
@@ -1755,22 +1763,27 @@ export interface components {
             provider: string;
             /** Source */
             source: string;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
             /** Versions */
             versions: components["schemas"]["ModuleVersion"][];
         };
         /**
-         * ModuleAddress
-         * @description One module version's registry address.
+         * ModuleCreate
+         * @description A module to connect to a GitHub repository the App is installed on.
+         *
+         *     Like HCP Terraform's publish from VCS: from then on a push of a `vX.Y.Z` or
+         *     `X.Y.Z` tag to the repository publishes that version. The namespace is the
+         *     repository owner. A name and provider left out come from a
+         *     `terraform-<provider>-<name>` repository name.
          */
-        ModuleAddress: {
+        ModuleCreate: {
             /** Name */
-            name: string;
-            /** Namespace */
-            namespace: string;
+            name?: string | null;
             /** Provider */
-            provider: string;
-            /** Version */
-            version: string;
+            provider?: string | null;
+            /** Vcs Repo */
+            vcs_repo: string;
         };
         /**
          * ModuleList
@@ -1781,41 +1794,8 @@ export interface components {
             modules: components["schemas"]["Module"][];
         };
         /**
-         * ModuleUpload
-         * @description Where to PUT the tarball.
-         *
-         *     A retry of the same workflow run attempt gets the same `upload_id` and a freshly
-         *     signed URL for the same key. Every header is inside the signature and has to be
-         *     sent verbatim.
-         */
-        ModuleUpload: {
-            /** Expires In */
-            expires_in: number;
-            /** Headers */
-            headers: {
-                [key: string]: string;
-            };
-            module: components["schemas"]["ModuleAddress"];
-            /** Upload Id */
-            upload_id: string;
-            /** Upload Url */
-            upload_url: string;
-        };
-        /**
-         * ModuleUploadCreate
-         * @description What the publishing workflow reports alongside its GitHub Actions OIDC token.
-         *
-         *     The module and its version come from the verified token: the namespace is the
-         *     repository owner, the name and provider come from the repository, and the
-         *     version from the pushed tag.
-         */
-        ModuleUploadCreate: {
-            /** Size Bytes */
-            size_bytes: number;
-        };
-        /**
          * ModuleVersion
-         * @description One version of a module and where its ingest stands.
+         * @description One version of a module and where its publishing stands.
          */
         ModuleVersion: {
             /** Actor */
@@ -1837,6 +1817,8 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "published" | "failed";
+            /** Tag */
+            tag?: string | null;
             /** Version */
             version: string;
         };
@@ -4371,7 +4353,7 @@ export interface operations {
             };
         };
     };
-    create_module_upload_api_v1_registry_uploads_post: {
+    create_module_api_v1_registry_modules_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -4380,7 +4362,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ModuleUploadCreate"];
+                "application/json": components["schemas"]["ModuleCreate"];
             };
         };
         responses: {
@@ -4390,36 +4372,100 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ModuleUpload"];
+                    "application/json": components["schemas"]["Module"];
                 };
             };
-            /** @description The GitHub Actions OIDC token is missing or did not verify. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The repository may not publish modules. `error_code` is `REGISTRY_REPO_NOT_ALLOWED`. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The version is already published. `error_code` is `REGISTRY_VERSION_EXISTS`. */
+            /** @description A module already sits at the address, or there is no GitHub App. */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description The token is not for a version tag push, or the repository names no valid module. */
+            /** @description The App is not installed on the repository, or the address is not valid. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_module_api_v1_registry_modules__namespace___name___provider__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                name: string;
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Module"];
+                };
+            };
+            /** @description No module sits at the address. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_module_api_v1_registry_modules__namespace___name___provider__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                name: string;
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No module sits at the address. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };

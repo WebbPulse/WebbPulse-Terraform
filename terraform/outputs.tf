@@ -153,11 +153,6 @@ output "e2e_run_role_arn" {
   value       = one(aws_iam_role.e2e_run_role[*].arn)
 }
 
-output "vcs_oidc_audience" {
-  description = "Audience a module publishing workflow must request its GitHub Actions OIDC token with for POST /api/v1/registry/uploads"
-  value       = var.vcs_oidc_audience
-}
-
 output "vcs_ingest_queue_url" {
   description = "Queue EventBridge feeds with Object Created events under ingest/ in the artifacts bucket"
   value       = module.vcs_ingest.queue_url
@@ -169,7 +164,7 @@ output "github_webhooks_queue_url" {
 }
 
 output "registry_ingest_queue_url" {
-  description = "Queue EventBridge feeds with Object Created events under registry/incoming/ in the artifacts bucket"
+  description = "Queue the GitHub webhook route sends each semantic version tag push to, consumed by the registry function"
   value       = module.registry_ingest.queue_url
 }
 

@@ -6,10 +6,13 @@ serves the route. It reads the raw body, checks `X-Hub-Signature-256` against th
 `GITHUB_WEBHOOK_SECRET` key of the `app` secret, and answers 401 before any routing,
 parsing or handler runs. With no secret configured every delivery is refused.
 
-A verified delivery the bridge acts on becomes one compact message on the webhooks
-queue, built by `delivery_message` from the signed payload alone. The runs function
-reads it back with `parse_message`. Both sides live here so the github function and
-the runs function share the shape without importing each other.
+A verified delivery the bridge acts on becomes one compact message, built from the
+signed payload alone. A branch push or a pull request goes to the webhooks queue
+through `delivery_message`, and the runs function reads it back with
+`parse_message`. A push of a semantic version tag goes to the registry's ingest
+queue through `tag_message`, and the registry function reads it back with
+`parse_tag_message`. Both sides live here so the functions share the shape without
+importing each other.
 """
 
 from __future__ import annotations
@@ -34,6 +37,9 @@ WEBHOOK_PATH: Final = "/api/v1/github/webhooks"
 WEBHOOK_KIND: Final = "github_webhook"
 """The `kind` a queued delivery carries, which the runs function routes on."""
 
+TAG_KIND: Final = "module_tag"
+"""The `kind` a queued tag push carries, which the registry function routes on."""
+
 SIGNATURE_HEADER: Final = "x-hub-signature-256"
 EVENT_HEADER: Final = "x-github-event"
 DELIVERY_HEADER: Final = "x-github-delivery"
@@ -54,7 +60,10 @@ PULL_REQUEST_ACTIONS: Final = frozenset({"opened", "synchronize", "reopened"})
 ZERO_SHA: Final = "0" * 40
 
 _BRANCH_REF = re.compile(r"^refs/heads/(?P<branch>.+)$")
-_TAG_REF = re.compile(r"^refs/tags/(?P<tag>.+)$")
+_SEMVER_TAG_REF = re.compile(
+    r"^refs/tags/(?P<tag>v?(?P<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?))$"
+)
 _DELIVERY = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 
@@ -210,8 +219,6 @@ def delivery_message(event: str, delivery: str, payload: Mapping[str, Any]) -> O
             return None
         branch = _BRANCH_REF.match(ref)
         if branch is None:
-            if _TAG_REF.match(ref):
-                _log.info("Ignored a tag push.", extra={"event": "github.webhook.tag_ignored", "delivery": delivery})
             return None
         return {**base, "ref": ref, "sha": sha, "branch": branch.group("branch"), "paths": _push_paths(payload)}
     if event == PULL_REQUEST:
@@ -239,6 +246,63 @@ def delivery_message(event: str, delivery: str, payload: Mapping[str, Any]) -> O
             "base_branch": str(base_ref.get("ref") or "") or None,
         }
     return None
+
+
+def tag_message(event: str, delivery: str, payload: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    """The registry message for a push of a semantic version tag, or `None` for anything else.
+
+    `vX.Y.Z` and `X.Y.Z` both publish, a prerelease suffix included. A deleted tag
+    publishes nothing and unpublishes nothing, and any other tag is ignored. The
+    commit is the push's head commit, since for an annotated tag `after` names the
+    tag object rather than the commit it points at.
+    """
+    if event != PUSH or not _DELIVERY.match(delivery) or payload.get("deleted"):
+        return None
+    match = _SEMVER_TAG_REF.match(str(payload.get("ref") or ""))
+    if match is None:
+        return None
+    base = _repository(payload)
+    if not base["repo"] or not base["repository_id"] or not base["installation_id"]:
+        return None
+    head = payload.get("head_commit") or {}
+    sha = str(head.get("id") or "") if isinstance(head, Mapping) else ""
+    if not _SHA.match(sha):
+        sha = str(payload.get("after") or "")
+    if not _SHA.match(sha) or sha == ZERO_SHA:
+        return None
+    return {
+        "kind": TAG_KIND,
+        "delivery": delivery,
+        "event": event,
+        **base,
+        "ref": str(payload["ref"]),
+        "tag": match.group("tag"),
+        "version": match.group("version"),
+        "sha": sha,
+    }
+
+
+def parse_tag_message(record: Mapping[str, Any]) -> dict[str, Any]:
+    """The queued tag push one SQS record carries.
+
+    Raises:
+        MalformedDelivery: The body is not a `module_tag` message with every field
+            it needs, so it parks on the dead letter queue.
+    """
+    raw = record.get("body")
+    try:
+        body = json.loads(raw) if isinstance(raw, str) else None
+    except ValueError as error:
+        raise MalformedDelivery("The body is not JSON.") from error
+    if not isinstance(body, dict) or body.get("kind") != TAG_KIND:
+        raise MalformedDelivery(f"The body is not a {TAG_KIND} message.")
+    required = ["delivery", "repo", "repository_id", "installation_id", "tag", "version", "sha", "actor"]
+    missing = [name for name in required if not body.get(name)]
+    if missing:
+        raise MalformedDelivery(f"The message lacks {', '.join(missing)}.")
+    if not _SHA.match(str(body["sha"])):
+        raise MalformedDelivery("The message names no commit.")
+    return body
 
 
 def parse_message(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -276,11 +340,14 @@ __all__ = [
     "PULL_REQUEST",
     "PUSH",
     "SIGNATURE_HEADER",
+    "TAG_KIND",
     "WEBHOOK_KIND",
     "WEBHOOK_PATH",
     "MalformedDelivery",
     "WebhookSignatureMiddleware",
     "delivery_message",
     "parse_message",
+    "parse_tag_message",
+    "tag_message",
     "webhook_secret",
 ]
