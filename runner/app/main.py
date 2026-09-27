@@ -8,12 +8,12 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Callable, cast
 
 import boto3
 import httpx
 
-from app import callback, credentials, engine, install, state_credentials, workspace
+from app import callback, credentials, engine, identity, install, state_credentials, workspace
 from app.api import ApiError, RunnerApi, build_client
 from app.logs import CloudWatchLogSink, Redactor
 from app.models import Bundle, Changes, PhaseResult, RunnerEnv, RunnerEnvError
@@ -43,6 +43,7 @@ class Clients:
     sts: STSClient
     sfn: SFNClient
     http: httpx.Client
+    identity: Callable[[str], dict[str, str]] | None = None
 
     @classmethod
     def build(cls, region: str) -> Clients:
@@ -53,7 +54,38 @@ class Clients:
             sts=session.client("sts"),
             sfn=session.client("stepfunctions"),
             http=build_client(),
+            identity=identity.session_signer(session, region),
         )
+
+
+def _initial_secrets(env: RunnerEnv) -> list[str]:
+    """The secrets the runner holds before it has read anything from the API."""
+    secrets = [env.task_token.get_secret_value()]
+    if env.run_token is not None:
+        secrets.append(env.run_token.get_secret_value())
+    return secrets
+
+
+def obtain_run_token(env: RunnerEnv, clients: Clients, api: RunnerApi) -> str:
+    """Get the run token by trading the task's signed identity for it.
+
+    A `RUN_TOKEN` override, when the task was started with one, is the fallback
+    for an exchange that fails, so a runner image and a state machine from either
+    side of the change still run together. What happened goes to the container's
+    own output, not the run's transcript.
+    """
+    if clients.identity is not None:
+        try:
+            token = api.exchange_token(clients.identity(env.run_id))
+        except (ApiError, identity.IdentityError) as error:
+            print(f"run token exchange failed: {error}", flush=True)
+        else:
+            print("run token obtained from the task identity", flush=True)
+            return token
+    if api.has_token and env.run_token is not None:
+        print("using the run token the task was started with", flush=True)
+        return env.run_token.get_secret_value()
+    raise PhaseFailure("RunTokenUnavailable", "no run token from the exchange or the task overrides")
 
 
 def _run_plan(
@@ -131,13 +163,18 @@ def _upload_outputs(runner: engine.EngineRunner, api: RunnerApi, sink: CloudWatc
         sink.write(f"applied outputs not uploaded: {error}")
 
 
-def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
-    """Fetch the bundle, run the phase, upload the artifacts and post the result."""
-    redactor = Redactor([env.run_token.get_secret_value(), env.task_token.get_secret_value()])
+def execute(env: RunnerEnv, clients: Clients, directory: Path, redactor: Redactor | None = None) -> PhaseResult:
+    """Fetch the bundle, run the phase, upload the artifacts and post the result.
+
+    `redactor` is shared with the caller so a failure it reports is scrubbed of
+    the run token this phase obtained.
+    """
+    redactor = redactor or Redactor(_initial_secrets(env))
     api = RunnerApi(env, clients.http)
     sink = CloudWatchLogSink(clients.logs, env.log_group, f"{env.run_id}/{env.phase}", redactor)
 
     with sink:
+        redactor.add(obtain_run_token(env, clients, api))
         try:
             bundle: Bundle = api.fetch_bundle()
         except ApiError as error:
@@ -226,9 +263,9 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
 
 def run(env: RunnerEnv, clients: Clients, directory: Path) -> int:
     """Execute the phase and send task success or task failure, never raising."""
-    redactor = Redactor([env.run_token.get_secret_value(), env.task_token.get_secret_value()])
+    redactor = Redactor(_initial_secrets(env))
     try:
-        result = execute(env, clients, directory)
+        result = execute(env, clients, directory, redactor)
     except PhaseFailure as failure:
         print(redactor.scrub(f"{failure.error}: {failure.cause}"), file=sys.stderr, flush=True)
         callback.send_failure(

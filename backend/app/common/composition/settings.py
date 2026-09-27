@@ -115,6 +115,10 @@ class Settings(BaseServiceSettings):
     One role per phase, so a trust policy that names only the first leaves the
     apply phase unable to assume. `runner_task_role_arns` splits it."""
 
+    RUNNER_CLUSTER_ARN: str = ""
+    """The ECS cluster runner tasks run on. The runner token exchange describes the
+    calling task there to learn which run and phase it was started for."""
+
     RUN_ROLE_NAME_PREFIX: str = ""
     """The prefix every workspace run role name carries, `${local.prefix}-workspace-`.
     The runner's AssumeRole grant is scoped to it, so a role named outside it cannot

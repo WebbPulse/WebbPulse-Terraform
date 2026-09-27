@@ -2815,6 +2815,39 @@
         "title": "RunVcs",
         "type": "object"
       },
+      "RunnerToken": {
+        "description": "The run token a runner task holds for its phase.",
+        "properties": {
+          "run_token": {
+            "title": "Run Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_token"
+        ],
+        "title": "RunnerToken",
+        "type": "object"
+      },
+      "RunnerTokenRequest": {
+        "additionalProperties": false,
+        "description": "A runner task's signed STS `GetCallerIdentity` headers, traded for its run token.",
+        "properties": {
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 16,
+            "title": "Headers",
+            "type": "object"
+          }
+        },
+        "required": [
+          "headers"
+        ],
+        "title": "RunnerTokenRequest",
+        "type": "object"
+      },
       "StateVersion": {
         "description": "One version of a workspace's Terraform state, as the API renders it.\n\nA state body holds every resource attribute and every output in plaintext,\nroutinely including passwords and private keys, so nothing derived from those\nappears here. The fields are the ones that describe the version rather than\nwhat is inside it, and the body is reachable only through the separate\ndownload route.",
         "properties": {
@@ -6012,6 +6045,62 @@
           }
         },
         "summary": "Run Plan",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/runner-token": {
+      "post": {
+        "description": "Trade a runner task's signed identity for its run token. Runner only.\n\nEvery refusal is the same 401, so a caller learns nothing about which check\nfailed; the reason is logged instead.",
+        "operationId": "runner_token_api_v1_runs__run_id__runner_token_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerToken"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Runner Token",
         "tags": [
           "runs"
         ]

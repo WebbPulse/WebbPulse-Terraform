@@ -170,11 +170,20 @@ version, and return `Cache-Control: no-store` on both the API and S3 responses.
 History cursors are bound to the workspace's state key and invalid ones return 400; clients
 must follow `next_page_token` even on an empty page caused by delete markers.
 
-The runner is separate. Starting a run mints a `wpk_` key scoped `runner`, bound
-to that run and expiring after four hours, and only that token opens
-`GET /runs/{id}/bundle` and `POST /runs/{id}/phase-result`. The bundle carries
-decrypted sensitive variables, so no human scope reaches it, and every terminal
-transition revokes the token.
+The runner is separate. A run token is a `wpk_` key scoped `runner`, bound to
+one run and expiring after four hours, and only it opens the bundle, the
+artifact uploads and the phase result. The bundle carries decrypted sensitive
+variables, so no human scope reaches it, and every terminal transition revokes
+the token. The runner gets it from `POST /runs/{id}/runner-token` (no
+authorizer) by sending the headers of an STS `GetCallerIdentity` it signed with
+its task role, with the run id in the signed `x-webbpulse-run-id` header
+(`app/domains/runs/runner_tokens.py`). The route replays that to regional STS,
+requires a runner task role session, whose session name is the task id, then
+requires `ecs:DescribeTasks` on `RUNNER_CLUSTER_ARN` to show that task still
+running with this `RUN_ID` and a `PHASE` matching the run's status. It mints a
+token, swaps `run_token_hash` conditionally on that status and revokes the one
+it replaced; every refusal is the same 401 and logs `runs.runner_token.refused`.
+So the token never has to travel in the Step Functions execution input.
 
 ### The run role
 
@@ -375,7 +384,9 @@ the only reader.
 
 ### Runner protocol
 
-Step Functions starts the runner with `runTask.waitForTaskToken`. It fetches the
+Step Functions starts the runner with `runTask.waitForTaskToken`. It exchanges
+its task identity for the run token (`app/identity.py`), falling back to a
+`RUN_TOKEN` override if the task has one, then fetches the
 bundle, unpacks the config tarball, writes the S3 backend override and the auto
 loaded tfvars files, assumes the workspace's run role with the phase session policy,
 points the S3 backend at the task role through the `webbpulse-state` profile so

@@ -1009,6 +1009,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/runner-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Runner Token
+         * @description Trade a runner task's signed identity for its run token. Runner only.
+         *
+         *     Every refusal is the same 401, so a caller learns nothing about which check
+         *     failed; the reason is logged instead.
+         */
+        post: operations["runner_token_api_v1_runs__run_id__runner_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces": {
         parameters: {
             query?: never;
@@ -2531,6 +2554,24 @@ export interface components {
             repository_id: string;
             /** Sha */
             sha: string;
+        };
+        /**
+         * RunnerToken
+         * @description The run token a runner task holds for its phase.
+         */
+        RunnerToken: {
+            /** Run Token */
+            run_token: string;
+        };
+        /**
+         * RunnerTokenRequest
+         * @description A runner task's signed STS `GetCallerIdentity` headers, traded for its run token.
+         */
+        RunnerTokenRequest: {
+            /** Headers */
+            headers: {
+                [key: string]: string;
+            };
         };
         /**
          * StateVersion
@@ -4911,6 +4952,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunPlan"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    runner_token_api_v1_runs__run_id__runner_token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerToken"];
                 };
             };
             /** @description Request validation failed. */
