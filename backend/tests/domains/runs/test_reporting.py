@@ -605,3 +605,164 @@ def test_a_pull_request_run_does_not_look_up_pull_requests(pr_ready, settings):
     store_run(settings, "run-1", "ws-1", "planning", source="vcs_pr")
     reporting.report_run("run-1", settings=settings)
     assert not [r for r in pr_ready.requests if r.url.path.endswith("/pulls")]
+
+
+SKIP = {"workspace_name": "roleless", "reason": "The workspace has no run role."}
+
+
+def pr_upload(**fields: Any) -> dict[str, Any]:
+    """An ingest record for a pull request upload."""
+    return {
+        "upload_id": "up-1",
+        "event": "pull_request",
+        "repo": REPO,
+        "repository_id": REPOSITORY_ID,
+        "sha": MERGE_SHA,
+        "ref": "refs/pull/7/merge",
+        "pr_number": 7,
+        "head_sha": HEAD_SHA,
+    } | fields
+
+
+def push_upload() -> dict[str, Any]:
+    """An ingest record for a push upload."""
+    return {
+        "upload_id": "up-2",
+        "event": "push",
+        "repo": REPO,
+        "repository_id": REPOSITORY_ID,
+        "sha": PUSH_SHA,
+        "ref": "refs/heads/main",
+        "branch": "main",
+    }
+
+
+@pytest.mark.parametrize(
+    ("statuses", "skipped", "expected"),
+    [
+        ([], [], ("completed", "success", "No runs needed")),
+        ([], [SKIP], ("completed", "failure", "Workspace could not run")),
+        (["applied"], [SKIP], ("completed", "failure", "Workspace could not run")),
+        (["planning"], [SKIP], ("completed", "failure", "Workspace could not run")),
+        (["planning", "applied"], [], ("in_progress", None, "Runs in progress")),
+        (["applied", "errored"], [], ("completed", "failure", "Runs errored")),
+        (["applied", "awaiting_confirmation"], [], ("completed", "action_required", "Runs pending confirmation")),
+        (["planned_and_finished", "applied"], [], ("completed", "success", "All runs finished")),
+        (["applied", "discarded"], [], ("completed", "neutral", "Runs finished")),
+    ],
+)
+def test_the_aggregate_state(statuses, skipped, expected):
+    """No runs pass, a skip fails outright, and runs keep their summed semantics."""
+    state = reporting.aggregate_state([{"status": status} for status in statuses], skipped)
+    assert (state.status, state.conclusion, state.title) == expected
+
+
+def test_skipped_workspaces_are_read_off_the_runs_once_each():
+    """Every run from one upload carries the same skips; they are listed once, by name."""
+    runs = [
+        {"vcs": {"skipped": [SKIP]}},
+        {"vcs": {"skipped": [SKIP, {"workspace_name": "alpha", "reason": "r"}]}},
+        {"vcs": {}},
+    ]
+    assert reporting.skipped_workspaces(runs) == [{"workspace_name": "alpha", "reason": "r"}, SKIP]
+
+
+def test_an_upload_with_no_runs_needed_passes_the_aggregate(pr_ready, settings):
+    """The pull request's head gets a successful aggregate and nothing else."""
+    assert reporting.report_upload(pr_upload(), [], settings=settings) is True
+    [overall] = pr_ready.named(CHECK)
+    assert overall["head_sha"] == HEAD_SHA
+    assert (overall["status"], overall["conclusion"]) == ("completed", "success")
+    assert overall["output"]["title"] == "No runs needed"
+    assert len(pr_ready.check_runs) == 1
+    assert 7 not in pr_ready.comments
+
+
+def test_a_push_with_no_runs_needed_passes_the_aggregate(push_ready, settings):
+    """A push that runs nothing concludes the aggregate on the pushed commit."""
+    assert reporting.report_upload(push_upload(), [], settings=settings) is True
+    [overall] = push_ready.named(CHECK)
+    assert (overall["head_sha"], overall["conclusion"]) == (PUSH_SHA, "success")
+
+
+def test_a_skipped_workspace_fails_the_aggregate_by_name(pr_ready, settings):
+    """The aggregate, the workspace's own check and the comment all name the reason."""
+    assert reporting.report_upload(pr_upload(), [SKIP], settings=settings) is True
+    [overall] = pr_ready.named(CHECK)
+    assert (overall["status"], overall["conclusion"]) == ("completed", "failure")
+    assert "| roleless | Not run | The workspace has no run role. |" in overall["output"]["summary"]
+    [own] = pr_ready.named(f"{CHECK}/roleless")
+    assert (own["conclusion"], own["output"]["summary"]) == ("failure", SKIP["reason"])
+    [comment] = pr_ready.comments[7]
+    assert "roleless" in comment["body"]
+
+
+def test_a_reported_upload_updates_the_same_aggregate(pr_ready, settings):
+    """A redelivered upload lands on the aggregate already there."""
+    reporting.report_upload(pr_upload(), [], settings=settings)
+    reporting.report_upload(pr_upload(), [], settings=settings)
+    assert len(pr_ready.named(CHECK)) == 1
+
+
+def test_an_upload_on_a_forged_head_posts_nothing(pr_ready, settings):
+    """The upload's head is verified the same way a run's is."""
+    assert reporting.report_upload(pr_upload(head_sha=OTHER_SHA), [], settings=settings) is False
+    assert pr_ready.writes() == []
+
+
+def test_an_upload_report_swallows_github_failures(pr_ready, settings):
+    """A GitHub error never reaches the ingest consumer."""
+    pr_ready.failure = 500
+    assert reporting.report_upload(pr_upload(), [], settings=settings) is False
+
+
+def test_an_upload_report_without_an_app_posts_nothing(settings, monkeypatch):
+    """No App credentials, no calls."""
+    monkeypatch.delenv("GITHUB_APP_ID", raising=False)
+    monkeypatch.delenv("GITHUB_PRIVATE_KEY", raising=False)
+    loader.invalidate()
+    calls: list[Any] = []
+    monkeypatch.setattr(reporting, "http_client", lambda: calls.append(1))
+    assert reporting.report_upload(pr_upload(), [], settings=settings) is False
+    assert calls == []
+    loader.invalidate()
+
+
+def test_a_run_carrying_a_skip_keeps_the_aggregate_failing(pr_ready, settings):
+    """A sibling that could not run fails the aggregate even once the run itself planned."""
+    store_run(
+        settings,
+        "run-1",
+        "ws-1",
+        "planned_and_finished",
+        source="vcs_pr",
+        changes={"add": 0, "change": 0, "destroy": 0},
+    )
+    set_status(
+        settings,
+        "run-1",
+        "planned_and_finished",
+        vcs=(repositories.runs(settings).get({"run_id": "run-1"}) or {})["vcs"] | {"skipped": [SKIP]},
+    )
+    assert reporting.report_run("run-1", settings=settings) is True
+    [own] = pr_ready.named("webbpulse-terraform/network")
+    assert own["conclusion"] == "success"
+    [overall] = pr_ready.named(CHECK)
+    assert overall["conclusion"] == "failure"
+    assert "| roleless | Not run |" in overall["output"]["summary"]
+    assert "roleless" in pr_ready.comments[7][0]["body"]
+
+
+def test_a_planned_pull_request_run_passes_the_aggregate(pr_ready, settings):
+    """A pull request plan with changes is a success: only a failure blocks the merge."""
+    store_run(
+        settings,
+        "run-1",
+        "ws-1",
+        "planned_and_finished",
+        source="vcs_pr",
+        changes={"add": 2, "change": 1, "destroy": 1},
+    )
+    reporting.report_run("run-1", settings=settings)
+    [overall] = pr_ready.named(CHECK)
+    assert (overall["status"], overall["conclusion"]) == ("completed", "success")

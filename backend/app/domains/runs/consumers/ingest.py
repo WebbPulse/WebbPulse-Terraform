@@ -11,6 +11,13 @@ Delivery is at least once, and the workflow's PUT retries, so one key can fire
 twice. Every id this writes is derived from the upload id and the workspace id,
 so a redelivery finds its own config version and its own run already there and
 does nothing new.
+
+Every upload that reaches the workspaces is reported to GitHub, so the aggregate
+`webbpulse-terraform` check can be required. Runs report themselves through the
+runs table's stream. An upload that starts none, because no workspace matched or
+every matched one was skipped for its configuration, is reported from here, and a
+skip is also written onto each run the upload did start so the aggregate keeps
+failing.
 """
 
 from __future__ import annotations
@@ -32,7 +39,7 @@ from ....common.db import repositories
 from ....common.db.tables import RUNS_BY_WORKSPACE_INDEX
 from ....common.workspaces import reads as workspace_reads
 from ....common.workspaces import vcs as workspace_vcs
-from .. import service
+from .. import reporting, service
 from ..vcs import PULL_REQUEST_EVENT, PUSH_EVENT, UPLOAD_ID_PATTERN, crockford
 
 _log = logging.getLogger(__name__)
@@ -51,6 +58,10 @@ _INGEST_KEY = re.compile(rf"^ingest/(?P<upload_id>{UPLOAD_ID_PATTERN})\.tar\.gz$
 
 SOURCE_PUSH = "vcs_push"
 SOURCE_PR = "vcs_pr"
+
+RUN_ROLE_ARN = re.compile(r"^arn:aws[\w-]*:iam::\d{12}:role/[\w+=,.@/-]+$")
+NO_RUN_ROLE_REASON = "The workspace has no run role, so the runner has nothing to assume."
+BAD_RUN_ROLE_REASON = "The workspace's run role is not an IAM role ARN, so the runner cannot assume it."
 
 SUPERSEDE_CANCEL_STATUSES = frozenset({"pending"})
 SUPERSEDE_DISCARD_STATUSES = frozenset({"awaiting_confirmation"})
@@ -179,6 +190,26 @@ def _eligible(workspace: Mapping[str, Any], upload: Mapping[str, Any]) -> bool:
     return False
 
 
+def skip_reason(workspace: Mapping[str, Any]) -> Optional[str]:
+    """Why a matched workspace cannot run, or `None` when it can."""
+    role_arn = str(workspace.get("run_role_arn", "") or "").strip()
+    if not role_arn:
+        return NO_RUN_ROLE_REASON
+    if not RUN_ROLE_ARN.match(role_arn):
+        return BAD_RUN_ROLE_REASON
+    return None
+
+
+def _skip(workspace: Mapping[str, Any], reason: str) -> dict[str, str]:
+    """The skip record the reports and the runs carry for one workspace."""
+    workspace_id = str(workspace["workspace_id"])
+    return {
+        "workspace_id": workspace_id,
+        "workspace_name": str(workspace.get("name") or workspace_id),
+        "reason": reason,
+    }
+
+
 def _ensure_config_version(
     workspace_id: str,
     config_version_id: str,
@@ -269,8 +300,18 @@ def _resume(run_id: str, *, settings: Settings) -> None:
         service.start_run(run_id, settings=settings)
 
 
-def _run_for_workspace(workspace: Mapping[str, Any], upload: Mapping[str, Any], *, settings: Settings) -> Optional[str]:
-    """Create, or find already created, this upload's run on one workspace."""
+def _run_for_workspace(
+    workspace: Mapping[str, Any],
+    upload: Mapping[str, Any],
+    *,
+    skipped: list[dict[str, str]],
+    settings: Settings,
+) -> Optional[str]:
+    """Create, or find already created, this upload's run on one workspace.
+
+    The run's `vcs` block keeps `skipped`, the upload's other matched workspaces
+    that could not run.
+    """
     workspace_id = str(workspace["workspace_id"])
     seed = f"{upload['upload_id']}:{workspace_id}"
     millis = upload_millis(upload)
@@ -310,6 +351,7 @@ def _run_for_workspace(workspace: Mapping[str, Any], upload: Mapping[str, Any], 
         "pr_number": upload.get("pr_number"),
         "head_sha": upload.get("head_sha"),
         "base_sha": upload.get("base_sha"),
+        "skipped": list(skipped) or None,
     }
     actor = {"kind": "vcs", "id": f"github:{upload['actor']}", "display_name": str(upload["actor"])}
     try:
@@ -336,7 +378,9 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
 
     A foreign bucket, a key outside the upload id shape, an expired or absent
     record and a size the record does not declare are logged and dropped. A
-    workspace with no run role is skipped rather than failing its siblings.
+    matched workspace whose configuration keeps it from running is skipped rather
+    than failing its siblings, and the skip is reported as a failure. An upload that
+    starts no run and was not superseded is reported from here.
 
     Raises:
         MalformedIngest: The body is not a usable object created event.
@@ -372,30 +416,54 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
         )
         if _eligible(workspace, upload)
     ]
-    if not workspaces:
+    matched: list[Mapping[str, Any]] = []
+    if workspaces:
+        paths = read_changed_paths(bucket, key, settings=resolved)
+        matched = [
+            workspace
+            for workspace in workspaces
+            if always_triggers(workspace) or paths_match(trigger_patterns(workspace), paths)
+        ]
+    if not matched:
         _log.info(
             "No bound workspace runs on this upload.", extra={"event": "runs.ingest.no_match", "upload_id": upload_id}
         )
-        return []
 
-    paths = read_changed_paths(bucket, key, settings=resolved)
+    skipped: list[dict[str, str]] = []
+    runnable: list[Mapping[str, Any]] = []
+    for workspace in matched:
+        reason = skip_reason(workspace)
+        if reason is None:
+            runnable.append(workspace)
+            continue
+        skipped.append(_skip(workspace, reason))
+        _log.info(
+            "Skipped a workspace that cannot run.",
+            extra={
+                "event": "runs.ingest.skipped",
+                "workspace_id": str(workspace["workspace_id"]),
+                "upload_id": upload_id,
+                "reason": reason,
+            },
+        )
+
     started: list[str] = []
-    for workspace in workspaces:
-        workspace_id = str(workspace["workspace_id"])
-        if not always_triggers(workspace) and not paths_match(trigger_patterns(workspace), paths):
+    superseded = False
+    for workspace in runnable:
+        try:
+            run_id = _run_for_workspace(workspace, upload, skipped=skipped, settings=resolved)
+        except workspace_reads.RunRoleMissing:
+            skipped.append(_skip(workspace, NO_RUN_ROLE_REASON))
             continue
-        if not str(workspace.get("run_role_arn", "") or ""):
-            _log.info(
-                "Skipped a workspace with no run role.",
-                extra={"event": "runs.ingest.no_run_role", "workspace_id": workspace_id, "upload_id": upload_id},
-            )
-            continue
-        run_id = _run_for_workspace(workspace, upload, settings=resolved)
-        if run_id is not None:
+        if run_id is None:
+            superseded = True
+        else:
             started.append(run_id)
+    if not started and not superseded:
+        reporting.report_upload(upload, skipped, settings=resolved)
     _log.info(
         "Handled a VCS upload.",
-        extra={"event": "runs.ingest.handled", "upload_id": upload_id, "runs": started},
+        extra={"event": "runs.ingest.handled", "upload_id": upload_id, "runs": started, "skipped": len(skipped)},
     )
     return started
 
@@ -410,5 +478,6 @@ __all__ = [
     "parse_body",
     "paths_match",
     "read_changed_paths",
+    "skip_reason",
     "trigger_patterns",
 ]
