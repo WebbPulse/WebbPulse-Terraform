@@ -68,6 +68,8 @@ class Settings(BaseServiceSettings):
     ARTIFACTS_BUCKET: str = ""
     RUN_STATE_MACHINE_ARN: str = ""
     RUNNER_LOG_GROUP: str = ""
+    WORKSPACE_CLEANUP_QUEUE_URL: str = ""
+    """The queue a workspace delete sends its S3 purge to. Unset, the delete purges inline."""
     APP_SECRETS_ARN: str = ""
     """The one JSON app secret every runtime key is read from.
 

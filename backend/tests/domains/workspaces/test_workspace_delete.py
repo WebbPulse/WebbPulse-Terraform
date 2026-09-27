@@ -105,8 +105,8 @@ def test_safe_delete_refuses_while_state_tracks_an_instance(auth_client, workspa
     assert run_exists("run-01JBQ0000000000000000000R1")
 
 
-def test_force_delete_removes_everything_and_leaves_a_delete_marker(auth_client, workspace):
-    """A force delete goes through, and the state's history stays behind a delete marker."""
+def test_force_delete_removes_everything_including_the_state_history(auth_client, workspace):
+    """A force delete goes through and leaves no state version or delete marker behind."""
     enable_versioning()
     workspace_id = workspace["workspace_id"]
     add_variable(auth_client, workspace_id)
@@ -120,8 +120,8 @@ def test_force_delete_removes_everything_and_leaves_a_delete_marker(auth_client,
     listing = boto3.client("s3", region_name=REGION).list_object_versions(
         Bucket=STATE_BUCKET, Prefix=state_key(workspace_id)
     )
-    assert [marker.get("IsLatest") for marker in listing.get("DeleteMarkers", [])] == [True]
-    assert len(listing.get("Versions", [])) == 1
+    assert listing.get("DeleteMarkers", []) == []
+    assert listing.get("Versions", []) == []
 
 
 def test_safe_delete_goes_through_when_every_resource_is_empty(auth_client, workspace):
@@ -187,20 +187,23 @@ def test_delete_removes_only_this_workspaces_finished_runs(auth_client, workspac
 
 def test_delete_is_retryable_after_a_partial_failure(auth_client, workspace, monkeypatch):
     """A failure after the checks leaves the row, so a second delete finishes the job."""
-    from app.domains.workspaces import state_versions
+    from app.domains.workspaces import service
 
     workspace_id = workspace["workspace_id"]
+    add_variable(auth_client, workspace_id)
+    write_state(workspace_id, state_with(0))
     seed_run(workspace_id, "run-01JBQ0000000000000000000R1", "applied")
-    original = state_versions.delete_current_state
+    original = service.delete_workspace_runs
 
     def failing(*args, **kwargs):
-        """Fail the state delete once, as a throttled call would."""
+        """Fail the runs delete once, as a throttled call would."""
         raise RuntimeError("simulated")
 
-    monkeypatch.setattr(state_versions, "delete_current_state", failing)
+    monkeypatch.setattr(service, "delete_workspace_runs", failing)
     with pytest.raises(RuntimeError):
         auth_client.delete(f"{BASE}/{workspace_id}")
-    assert auth_client.get(f"{BASE}/{workspace_id}").status_code == 200
-    monkeypatch.setattr(state_versions, "delete_current_state", original)
+    assert_untouched(auth_client, workspace_id)
+    assert state_exists(workspace_id)
+    monkeypatch.setattr(service, "delete_workspace_runs", original)
     assert auth_client.delete(f"{BASE}/{workspace_id}").status_code == 204
     assert auth_client.get(f"{BASE}/{workspace_id}").status_code == 404

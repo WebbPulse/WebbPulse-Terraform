@@ -22,8 +22,13 @@ from ...common.db.tables import (
     CONFIG_VERSIONS_BY_WORKSPACE_INDEX,
     WORKSPACES_BY_NAME_INDEX,
 )
-from ...common.runs.workspace_runs import RunStillActive, delete_workspace_runs, require_no_active_run
-from ...common.workspaces import reads
+from ...common.runs.workspace_runs import (
+    RunStillActive,
+    delete_workspace_runs,
+    require_no_active_run,
+    workspace_run_ids,
+)
+from ...common.workspaces import cleanup, reads
 from ...common.workspaces import vcs as workspace_vcs
 from ...common.workspaces.reads import (
     CONFIG_VERSION_ID_PREFIX,
@@ -313,23 +318,36 @@ class WorkspaceManagesResources(Exception):
 
 
 def delete_workspace(workspace_id: str, *, force: bool = False, settings: Settings | None = None) -> None:
-    """Delete one workspace with its finished runs, current state and variables.
+    """Delete one workspace with everything it owns.
 
     Every check runs before anything is removed: `WorkspaceNotFound`, then
     `RunStillActive` for a run that has not finished, then, unless `force`,
-    `WorkspaceManagesResources` when the current state tracks an instance. The
-    deletes then run runs, state, variables and the workspace row last, so a
-    failure part way leaves the workspace in place and a retry finishes the job.
-    Removing the state object leaves a delete marker over its versions, and the
-    config versions and their tarballs are left to the artifacts bucket lifecycle.
+    `WorkspaceManagesResources` when the current state tracks an instance.
+
+    The object purge (run artifacts, config tarballs, and every state version, delete
+    marker and lock under the workspace's state prefix) is queued first, while the run
+    ids are still readable, and waits for the workspace row to be gone. The rows then
+    go runs, config versions and variables first and the workspace row last, so a
+    failure part way leaves the workspace in place with its state intact and a retry
+    finishes the job. With no cleanup queue configured the purge runs inline at the end.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
     require_no_active_run(workspace_id, settings=resolved)
     if not force and state_versions.current_state_manages_resources(workspace_id, settings=resolved):
         raise WorkspaceManagesResources(workspace_id)
+    run_ids = workspace_run_ids(workspace_id, settings=resolved)
+    queued = cleanup.enqueue(workspace_id, run_ids, settings=resolved)
     delete_workspace_runs(workspace_id, settings=resolved)
-    state_versions.delete_current_state(workspace_id, settings=resolved)
+    config_versions_repository = repositories.config_versions(resolved)
+    config_keys = [
+        {"config_version_id": str(item["config_version_id"])}
+        for item in config_versions_repository.iter_query(
+            Key("workspace_id").eq(workspace_id), index_name=CONFIG_VERSIONS_BY_WORKSPACE_INDEX
+        )
+    ]
+    if config_keys:
+        config_versions_repository.delete_many(config_keys)
     variables_repository = repositories.variables(resolved)
     keys = [
         {"workspace_id": workspace_id, "key": str(item["key"])}
@@ -338,6 +356,8 @@ def delete_workspace(workspace_id: str, *, force: bool = False, settings: Settin
     if keys:
         variables_repository.delete_many(keys)
     repositories.workspaces(resolved).delete({"workspace_id": workspace_id})
+    if not queued:
+        cleanup.purge(workspace_id, run_ids, settings=resolved)
 
 
 def put_variable(
