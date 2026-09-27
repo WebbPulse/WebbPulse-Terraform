@@ -3,8 +3,8 @@
 `Plan` and `Apply` are `ecs:runTask.waitForTaskToken` states, so the execution sits
 on a task token the runner container is supposed to send. When the task never runs
 at all, because the image tag resolves to nothing, an ENI cannot be attached or the
-pull is denied, there is no container to send it and the state waits out its six
-hundred second heartbeat before the run errors. An EventBridge rule on ECS `Task
+pull is denied, there is no container to send it and the state waits out its
+heartbeat before the run errors. An EventBridge rule on ECS `Task
 State Change` for the runner cluster delivers the stop here instead, and this sends
 `SendTaskFailure` against the same token so the execution takes its existing
 `MarkErrored` and `ReleaseSemaphoreAfterFailure` path within seconds.

@@ -961,7 +961,7 @@ def fail_phase_task(
     The counterpart of `discard_run` for the phase states rather than the
     confirmation wait. `Plan` and `Apply` are `ecs:runTask.waitForTaskToken`, so a
     task that dies before the runner can report leaves the state waiting on a token
-    nobody will ever send, until its six hundred second heartbeat expires. Sending
+    nobody will ever send, until its heartbeat expires. Sending
     the failure here lets the execution take its own `MarkErrored` and
     `ReleaseSemaphoreAfterFailure` path at once, which is why this does not touch
     the run row or the semaphore itself.

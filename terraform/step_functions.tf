@@ -10,6 +10,12 @@ variable "apply_timeout_seconds" {
   default     = 7200
 }
 
+variable "task_heartbeat_seconds" {
+  description = "Seconds a plan or apply state waits without a heartbeat from its Fargate task. The runner sends none, so this is the budget for the task to start and finish, and it covers a slow Fargate placement, which has taken 14 minutes in staging"
+  type        = number
+  default     = 1800
+}
+
 variable "confirmation_timeout_seconds" {
   description = "Seconds a planned run waits for a confirmation before the execution gives up and marks it errored. Leave it null, the default, and the environment decides: 86400 in production, 7200 in staging, where an unconfirmed run is a forgotten test run and holding a semaphore slot for a day is waste"
   type        = number
@@ -53,6 +59,7 @@ module "run_state_machine" {
 
     PlanTimeoutSeconds         = tostring(var.plan_timeout_seconds)
     ApplyTimeoutSeconds        = tostring(var.apply_timeout_seconds)
+    TaskHeartbeatSeconds       = tostring(var.task_heartbeat_seconds)
     ConfirmationTimeoutSeconds = tostring(local.confirmation_timeout_seconds)
   }
 

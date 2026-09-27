@@ -74,7 +74,7 @@
         }
       },
       "TimeoutSeconds": ${PlanTimeoutSeconds},
-      "HeartbeatSeconds": 600,
+      "HeartbeatSeconds": ${TaskHeartbeatSeconds},
       "ResultPath": "$.plan",
       "Next": "PlanOutcome",
       "Catch": [
@@ -166,7 +166,7 @@
         }
       },
       "TimeoutSeconds": ${ApplyTimeoutSeconds},
-      "HeartbeatSeconds": 600,
+      "HeartbeatSeconds": ${TaskHeartbeatSeconds},
       "ResultPath": "$.apply",
       "Next": "MarkApplied",
       "Catch": [

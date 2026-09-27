@@ -204,7 +204,9 @@ off, so it never reaches the execution log. The states in order:
 1. `AcquireSemaphore` adds the run to the `holders` set, condition checked
    against the cap, retrying every 15 seconds up to 240 times.
 2. `Plan` runs the plan task definition with `runTask.waitForTaskToken`, timing
-   out at `var.plan_timeout_seconds`, default 1800, with a 600 second heartbeat.
+   out at `var.plan_timeout_seconds`, default 1800, with a heartbeat of
+   `var.task_heartbeat_seconds`, default 1800. The runner sends no heartbeats, so
+   the heartbeat is the budget for the task to start and finish.
 3. `PlanOutcome` chooses: a plan only run, or one whose add, change and destroy
    counts are all zero, goes straight to `MarkPlannedAndFinished`; anything else
    goes to `AwaitConfirmation`.
