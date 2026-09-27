@@ -213,6 +213,19 @@ def list_workspaces(*, settings: Settings | None = None) -> list[dict[str, Any]]
     return sorted(items, key=lambda item: str(item.get("workspace_id", "")))
 
 
+def _stage_run_role(changes: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    """The edit with a staged role resolved against the role the workspace runs as now."""
+    if "run_role_arn" in changes:
+        return {**changes, "pending_run_role_arn": None}
+    pending = changes.get("pending_run_role_arn")
+    if pending is None:
+        return changes
+    current = str(existing.get("run_role_arn") or "")
+    if current and current != pending:
+        return changes
+    return {**changes, "run_role_arn": pending, "pending_run_role_arn": None}
+
+
 def update_workspace(
     workspace_id: str,
     changes: dict[str, Any],
@@ -235,6 +248,12 @@ def update_workspace(
     show a new, unchecked role as connected. Clearing the ARN counts as a change,
     so the outcome goes with it.
 
+    A `pending_run_role_arn` stages a role without switching to it: runs keep the
+    current role until the run role check sees a verification run assume the new
+    one. A workspace with no role, or already on that role, takes it at once
+    instead, since there is nothing to keep working. Setting `run_role_arn`
+    directly switches at once and discards whatever was staged.
+
     A change to `vcs_repo` rewrites the lowercased `vcs_repo_key` the binding
     index reads and resolves the repository through the GitHub App, which records
     its id, installation and canonical name, and fills `tracked_branch` with the
@@ -243,12 +262,16 @@ def update_workspace(
     repository. Clearing `vcs_repo` removes all of them.
     """
     resolved = settings or get_settings()
+    staged: dict[str, Any] | None = None
+    if "run_role_arn" in changes or "pending_run_role_arn" in changes:
+        staged = get_workspace(workspace_id, settings=resolved)
+        changes = _stage_run_role(changes, staged)
     assignments = {key: value for key, value in changes.items() if value is not None}
     clears = [key for key, value in changes.items() if value is None and key in CLEARABLE_WORKSPACE_FIELDS]
     if not assignments and not clears:
         return get_workspace(workspace_id, settings=resolved)
 
-    existing = get_workspace(workspace_id, settings=resolved)
+    existing = staged if staged is not None else get_workspace(workspace_id, settings=resolved)
     role_changed = "run_role_arn" in changes and changes["run_role_arn"] != existing.get("run_role_arn")
 
     assignments["updated_at"] = now_iso()

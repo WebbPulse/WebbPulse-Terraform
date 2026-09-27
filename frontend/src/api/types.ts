@@ -45,6 +45,14 @@ export type RunRoleSetup = Schemas['RunRoleSetup'];
 export type RunRoleCheck = Schemas['RunRoleCheck'];
 
 /**
+ * The verdict on a staged role, which runs do not use until it connects.
+ *
+ * A verification run assumes the staged role, and the recording check then
+ * makes it the workspace's run role.
+ */
+export type PendingRunRoleCheck = Schemas['PendingRunRoleCheck'];
+
+/**
  * The body that starts AWS quick setup: the account and the managed policy.
  *
  * The account id may carry the dashes the AWS console prints them with.

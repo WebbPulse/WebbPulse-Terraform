@@ -126,6 +126,10 @@ class ConfigVersionNotReady(Exception):
     """The config version exists but its tarball was never uploaded."""
 
 
+class PendingRunRoleMissing(Exception):
+    """A run role check was asked for on a workspace with no staged role."""
+
+
 class ArtifactTooLarge(Exception):
     """The requested upload is above that artifact's byte ceiling."""
 
@@ -347,7 +351,9 @@ def create_run(
     workspaces domain owns that write and persists it on its own reads.
 
     The run keeps the role ARN it was created with, so the run role check can tell
-    which role a run's AssumeRole outcome belongs to.
+    which role a run's AssumeRole outcome belongs to. A `run_role_check` run takes
+    the workspace's staged `pending_run_role_arn` instead, is always plan only, and
+    is the one run that assumes that role before the workspace switches to it.
 
     Returns the stored run, carrying `run_token` only when an execution started.
 
@@ -366,6 +372,7 @@ def create_run(
     Raises:
         WorkspaceNotFound: No such workspace.
         RunRoleMissing: The workspace has no run role, so nothing could be assumed.
+        PendingRunRoleMissing: A run role check on a workspace with no staged role.
         ConfigVersionNotFound: No such config version on that workspace.
         ConfigVersionNotReady: The tarball was never uploaded.
     """
@@ -374,7 +381,11 @@ def create_run(
     config_version_id = str(payload["config_version_id"])
 
     workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
-    if not str(workspace.get("run_role_arn", "") or ""):
+    role_check = bool(payload.get("run_role_check", False))
+    role_arn = str(workspace.get("pending_run_role_arn" if role_check else "run_role_arn", "") or "")
+    if not role_arn and role_check:
+        raise PendingRunRoleMissing(workspace_id)
+    if not role_arn:
         raise workspace_reads.RunRoleMissing(workspace_id)
     config_version = workspace_reads.get_config_version(
         workspace_id,
@@ -393,14 +404,16 @@ def create_run(
         "config_version_id": config_version_id,
         "collection": RUNS_COLLECTION,
         "status": "pending",
-        "plan_only": bool(payload.get("plan_only", False)),
-        "is_destroy": bool(payload.get("is_destroy", False)),
+        "plan_only": role_check or bool(payload.get("plan_only", False)),
+        "is_destroy": not role_check and bool(payload.get("is_destroy", False)),
         "message": str(payload.get("message", "")),
-        "run_role_arn": str(workspace.get("run_role_arn", "")),
+        "run_role_arn": role_arn,
         "source": source,
         "created_at": timestamp,
         "updated_at": timestamp,
     }
+    if role_check:
+        item["run_role_check"] = True
     if vcs is not None:
         item["vcs"] = {key: value for key, value in vcs.items() if value is not None}
     if actor is not None:
@@ -1357,7 +1370,9 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
             "kms_key_id": resolved.STATE_KMS_KEY_ARN,
         },
         "run_role": {
-            "role_arn": str(workspace.get("run_role_arn", "")),
+            "role_arn": str(
+                run.get("run_role_arn") if run.get("run_role_check") else workspace.get("run_role_arn", "")
+            ),
             "external_id": workspace_id,
             "session_policy": phase_policy.document,
             "session_policy_arns": list(phase_policy.policy_arns),
@@ -1515,6 +1530,7 @@ __all__ = [
     "NON_TERMINAL_STATUSES",
     "ArtifactTooLarge",
     "ConfigVersionNotReady",
+    "PendingRunRoleMissing",
     "PhaseMismatch",
     "PlanNotFound",
     "RUN_ID_PREFIX",

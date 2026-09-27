@@ -124,6 +124,15 @@ saved role no run has proven reads as Not verified, and the first plan only
 run is the check. A `409` carrying `RUN_ROLE_MISSING` renders the missing role
 sentence.
 
+AWS quick setup on a workspace that already has a role stages the new one as
+`pending_run_role_arn` instead of replacing it, so an unfinished stack never
+breaks a working workspace. The panel shows the staged role with its own
+verdict from the check's `pending` block, a Start verification run button that
+creates a plan only run with `run_role_check: true`, which assumes the staged
+role, and Discard the new role, a `PATCH` of `pending_run_role_arn: null`. The
+workspace frame posts `run-role/check` once the staged role reads connected,
+and that recording check makes it the workspace's `run_role_arn`.
+
 `RunRoleSetup` and `RunRoleCheck` are aliases into `schema.d.ts` like every
 other contract type, so `runRoleSetup.ts` holds only the trust policy, the
 snippets and the connection predicates. The generated `Workspace` leaves the

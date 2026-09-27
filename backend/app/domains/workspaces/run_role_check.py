@@ -13,6 +13,11 @@ The answer is one of three:
 - `failed`: the newest run with a verdict failed on AssumeRole for this ARN.
 - `unverified`: no run with a verdict has used this ARN yet, so a plan only run is
   the check.
+
+A role staged as `pending_run_role_arn` is answered the same way. Runs keep the
+current role until a verification run proves the staged one, and the recording
+check then switches the workspace over, so a half finished setup never breaks a
+workspace that works.
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ import re
 from typing import Any, Final, Literal
 
 from boto3.dynamodb.conditions import Attr, Key
-from webbpulse.dynamodb import now_iso
+from webbpulse.dynamodb import ConditionFailed, now_iso
 
 from ...common.composition.settings import Settings, get_settings
 from ...common.db import repositories
@@ -56,6 +61,12 @@ RUN_ROLE_UNVERIFIED_MESSAGE: Final = (
     "start of every phase, and the outcome shows here."
 )
 """What a role no run has tried yet reads as."""
+
+PENDING_UNVERIFIED_MESSAGE: Final = (
+    "Runs keep the current role until a verification run assumes this one. Once the stack exists, "
+    "start the verification run: it is plan only and switches the workspace over when it connects."
+)
+"""What a staged role no verification run has tried yet reads as."""
 
 _FAILURE_NAME = re.compile(r"failed with (\w+)")
 _ENGINE_EXIT = re.compile(r"^The (plan|apply) phase exited")
@@ -109,30 +120,15 @@ def _evidence(workspace_id: str, role_arn: str, settings: Settings) -> tuple[dic
     return None
 
 
-def probe_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """Report whether the runner has assumed the workspace's run role, writing nothing.
-
-    Reads the workspace's newest runs and answers from the first one created with
-    the current role ARN that reached AssumeRole. No credentials are requested, so
-    the API holds no path into the account the role lives in.
-
-    Raises:
-        WorkspaceNotFound: No such workspace.
-        RunRoleMissing: The workspace carries no run role ARN.
-    """
-    resolved = settings or get_settings()
-    workspace = get_workspace(workspace_id, settings=resolved)
-    role_arn = str(workspace.get("run_role_arn", "") or "")
-    if not role_arn:
-        raise RunRoleMissing(workspace_id)
-
-    found = _evidence(workspace_id, role_arn, resolved)
+def _outcome(workspace_id: str, role_arn: str, *, unverified: str, settings: Settings) -> dict[str, Any]:
+    """The runner's verdict on one role ARN, from the newest run that reached one."""
+    found = _evidence(workspace_id, role_arn, settings)
     if found is None:
         return {
             "connected": False,
             "status": "unverified",
             "account_id": None,
-            "error": RUN_ROLE_UNVERIFIED_MESSAGE,
+            "error": unverified,
             "run_id": None,
             "checked_at": None,
         }
@@ -157,12 +153,42 @@ def probe_run_role(workspace_id: str, *, settings: Settings | None = None) -> di
     }
 
 
-def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """Probe the workspace's run role and stamp the outcome on the row.
+def probe_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """Report whether the runner has assumed the workspace's run role, writing nothing.
 
-    The probe itself is `probe_run_role`. What this adds is the record the UI reads
-    between visits: the moment and the account on a success, both cleared
-    otherwise, so a stale success cannot outlive a broken trust policy.
+    Reads the workspace's newest runs and answers from the first one created with
+    the current role ARN that reached AssumeRole. No credentials are requested, so
+    the API holds no path into the account the role lives in. A staged
+    `pending_run_role_arn` is answered the same way under `pending`.
+
+    Raises:
+        WorkspaceNotFound: No such workspace.
+        RunRoleMissing: The workspace carries no run role ARN.
+    """
+    resolved = settings or get_settings()
+    workspace = get_workspace(workspace_id, settings=resolved)
+    role_arn = str(workspace.get("run_role_arn", "") or "")
+    if not role_arn:
+        raise RunRoleMissing(workspace_id)
+    outcome = _outcome(workspace_id, role_arn, unverified=RUN_ROLE_UNVERIFIED_MESSAGE, settings=resolved)
+    pending_arn = str(workspace.get("pending_run_role_arn", "") or "")
+    pending = None
+    if pending_arn:
+        pending = {
+            "role_arn": pending_arn,
+            **_outcome(workspace_id, pending_arn, unverified=PENDING_UNVERIFIED_MESSAGE, settings=resolved),
+        }
+    return outcome | {"pending": pending}
+
+
+def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """Probe the workspace's run role, switch to a staged role that proved out, and stamp the outcome.
+
+    The probe itself is `probe_run_role`. A staged role a verification run assumed
+    becomes the workspace's `run_role_arn` here, conditional on it still being the
+    staged one, and the check is read again for it. What this adds besides is the
+    record the UI reads between visits: the moment and the account on a success,
+    both cleared otherwise, so a stale success cannot outlive a broken trust policy.
 
     Raises:
         WorkspaceNotFound: No such workspace.
@@ -170,8 +196,25 @@ def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> di
     """
     resolved = settings or get_settings()
     outcome = probe_run_role(workspace_id, settings=resolved)
+    pending = outcome["pending"]
+    if pending is not None and pending["connected"] and _promote(workspace_id, pending["role_arn"], settings=resolved):
+        outcome = probe_run_role(workspace_id, settings=resolved)
     _record(workspace_id, outcome, settings=resolved)
     return outcome
+
+
+def _promote(workspace_id: str, role_arn: str, *, settings: Settings) -> bool:
+    """Make the staged `role_arn` the workspace's run role, unless the staging changed meanwhile."""
+    try:
+        repositories.workspaces(settings).update(
+            {"workspace_id": workspace_id},
+            update_expression="SET run_role_arn = :role, updated_at = :now REMOVE pending_run_role_arn",
+            expression_values={":role": role_arn, ":now": now_iso()},
+            condition=Attr("pending_run_role_arn").eq(role_arn),
+        )
+    except ConditionFailed:
+        return False
+    return True
 
 
 def _record(workspace_id: str, outcome: dict[str, Any], *, settings: Settings) -> None:

@@ -25,7 +25,7 @@ import {
   Spinner,
   useWorkspaceNav,
 } from '../components';
-import { useRunRoleCheck } from './useRunRoleCheck';
+import { useRunRoleCheck, useSwitchToVerifiedRole } from './useRunRoleCheck';
 import { NewRunDialog } from './workspace/NewRunDialog';
 import { isSetupComplete, setupSteps } from './workspace/setup';
 import { workspaceKeys, type WorkspaceContext } from './workspaceContext';
@@ -51,6 +51,7 @@ export function WorkspaceLayout(): React.ReactElement {
     { intervalMs: 10_000, queryKey: keys.runs, auth, enabled }
   );
   const runRoleCheck = useRunRoleCheck(query.data);
+  useSwitchToVerifiedRole(query.data, runRoleCheck);
   const runSignature =
     runs.data === null
       ? null
