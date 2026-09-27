@@ -13,11 +13,13 @@ import {
   accountIdFromArn,
   accountStatus,
   api,
+  connectionVerification,
   runRoleArnProblem,
   runRolePrefix,
   snippetFor,
   trustedPrincipals,
   type AwsConnection,
+  type ConnectionVerification,
   type PendingRunRoleCheck,
   type RunRoleCheck,
   type RunRolePermissions,
@@ -83,7 +85,8 @@ function connectionFor(
 
 /**
  * Rereads the workspace while a stack is due to report back, and the check while
- * the verification run it started has not answered yet.
+ * the verification run it started has not answered yet or its outcome is still
+ * pending.
  */
 function useConnectionPolling(
   workspace: Workspace,
@@ -101,8 +104,8 @@ function useConnectionPolling(
     accountStatus(workspace, runRoleCheck).state === 'unverified';
   const verifying =
     connection?.status === 'connected' &&
-    Boolean(connection.run_id) &&
-    (staged || unverifiedRole);
+    ((Boolean(connection.run_id) && (staged || unverifiedRole)) ||
+      connection.verification === 'pending');
 
   useEffect(() => {
     if (!waiting) {
@@ -308,6 +311,78 @@ function VerificationRunLink({
   );
 }
 
+/**
+ * The badge beside a connected account: Verified, Verifying while the run the
+ * stack started is going, or Verification failed once it ended badly.
+ */
+function VerificationBadge({
+  verified,
+  verification,
+}: {
+  verified: boolean;
+  verification: ConnectionVerification | null;
+}): React.ReactElement | null {
+  if (verified) {
+    return (
+      <span
+        data-testid="verified-badge"
+        className="rounded-full border border-success/40 px-2 py-0.5 text-xs font-medium text-success"
+      >
+        Verified
+      </span>
+    );
+  }
+  if (verification?.state === 'pending') {
+    return (
+      <span
+        data-testid="verifying-badge"
+        className="rounded-full border border-line px-2 py-0.5 text-xs font-medium text-text-muted"
+      >
+        Verifying
+      </span>
+    );
+  }
+  if (verification?.state === 'failed') {
+    return (
+      <span
+        data-testid="verification-failed-badge"
+        className="rounded-full border border-danger/40 px-2 py-0.5 text-xs font-medium text-danger"
+      >
+        Verification failed
+      </span>
+    );
+  }
+  return null;
+}
+
+/** The sentence under a connection whose verification run has not succeeded. */
+function VerificationOutcome({
+  verification,
+}: {
+  verification: ConnectionVerification | null;
+}): React.ReactElement | null {
+  if (verification?.state === 'pending') {
+    return (
+      <StatusLine
+        tone="neutral"
+        testValue="pending"
+        testId="verification-status"
+      >
+        The stack reported back and the verification run is running. It only
+        plans, and changes nothing.
+      </StatusLine>
+    );
+  }
+  if (verification?.state === 'failed') {
+    return (
+      <StatusLine tone="bad" testValue="failed" testId="verification-status">
+        {verification.error ?? 'The verification run failed.'}
+      </StatusLine>
+    );
+  }
+  return null;
+}
+
 /** The connected state: the account, the role ARN, whether it is verified, and Change role. */
 function ConnectedRole({
   workspace,
@@ -323,7 +398,14 @@ function ConnectedRole({
   onChange: () => void;
 }): React.ReactElement {
   const accountId = accountIdFromArn(arn);
-  const verified = accountStatus(workspace, runRoleCheck).state === 'connected';
+  const verification = connectionVerification(
+    workspace.aws_connection ?? null,
+    arn
+  );
+  const verified =
+    verification === null
+      ? accountStatus(workspace, runRoleCheck).state === 'connected'
+      : verification.state === 'verified';
   const reported = connectionFor(workspace.aws_connection ?? null, arn);
   return (
     <section
@@ -338,14 +420,10 @@ function ConnectedRole({
               Connected to AWS account{' '}
               <span className="font-mono">{accountId ?? 'unknown'}</span>
             </span>
-            {verified ? (
-              <span
-                data-testid="verified-badge"
-                className="rounded-full border border-success/40 px-2 py-0.5 text-xs font-medium text-success"
-              >
-                Verified
-              </span>
-            ) : null}
+            <VerificationBadge
+              verified={verified}
+              verification={verification}
+            />
           </h3>
           <p className="mt-0.5 text-xs text-text-muted">
             Runs assume this role to read and write your infrastructure.
@@ -359,6 +437,7 @@ function ConnectedRole({
         <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
           <ValueRow label="Role ARN" value={arn} />
         </dl>
+        <VerificationOutcome verification={verification} />
         <ConnectionCheck
           workspace={workspace}
           runRoleCheck={runRoleCheck}
@@ -454,8 +533,7 @@ function PendingRole({
         </dl>
         {status === 'failed' ? (
           <StatusLine tone="bad" testValue="failed">
-            The verification run could not assume this role.{' '}
-            {check?.error ?? ''}
+            {pendingFailure(check?.error ?? null)}
           </StatusLine>
         ) : status === 'connected' ? (
           <StatusLine tone="ok" testValue="connected">
@@ -985,14 +1063,27 @@ function ConnectionStatus({
   );
 }
 
+/**
+ * Why a staged role was not switched to. The check's error already says so when
+ * the run assumed the role but did not finish its plan.
+ */
+function pendingFailure(error: string | null): string {
+  if (error?.startsWith('The verification run') === true) {
+    return error;
+  }
+  return `The verification run could not assume this role. ${error ?? ''}`.trim();
+}
+
 /** One status sentence with a coloured dot. */
 function StatusLine({
   tone,
   testValue,
+  testId = 'run-role-status',
   children,
 }: {
   tone: 'ok' | 'bad' | 'neutral';
   testValue: string;
+  testId?: string;
   children: React.ReactNode;
 }): React.ReactElement {
   const dot = {
@@ -1008,7 +1099,7 @@ function StatusLine({
   return (
     <p
       role="status"
-      data-testid="run-role-status"
+      data-testid={testId}
       data-connection={testValue}
       className={`flex items-start gap-2 text-sm ${text}`}
     >

@@ -203,14 +203,22 @@ from the stack ARN, the role must be the workspace's derived one, a valid create
 stages it with the same rules as an edit and starts a plan only verification
 run, and a bad or expired token answers FAILED so the stack rolls back. A delete
 always answers SUCCESS and forgets the role only if that stack still provides
-it. The workspace's `aws_connection` records what the UI shows.
+it. The workspace's `aws_connection` records what the UI shows, and its
+`verification` (`pending`, `verified` or `failed` with `verification_error`) is
+settled when a run on that role ends: a clean finish verifies it, and an error or
+a cancel fails it. A staged role is only switched to once its run finished its
+plan.
 
 ### Runs
 
 Runs are serial per workspace. A run created while another is active is stored
 `pending` with `queued_behind` set, and the previous run's terminal transition
 promotes it, because two concurrent executions would contend on the S3 state
-lock. A run's phase comes from its stored status, never from the caller: the plan
+lock. The state machine writes `errored`, `applied` and
+`planned_and_finished` straight to the table, so the runs stream also delivers
+any terminal row without `finished_at` to `consumers/endings.py`, which settles it
+as `finish_run` would: revoke the token, record the run role, settle the
+connection's verification and promote the queue. A run's phase comes from its stored status, never from the caller: the plan
 phase gets a read-only IAM session policy and the apply phase an unrestricted
 one.
 

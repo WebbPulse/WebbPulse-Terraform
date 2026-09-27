@@ -40,8 +40,8 @@ from ...common.db.tables import (
     SEMAPHORE_RUN_ID,
 )
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
+from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
-from ...common.workspaces import run_role_check
 from . import session_policy
 from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
 
@@ -828,10 +828,78 @@ def finish_run(
                 "attempted": status,
             },
         )
-    _revoke_run_token(run, settings=resolved)
-    _record_run_role(str(run["workspace_id"]), settings=resolved)
-    _promote_queue(str(run["workspace_id"]), settings=resolved)
+    _after_ending(run, updated, settings=resolved)
     return updated
+
+
+def settle_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any] | None:
+    """Do for an ending the state machine wrote what `finish_run` does for the API's.
+
+    `MarkErrored`, `MarkApplied` and `MarkPlannedAndFinished` write the terminal
+    status straight to the table, and a runner that fails before it can report
+    (AssumeRole refused, init failed) ends its run only that way. Nothing in the API
+    sees those endings, so without this the run's token would live out its full TTL,
+    the run role check and the connection's verification would not move, and a run
+    queued behind it would wait for the next unrelated transition.
+
+    Reached from the runs table's stream, whose filter delivers a terminal status
+    that carries no `finished_at`, which only the state machine's writes lack.
+    Stamping `finished_at` here, only when absent, is what keeps the record from
+    being delivered twice and what gives the run the end time the UI shows. Every
+    step is idempotent, so a redelivery repeats nothing harmful. Returns the run,
+    or `None` when it is gone or not terminal.
+    """
+    resolved = settings or get_settings()
+    try:
+        run = get_run(run_id, settings=resolved)
+    except RunNotFound:
+        return None
+    if str(run.get("status", "")) not in TERMINAL_STATUSES:
+        return None
+    try:
+        stamped = _runs(resolved).update(
+            {"run_id": run_id},
+            update_expression="SET finished_at = if_not_exists(finished_at, :finished), updated_at = :now",
+            expression_values={":finished": now_iso(), ":now": now_iso()},
+            condition=Attr("status").is_in(sorted(TERMINAL_STATUSES)),
+            return_values="ALL_NEW",
+        )
+    except ConditionFailed:
+        return None
+    ended = dict(stamped or run)
+    _log.info(
+        "Settled a run the state machine ended.",
+        extra={"event": "runs.settle", "run_id": run_id, "status": str(ended.get("status", ""))},
+    )
+    _after_ending(run, ended, settings=resolved)
+    return ended
+
+
+def _after_ending(run: dict[str, Any], ended: dict[str, Any], *, settings: Settings) -> None:
+    """Everything a run's ending sets off, whoever wrote it.
+
+    `run` is the row as it was read before the ending, which still carries the
+    token hash, and `ended` the row as it stands after.
+    """
+    _revoke_run_token(run, settings=settings)
+    _record_run_role(str(run["workspace_id"]), settings=settings)
+    _record_verification(ended, settings=settings)
+    _promote_queue(str(run["workspace_id"]), settings=settings)
+
+
+def _record_verification(run: dict[str, Any], *, settings: Settings) -> None:
+    """Settle the workspace's AWS connection verification from this run, best effort."""
+    try:
+        aws_connect.record_verification(run, settings=settings)
+    except Exception as error:  # noqa: BLE001
+        _log.exception(
+            "Could not record the AWS connection verification after a run finished.",
+            extra={
+                "event": "runs.aws_connect.verification_failed",
+                "run_id": str(run.get("run_id", "")),
+                "error": type(error).__name__,
+            },
+        )
 
 
 def _record_run_role(workspace_id: str, *, settings: Settings) -> None:
@@ -1590,6 +1658,7 @@ __all__ = [
     "record_phase_result",
     "release_semaphore",
     "render_run",
+    "settle_run",
     "run_bundle",
     "run_logs",
     "run_plan",

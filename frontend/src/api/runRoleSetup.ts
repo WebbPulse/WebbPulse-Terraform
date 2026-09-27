@@ -9,6 +9,7 @@
 import { ApiError, getWebbPulseError } from '@webbpulse/api-client';
 
 import type {
+  AwsConnection,
   RunRoleCheck,
   RunRolePermissions,
   RunRoleSetup,
@@ -96,6 +97,39 @@ export function accountStatus(
     };
   }
   return { state: 'unverified', accountId: null, checkedAt: null, error: null };
+}
+
+/** Where the run proving a Quick setup connection stands. */
+export interface ConnectionVerification {
+  state: 'pending' | 'verified' | 'failed';
+  error: string | null;
+  runId: string | null;
+}
+
+/**
+ * The verification a stack's report recorded for `arn`, or null when there is none.
+ *
+ * A stack reporting back only says the role exists. Whether a run could use it
+ * is the verification, which the runs function settles when that run ends. A
+ * connection recorded before verification existed, one naming another role, or
+ * a role saved by hand has none, and the check-based display stands in.
+ */
+export function connectionVerification(
+  connection: AwsConnection | null,
+  arn: string
+): ConnectionVerification | null {
+  if (connection?.status !== 'connected' || connection.role_arn !== arn) {
+    return null;
+  }
+  const state = connection.verification ?? null;
+  if (state === null) {
+    return null;
+  }
+  return {
+    state,
+    error: connection.verification_error ?? null,
+    runId: connection.run_id ?? null,
+  };
 }
 
 /** The short words for an account status, or its account id once connected. */
