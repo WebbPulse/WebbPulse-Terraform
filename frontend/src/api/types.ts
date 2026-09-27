@@ -53,9 +53,9 @@ export type RunRoleCheck = Schemas['RunRoleCheck'];
 export type PendingRunRoleCheck = Schemas['PendingRunRoleCheck'];
 
 /**
- * The body that starts AWS quick setup: the account and the managed policy.
+ * The body that starts AWS quick setup: the managed policy, and optionally an account.
  *
- * The account id may carry the dashes the AWS console prints them with.
+ * Without an account the stack reports its own account back, so the SPA sends none.
  */
 export type RunRoleQuickSetupCreate = Schemas['RunRoleQuickSetupCreate'];
 
@@ -65,11 +65,17 @@ export type RunRolePermissions = NonNullable<
 >;
 
 /**
- * What quick setup answers: the saved role ARN and the AWS CloudFormation link.
+ * What quick setup answers: the AWS CloudFormation link and, when an account was given, the saved role ARN.
  *
  * The link carries a presigned template URL, so it lasts `expires_in` seconds.
  */
 export type RunRoleQuickSetup = Schemas['RunRoleQuickSetup'];
+
+/**
+ * What the last Quick setup link and its stack reported: waiting for the stack,
+ * connected to an account, expired unused, or disconnected by a stack delete.
+ */
+export type AwsConnection = Schemas['AwsConnection'];
 
 /**
  * The body that edits a workspace. Every field is optional.
