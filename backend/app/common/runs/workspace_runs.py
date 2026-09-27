@@ -44,6 +44,12 @@ def _workspace_runs(workspace_id: str, *, settings: Settings) -> list[dict[str, 
     ]
 
 
+def workspace_run_ids(workspace_id: str, *, settings: Settings | None = None) -> list[str]:
+    """Every run id on the workspace, which is what a delete's object purge walks."""
+    resolved = settings or get_settings()
+    return [str(item["run_id"]) for item in _workspace_runs(workspace_id, settings=resolved)]
+
+
 def require_no_active_run(workspace_id: str, *, settings: Settings | None = None) -> None:
     """Raise `RunStillActive` for the newest run on the workspace that is not finished.
 
@@ -64,8 +70,8 @@ def delete_workspace_runs(workspace_id: str, *, settings: Settings | None = None
     still being finished, so a run created after `require_no_active_run` looked is
     never removed out from under its execution: its delete fails the condition and
     this raises `RunStillActive` for it instead. A row already gone by then is
-    skipped rather than refused. The run's artifacts and logs are
-    left to the bucket lifecycle and the log group retention.
+    skipped rather than refused. The run's artifacts are purged by the workspace
+    cleanup and its logs are left to the log group retention.
     """
     resolved = settings or get_settings()
     repository = repositories.runs(resolved)

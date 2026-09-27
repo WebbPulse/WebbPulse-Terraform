@@ -23,6 +23,7 @@ from fastapi import APIRouter
 from webbpulse.events import register_stream_consumer
 
 from ....common.composition.settings import Settings
+from ....common.workspaces import cleanup
 from . import confirmations, ingest, reports, task_failures
 
 _log = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ HANDLERS: dict[str, Handler] = {
     confirmations.CONFIRMATION_KIND: lambda record, settings: confirmations.handle_record(record, settings=settings),
     task_failures.TASK_FAILURE_KIND: lambda record, settings: task_failures.handle_record(record, settings=settings),
     ingest.INGEST_KIND: lambda record, settings: _ingest(record, settings),
+    cleanup.CLEANUP_KIND: lambda record, settings: cleanup.handle_record(record, settings=settings),
 }
 """Each `kind` this function consumes, against the consumer that owns it."""
 

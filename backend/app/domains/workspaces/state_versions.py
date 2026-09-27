@@ -4,9 +4,8 @@ The state bucket is versioned, so S3 already holds every state a run has written
 and there is no second copy to keep: a state version here is one S3 object
 version of `workspaces/<id>/terraform.tfstate`, named by its `VersionId`. No row
 records a state version, because a row would be a parallel history that drifts
-from the bucket the moment a lifecycle rule expires a version. The one write in
-this module is `delete_current_state`, which a workspace delete makes and which
-leaves every version in place behind a delete marker.
+from the bucket the moment a lifecycle rule expires a version. Nothing here
+writes: a workspace delete purges the history through `common.workspaces.cleanup`.
 
 Terraform writes state through its own S3 backend, so the control plane never
 sees the write and cannot stamp user metadata on the object. The serial and the
@@ -417,21 +416,6 @@ def current_state_manages_resources(workspace_id: str, *, settings: Settings | N
     return _manages_resources(content)
 
 
-def delete_current_state(workspace_id: str, *, settings: Settings | None = None) -> None:
-    """Delete the workspace's current state object, leaving its history behind.
-
-    The bucket is versioned, so this writes a delete marker rather than removing
-    any version: the old states stay recoverable until the noncurrent lifecycle
-    rule expires them. Deleting a key that is not there succeeds, so a workspace
-    that never ran costs one call and no error. With no state bucket configured
-    there is nothing to delete.
-    """
-    resolved = settings or get_settings()
-    if not resolved.STATE_BUCKET:
-        return
-    _s3(resolved).delete_object(Bucket=resolved.STATE_BUCKET, Key=state_key(workspace_id))
-
-
 def state_version_download(
     workspace_id: str,
     state_version_id: str,
@@ -493,7 +477,6 @@ __all__ = [
     "StateBucketMissing",
     "StateVersionNotFound",
     "current_state_manages_resources",
-    "delete_current_state",
     "get_state_version",
     "list_state_versions",
     "state_key",
