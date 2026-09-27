@@ -705,8 +705,8 @@ export interface paths {
          * Create Module
          * @description Connect a module to a repository; each `vX.Y.Z` or `X.Y.Z` tag pushed there publishes it.
          *
-         *     Tags pushed before the module existed are not published. Push a new tag, or
-         *     delete and push an existing one again.
+         *     The repository's existing semantic version tags are imported in the
+         *     background unless `import_tags` is false. Other tags are ignored.
          */
         post: operations["create_module_api_v1_registry_modules_post"];
         delete?: never;
@@ -734,6 +734,29 @@ export interface paths {
          * @description Remove a module with every version and stored tarball. Configurations pinned to it stop resolving.
          */
         delete: operations["delete_module_api_v1_registry_modules__namespace___name___provider__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}/resync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resync Module
+         * @description Queue an import of every semantic version tag in the module's repository.
+         *
+         *     Picks up tags pushed before the module was connected, or pushed more than
+         *     three at once, when GitHub sends no push event. Published versions are left alone.
+         */
+        post: operations["resync_module_api_v1_registry_modules__namespace___name___provider__resync_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1807,6 +1830,11 @@ export interface components {
          *     `terraform-<provider>-<name>` repository name.
          */
         ModuleCreate: {
+            /**
+             * Import Tags
+             * @default true
+             */
+            import_tags?: boolean;
             /** Name */
             name?: string | null;
             /** Provider */
@@ -1821,6 +1849,16 @@ export interface components {
         ModuleList: {
             /** Modules */
             modules: components["schemas"]["Module"][];
+        };
+        /**
+         * ModuleSync
+         * @description A queued import of a module's existing tags.
+         */
+        ModuleSync: {
+            /** Delivery */
+            delivery: string;
+            /** Source */
+            source: string;
         };
         /**
          * ModuleVersion
@@ -4513,6 +4551,53 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
+            };
+        };
+    };
+    resync_module_api_v1_registry_modules__namespace___name___provider__resync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                name: string;
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleSync"];
+                };
+            };
+            /** @description No module connected to a repository sits at the address. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The sync could not be queued. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
