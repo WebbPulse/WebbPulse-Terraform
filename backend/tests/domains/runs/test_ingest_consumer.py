@@ -10,10 +10,8 @@ import json
 
 import boto3
 import pytest
-from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 from vcs_helpers import BASE_SHA, HEAD_SHA, REPO, FakeVerifier, claims, pr_claims, tarball, token_for
-from webbpulse.dynamodb import Repository
 from webbpulse.events import BATCH_FAILURES_KEY, events_path
 
 from app.common.composition.wiring import build_domain_app
@@ -33,43 +31,6 @@ def verifier(monkeypatch):
     fake = FakeVerifier()
     monkeypatch.setattr(vcs, "_verifier", lambda audience: fake)
     return fake
-
-
-@pytest.fixture(autouse=True)
-def primary_keys_only(monkeypatch):
-    """Refuse a key that is not exactly its table's primary key, as DynamoDB does.
-
-    moto checks a `GetItem`, `UpdateItem` or `DeleteItem` key against every key
-    attribute of the table and its indexes, so a secondary index key passed
-    alongside the primary one is accepted and ignored. DynamoDB rejects it with a
-    ValidationException, which is how a lookup on the config versions table with
-    `workspace_id` added passed here and failed every ingest in staging. Returns
-    the `(table, key names)` of every checked call.
-    """
-    seen: list[tuple[str, frozenset[str]]] = []
-
-    def checked(method, operation: str):
-        def call(self, key, *args, **kwargs):
-            names = frozenset(key)
-            expected = frozenset(part["AttributeName"] for part in self.table.key_schema)
-            seen.append((self.table_name, names))
-            if names != expected:
-                raise ClientError(
-                    {
-                        "Error": {
-                            "Code": "ValidationException",
-                            "Message": "The provided key element does not match the schema",
-                        }
-                    },
-                    operation,
-                )
-            return method(self, key, *args, **kwargs)
-
-        return call
-
-    for name, operation in (("get", "GetItem"), ("update", "UpdateItem"), ("delete", "DeleteItem")):
-        monkeypatch.setattr(Repository, name, checked(getattr(Repository, name), operation))
-    return seen
 
 
 @pytest.fixture
@@ -155,7 +116,7 @@ def test_the_config_version_is_read_by_its_table_key_alone(client, settings, bin
     bind()
     [run_id] = deliver(upload(client, settings, claims(), tarball()), settings)
     assert runs_service.get_run(run_id, settings=settings)["status"] == "planning"
-    config_reads = {names for table, names in primary_keys_only if table == settings.CONFIG_VERSIONS_TABLE}
+    config_reads = {key.names for key in primary_keys_only if key.table == settings.CONFIG_VERSIONS_TABLE}
     assert config_reads == {frozenset({"config_version_id"})}
 
 
