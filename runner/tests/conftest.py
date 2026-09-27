@@ -113,7 +113,7 @@ def nested_config_tarball() -> bytes:
     return build_config_tarball("main.tf", "infra/main.tf")
 
 
-BAKED_VERSION = "1.16.3"
+BAKED_VERSION = "1.16.4"
 """The version the fake engine on PATH reports, standing in for the image's baked release."""
 
 SECRET_OUTPUT = "sensitive-output-value-uvwxyz0123"

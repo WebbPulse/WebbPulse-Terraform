@@ -241,7 +241,7 @@ def test_the_baked_engine_runs_when_it_matches_the_pin(
 
     assert run(make_env("plan"), clients, tmp_path) == 0
     messages = log_stream_messages(f"{RUN_ID}/plan")
-    assert "using terraform 1.16.3" in messages
+    assert "using terraform 1.16.4" in messages
     assert not any(message.startswith("installing") for message in messages)
     assert not (tmp_path / "engines").exists()
     assert bin_directory.exists()

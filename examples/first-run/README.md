@@ -17,7 +17,7 @@ Leave the workspace's working directory empty; this config is the tarball root.
 
 1. Sign in at `https://staging.terraform.webbpulse.com/`.
 
-2. Create a workspace. Engine `terraform`, engine version `1.16.3`, which is the
+2. Create a workspace. Engine `terraform`, engine version `1.16.4`, which is the
    version in `runner/versions.env`. Leave the run role empty: it cannot exist
    yet, because its trust policy names this workspace's id as the external id.
    Note the `ws-` id the response returns.

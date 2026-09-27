@@ -233,7 +233,7 @@ def test_bundle_ignores_the_api_only_top_level_fields(run_role_arn: str) -> None
     payload = bundle_payload(run_role_arn)
     payload |= {"phase": "plan", "plan_only": False, "working_directory": "infra"}
     bundle = Bundle.model_validate(payload)
-    assert bundle.engine_version == "1.16.3"
+    assert bundle.engine_version == "1.16.4"
     assert bundle.run_role.duration_seconds == 3600
     assert bundle.is_destroy is False
 
