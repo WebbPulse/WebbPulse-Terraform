@@ -17,8 +17,8 @@ from webbpulse.events import BATCH_FAILURES_KEY, events_path
 from app.common.composition.wiring import build_domain_app
 from app.common.db import repositories
 from app.common.db.tables import CONFIG_VERSIONS, local_table_name, table_definition
+from app.domains.runs import reporting, vcs
 from app.domains.runs import service as runs_service
-from app.domains.runs import vcs
 from app.domains.runs.consumers import ingest
 from app.domains.workspaces import service as workspaces_service
 
@@ -50,6 +50,19 @@ def bind(auth_client):
         return response.json()
 
     return create
+
+
+@pytest.fixture(autouse=True)
+def reported(monkeypatch):
+    """The uploads the consumer reported itself, as upload id and skipped workspaces."""
+    calls: list[tuple[str, list[dict]]] = []
+
+    def record(upload, skipped, *, settings=None):
+        calls.append((str(upload["upload_id"]), [dict(item) for item in skipped]))
+        return True
+
+    monkeypatch.setattr(reporting, "report_upload", record)
+    return calls
 
 
 def upload(client, settings, values, data: bytes, **body) -> dict:
@@ -202,13 +215,87 @@ def test_a_missing_changed_paths_file_matches_every_workspace(client, settings, 
     assert len(runs_on(workspace, settings)) == 1
 
 
-def test_a_workspace_with_no_run_role_is_skipped(client, settings, bind, state_machine):
-    """It is skipped rather than failing the other workspaces."""
+def test_a_workspace_with_no_run_role_is_skipped(client, settings, bind, state_machine, reported):
+    """It is skipped rather than failing the other workspaces, and the started run carries the skip."""
     ready = bind("ready")
     roleless = bind("roleless", run_role_arn=None)
     deliver(upload(client, settings, claims(), tarball()), settings)
-    assert len(runs_on(ready, settings)) == 1
+    [run] = runs_on(ready, settings)
     assert runs_on(roleless, settings) == []
+    assert run["vcs"]["skipped"] == [
+        {"workspace_id": roleless["workspace_id"], "workspace_name": "roleless", "reason": ingest.NO_RUN_ROLE_REASON}
+    ]
+    assert reported == []
+
+
+def test_an_upload_matching_nothing_is_reported_as_no_runs_needed(client, settings, bind, state_machine, reported):
+    """No bound workspace matches the changed paths, so the consumer reports the upload itself."""
+    bind(trigger_patterns=["stacks/**"])
+    event = upload(client, settings, pr_claims(4), tarball("docs/readme.md\n"))
+    assert deliver(event, settings) == []
+    [(upload_id, skipped)] = reported
+    assert event["key"].endswith(f"{upload_id}.tar.gz")
+    assert skipped == []
+
+
+def test_a_push_no_workspace_tracks_is_reported(client, settings, bind, state_machine, reported):
+    """A push to an untracked branch still gets its aggregate."""
+    bind()
+    assert deliver(upload(client, settings, claims(ref="refs/heads/feature"), tarball()), settings) == []
+    [(_, skipped)] = reported
+    assert skipped == []
+
+
+def test_an_upload_whose_only_match_cannot_run_reports_the_skip(client, settings, bind, state_machine, reported):
+    """A matched workspace with no run role is reported by name and reason."""
+    roleless = bind("roleless", run_role_arn=None)
+    assert deliver(upload(client, settings, pr_claims(4), tarball()), settings) == []
+    [(_, skipped)] = reported
+    assert skipped == [
+        {"workspace_id": roleless["workspace_id"], "workspace_name": "roleless", "reason": ingest.NO_RUN_ROLE_REASON}
+    ]
+
+
+def test_a_run_role_that_is_not_a_role_arn_is_skipped(client, settings, bind, state_machine, reported):
+    """A malformed role cannot be assumed, so the workspace is skipped before any run."""
+    broken = bind("broken", run_role_arn="arn:aws:s3:::not-a-role-at-all")
+    assert deliver(upload(client, settings, claims(), tarball()), settings) == []
+    assert runs_on(broken, settings) == []
+    [(_, skipped)] = reported
+    assert [item["reason"] for item in skipped] == [ingest.BAD_RUN_ROLE_REASON]
+
+
+@pytest.mark.parametrize(
+    ("role", "expected"),
+    [
+        (None, ingest.NO_RUN_ROLE_REASON),
+        ("", ingest.NO_RUN_ROLE_REASON),
+        ("arn:aws:iam::870550636948:user/someone", ingest.BAD_RUN_ROLE_REASON),
+        ("not an arn at all, just words", ingest.BAD_RUN_ROLE_REASON),
+        (ROLE, None),
+        ("arn:aws:iam::870550636948:role/path/to/role-name", None),
+    ],
+)
+def test_skip_reason(role, expected):
+    """A missing role and one that is not an IAM role ARN are skips."""
+    assert ingest.skip_reason({"run_role_arn": role}) == expected
+
+
+def test_an_upload_that_starts_a_run_is_left_to_the_run_reports(client, settings, bind, state_machine, reported):
+    """Runs report themselves through the stream, so the consumer posts nothing."""
+    bind()
+    assert len(deliver(upload(client, settings, claims(), tarball()), settings)) == 1
+    assert reported == []
+
+
+def test_a_superseded_upload_is_not_reported(client, settings, bind, state_machine, reported):
+    """An older upload a newer one replaced reports nothing on its stale commit."""
+    bind()
+    older = upload(client, settings, claims(run_id="1"), tarball())
+    newer = upload(client, settings, claims(run_id="2", sha="d" * 40), tarball())
+    deliver(newer, settings)
+    assert deliver(older, settings) == []
+    assert reported == []
 
 
 def test_a_redelivery_creates_nothing_new(client, settings, bind, state_machine):

@@ -12,6 +12,13 @@ reporting writes back is what the upload does not carry and the run pages show: 
 commit's message and, for a push, the pull request it was merged from, both read
 through the App on the first report.
 
+Every ingested push and pull request gets the aggregate, so it can be a required
+check. An upload no bound workspace runs on concludes it `success` as "No runs
+needed". A workspace the upload matched but could not run, for a missing or
+malformed run role, concludes it `failure` naming the workspace and the reason,
+and every run started from that upload carries the skip in `vcs.skipped` so later
+reports keep the failure.
+
 A held run's check completes as `action_required`. GitHub never reopens a completed
 check run, so once the run is confirmed a new check run of the same name carries the
 apply, and the held one keeps its conclusion with a summary pointing at its successor.
@@ -31,7 +38,8 @@ here go through a plain `httpx` call with the client's installation token.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -56,6 +64,7 @@ from ...common.github.loader import github_app_settings
 from ...common.workspaces import reads as workspace_reads
 from ...common.workspaces import vcs as workspace_vcs
 from . import service
+from .vcs import PULL_REQUEST_EVENT
 
 _log = logging.getLogger(__name__)
 
@@ -398,11 +407,27 @@ def with_current(siblings: list[dict[str, Any]], run: Mapping[str, Any], workspa
     return sorted(kept, key=lambda item: item["workspace_name"])
 
 
-def aggregate_state(runs: Iterable[Mapping[str, Any]]) -> CheckState:
-    """One check state for a set of runs: still going, failed, held, or finished."""
+def skipped_workspaces(runs: Iterable[Mapping[str, Any]]) -> list[dict[str, str]]:
+    """The workspaces the runs' uploads matched but could not run, by name, once each."""
+    found: dict[str, str] = {}
+    for run in runs:
+        for item in (run.get("vcs") or {}).get("skipped") or []:
+            if isinstance(item, Mapping) and item.get("workspace_name"):
+                found[str(item["workspace_name"])] = str(item.get("reason", ""))
+    return [{"workspace_name": name, "reason": reason} for name, reason in sorted(found.items())]
+
+
+def aggregate_state(runs: Iterable[Mapping[str, Any]], skipped: Iterable[Mapping[str, Any]] = ()) -> CheckState:
+    """One check state for a set of runs and skipped workspaces.
+
+    A skipped workspace fails it outright. Otherwise it is still going, failed,
+    held or finished, and no runs at all is a success.
+    """
+    if list(skipped):
+        return CheckState("completed", "failure", "Workspace could not run")
     states = [check_state(run) for run in runs]
     if not states:
-        return CheckState("queued", None, "No runs")
+        return CheckState("completed", "success", "No runs needed")
     if any(state.status != "completed" for state in states):
         return CheckState("in_progress", None, "Runs in progress")
     conclusions = {state.conclusion for state in states}
@@ -423,17 +448,20 @@ def _row(run: Mapping[str, Any], settings: Settings) -> str:
     return f"| {run['workspace_name']} | {shown} | {counts_line(run)} |"
 
 
-def runs_table(runs: Iterable[Mapping[str, Any]], settings: Settings) -> str:
-    """The workspaces, their statuses and counts, as a Markdown table."""
+def runs_table(runs: Iterable[Mapping[str, Any]], settings: Settings, skipped: Iterable[Mapping[str, Any]] = ()) -> str:
+    """The workspaces, their statuses and counts, then the skipped ones, as a Markdown table."""
     lines = ["| Workspace | Status | Changes |", "| --- | --- | --- |"]
     lines.extend(_row(run, settings) for run in runs)
+    lines.extend(f"| {item['workspace_name']} | Not run | {item['reason']} |" for item in skipped)
     return "\n".join(lines)
 
 
-def comment_body(runs: list[dict[str, Any]], head: str, settings: Settings) -> str:
+def comment_body(
+    runs: list[dict[str, Any]], head: str, settings: Settings, skipped: Iterable[Mapping[str, Any]] = ()
+) -> str:
     """The pull request comment: the marker, a heading and the table."""
     return "\n".join(
-        [COMMENT_MARKER, f"### WebbPulse Terraform runs for {head[:7]}", "", runs_table(runs, settings), ""]
+        [COMMENT_MARKER, f"### WebbPulse Terraform runs for {head[:7]}", "", runs_table(runs, settings, skipped), ""]
     )
 
 
@@ -530,13 +558,14 @@ def publish(reader: GitHubReader, run: Mapping[str, Any], *, settings: Settings)
     )
 
     siblings = with_current(sibling_runs(run, by_pull_request=False, settings=settings), run, workspace_name)
-    overall = aggregate_state(siblings)
+    skipped = skipped_workspaces(siblings)
+    overall = aggregate_state(siblings, skipped)
     upsert_check_run(
         reader,
         sha,
         CHECK_NAME,
         overall,
-        CheckRunOutput(title=overall.title, summary=runs_table(siblings, settings)),
+        CheckRunOutput(title=overall.title, summary=runs_table(siblings, settings, skipped)),
         details_url=None,
         external_id=None,
     )
@@ -544,8 +573,106 @@ def publish(reader: GitHubReader, run: Mapping[str, Any], *, settings: Settings)
     if str(run.get("source")) == SOURCE_PR:
         number = int((run.get("vcs") or {})["pr_number"])
         latest = with_current(sibling_runs(run, by_pull_request=True, settings=settings), run, workspace_name)
-        upsert_comment(reader, number, comment_body(latest, sha, settings))
+        upsert_comment(reader, number, comment_body(latest, sha, settings, skipped_workspaces(latest)))
     return sha
+
+
+NO_RUNS_SUMMARY: Final = "No workspace bound to this repository runs on this change."
+SKIPPED_TITLE: Final = "Run not started"
+
+
+def upload_as_run(upload: Mapping[str, Any]) -> dict[str, Any]:
+    """The run shaped view of an upload that `verified_commit` reads."""
+    is_pr = str(upload.get("event")) == PULL_REQUEST_EVENT
+    return {
+        "source": SOURCE_PR if is_pr else SOURCE_PUSH,
+        "vcs": {
+            "repo": upload.get("repo"),
+            "repository_id": upload.get("repository_id"),
+            "sha": upload.get("sha"),
+            "branch": upload.get("branch"),
+            "pr_number": upload.get("pr_number"),
+            "head_sha": upload.get("head_sha"),
+        },
+    }
+
+
+def publish_upload(
+    reader: GitHubReader, upload: Mapping[str, Any], skipped: list[dict[str, str]], *, settings: Settings
+) -> str:
+    """Report an upload that started no run: a failing check per skipped workspace and the aggregate.
+
+    Returns the commit the reports landed on.
+    """
+    run = upload_as_run(upload)
+    sha = verified_commit(reader, run)
+    for item in skipped:
+        upsert_check_run(
+            reader,
+            sha,
+            f"{CHECK_NAME}/{item['workspace_name']}",
+            CheckState("completed", "failure", SKIPPED_TITLE),
+            CheckRunOutput(title=SKIPPED_TITLE, summary=item["reason"]),
+            details_url=None,
+            external_id=None,
+        )
+    overall = aggregate_state([], skipped)
+    summary = runs_table([], settings, skipped) if skipped else NO_RUNS_SUMMARY
+    upsert_check_run(
+        reader,
+        sha,
+        CHECK_NAME,
+        overall,
+        CheckRunOutput(title=overall.title, summary=summary),
+        details_url=None,
+        external_id=None,
+    )
+    if skipped and run["source"] == SOURCE_PR:
+        upsert_comment(reader, int(run["vcs"]["pr_number"]), comment_body([], sha, settings, skipped))
+    return sha
+
+
+@contextmanager
+def app_reader(repository: str, settings: Settings) -> Iterator[GitHubReader | None]:
+    """A reader on `repository` through the environment's App, or `None` when there is no App."""
+    try:
+        app = github_app_settings(settings.app_secret_arn, region_name=settings.AWS_REGION_NAME)
+    except GitHubNotConfigured:
+        yield None
+        return
+    with http_client() as http:
+        client = GitHubAppClient.from_settings(app, client=http)
+        yield GitHubReader(client, http, repository, str(app.app_id))
+
+
+def report_upload(
+    upload: Mapping[str, Any], skipped: list[dict[str, str]], *, settings: Settings | None = None
+) -> bool:
+    """Report an upload that started no run to GitHub. Never raises; returns whether anything was posted."""
+    resolved = settings or get_settings()
+    extra: dict[str, Any] = {"upload_id": upload.get("upload_id"), "repository": upload.get("repo")}
+    try:
+        with app_reader(str(upload["repo"]), resolved) as reader:
+            if reader is None:
+                _log.info("No GitHub App to report an upload through.", extra={"event": "runs.report.no_app", **extra})
+                return False
+            sha = publish_upload(reader, upload, skipped, settings=resolved)
+        _log.info(
+            "Reported an upload that started no run.",
+            extra={"event": "runs.report.upload_sent", "sha": sha, "skipped": len(skipped), **extra},
+        )
+        return True
+    except UnverifiedCommit as exc:
+        _log.warning(
+            "Skipped reporting an upload on an unverified commit.",
+            extra={"event": "runs.report.unverified", "reason": str(exc), **extra},
+        )
+    except Exception as exc:
+        _log.warning(
+            "Reporting an upload to GitHub failed.",
+            extra={"event": "runs.report.failed", "error_type": type(exc).__name__, **extra},
+        )
+    return False
 
 
 def report_run(run_id: str, *, image: Mapping[str, Any] | None = None, settings: Settings | None = None) -> bool:
@@ -568,14 +695,10 @@ def report_run(run_id: str, *, image: Mapping[str, Any] | None = None, settings:
         if str(run.get("source")) not in (SOURCE_PUSH, SOURCE_PR) or not vcs.get("repo"):
             return False
         extra |= {"repository": vcs["repo"], "status": run.get("status")}
-        try:
-            app = github_app_settings(resolved.app_secret_arn, region_name=resolved.AWS_REGION_NAME)
-        except GitHubNotConfigured:
-            _log.info("No GitHub App to report a run through.", extra={"event": "runs.report.no_app", **extra})
-            return False
-        with http_client() as http:
-            client = GitHubAppClient.from_settings(app, client=http)
-            reader = GitHubReader(client, http, str(vcs["repo"]), str(app.app_id))
+        with app_reader(str(vcs["repo"]), resolved) as reader:
+            if reader is None:
+                _log.info("No GitHub App to report a run through.", extra={"event": "runs.report.no_app", **extra})
+                return False
             sha = publish(reader, run, settings=resolved)
         _log.info("Reported a run to GitHub.", extra={"event": "runs.report.sent", "sha": sha, **extra})
         return True
@@ -602,13 +725,18 @@ __all__ = [
     "check_state",
     "counts_line",
     "http_client",
+    "app_reader",
     "publish",
+    "publish_upload",
     "record_message",
     "record_pull_request",
     "retire_check_run",
     "report_run",
+    "report_upload",
     "run_url",
     "sibling_runs",
+    "skipped_workspaces",
+    "upload_as_run",
     "verified_commit",
     "with_current",
 ]
