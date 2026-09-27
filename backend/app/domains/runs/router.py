@@ -20,9 +20,11 @@ from ...common.core.auth import (
     RUNS_APPLY,
     RUNS_READ,
     RUNS_WRITE,
+    RunnerRoute,
     claims,
     require_run_token,
     scopes,
+    unauthenticated,
 )
 from ...common.workspaces import reads as workspace_reads
 from . import runner_tokens, service
@@ -45,6 +47,8 @@ from .schemas.run import (
 )
 
 router = APIRouter()
+runner_router = APIRouter(route_class=RunnerRoute)
+"""The four runner routes, whose validation failures answer 401 to a caller without a run token."""
 
 RUN_ID_PATTERN = r"^run-[0-9A-HJKMNP-TV-Z]{26}$"
 RunId = Path(min_length=4, max_length=64, pattern=RUN_ID_PATTERN)
@@ -269,7 +273,7 @@ def run_plan(run_id: str = RunId) -> dict[str, Any]:
         raise _not_found("That run has no plan yet.") from error
 
 
-@router.get(
+@runner_router.get(
     "/runs/{run_id}/bundle",
     response_model=RunBundle,
     dependencies=[Depends(require_run_token())],
@@ -290,7 +294,7 @@ def run_bundle(run_id: str = RunId) -> dict[str, Any]:
         raise _not_found("That run's config version no longer exists.") from error
 
 
-@router.post(
+@runner_router.post(
     "/runs/{run_id}/artifact-uploads",
     response_model=ArtifactUpload,
     dependencies=[Depends(require_run_token())],
@@ -323,7 +327,7 @@ def artifact_upload(payload: ArtifactUploadCreate, run_id: str = RunId) -> dict[
         ) from error
 
 
-@router.post(
+@runner_router.post(
     "/runs/{run_id}/phase-result",
     response_model=PhaseResultAccepted,
     dependencies=[Depends(require_run_token())],
@@ -339,17 +343,18 @@ def phase_result(payload: PhaseResult, run_id: str = RunId) -> dict[str, Any]:
     return {"run_id": run_id, "status": updated["status"]}
 
 
-@router.post("/runs/{run_id}/runner-token", response_model=RunnerToken)
+@runner_router.post("/runs/{run_id}/runner-token", response_model=RunnerToken)
 def runner_token(payload: RunnerTokenRequest, run_id: str = RunId) -> dict[str, Any]:
     """Trade a runner task's signed identity for its run token. Runner only.
 
-    Every refusal is the same 401, so a caller learns nothing about which check
-    failed; the reason is logged instead.
+    Every refusal is the same 401, a malformed request included, so a caller
+    learns nothing about which check failed or what the route expects; the reason
+    is logged instead.
     """
     try:
         return {"run_token": runner_tokens.exchange(run_id, payload.headers)}
     except runner_tokens.ExchangeRefused as error:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="That request does not prove a runner task of this run.",
-        ) from error
+        raise unauthenticated() from error
+
+
+router.include_router(runner_router)

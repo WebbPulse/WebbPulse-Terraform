@@ -6041,7 +6041,7 @@
     },
     "/api/v1/runs/{run_id}/runner-token": {
       "post": {
-        "description": "Trade a runner task's signed identity for its run token. Runner only.\n\nEvery refusal is the same 401, so a caller learns nothing about which check\nfailed; the reason is logged instead.",
+        "description": "Trade a runner task's signed identity for its run token. Runner only.\n\nEvery refusal is the same 401, a malformed request included, so a caller\nlearns nothing about which check failed or what the route expects; the reason\nis logged instead.",
         "operationId": "runner_token_api_v1_runs__run_id__runner_token_post",
         "parameters": [
           {

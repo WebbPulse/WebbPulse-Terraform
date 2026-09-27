@@ -297,8 +297,38 @@ def test_every_refusal_is_the_same_answer(client, created_run, cluster, sts, ecs
 
 
 def test_the_request_body_is_bounded(client, created_run, cluster, sts, ecs):
-    """An oversized header value is a 422 before anything is replayed."""
+    """An oversized header value is refused before anything is replayed."""
     run_id = created_run["run_id"]
     headers = _signed(run_id) | {"Authorization": "x" * 5000}
-    assert _exchange(client, run_id, headers).status_code == 422
+    assert _exchange(client, run_id, headers).status_code == 401
     assert sts.calls == []
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/api/v1/runs/x/runner-token", {"headers": {}}),
+        ("/api/v1/runs/x/runner-token", {"nonsense": True}),
+        ("/api/v1/runs/run-00000000000000000000000000/runner-token", {"unexpected": 1}),
+        ("/api/v1/runs/run-00000000000000000000000000/runner-token", None),
+    ],
+)
+def test_a_malformed_exchange_is_the_same_401_as_a_refused_one(client, path, body):
+    """A stranger learns nothing about the route's schema from a malformed request."""
+    response = client.post(path, json=body) if body is not None else client.post(path, content=b"{not json")
+
+    assert response.status_code == 401
+    assert "loc" not in response.text
+    assert response.json()["error_code"] == "UNAUTHORIZED"
+
+
+def test_a_refused_exchange_and_a_malformed_one_answer_alike(client, created_run, cluster, sts, ecs):
+    """The body of a refusal does not say whether the request was malformed or unproven."""
+    run_id = created_run["run_id"]
+    refused = _exchange(client, run_id, {"Authorization": "unsigned"})
+    malformed = client.post(f"{BASE}/{run_id}/runner-token", json={"nonsense": True})
+
+    assert refused.status_code == malformed.status_code == 401
+    assert {k: v for k, v in refused.json().items() if k != "request_id"} == {
+        k: v for k, v in malformed.json().items() if k != "request_id"
+    }

@@ -16,9 +16,12 @@ the path, so a token for one run cannot read another run's bundle.
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Any, Callable, Coroutine, Final
 
 from fastapi import Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
+from starlette.responses import Response
 from webbpulse.identity.api_keys import ApiKeyRecord, ApiKeyStore, DynamoApiKeyStore, verify
 from webbpulse.identity.claims import AuthorizerClaims
 from webbpulse.identity.scopes import bearer_credential, claims_or_api_key, require_scopes
@@ -96,19 +99,35 @@ def api_key_store(settings: Settings | None = None) -> ApiKeyStore:
     )
 
 
+def key_owner_scopes(record: ApiKeyRecord) -> tuple[str, ...]:
+    """The scopes a key's owner holds right now, read from the `users` table.
+
+    Nothing for an owner that is gone, disabled or unverified, which is the same
+    test `may_authenticate` applies at sign-in. Otherwise the scopes the owner's
+    current role earns, the same ones a fresh session token would carry.
+    """
+    from ..db.users import UserRepository
+    from ..identity.identity_hooks import ADMIN_ROLE, scope_claim_for_roles
+
+    user = UserRepository().get(record.user_id)
+    if user is None or user.disabled or not user.email_verified:
+        return ()
+    return tuple(scope_claim_for_roles([ADMIN_ROLE] if user.is_admin else []).split())
+
+
 def _claims_dependency() -> Any:
     """The claims dependency accepting a verified JWT or a `wpk_` agent key.
 
     The store is resolved per request rather than captured, so a test that moves
-    the table underneath the settings is read rather than a stale one. `live_scopes`
-    is left unset deliberately: the control plane has no membership store to
-    intersect a key against, so a key's stored scopes are its authority and
-    revoking one means revoking the key.
+    the table underneath the settings is read rather than a stale one. A key's
+    stored scopes are intersected with `key_owner_scopes`, so a key loses what its
+    owner loses: a demoted admin's keys fall to the read scopes and a disabled or
+    deleted owner's keys hold nothing.
     """
 
     async def dependency(request: Request) -> AuthorizerClaims:
         """Return this request's verified claims, or raise a 401."""
-        inner = claims_or_api_key(store=api_key_store())
+        inner = claims_or_api_key(store=api_key_store(), live_scopes=key_owner_scopes)
         result: AuthorizerClaims = await inner(request)
         return result
 
@@ -130,7 +149,7 @@ def scopes(*required: str) -> Any:
     return require_scopes(*required, claims_dependency=claims)
 
 
-def _unauthenticated() -> HTTPException:
+def unauthenticated() -> HTTPException:
     """The 401 every failed run token path raises, with no detail of which check failed."""
     return HTTPException(
         status_code=401,
@@ -149,14 +168,14 @@ def run_token_record(request: Request, run_id: str) -> ApiKeyRecord:
     """
     presented = bearer_credential(request)
     if not presented:
-        raise _unauthenticated()
+        raise unauthenticated()
     record = verify(presented, api_key_store())
     if record is None:
-        raise _unauthenticated()
+        raise unauthenticated()
     if RUNNER_SCOPE not in record.scopes:
-        raise _unauthenticated()
+        raise unauthenticated()
     if record.user_id != run_id:
-        raise _unauthenticated()
+        raise unauthenticated()
     return record
 
 
@@ -172,6 +191,35 @@ def require_run_token() -> Any:
     return dependency
 
 
+class RunnerRoute(APIRoute):
+    """A route class for the runner routes that hides their schema from strangers.
+
+    FastAPI validates the path and body before a route's own checks run, so an
+    unauthenticated caller would get a 422 naming every field the route expects.
+    Here a validation failure becomes the same 401 an unauthenticated caller gets
+    anywhere else, unless the request carries a run token for the run in its path,
+    in which case the runner sees the 422 it needs to diagnose itself. The runner
+    token route is reached without a run token, so it always answers 401.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        """Wrap the stock handler so a validation failure is judged by credential first."""
+        handler = super().get_route_handler()
+        route_path = self.path
+
+        async def guarded(request: Request) -> Response:
+            """Run the stock handler, turning an unauthenticated 422 into a 401."""
+            try:
+                return await handler(request)
+            except RequestValidationError:
+                if route_path.endswith("/runner-token"):
+                    raise unauthenticated() from None
+                run_token_record(request, str(request.path_params.get("run_id", "")))
+                raise
+
+        return guarded
+
+
 __all__ = [
     "ADMIN",
     "ALL_SCOPES",
@@ -184,6 +232,7 @@ __all__ = [
     "REGISTRY_READ",
     "REGISTRY_WRITE",
     "RUN_TOKEN_TENANT",
+    "RunnerRoute",
     "STATE_DOWNLOAD",
     "VARIABLES_READ",
     "VARIABLES_WRITE",
@@ -192,7 +241,9 @@ __all__ = [
     "Depends",
     "api_key_store",
     "claims",
+    "key_owner_scopes",
     "require_run_token",
     "run_token_record",
     "scopes",
+    "unauthenticated",
 ]

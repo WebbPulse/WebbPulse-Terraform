@@ -92,10 +92,13 @@ A person arrives with a JWT the API Gateway authorizer has already verified. An
 agent arrives with a `wpk_` API key. Both render as the same claims object, so a
 route guarded by `require_scopes` cannot tell them apart. The scopes are
 `workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}`,
-`runs:{read,write,apply}`.
+`runs:{read,write,apply}`. A key's stored scopes are intersected on every request
+with what its owner holds now, and a new key expires in 90 days by default and
+365 at most.
 
-The runner is separate. Starting a run mints a `wpk_` key scoped `runner`, bound
-to that run and expiring after four hours, and only that token opens
+The runner is separate. `POST /runs/{id}/runner-token` mints a `wpk_` key scoped
+`runner` for a runner task that proves its identity, bound to that run and
+expiring after four hours, and only that token opens
 `GET /runs/{id}/bundle`, `POST /runs/{id}/artifact-uploads` and
 `POST /runs/{id}/phase-result`. The bundle carries decrypted sensitive
 variables, so no human scope reaches it, and every terminal transition revokes

@@ -155,6 +155,13 @@ refuses an API key actor with `API_KEY_ACTOR_FORBIDDEN`, because a key able to
 mint its successor would outlive being revoked. Listing and revoking stay open to
 a key so a service can rotate the credential it is holding.
 
+Every new key expires: 90 days out when the request names no `expires_at`, and
+no later than 365 days out when it does (422 otherwise). Keys minted before this
+rule keep the expiry they had. On every request a key's stored scopes are
+intersected with what its owner holds now (`auth.key_owner_scopes`, read from the
+`users` table), so a demoted admin's keys fall to the read scopes and a disabled,
+unverified or deleted owner's keys hold nothing.
+
 The confirmations queue consumer is mounted outside `/api/v1`, on the Lambda Web
 Adapter's pass-through path, so the HTTP API never routes it.
 
@@ -287,7 +294,7 @@ first, and the engine's environment is built without the runner's own tokens.
 Ids are a prefix plus a ULID, matching `^<prefix>-[0-9A-HJKMNP-TV-Z]{26}$`:
 `ws-` for a workspace, `cv-` for a configuration version, `run-` for a run.
 
-A run token is a `wpk_` key the runs domain mints when the run starts, carrying
+A run token is a `wpk_` key the runs domain mints when a runner task proves its identity, carrying
 the `runner` scope, an expiry four hours out, and the run id as its subject. The
 plaintext exists once, at mint time. It is not interchangeable with an agent key:
 the guard checks the key verifies, carries the `runner` scope, and is bound to
