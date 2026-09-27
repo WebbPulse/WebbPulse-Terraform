@@ -1022,8 +1022,9 @@ export interface paths {
          * Runner Token
          * @description Trade a runner task's signed identity for its run token. Runner only.
          *
-         *     Every refusal is the same 401, so a caller learns nothing about which check
-         *     failed; the reason is logged instead.
+         *     Every refusal is the same 401, a malformed request included, so a caller
+         *     learns nothing about which check failed or what the route expects; the reason
+         *     is logged instead.
          */
         post: operations["runner_token_api_v1_runs__run_id__runner_token_post"];
         delete?: never;
