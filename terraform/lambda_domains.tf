@@ -31,6 +31,11 @@ locals {
           batch_size                      = 1
           maximum_batching_window_seconds = 0
         }
+        github_webhooks = {
+          queue_arn                       = module.github_webhooks.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
         workspace_cleanup = {
           queue_arn                       = module.workspace_cleanup.queue_arn
           batch_size                      = 1
@@ -175,6 +180,7 @@ module "lambda_domain" {
       REGISTRY_TABLE        = module.dynamodb.table_names["registry"]
 
       GITHUB_APP_SLUG   = var.github_app_slug
+      API_BASE_URL      = "https://${local.api_host}"
       VCS_OIDC_AUDIENCE = var.vcs_oidc_audience
 
       REGISTRY_REPOSITORIES = jsonencode(local.registry_repositories)
@@ -189,6 +195,7 @@ module "lambda_domain" {
       RUN_STATE_MACHINE_ARN = module.run_state_machine.arn
 
       WORKSPACE_CLEANUP_QUEUE_URL = module.workspace_cleanup.queue_url
+      GITHUB_WEBHOOKS_QUEUE_URL   = module.github_webhooks.queue_url
 
       RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
       RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
@@ -254,6 +261,12 @@ locals {
         Effect   = "Allow"
         Action   = ["secretsmanager:PutSecretValue"]
         Resource = [module.app_secrets.arns["app"]]
+      },
+      {
+        Sid      = "QueueVerifiedWebhookDeliveries"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [module.github_webhooks.queue_arn]
       },
     ]
     registry = local.bucket_statements["Artifacts"]

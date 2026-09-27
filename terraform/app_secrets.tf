@@ -19,7 +19,7 @@ module "app_secrets" {
   secrets = {
     "app" = {
       description = "JSON map of runtime secrets read by the control plane Lambdas at cold start"
-      version     = 2
+      version     = 3
 
       json_preserve_unmanaged = true
       json = {
@@ -33,6 +33,12 @@ module "app_secrets" {
         mfa_master_key = {
           format = "bytes32-base64"
           keep   = true
+        }
+        GITHUB_WEBHOOK_SECRET = {
+          format  = "password"
+          length  = 48
+          special = false
+          keep    = true
         }
       }
     }
