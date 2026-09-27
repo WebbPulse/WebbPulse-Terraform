@@ -46,6 +46,7 @@ import type {
   Workspace,
   WorkspaceCreate,
   WorkspaceList,
+  WebhookConfig,
   WorkspaceUpdate,
 } from './types';
 
@@ -497,6 +498,22 @@ export class TerraformApi {
     const response = await this.client.post<GitHubAppStatus>(
       '/github/app/conversions',
       body,
+      options
+    );
+    return response.data;
+  }
+
+  /**
+   * Points the App's webhook at this API and sets its signing secret. Rejects
+   * with `GITHUB_WEBHOOK_URL_MISSING` or `GITHUB_WEBHOOK_SECRET_MISSING` when
+   * the environment lacks either.
+   */
+  async syncGitHubWebhook(
+    options: RequestOptions = {}
+  ): Promise<WebhookConfig> {
+    const response = await this.client.post<WebhookConfig>(
+      '/github/app/webhook',
+      undefined,
       options
     );
     return response.data;

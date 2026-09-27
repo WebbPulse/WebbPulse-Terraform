@@ -51,6 +51,7 @@ export function createApiMock(): ApiMock {
     'getGitHubApp',
     'startGitHubManifest',
     'convertGitHubManifest',
+    'syncGitHubWebhook',
     'startGitHubInstall',
     'recordGitHubInstallation',
     'listGitHubInstallations',
