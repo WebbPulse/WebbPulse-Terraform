@@ -16,6 +16,7 @@ DOMAIN_MODULES = {
     "workspaces": "app.domains.workspaces.entrypoint",
     "runs": "app.domains.runs.entrypoint",
     "github": "app.domains.github.entrypoint",
+    "registry": "app.domains.registry.entrypoint",
 }
 
 
@@ -32,7 +33,7 @@ def paths_of(app) -> set[str]:
 
 def test_the_map_carries_every_domain():
     """The contract's domains are the ones wired."""
-    assert set(DOMAIN_NAMES) == {"workspaces", "runs", "github"}
+    assert set(DOMAIN_NAMES) == {"workspaces", "runs", "github", "registry"}
 
 
 @pytest.mark.parametrize("name", sorted(DOMAIN_MODULES))

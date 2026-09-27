@@ -54,6 +54,7 @@ os.environ.update(
         "CONFIG_VERSIONS_TABLE": f"{TABLE_PREFIX}-config-versions",
         "USERS_TABLE": f"{TABLE_PREFIX}-users",
         "GITHUB_TABLE": f"{TABLE_PREFIX}-github",
+        "REGISTRY_TABLE": f"{TABLE_PREFIX}-registry",
         "STATE_BUCKET": STATE_BUCKET,
         "STATE_KMS_KEY_ARN": STATE_KMS_KEY_ARN,
         "ARTIFACTS_BUCKET": ARTIFACTS_BUCKET,

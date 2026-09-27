@@ -120,6 +120,25 @@ def _github_routers() -> "list[APIRouter]":
     return [router]
 
 
+def _registry_routers() -> "list[APIRouter]":
+    """Import and return the registry domain's `/api/v1` routers."""
+    from app.domains.registry.router import router
+
+    return [router]
+
+
+def _registry_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
+    """The module registry protocol and the ingest consumer, both at the root.
+
+    The protocol mounts at `/v1/modules`, where service discovery points Terraform,
+    and the consumer at the adapter's pass-through path.
+    """
+    from app.domains.registry.consumers.dispatch import build_router
+    from app.domains.registry.protocol_router import router as protocol_router
+
+    return [protocol_router, build_router(settings)]
+
+
 DOMAINS: Final[dict[str, Domain]] = {
     "workspaces": Domain(
         name="workspaces",
@@ -140,6 +159,13 @@ DOMAINS: Final[dict[str, Domain]] = {
         title="WebbPulse Terraform GitHub",
         load_routers=_github_routers,
         router_tags=("github",),
+    ),
+    "registry": Domain(
+        name="registry",
+        title="WebbPulse Terraform registry",
+        load_routers=_registry_routers,
+        load_unprefixed_routers=_registry_unprefixed_routers,
+        router_tags=("registry",),
     ),
 }
 

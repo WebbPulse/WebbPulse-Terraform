@@ -1,5 +1,7 @@
-"""The GitHub App settings loader every domain reads credentials through.
+"""GitHub pieces shared across domains.
 
-The client itself is `webbpulse.integrations.github`; this package adds only the short
-TTL cache in `loader`, so a warm function sees credentials written after its cold start.
+`loader` holds the GitHub App settings behind a short TTL cache, so a warm function
+sees credentials written after its cold start; the client itself is
+`webbpulse.integrations.github`. `oidc` verifies the GitHub Actions OIDC token a
+workflow authenticates with.
 """

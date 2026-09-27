@@ -11,7 +11,17 @@ from __future__ import annotations
 from webbpulse.dynamodb import Repository
 
 from ..composition.settings import Settings, get_settings
-from .tables import CONFIG_VERSIONS, GITHUB, RUNS, USERS, VARIABLES, VCS_UPLOADS, WORKSPACES, local_table_name
+from .tables import (
+    CONFIG_VERSIONS,
+    GITHUB,
+    REGISTRY,
+    RUNS,
+    USERS,
+    VARIABLES,
+    VCS_UPLOADS,
+    WORKSPACES,
+    local_table_name,
+)
 
 
 def _repository(logical_name: str, physical_name: str, settings: Settings) -> Repository:
@@ -84,6 +94,12 @@ def vcs_uploads(settings: Settings | None = None) -> Repository:
     return _repository(VCS_UPLOADS, _name(resolved.VCS_UPLOADS_TABLE, VCS_UPLOADS, resolved), resolved)
 
 
+def registry(settings: Settings | None = None) -> Repository:
+    """The module registry's table."""
+    resolved = settings or get_settings()
+    return _repository(REGISTRY, _name(resolved.REGISTRY_TABLE, REGISTRY, resolved), resolved)
+
+
 def physical_names(settings: Settings | None = None) -> dict[str, str]:
     """Every logical table paired with the physical name this environment uses."""
     resolved = settings or get_settings()
@@ -95,4 +111,5 @@ def physical_names(settings: Settings | None = None) -> dict[str, str]:
         USERS: _name(resolved.USERS_TABLE, USERS, resolved),
         GITHUB: _name(resolved.GITHUB_TABLE, GITHUB, resolved),
         VCS_UPLOADS: _name(resolved.VCS_UPLOADS_TABLE, VCS_UPLOADS, resolved),
+        REGISTRY: _name(resolved.REGISTRY_TABLE, REGISTRY, resolved),
     }

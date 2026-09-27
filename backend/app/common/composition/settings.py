@@ -55,6 +55,14 @@ class Settings(BaseServiceSettings):
     VCS_OIDC_AUDIENCE: str = "webbpulse-terraform"
     """The audience a GitHub Actions OIDC token must carry to request an upload."""
 
+    REGISTRY_TABLE: str = ""
+    """The module registry's one table: module versions and their upload records."""
+
+    REGISTRY_REPOSITORIES: str = "{}"
+    """JSON object of the repositories allowed to publish modules, `owner/name` to an
+    override. An empty override derives the module from a `terraform-<provider>-<name>`
+    repository name; `<name>/<provider>` names it outright."""
+
     GITHUB_TABLE: str = ""
     """The GitHub domain's one table: the App row, one-time states and installations."""
 
