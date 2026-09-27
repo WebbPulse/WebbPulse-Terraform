@@ -59,6 +59,8 @@ locals {
 
   github_routes = contains(keys(local.lambda_domains), "github") ? {
     "GET /api/v1/github/app"                                          = { integration = "github" }
+    "POST /api/v1/github/app/webhook"                                 = { integration = "github" }
+    "POST /api/v1/github/webhooks"                                    = { integration = "github", authorization_type = "NONE" }
     "POST /api/v1/github/app/manifest"                                = { integration = "github" }
     "POST /api/v1/github/app/conversions"                             = { integration = "github" }
     "POST /api/v1/github/install-state"                               = { integration = "github" }
@@ -82,7 +84,10 @@ locals {
       for key, route in local.runs_routes :
       key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
     },
-    { for key, route in local.github_routes : key => merge(route, { require_identity_jwt = true }) },
+    {
+      for key, route in local.github_routes :
+      key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
+    },
     {
       for key, route in local.registry_routes :
       key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })

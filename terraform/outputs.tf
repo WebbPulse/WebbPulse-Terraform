@@ -168,6 +168,11 @@ output "vcs_ingest_queue_url" {
   value       = module.vcs_ingest.queue_url
 }
 
+output "github_webhooks_queue_url" {
+  description = "Queue the GitHub webhook route sends each verified push and pull request delivery to, consumed by the runs function"
+  value       = module.github_webhooks.queue_url
+}
+
 output "registry_ingest_queue_url" {
   description = "Queue EventBridge feeds with Object Created events under registry/incoming/ in the artifacts bucket"
   value       = module.registry_ingest.queue_url
