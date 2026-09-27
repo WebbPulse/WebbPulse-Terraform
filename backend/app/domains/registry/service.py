@@ -4,7 +4,10 @@ A module is created connected to a GitHub repository the environment's App is
 installed on, the way HCP Terraform publishes a module from VCS. From then on a
 push of a semantic version tag to that repository publishes that version: the
 webhook route queues the tag, and the tag consumer reads the tarball through the
-App's installation token, checks it and stores it. The namespace is the
+App's installation token, checks it and stores it. Connecting also queues a tag
+sync, which imports the repository's existing semantic version tags through the
+same queue and the same consumer, and `resync_module` queues one again, which is
+how a tag GitHub never sent a push event for is picked up. The namespace is the
 repository owner; the name and provider come from the request, or from a
 `terraform-<provider>-<name>` repository name.
 
@@ -18,8 +21,11 @@ published version is immutable.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import time
+import uuid
 from typing import TYPE_CHECKING, Any, Final, Iterable, Mapping, Optional
 
 from boto3.dynamodb.conditions import Attr, Key
@@ -46,6 +52,9 @@ PENDING: Final = "pending"
 PUBLISHED: Final = "published"
 FAILED: Final = "failed"
 
+SYNC_KIND: Final = "module_sync"
+"""The `kind` of a queued request to import a module's existing tags."""
+
 _REPOSITORY_NAME = re.compile(r"^terraform-(?P<provider>[0-9a-z]+)-(?P<name>.+)$")
 _NAME = re.compile(r"^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$")
 _PROVIDER = re.compile(r"^[0-9a-z]{1,64}$")
@@ -66,6 +75,10 @@ class ModuleNotFound(Exception):
 
 class RegistryUnavailable(Exception):
     """The environment has no GitHub App, so no repository can be connected."""
+
+
+class SyncUnavailable(Exception):
+    """The tag sync could not be queued, so nothing will import the tags."""
 
 
 def module_pk(namespace: str, name: str, provider: str) -> str:
@@ -141,15 +154,59 @@ def http_client() -> httpx.Client | None:
     return None
 
 
+def sqs_client(settings: Settings) -> Any:
+    """An SQS client. Imported late so nothing connects at import."""
+    import boto3
+
+    return boto3.client("sqs", region_name=settings.AWS_REGION_NAME or None)
+
+
+def request_sync(row: Mapping[str, Any], actor: Optional[str], *, settings: Settings) -> str:
+    """Queue an import of the connected repository's tags for one module, returning its delivery id.
+
+    Raises:
+        SyncUnavailable: There is no ingest queue here, or SQS refused the message.
+    """
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    address = f"{row['namespace']}/{row['name']}/{row['provider']}"
+    if not settings.REGISTRY_INGEST_QUEUE_URL:
+        raise SyncUnavailable(f"no registry ingest queue to sync {address} through")
+    delivery = f"sync-{uuid.uuid4().hex}"
+    body = {
+        "kind": SYNC_KIND,
+        "delivery": delivery,
+        "module": str(row["pk"]),
+        "actor": actor or "",
+        "requested_at_ms": int(time.time() * 1000),
+    }
+    try:
+        sqs_client(settings).send_message(
+            QueueUrl=settings.REGISTRY_INGEST_QUEUE_URL, MessageBody=json.dumps(body, separators=(",", ":"))
+        )
+    except (BotoCoreError, ClientError) as error:
+        raise SyncUnavailable(f"the tag sync for {address} could not be queued") from error
+    _log.info(
+        "Queued a tag sync.",
+        extra={"event": "registry.sync_queued", "module_address": address, "delivery": delivery},
+    )
+    return delivery
+
+
 def create_module(
     vcs_repo: str,
     name: Optional[str],
     provider: Optional[str],
     actor: Optional[str],
     *,
+    import_tags: bool = True,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """Connect a new module to a repository the App is installed on.
+    """Connect a new module to a repository the App is installed on, then queue its tag import.
+
+    With `import_tags` false the repository's existing tags wait for a resync. A
+    sync that cannot be queued is logged rather than failing the connection, since
+    a resync recovers it.
 
     Raises:
         InvalidModuleName: The address is not valid.
@@ -185,7 +242,44 @@ def create_module(
             "repository": found.full_name,
         },
     )
+    if import_tags:
+        try:
+            request_sync(row, actor, settings=resolved)
+        except SyncUnavailable as error:
+            _log.warning(
+                "Connected a module without queueing its tag import.",
+                extra={"event": "registry.sync_unqueued", "module_address": f"{namespace}/{name}/{provider}"},
+                exc_info=error,
+            )
     return module_view(row, [])
+
+
+def connected_module(namespace: str, name: str, provider: str, *, settings: Settings) -> Optional[dict[str, Any]]:
+    """The module row at the address when it is connected to a repository, else `None`."""
+    row = repositories.registry(settings).get(module_row_key(namespace, name, provider))
+    if not row or not row.get("vcs_repo") or not row.get("vcs_installation_id"):
+        return None
+    return dict(row)
+
+
+def resync_module(
+    namespace: str, name: str, provider: str, actor: Optional[str], *, settings: Settings | None = None
+) -> dict[str, str]:
+    """Queue an import of every semantic version tag the module's repository holds.
+
+    Like HCP Terraform's resync: it picks up tags pushed while nothing was
+    connected, or pushed more than three at a time, when GitHub sends no event.
+
+    Raises:
+        ModuleNotFound: No connected module sits at the address.
+        SyncUnavailable: The sync could not be queued.
+    """
+    resolved = settings or get_settings()
+    row = connected_module(namespace, name, provider, settings=resolved)
+    if row is None:
+        raise ModuleNotFound(f"{namespace}/{name}/{provider}")
+    delivery = request_sync(row, actor, settings=resolved)
+    return {"source": f"{row['namespace']}/{row['name']}/{row['provider']}", "delivery": delivery}
 
 
 def connected_modules(repository_id: str, *, settings: Settings | None = None) -> list[dict[str, Any]]:
@@ -201,7 +295,7 @@ def connected_modules(repository_id: str, *, settings: Settings | None = None) -
     )
 
 
-def _versions(namespace: str, name: str, provider: str, *, settings: Settings) -> Iterable[dict[str, Any]]:
+def version_rows(namespace: str, name: str, provider: str, *, settings: Settings) -> Iterable[dict[str, Any]]:
     """Every version row of one module, whatever its status."""
     return repositories.registry(settings).iter_query(
         Key("pk").eq(module_pk(namespace, name, provider)) & Key("sk").begins_with(VERSION_SK_PREFIX)
@@ -217,7 +311,7 @@ def published_versions(namespace: str, name: str, provider: str, *, settings: Se
     resolved = settings or get_settings()
     versions = [
         str(row["version"])
-        for row in _versions(namespace, name, provider, settings=resolved)
+        for row in version_rows(namespace, name, provider, settings=resolved)
         if row.get("status") == PUBLISHED
     ]
     if not versions:
@@ -349,6 +443,9 @@ __all__ = [
     "ModuleExists",
     "ModuleNotFound",
     "RegistryUnavailable",
+    "SYNC_KIND",
+    "SyncUnavailable",
+    "connected_module",
     "connected_modules",
     "create_module",
     "delete_module",
@@ -363,6 +460,10 @@ __all__ = [
     "module_row_key",
     "module_view",
     "published_versions",
+    "request_sync",
+    "resync_module",
+    "sqs_client",
     "version_order",
+    "version_rows",
     "version_sk",
 ]

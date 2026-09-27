@@ -1,6 +1,7 @@
-"""Fetching a repository archive through the App's installation token.
+"""Reading a repository's tags and archives through the App's installation token.
 
-GitHub answers `GET /repos/{repo}/tarball/{ref}` with a redirect to a signed
+`list_tags` pages `GET /repos/{repo}/tags`, which names each tag's commit even for
+an annotated tag. GitHub answers `GET /repos/{repo}/tarball/{ref}` with a redirect to a signed
 codeload URL. The installation token goes only to the API, the redirect is
 followed without it, and only to codeload, so a token never reaches another host
 and an archive never comes from one.
@@ -21,8 +22,65 @@ TARBALL_HOSTS: Final = frozenset({"codeload.github.com"})
 REDIRECTS: Final = frozenset({301, 302, 303, 307, 308})
 
 
+TAGS_PAGE_SIZE: Final = 100
+
+
 class TarballUnavailable(Exception):
     """GitHub did not hand over an archive within the size limit, so the caller retries."""
+
+
+class TagsUnavailable(Exception):
+    """GitHub did not list the repository's tags, so the caller retries."""
+
+
+def _api_headers(token: str) -> dict[str, str]:
+    """The headers an installation token call to the REST API carries."""
+    return {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": API_VERSION,
+        "Authorization": f"Bearer {token}",
+    }
+
+
+def list_tags(
+    app: GitHubAppClient,
+    http: httpx.Client,
+    *,
+    installation_id: int | str,
+    repository: str,
+    max_pages: int,
+) -> list[tuple[str, str]]:
+    """Each tag of `repository` as `(name, commit sha)`, reading at most `max_pages` pages.
+
+    Raises:
+        TagsUnavailable: The API refused or did not answer.
+    """
+    token = app.installation_token(installation_id)
+    path = f"/repos/{repository}/tags"
+    found: list[tuple[str, str]] = []
+    for page in range(1, max_pages + 1):
+        try:
+            response = http.get(
+                f"{API_ROOT}{path}",
+                params={"per_page": TAGS_PAGE_SIZE, "page": page},
+                headers=_api_headers(token),
+            )
+        except httpx.HTTPError as error:
+            raise TagsUnavailable(f"GET {path} did not answer") from error
+        if response.status_code != 200:
+            raise TagsUnavailable(f"GET {path} answered {response.status_code}")
+        body = response.json()
+        if not isinstance(body, list):
+            raise TagsUnavailable(f"GET {path} answered something other than a list")
+        for item in body:
+            name = str(item.get("name") or "") if isinstance(item, dict) else ""
+            commit = item.get("commit") if isinstance(item, dict) else None
+            sha = str(commit.get("sha") or "") if isinstance(commit, dict) else ""
+            if name and sha:
+                found.append((name, sha))
+        if len(body) < TAGS_PAGE_SIZE:
+            break
+    return found
 
 
 def download_tarball(
@@ -46,11 +104,7 @@ def download_tarball(
     try:
         response = http.get(
             f"{API_ROOT}{path}",
-            headers={
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": API_VERSION,
-                "Authorization": f"Bearer {token}",
-            },
+            headers=_api_headers(token),
         )
     except httpx.HTTPError as error:
         raise TarballUnavailable(f"GET {path} did not answer") from error
@@ -75,4 +129,4 @@ def download_tarball(
     return size
 
 
-__all__ = ["TARBALL_HOSTS", "TarballUnavailable", "download_tarball"]
+__all__ = ["TAGS_PAGE_SIZE", "TARBALL_HOSTS", "TagsUnavailable", "TarballUnavailable", "download_tarball", "list_tags"]
