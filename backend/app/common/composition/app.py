@@ -74,6 +74,9 @@ def build_app(settings: Settings | None = None) -> "FastAPI":
         )
     app.add_middleware(TrailingSlashMiddleware, router=app.router)
     app.add_middleware(DomainHeaderMiddleware, domain=MONOLITH_DOMAIN)
+    for domain in DOMAINS.values():
+        if domain.install_outer_middleware is not None:
+            domain.install_outer_middleware(app, resolved)
     return app
 
 
