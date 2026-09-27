@@ -391,3 +391,13 @@ is deliberately not part of `all-checks-passed`.
 The `E2E_*` variables live on the `staging` GitHub Environment. The suite makes
 its own login user per run through `/api/auth/e2e/users`, which is gated by
 `ephemeral_users_enabled` and so exists outside production only.
+
+`WebbPulse/webbpulse-terraform-staging-e2e` (repository id 1389889459, public) is
+the staging end-to-end test repository, part of the staging environment in the
+same way as the `webbpulse-terraform-staging-e2e` AWS account. It is declared in
+the WebbPulse-Platform repository factory with the topics `webbpulse-terraform`,
+`staging` and `e2e`, is load bearing for staging e2e and holds nothing durable.
+The staging GitHub App is installed on it and not on this repository, it carries
+the caller workflow and a copy of `examples/first-run`, and the staging
+`first-run` workspace is bound to it. VCS runs, check runs and the pull request
+comment are proven there, and `E2E_VCS_CONNECT_REPO` names it.
