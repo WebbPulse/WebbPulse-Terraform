@@ -2259,10 +2259,10 @@ export interface components {
         };
         /**
          * RunCreated
-         * @description A newly created run. Carries the run token only when the run started.
+         * @description A newly created run.
          *
-         *     A queued run has no execution and so no token: the token is minted when the
-         *     state machine starts, which is when the run ahead of it finishes.
+         *     It carries no run token: only the runner task holds one, obtained by
+         *     trading its signed task identity, so no caller ever sees the plaintext.
          */
         RunCreated: {
             actor?: components["schemas"]["RunActor"] | null;
@@ -2302,8 +2302,6 @@ export interface components {
              * @default false
              */
             run_role_check?: boolean;
-            /** Run Token */
-            run_token?: string | null;
             /**
              * Source
              * @default api
