@@ -12,8 +12,9 @@ from webbpulse.dynamodb import new_ulid
 
 from app.common.db import repositories
 from app.common.db.tables import RUNS_COLLECTION
+from app.common.workspaces import run_role_check
 from app.domains.runs import service as runs_service
-from app.domains.workspaces import run_role_check, service
+from app.domains.workspaces import service
 from tests.conftest import RUN_ROLE_NAME_PREFIX, RUNNER_TASK_ROLE_ARNS, WORKSPACE_PAYLOAD
 
 BASE = "/api/v1/workspaces"

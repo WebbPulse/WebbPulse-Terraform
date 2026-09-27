@@ -18,6 +18,11 @@ A role staged as `pending_run_role_arn` is answered the same way. Runs keep the
 current role until a verification run proves the staged one, and the recording
 check then switches the workspace over, so a half finished setup never breaks a
 workspace that works.
+
+Both functions record it: the workspaces function when someone asks, and the runs
+function after every run reaches a terminal status, which is what switches a staged
+role over without anyone opening the workspace. The module lives in `common` for
+that reason, since neither domain may import the other.
 """
 
 from __future__ import annotations
@@ -28,10 +33,10 @@ from typing import Any, Final, Literal
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, now_iso
 
-from ...common.composition.settings import Settings, get_settings
-from ...common.db import repositories
-from ...common.db.tables import RUNS_BY_WORKSPACE_INDEX, SEMAPHORE_RUN_ID
-from ...common.workspaces.reads import RunRoleMissing, get_workspace
+from ..composition.settings import Settings, get_settings
+from ..db import repositories
+from ..db.tables import RUNS_BY_WORKSPACE_INDEX, SEMAPHORE_RUN_ID
+from .reads import RunRoleMissing, get_workspace
 
 RunRoleCheckStatus = Literal["connected", "failed", "unverified"]
 """What the runner's record says about one run role."""
