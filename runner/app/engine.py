@@ -131,8 +131,14 @@ def build_environment(
     bundle_environment: dict[str, str],
     region: str,
     directory: Path,
+    backend_environment: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Assemble the engine's environment without letting the runner's own tokens through."""
+    """Assemble the engine's environment without letting the runner's own tokens through.
+
+    `aws_credentials` is the run role, which the providers use. `backend_environment`
+    points the SDK at the state profile the backend override names, and is applied
+    last so a workspace variable cannot redirect where state credentials come from.
+    """
     environment = {
         key: value
         for key, value in base.items()
@@ -154,6 +160,7 @@ def build_environment(
     environment["TF_DATA_DIR"] = str(directory / ".terraform")
     environment.update(bundle_environment)
     environment.update(aws_credentials)
+    environment.update(backend_environment or {})
     return environment
 
 

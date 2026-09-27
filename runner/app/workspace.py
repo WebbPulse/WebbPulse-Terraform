@@ -8,6 +8,7 @@ import tarfile
 from pathlib import Path
 
 from app.models import BackendConfig, Bundle
+from app.state_credentials import STATE_PROFILE
 
 BACKEND_FILENAME = "zz_webbpulse_backend_override.tf"
 TFVARS_FILENAME = "zz_webbpulse.auto.tfvars.json"
@@ -41,7 +42,14 @@ def unpack_config(archive: Path, directory: Path) -> Path:
 
 
 def write_backend_override(directory: Path, backend: BackendConfig) -> Path:
-    """Write the S3 backend override with native locking on."""
+    """Write the S3 backend override with native locking on.
+
+    The backend names the state profile, so state is always read and written
+    with the runner task's own role while the providers get the run role from the
+    environment. A run role in another account never reaches the state bucket.
+    Only the profile name is written, so neither the plan file nor `.terraform`
+    records a credential.
+    """
     body = "\n".join(
         [
             "terraform {",
@@ -52,6 +60,7 @@ def write_backend_override(directory: Path, backend: BackendConfig) -> Path:
             f'    kms_key_id   = "{backend.kms_key_id}"',
             "    encrypt      = true",
             "    use_lockfile = true",
+            f'    profile      = "{STATE_PROFILE}"',
             "  }",
             "}",
             "",

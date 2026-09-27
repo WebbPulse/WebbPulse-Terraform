@@ -74,7 +74,15 @@ the token. The runner then:
    variable an eight character string instead. A key is in one file or the other,
    never both, so the two auto loaded files never contend.
 4. Assumes the bundle's run role with the workspace id as the external id and the
-   phase session policy, and exports only those credentials to the engine.
+   phase session policy, and exports only those credentials to the engine, for
+   the providers. The state backend never uses them: the override names the
+   `webbpulse-state` profile, which Terraform and OpenTofu both prefer over
+   environment keys, and `app/state_credentials.py` writes that profile into an
+   owner only `AWS_CONFIG_FILE` as a `credential_process` fetching the runner
+   task role from the ECS container endpoint. A run role in another account
+   therefore still reads and writes the control plane's state bucket, and the
+   SDK refreshes the task credentials during a long apply. Only the profile name
+   reaches the plan file and `.terraform`.
 5. Runs the engine from the working directory: `init`, then
    `plan -out plan.tfplan -detailed-exitcode` plus `show -json`
    for the plan phase, with `-destroy` added when the bundle's `is_destroy` is
