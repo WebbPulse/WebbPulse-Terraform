@@ -1,86 +1,144 @@
-"""The registry's routes under `/api/v1`: the GitHub Actions upload and the listing.
+"""The registry's routes under `/api/v1`: connecting modules to repositories, and the listing.
 
-The upload carries no identity JWT and no `wpk_` key, and is exposed past the
-staging gate with `authorization_type = "NONE"`, because a workflow has neither.
-The GitHub token is verified here, in process, against GitHub's published keys.
+Creating and deleting a module needs `registry:write`, which only an admin holds;
+reading needs `registry:read`. Publishing has no route: a semantic version tag
+pushed to a connected repository arrives through the GitHub App's webhook.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from webbpulse.identity.scopes import bearer_credential
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from webbpulse.identity.claims import AuthorizerClaims
+from webbpulse.integrations.github import GitHubError, GitHubRateLimited
 
-from ...common.core.auth import REGISTRY_READ, scopes
+from ...common.core.auth import REGISTRY_READ, REGISTRY_WRITE, claims, scopes
+from ...common.github.repositories import RepositoryNotInstalled
 from . import service
-from .schemas.registry import ModuleList, ModuleUpload, ModuleUploadCreate
+from .schemas.registry import Module, ModuleCreate, ModuleList
 
 router = APIRouter(prefix="/registry")
 
-REPO_NOT_ALLOWED_CODE = "REGISTRY_REPO_NOT_ALLOWED"
-REF_UNSUPPORTED_CODE = "REGISTRY_REF_UNSUPPORTED"
 INVALID_MODULE_NAME_CODE = "REGISTRY_INVALID_MODULE_NAME"
-VERSION_EXISTS_CODE = "REGISTRY_VERSION_EXISTS"
+MODULE_EXISTS_CODE = "REGISTRY_MODULE_EXISTS"
+NOT_FOUND_CODE = "REGISTRY_NOT_FOUND"
+VCS_REPO_NOT_INSTALLED_CODE = "VCS_REPO_NOT_INSTALLED"
+GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
+GITHUB_NOT_CONFIGURED_CODE = "GITHUB_NOT_CONFIGURED"
+
+Segment = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[0-9A-Za-z_-]+$")]
 
 
-def _error(status_code: int, message: str, error_code: str, **headers: str) -> HTTPException:
-    """An error whose body carries a top-level `error_code` the workflow matches on."""
-    return HTTPException(
-        status_code=status_code,
-        detail={"message": message, "error_code": error_code},
-        headers=headers or None,
-    )
+def _error(status_code: int, message: str, error_code: str) -> HTTPException:
+    """An error whose body carries a stable `error_code`."""
+    return HTTPException(status_code=status_code, detail={"message": message, "error_code": error_code})
+
+
+def _actor(current: Optional[AuthorizerClaims]) -> Optional[str]:
+    """The caller's subject, recorded on what they create."""
+    subject = str((current or {}).get("sub", "") or "").strip()
+    return subject or None
+
+
+@contextmanager
+def _connect_errors() -> Iterator[None]:
+    """Translate a failed repository resolution into this API's errors.
+
+    GitHub's own message is never forwarded, since the resolution runs on App credentials.
+    """
+    try:
+        yield
+    except service.RegistryUnavailable as error:
+        raise _error(
+            status.HTTP_409_CONFLICT, "Create the GitHub App before connecting a module.", GITHUB_NOT_CONFIGURED_CODE
+        ) from error
+    except RepositoryNotInstalled as error:
+        raise _error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"The GitHub App is not installed on {error}. Install it on the repository first.",
+            VCS_REPO_NOT_INSTALLED_CODE,
+        ) from error
+    except GitHubRateLimited as error:
+        raise _error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "GitHub is rate limiting this App. Try again shortly.",
+            GITHUB_UNAVAILABLE_CODE,
+        ) from error
+    except GitHubError as error:
+        raise _error(
+            status.HTTP_502_BAD_GATEWAY, "GitHub could not resolve the repository.", GITHUB_UNAVAILABLE_CODE
+        ) from error
 
 
 @router.post(
-    "/uploads",
-    response_model=ModuleUpload,
+    "/modules",
+    response_model=Module,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(scopes(REGISTRY_WRITE))],
     responses={
-        401: {"description": "The GitHub Actions OIDC token is missing or did not verify."},
-        403: {"description": "The repository may not publish modules. `error_code` is `REGISTRY_REPO_NOT_ALLOWED`."},
-        409: {"description": "The version is already published. `error_code` is `REGISTRY_VERSION_EXISTS`."},
-        422: {"description": "The token is not for a version tag push, or the repository names no valid module."},
+        409: {"description": "A module already sits at the address, or there is no GitHub App."},
+        422: {"description": "The App is not installed on the repository, or the address is not valid."},
     },
 )
-def create_module_upload(payload: ModuleUploadCreate, request: Request) -> dict[str, Any]:
-    """Issue a presigned PUT for a module version's tarball.
+def create_module(payload: ModuleCreate, current: AuthorizerClaims = Depends(claims)) -> dict[str, Any]:
+    """Connect a module to a repository; each `vX.Y.Z` or `X.Y.Z` tag pushed there publishes it.
 
-    The caller sends `Authorization: Bearer <GitHub Actions OIDC token>` from a
-    workflow running on a `v<semver>` tag push. The module and version come from
-    its verified claims. A retry of the same workflow run attempt returns the same
-    `upload_id` with a new URL for the same key.
+    Tags pushed before the module existed are not published. Push a new tag, or
+    delete and push an existing one again.
     """
-    try:
-        return service.issue_upload(bearer_credential(request), payload.size_bytes)
-    except service.InvalidUploadToken as error:
-        raise _error(
-            status.HTTP_401_UNAUTHORIZED,
-            "Authentication is required.",
-            "UNAUTHORIZED",
-            **{"WWW-Authenticate": "Bearer"},
-        ) from error
-    except service.RepositoryNotAllowed as error:
-        raise _error(status.HTTP_403_FORBIDDEN, f"{error} may not publish modules.", REPO_NOT_ALLOWED_CODE) from error
-    except service.UnsupportedRef as error:
-        raise _error(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error), REF_UNSUPPORTED_CODE) from error
-    except service.InvalidModuleName as error:
-        raise _error(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error), INVALID_MODULE_NAME_CODE) from error
-    except service.VersionAlreadyPublished as error:
-        raise _error(status.HTTP_409_CONFLICT, f"{error} is already published.", VERSION_EXISTS_CODE) from error
+    with _connect_errors():
+        try:
+            return service.create_module(payload.vcs_repo, payload.name, payload.provider, _actor(current))
+        except service.InvalidModuleName as error:
+            raise _error(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error), INVALID_MODULE_NAME_CODE) from error
+        except service.ModuleExists as error:
+            raise _error(status.HTTP_409_CONFLICT, f"{error} already exists.", MODULE_EXISTS_CODE) from error
 
 
 @router.get("/modules", response_model=ModuleList, dependencies=[Depends(scopes(REGISTRY_READ))])
 def list_modules() -> dict[str, Any]:
-    """Every module and every version, with pending and failed ingests shown."""
+    """Every module and every version, with pending and failed versions shown."""
     return {"modules": service.list_modules()}
 
 
+@router.get(
+    "/modules/{namespace}/{name}/{provider}",
+    response_model=Module,
+    dependencies=[Depends(scopes(REGISTRY_READ))],
+    responses={404: {"description": "No module sits at the address."}},
+)
+def get_module(namespace: Segment, name: Segment, provider: Segment) -> dict[str, Any]:
+    """One module and every version of it."""
+    try:
+        return service.get_module(namespace, name, provider)
+    except service.ModuleNotFound as error:
+        raise _error(status.HTTP_404_NOT_FOUND, f"{error} was not found.", NOT_FOUND_CODE) from error
+
+
+@router.delete(
+    "/modules/{namespace}/{name}/{provider}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(scopes(REGISTRY_WRITE))],
+    responses={404: {"description": "No module sits at the address."}},
+)
+def delete_module(namespace: Segment, name: Segment, provider: Segment) -> Response:
+    """Remove a module with every version and stored tarball. Configurations pinned to it stop resolving."""
+    try:
+        service.delete_module(namespace, name, provider)
+    except service.ModuleNotFound as error:
+        raise _error(status.HTTP_404_NOT_FOUND, f"{error} was not found.", NOT_FOUND_CODE) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 __all__ = [
+    "GITHUB_NOT_CONFIGURED_CODE",
+    "GITHUB_UNAVAILABLE_CODE",
     "INVALID_MODULE_NAME_CODE",
-    "REF_UNSUPPORTED_CODE",
-    "REPO_NOT_ALLOWED_CODE",
-    "VERSION_EXISTS_CODE",
+    "MODULE_EXISTS_CODE",
+    "NOT_FOUND_CODE",
+    "VCS_REPO_NOT_INSTALLED_CODE",
     "router",
 ]

@@ -5,6 +5,9 @@ whole application and refuses any delivery the App's secret did not sign before 
 module runs, so everything read here is GitHub's own signed payload. The route only
 queues: the fetch, the ingest and the report happen on the runs function, and GitHub
 gets its answer within its ten second window whatever the repository's size.
+
+A push of a semantic version tag goes to the registry's own ingest queue instead,
+so module publishing never passes through the runs function or its VCS ingest.
 """
 
 from __future__ import annotations
@@ -17,7 +20,14 @@ from typing import Any, Final
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from ...common.composition.settings import Settings, get_settings
-from ...common.github.webhooks import DELIVERY_HEADER, EVENT_HEADER, PING, WEBHOOK_PATH, delivery_message
+from ...common.github.webhooks import (
+    DELIVERY_HEADER,
+    EVENT_HEADER,
+    PING,
+    WEBHOOK_PATH,
+    delivery_message,
+    tag_message,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -46,6 +56,21 @@ def enqueue(message: dict[str, Any], *, settings: Settings) -> None:
     _sqs(settings).send_message(QueueUrl=settings.GITHUB_WEBHOOKS_QUEUE_URL, MessageBody=body, DelaySeconds=delay)
 
 
+def enqueue_tag(message: dict[str, Any], *, settings: Settings) -> None:
+    """Send one tag push to the registry's ingest queue, or drop it where there is none.
+
+    An environment without the registry acknowledges the tag rather than failing
+    the delivery, since GitHub would only redeliver it to the same answer.
+    """
+    extra = {"event": "github.webhook.tag", "delivery": message["delivery"], "repository": message["repo"]}
+    if not settings.REGISTRY_INGEST_QUEUE_URL:
+        _log.info("Dropped a tag push with no registry here.", extra={**extra, "queued": False})
+        return
+    body = json.dumps({**message, "received_at_ms": int(time.time() * 1000)}, separators=(",", ":"))
+    _sqs(settings).send_message(QueueUrl=settings.REGISTRY_INGEST_QUEUE_URL, MessageBody=body)
+    _log.info("Queued a tag push for the registry.", extra={**extra, "queued": True, "tag": message["tag"]})
+
+
 @router.post(WEBHOOK_PATH, status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
 async def receive(request: Request) -> Response:
     """Queue one signed delivery the bridge acts on, and acknowledge the rest."""
@@ -64,8 +89,12 @@ async def receive(request: Request) -> Response:
         raise HTTPException(
             status_code=400, detail={"message": "The delivery is not an object.", "error_code": "BAD_DELIVERY"}
         )
-    message = delivery_message(event, delivery, payload)
     extra = {"event": "github.webhook.received", "github_event": event, "delivery": delivery[:64]}
+    tag = tag_message(event, delivery, payload)
+    if tag is not None:
+        enqueue_tag(tag, settings=settings)
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+    message = delivery_message(event, delivery, payload)
     if message is None:
         _log.info("Acknowledged a delivery the bridge ignores.", extra={**extra, "queued": False})
         return Response(status_code=status.HTTP_202_ACCEPTED)

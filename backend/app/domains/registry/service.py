@@ -1,109 +1,81 @@
-"""The module registry: uploads from GitHub Actions, and the reads the protocol serves.
+"""The module registry: modules connected to repositories, and the reads the protocol serves.
 
-A module is published by a tag push in an allowlisted repository. The workflow
-authenticates with its GitHub Actions OIDC token, and everything the registry
-trusts about the upload comes from that token's verified claims: the namespace is
-the repository owner, the name and provider come from the repository, and the
-version from the tag. The version row is written `pending` before any URL exists,
-and the ingest consumer moves it to `published` or `failed` once the tarball has
-landed and been checked.
+A module is created connected to a GitHub repository the environment's App is
+installed on, the way HCP Terraform publishes a module from VCS. From then on a
+push of a semantic version tag to that repository publishes that version: the
+webhook route queues the tag, and the tag consumer reads the tarball through the
+App's installation token, checks it and stores it. The namespace is the
+repository owner; the name and provider come from the request, or from a
+`terraform-<provider>-<name>` repository name.
 
-The table holds two kinds of row. A version row sits at
-`MODULE#<namespace>/<name>/<provider>`, `VERSION#<version>`, lowercased so a lookup
-is case insensitive while the row keeps the case it was published with. An upload
-row sits at `UPLOAD#<upload_id>` and expires by TTL once its tarball has long been
-ingested or abandoned.
+The table holds two kinds of row under one partition per module,
+`MODULE#<namespace>/<name>/<provider>` lowercased, so a lookup is case insensitive
+while the rows keep the case the module was created with. The module row at sort
+key `MODULE` carries the connected repository. Each version row at
+`VERSION#<version>` moves from `pending` to `published` or `failed`, and a
+published version is immutable.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Any, Final, Iterable, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Final, Iterable, Mapping, Optional
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, now_iso
 
 from ...common.composition.settings import Settings, get_settings
 from ...common.db import repositories
-from ...common.github.oidc import InvalidActionsToken, crockford, verify_actions_token
+from ...common.github import repositories as github_repositories
+
+if TYPE_CHECKING:  # pragma: no cover
+    import httpx
 
 _log = logging.getLogger(__name__)
 
-UPLOAD_ID_PREFIX: Final = "up-"
-UPLOAD_ID_PATTERN: Final = r"up-[0-9A-HJKMNP-TV-Z]{26}"
-INCOMING_PREFIX: Final = "registry/incoming/"
 MODULES_PREFIX: Final = "registry/modules/"
-UPLOAD_CONTENT_TYPE: Final = "application/gzip"
-UPLOAD_URL_TTL: Final = 900
+MODULE_CONTENT_TYPE: Final = "application/gzip"
 DOWNLOAD_URL_TTL: Final = 300
-UPLOAD_RECORD_TTL: Final = timedelta(days=7)
-"""How long an upload row outlives its request, matching the bucket's lifecycle on
-`registry/incoming/`."""
 
 MODULE_PK_PREFIX: Final = "MODULE#"
+MODULE_SK: Final = "MODULE"
 VERSION_SK_PREFIX: Final = "VERSION#"
-UPLOAD_PK_PREFIX: Final = "UPLOAD#"
-UPLOAD_SK: Final = "UPLOAD"
 
 PENDING: Final = "pending"
 PUBLISHED: Final = "published"
 FAILED: Final = "failed"
 
-PUSH_EVENT: Final = "push"
-
-TRUSTED_CLAIMS: Final = (
-    "repository",
-    "repository_id",
-    "repository_owner",
-    "event_name",
-    "ref",
-    "sha",
-    "actor",
-    "run_id",
-    "run_attempt",
-)
-"""The claims an upload is attributed by. Every one is required."""
-
-_TAG_REF = re.compile(
-    r"^refs/tags/v?(?P<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?)$"
-)
 _REPOSITORY_NAME = re.compile(r"^terraform-(?P<provider>[0-9a-z]+)-(?P<name>.+)$")
 _NAME = re.compile(r"^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$")
 _PROVIDER = re.compile(r"^[0-9a-z]{1,64}$")
 _VERSION = re.compile(r"^(?P<core>[0-9]+\.[0-9]+\.[0-9]+)(?:-(?P<pre>[0-9A-Za-z.-]+))?$")
 
 
-class InvalidUploadToken(Exception):
-    """The bearer is missing, fails verification, or lacks a trusted claim."""
-
-
-class RepositoryNotAllowed(Exception):
-    """The token's repository is not on the registry's allowlist."""
-
-
-class UnsupportedRef(Exception):
-    """The token is not for a push of a semantic version tag."""
-
-
 class InvalidModuleName(Exception):
-    """The repository's name or its override does not name a valid module."""
+    """The request and the repository's name together name no valid module."""
 
 
-class VersionAlreadyPublished(Exception):
-    """The version is already published, and published versions are immutable."""
+class ModuleExists(Exception):
+    """A module already sits at the address."""
 
 
 class ModuleNotFound(Exception):
-    """No published version answers the address."""
+    """Nothing answers the address."""
+
+
+class RegistryUnavailable(Exception):
+    """The environment has no GitHub App, so no repository can be connected."""
 
 
 def module_pk(namespace: str, name: str, provider: str) -> str:
-    """The partition every version of one module shares, lowercased."""
+    """The partition every row of one module shares, lowercased."""
     return MODULE_PK_PREFIX + f"{namespace}/{name}/{provider}".lower()
+
+
+def module_row_key(namespace: str, name: str, provider: str) -> dict[str, str]:
+    """The key of one module row."""
+    return {"pk": module_pk(namespace, name, provider), "sk": MODULE_SK}
 
 
 def version_sk(version: str) -> str:
@@ -111,14 +83,9 @@ def version_sk(version: str) -> str:
     return f"{VERSION_SK_PREFIX}{version}"
 
 
-def upload_key(upload_id: str) -> Mapping[str, str]:
-    """The key of one upload row."""
-    return {"pk": f"{UPLOAD_PK_PREFIX}{upload_id}", "sk": UPLOAD_SK}
-
-
-def incoming_key(upload_id: str) -> str:
-    """The artifacts bucket key an upload's tarball is PUT to."""
-    return f"{INCOMING_PREFIX}{upload_id}.tar.gz"
+def module_prefix(namespace: str, name: str, provider: str) -> str:
+    """The artifacts bucket prefix every version tarball of one module sits under."""
+    return f"{MODULES_PREFIX}{namespace}/{name}/{provider}/".lower()
 
 
 def module_key(namespace: str, name: str, provider: str, version: str) -> str:
@@ -126,58 +93,31 @@ def module_key(namespace: str, name: str, provider: str, version: str) -> str:
 
     It ends in `.tar.gz` so Terraform's getter reads the presigned URL as an archive.
     """
-    return f"{MODULES_PREFIX}{namespace}/{name}/{provider}/".lower() + f"{version}.tar.gz"
+    return module_prefix(namespace, name, provider) + f"{version}.tar.gz"
 
 
-def allowlist(settings: Settings | None = None) -> dict[str, str]:
-    """The repositories allowed to publish, lowercased `owner/name` to an override.
+def module_for(repository: str, name: Optional[str], provider: Optional[str]) -> tuple[str, str, str]:
+    """The namespace, name and provider a module connected to `repository` gets.
 
-    An unreadable setting allows nothing, so a bad deploy fails closed.
-    """
-    resolved = settings or get_settings()
-    try:
-        raw = json.loads(resolved.REGISTRY_REPOSITORIES or "{}")
-    except ValueError:
-        _log.error("REGISTRY_REPOSITORIES is not JSON.", extra={"event": "registry.allowlist_invalid"})
-        return {}
-    if not isinstance(raw, Mapping):
-        _log.error("REGISTRY_REPOSITORIES is not an object.", extra={"event": "registry.allowlist_invalid"})
-        return {}
-    return {str(repository).lower(): str(override or "") for repository, override in raw.items()}
-
-
-def module_for(repository: str, owner: str, override: str) -> tuple[str, str, str]:
-    """The namespace, name and provider a repository publishes as.
+    The namespace is the repository owner. A name or provider the request leaves
+    out comes from a `terraform-<provider>-<name>` repository name.
 
     Raises:
-        InvalidModuleName: Neither the override nor the repository name gives a
-            valid name and provider.
+        InvalidModuleName: The result is not a valid module address.
     """
-    if override:
-        name, _, provider = override.partition("/")
-    else:
-        match = _REPOSITORY_NAME.match(repository.split("/", 1)[-1])
-        if match is None:
-            raise InvalidModuleName(f"{repository} is not named terraform-<provider>-<name>")
-        name, provider = match.group("name"), match.group("provider")
-    if not _NAME.match(owner) or not _NAME.match(name) or not _PROVIDER.match(provider):
-        raise InvalidModuleName(f"{owner}/{name}/{provider} is not a valid module address")
-    return owner, name, provider
-
-
-def version_from_ref(event: str, ref: str) -> str:
-    """The version a tag push names, without its `v`.
-
-    Raises:
-        UnsupportedRef: Any event but a push, or a ref that is not a semantic
-            version tag.
-    """
-    if event != PUSH_EVENT:
-        raise UnsupportedRef(f"the {event} event does not publish modules")
-    match = _TAG_REF.match(ref)
-    if match is None:
-        raise UnsupportedRef(f"{ref} is not a semantic version tag")
-    return match.group("version")
+    owner, _, repo_name = repository.partition("/")
+    match = _REPOSITORY_NAME.match(repo_name)
+    derived_name = match.group("name") if match else ""
+    derived_provider = match.group("provider") if match else ""
+    module_name = name or derived_name
+    module_provider = provider or derived_provider
+    if not module_name or not module_provider:
+        raise InvalidModuleName(
+            f"{repository} is not named terraform-<provider>-<name>, so the module needs a name and a provider"
+        )
+    if not _NAME.match(owner) or not _NAME.match(module_name) or not _PROVIDER.match(module_provider):
+        raise InvalidModuleName(f"{owner}/{module_name}/{module_provider} is not a valid module address")
+    return owner, module_name, module_provider
 
 
 def version_order(version: str) -> tuple[Any, ...]:
@@ -193,123 +133,72 @@ def version_order(version: str) -> tuple[Any, ...]:
     return (core, 0, parts)
 
 
-def upload_id_for(claims: Mapping[str, Any], version: str) -> str:
-    """The upload id one workflow run attempt's upload of one version gets.
+def http_client() -> httpx.Client | None:
+    """The HTTP client repository resolution goes through; `None` lets the App client build its own.
 
-    Deterministic, so a retried request reaches the same row and the same key.
+    The seam the tests replace with a mock transport.
     """
-    seed = ":".join(
-        [str(claims["repository_id"]), version, str(claims["sha"]), str(claims["run_id"]), str(claims["run_attempt"])]
-    )
-    return UPLOAD_ID_PREFIX + crockford(hashlib.sha256(seed.encode()).digest())
+    return None
 
 
-def verify_token(token: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """The verified claims of the publishing workflow's GitHub Actions OIDC token.
+def create_module(
+    vcs_repo: str,
+    name: Optional[str],
+    provider: Optional[str],
+    actor: Optional[str],
+    *,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Connect a new module to a repository the App is installed on.
 
     Raises:
-        InvalidUploadToken: No token, a token that fails verification, or one
-            missing a trusted claim.
+        InvalidModuleName: The address is not valid.
+        RegistryUnavailable: The environment has no GitHub App.
+        RepositoryNotInstalled: The App is not installed on the repository.
+        ModuleExists: A module already sits at the address.
     """
     resolved = settings or get_settings()
+    found = github_repositories.resolve_repository(vcs_repo, settings=resolved, client=http_client())
+    if found is None:
+        raise RegistryUnavailable("no GitHub App is configured")
+    namespace, name, provider = module_for(found.full_name, name, provider)
+    row = {
+        **module_row_key(namespace, name, provider),
+        "namespace": namespace,
+        "name": name,
+        "provider": provider,
+        "vcs_repo": found.full_name,
+        "vcs_repository_id": found.repository_id,
+        "vcs_installation_id": found.installation_id,
+        "created_by": actor or "",
+        "created_at": now_iso(),
+    }
     try:
-        return verify_actions_token(token, audience=resolved.VCS_OIDC_AUDIENCE, required=TRUSTED_CLAIMS)
-    except InvalidActionsToken as error:
-        raise InvalidUploadToken(str(error)) from error
-
-
-def issue_upload(token: str, size_bytes: int, *, settings: Settings | None = None) -> dict[str, Any]:
-    """Verify the workflow's token, record a pending version and sign its PUT.
-
-    Idempotent on the repository id, the version, the commit, the workflow run and
-    its attempt: a repeat returns the same `upload_id` and a new URL for the same
-    key. A failed or pending version may be uploaded again; a published one may not.
-
-    Raises:
-        InvalidUploadToken: The token did not verify.
-        RepositoryNotAllowed: The repository is not on the allowlist.
-        UnsupportedRef: The token is not for a version tag push.
-        InvalidModuleName: The repository does not name a valid module.
-        VersionAlreadyPublished: The version is already published.
-    """
-    from webbpulse.storage import presigned_put
-
-    resolved = settings or get_settings()
-    claims = verify_token(token, settings=resolved)
-    repository = str(claims["repository"])
-    allowed = allowlist(resolved)
-    if repository.lower() not in allowed:
-        raise RepositoryNotAllowed(repository)
-    version = version_from_ref(str(claims["event_name"]), str(claims["ref"]))
-    namespace, name, provider = module_for(repository, str(claims["repository_owner"]), allowed[repository.lower()])
-
-    upload_id = upload_id_for(claims, version)
-    now = datetime.now(timezone.utc)
-    created_at = now_iso()
-    table = repositories.registry(resolved)
-    try:
-        table.put(
-            {
-                "pk": module_pk(namespace, name, provider),
-                "sk": version_sk(version),
-                "namespace": namespace,
-                "name": name,
-                "provider": provider,
-                "version": version,
-                "status": PENDING,
-                "upload_id": upload_id,
-                "repository": repository,
-                "repository_id": str(claims["repository_id"]),
-                "sha": str(claims["sha"]),
-                "actor": str(claims["actor"]),
-                "created_at": created_at,
-            },
-            condition=Attr("pk").not_exists() | Attr("status").ne(PUBLISHED),
-        )
+        repositories.registry(resolved).put(row, condition=Attr("pk").not_exists())
     except ConditionFailed as error:
-        raise VersionAlreadyPublished(f"{namespace}/{name}/{provider} {version}") from error
-    table.put(
-        {
-            **upload_key(upload_id),
-            "upload_id": upload_id,
-            "namespace": namespace,
-            "name": name,
-            "provider": provider,
-            "version": version,
-            "repository": repository,
-            "sha": str(claims["sha"]),
-            "size_bytes": int(size_bytes),
-            "created_at": created_at,
-            "expires_at": int((now + UPLOAD_RECORD_TTL).timestamp()),
-        }
-    )
-
-    upload = presigned_put(
-        resolved.ARTIFACTS_BUCKET,
-        incoming_key(upload_id),
-        UPLOAD_CONTENT_TYPE,
-        int(size_bytes),
-        UPLOAD_URL_TTL,
-        region_name=resolved.AWS_REGION_NAME or None,
-        endpoint_url=resolved.s3_endpoint_url,
-    )
+        raise ModuleExists(f"{namespace}/{name}/{provider}") from error
     _log.info(
-        "Issued a module upload URL.",
+        "Connected a module to a repository.",
         extra={
-            "event": "registry.upload_issued",
-            "upload_id": upload_id,
-            "repo": repository,
+            "event": "registry.module_created",
             "module_address": f"{namespace}/{name}/{provider}",
-            "version": version,
+            "repository": found.full_name,
         },
     )
-    return {
-        "upload_id": upload_id,
-        "upload_url": upload.url,
-        "headers": dict(upload.headers),
-        "expires_in": UPLOAD_URL_TTL,
-        "module": {"namespace": namespace, "name": name, "provider": provider, "version": version},
-    }
+    return module_view(row, [])
+
+
+def connected_modules(repository_id: str, *, settings: Settings | None = None) -> list[dict[str, Any]]:
+    """Every module row connected to the repository with this id.
+
+    A scan, since the registry holds a handful of modules and a tag push is rare.
+    """
+    resolved = settings or get_settings()
+    return list(
+        repositories.registry(resolved).iter_scan(
+            filter_expression=Attr("sk").eq(MODULE_SK) & Attr("vcs_repository_id").eq(str(repository_id))
+        )
+    )
 
 
 def _versions(namespace: str, name: str, provider: str, *, settings: Settings) -> Iterable[dict[str, Any]]:
@@ -364,6 +253,7 @@ def _version_view(row: Mapping[str, Any]) -> dict[str, Any]:
         "status": str(row.get("status", PENDING)),
         "error": row.get("error"),
         "repository": str(row.get("repository", "")),
+        "tag": row.get("tag"),
         "sha": str(row.get("sha", "")),
         "actor": str(row.get("actor", "")),
         "created_at": str(row.get("created_at", "")),
@@ -372,70 +262,107 @@ def _version_view(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def module_view(row: Mapping[str, Any], versions: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """One module as the API renders it, from its module row or its first version row."""
+    namespace, name, provider = str(row["namespace"]), str(row["name"]), str(row["provider"])
+    views = sorted((_version_view(version) for version in versions), key=lambda view: version_order(view["version"]))
+    return {
+        "namespace": namespace,
+        "name": name,
+        "provider": provider,
+        "source": f"{namespace}/{name}/{provider}",
+        "vcs_repo": row.get("vcs_repo") if row.get("sk") == MODULE_SK else None,
+        "created_at": row.get("created_at") if row.get("sk") == MODULE_SK else None,
+        "versions": list(reversed(views)),
+    }
+
+
 def list_modules(*, settings: Settings | None = None) -> list[dict[str, Any]]:
     """Every module with every version, failed and pending ones included.
 
     A scan, since the registry holds a handful of modules and the listing is an
-    operator view. Modules sort by address and versions newest first.
+    operator view. A module with versions but no module row is listed without a
+    repository. Modules sort by address and versions newest first.
     """
     resolved = settings or get_settings()
-    grouped: dict[str, dict[str, Any]] = {}
+    heads: dict[str, Mapping[str, Any]] = {}
+    versions: dict[str, list[Mapping[str, Any]]] = {}
     for row in repositories.registry(resolved).iter_scan(filter_expression=Attr("pk").begins_with(MODULE_PK_PREFIX)):
-        module = grouped.setdefault(
-            str(row["pk"]),
-            {
-                "namespace": str(row["namespace"]),
-                "name": str(row["name"]),
-                "provider": str(row["provider"]),
-                "versions": [],
-            },
-        )
-        module["versions"].append(_version_view(row))
-    modules = []
-    for pk in sorted(grouped):
-        module = grouped[pk]
-        module["source"] = f"{module['namespace']}/{module['name']}/{module['provider']}"
-        module["versions"].sort(key=lambda view: version_order(view["version"]), reverse=True)
-        modules.append(module)
-    return modules
+        pk = str(row["pk"])
+        if row.get("sk") == MODULE_SK:
+            heads[pk] = row
+        else:
+            heads.setdefault(pk, row)
+            versions.setdefault(pk, []).append(row)
+    return [module_view(heads[pk], versions.get(pk, [])) for pk in sorted(heads)]
 
 
-def upload_record(upload_id: str, *, settings: Settings | None = None) -> Optional[dict[str, Any]]:
-    """The upload row for `upload_id`, or `None`."""
+def get_module(namespace: str, name: str, provider: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """One module and every version of it.
+
+    Raises:
+        ModuleNotFound: Nothing sits at the address.
+    """
     resolved = settings or get_settings()
-    return repositories.registry(resolved).get(upload_key(upload_id), consistent=True)
+    rows = list(repositories.registry(resolved).iter_query(Key("pk").eq(module_pk(namespace, name, provider))))
+    if not rows:
+        raise ModuleNotFound(f"{namespace}/{name}/{provider}")
+    head = next((row for row in rows if row.get("sk") == MODULE_SK), rows[0])
+    return module_view(head, [row for row in rows if row.get("sk") != MODULE_SK])
+
+
+def delete_module(namespace: str, name: str, provider: str, *, settings: Settings | None = None) -> None:
+    """Remove a module, every version of it and every stored tarball.
+
+    Raises:
+        ModuleNotFound: Nothing sits at the address.
+    """
+    import boto3
+
+    resolved = settings or get_settings()
+    table = repositories.registry(resolved)
+    rows = list(table.iter_query(Key("pk").eq(module_pk(namespace, name, provider))))
+    if not rows:
+        raise ModuleNotFound(f"{namespace}/{name}/{provider}")
+    s3 = boto3.client("s3", region_name=resolved.AWS_REGION_NAME or None, endpoint_url=resolved.s3_endpoint_url)
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=resolved.ARTIFACTS_BUCKET, Prefix=module_prefix(namespace, name, provider)):
+        keys: list[Any] = [{"Key": item.get("Key", "")} for item in page.get("Contents", []) if item.get("Key")]
+        if keys:
+            s3.delete_objects(Bucket=resolved.ARTIFACTS_BUCKET, Delete={"Objects": keys, "Quiet": True})
+    table.delete_many([{"pk": str(row["pk"]), "sk": str(row["sk"])} for row in rows])
+    _log.info(
+        "Deleted a module.",
+        extra={"event": "registry.module_deleted", "module_address": f"{namespace}/{name}/{provider}"},
+    )
 
 
 __all__ = [
     "DOWNLOAD_URL_TTL",
     "FAILED",
-    "INCOMING_PREFIX",
     "MODULES_PREFIX",
+    "MODULE_CONTENT_TYPE",
+    "MODULE_SK",
     "PENDING",
     "PUBLISHED",
-    "TRUSTED_CLAIMS",
-    "UPLOAD_CONTENT_TYPE",
-    "UPLOAD_ID_PATTERN",
-    "UPLOAD_URL_TTL",
     "InvalidModuleName",
-    "InvalidUploadToken",
+    "ModuleExists",
     "ModuleNotFound",
-    "RepositoryNotAllowed",
-    "UnsupportedRef",
-    "VersionAlreadyPublished",
-    "allowlist",
+    "RegistryUnavailable",
+    "connected_modules",
+    "create_module",
+    "delete_module",
     "download_url",
-    "incoming_key",
-    "issue_upload",
+    "get_module",
+    "http_client",
     "list_modules",
     "module_for",
     "module_key",
     "module_pk",
+    "module_prefix",
+    "module_row_key",
+    "module_view",
     "published_versions",
-    "upload_id_for",
-    "upload_record",
-    "version_from_ref",
     "version_order",
     "version_sk",
-    "verify_token",
 ]

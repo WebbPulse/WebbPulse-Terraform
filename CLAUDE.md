@@ -156,11 +156,11 @@ agent with a `wpk_` API key that the gate authorizer passes through by prefix an
 `claims_or_api_key` verifies in process. Both render as the same claims object,
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
-runner routes, `POST /registry/uploads` (a GitHub Actions OIDC token, verified
-in process), `POST /github/webhooks` (a webhook signature), the registry protocol under `/v1/modules`
-(a `wpk_` key only) and the anonymous identity documents do not. The scopes are
-`workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}`,
-`runs:{read,write,apply}`, `state:download` and `registry:read`.
+runner routes, `POST /github/webhooks` (a webhook signature), the registry protocol
+under `/v1/modules` (a `wpk_` key only) and the anonymous identity documents do not.
+The scopes are `workspaces:{read,write}`, `variables:{read,write}`,
+`configs:{read,write}`, `runs:{read,write,apply}`, `state:download` and
+`registry:{read,write}`.
 
 State history and metadata require `workspaces:read`. Raw state downloads also
 require `state:download`, granted to admin sessions and explicitly delegated agent
@@ -238,18 +238,29 @@ The `registry` domain speaks Terraform's module registry protocol. The SPA serve
 `TF_TOKEN_<host>`. The download is a 204 whose `X-Terraform-Get` is a five minute
 presigned GET ending `.tar.gz`.
 
-Publishing: a workflow on a `v<semver>` tag push calls `POST /api/v1/registry/uploads`
-with its GitHub Actions OIDC token (audience `VCS_OIDC_AUDIENCE`), verified by
-`app/common/github/oidc.py`. The repository must be a key of `REGISTRY_REPOSITORIES`
-(JSON, repository to `""` or a `name/provider` override); otherwise the namespace is
-the owner and the name and provider come from `terraform-<provider>-<name>`. The
-route writes a `pending` version row and presigns a PUT to
-`registry/incoming/<upload id>.tar.gz`, which the bucket expires after seven days.
-An EventBridge rule sends `module_ingested` to the registry queue; the consumer
-checks the tarball (plain files and directories, no path escapes, at least one
-`.tf`), copies it to `registry/modules/...` and marks the version `published`, or
-`failed` with the reason. Published versions are immutable; a failed or pending
-one can be uploaded again. In Root A the consumer route is shadowed by the runs
+Publishing follows HCP's tag based "Publish module from VCS". `POST
+/api/v1/registry/modules` (`registry:write`) connects a module to a repository the
+GitHub App is installed on, resolved like a workspace's `vcs_repo` (422
+`VCS_REPO_NOT_INSTALLED`, 409 `GITHUB_NOT_CONFIGURED` with no App). The namespace is
+the owner; the name and provider come from the body or from
+`terraform-<provider>-<name>`. The module is the repository root, with no
+subdirectory. Connecting imports no existing tags. `GET` and `DELETE
+/api/v1/registry/modules/{ns}/{name}/{provider}` read and remove a module, the
+delete taking every version row and tarball with it.
+
+A push of a `vX.Y.Z` or `X.Y.Z` tag (prerelease suffix allowed) reaches the webhook
+route, which sends a `module_tag` message to `registry-ingest`, never
+`github-webhooks`. `app/domains/registry/consumers/tags.py` claims the version row
+`pending` for every module connected to the repository id, fetches the tagged
+commit's archive through the installation token (`app/common/github/archive.py`,
+codeload only), repacks it with the module at the root (plain files and
+directories, no `.git`, `.terraform`, state or links, a root `.tf` required, at most
+100 MB) into `registry/modules/...` and marks it `published`, or `failed` with the
+reason. A published version is immutable, so a redelivery or a retag is skipped
+without a fetch; a failed or pending one is retried by a new tag push. A GitHub
+fault raises so SQS retries. Other tags are ignored and deleting a tag unpublishes
+nothing. GitHub sends no push event when more than three tags are pushed at once,
+so push tags one at a time. In Root A the consumer route is shadowed by the runs
 consumer at the same pass-through path, so tests call `route_record` directly.
 
 ### VCS ingest
@@ -291,7 +302,8 @@ authorizer); `WebhookSignatureMiddleware` (`app/common/github/webhooks.py`), the
 outermost layer of the github function, checks `X-Hub-Signature-256` against the
 app secret's `GITHUB_WEBHOOK_SECRET` and answers 401 before routing. A branch push
 or a same-repository pull request (opened, synchronize, reopened) is queued on
-`github-webhooks`; forks, tags and other events are acknowledged and dropped.
+`github-webhooks` and a semantic version tag push on `registry-ingest` (above);
+forks, other tags and other events are acknowledged and dropped.
 `app/domains/runs/consumers/webhooks.py` resolves the commit (a pull request waits
 for GitHub's merge commit and uses it, reporting on the head), takes the changed
 paths from the push payload or `/pulls/{n}/files`, fetches the tarball with an
@@ -449,7 +461,7 @@ its own login user per run through `/api/auth/e2e/users`, which is gated by
 the staging end-to-end test repository, part of the staging environment in the
 same way as the `webbpulse-terraform-staging-e2e` AWS account. It is declared in
 the WebbPulse-Platform repository factory with the topics `webbpulse-terraform`,
-`staging` and `e2e`, is load bearing for staging e2e; its `registry-proof` branch and `v0.1.0` tag are the durable registry fixture `backend/e2e/test_registry.py` installs.
+`staging` and `e2e`, is load bearing for staging e2e; its `registry-proof` branch and `v0.1.0` tag are the durable registry fixture `backend/e2e/test_registry.py` installs, published before tag webhook publishing and connected to no module.
 The staging GitHub App is installed on it and not on this repository, it carries
 the caller workflow and a copy of `examples/first-run`, and the staging
 `first-run` workspace is bound to it. VCS runs, check runs and the pull request

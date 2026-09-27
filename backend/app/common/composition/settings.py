@@ -52,16 +52,12 @@ class Settings(BaseServiceSettings):
     VCS_UPLOADS_TABLE: str = ""
     """The ingest records a GitHub App delivery writes, expired by TTL."""
 
-    VCS_OIDC_AUDIENCE: str = "webbpulse-terraform"
-    """The audience a GitHub Actions OIDC token must carry to request a registry upload."""
-
     REGISTRY_TABLE: str = ""
-    """The module registry's one table: module versions and their upload records."""
+    """The module registry's one table: modules and their versions."""
 
-    REGISTRY_REPOSITORIES: str = "{}"
-    """JSON object of the repositories allowed to publish modules, `owner/name` to an
-    override. An empty override derives the module from a `terraform-<provider>-<name>`
-    repository name; `<name>/<provider>` names it outright."""
+    REGISTRY_INGEST_QUEUE_URL: str = ""
+    """The queue the webhook route sends each semantic version tag push to, for the
+    registry function. Unset, tag pushes are acknowledged and dropped."""
 
     GITHUB_TABLE: str = ""
     """The GitHub domain's one table: the App row, one-time states and installations."""

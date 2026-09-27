@@ -195,11 +195,8 @@ module "lambda_domain" {
       VCS_UPLOADS_TABLE     = module.dynamodb.table_names["vcs-uploads"]
       REGISTRY_TABLE        = module.dynamodb.table_names["registry"]
 
-      GITHUB_APP_SLUG   = var.github_app_slug
-      API_BASE_URL      = "https://${local.api_host}"
-      VCS_OIDC_AUDIENCE = var.vcs_oidc_audience
-
-      REGISTRY_REPOSITORIES = jsonencode(local.registry_repositories)
+      GITHUB_APP_SLUG = var.github_app_slug
+      API_BASE_URL    = "https://${local.api_host}"
 
       IDENTITY_TABLE_PREFIX = local.prefix
 
@@ -212,6 +209,7 @@ module "lambda_domain" {
 
       WORKSPACE_CLEANUP_QUEUE_URL = module.workspace_cleanup.queue_url
       GITHUB_WEBHOOKS_QUEUE_URL   = module.github_webhooks.queue_url
+      REGISTRY_INGEST_QUEUE_URL   = module.registry_ingest.queue_url
       AWS_CONNECT_TOPIC_ARN       = aws_sns_topic.aws_connect.arn
 
       RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
@@ -284,6 +282,12 @@ locals {
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
         Resource = [module.github_webhooks.queue_arn]
+      },
+      {
+        Sid      = "QueueSemverTagPushesForTheRegistry"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [module.registry_ingest.queue_arn]
       },
     ]
     registry = local.bucket_statements["Artifacts"]

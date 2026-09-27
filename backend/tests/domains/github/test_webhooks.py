@@ -18,7 +18,16 @@ import pytest
 
 from app.common.composition import settings as settings_module
 from app.common.github import loader
-from app.common.github.webhooks import WEBHOOK_KIND, WEBHOOK_PATH, delivery_message, parse_message
+from app.common.github.webhooks import (
+    TAG_KIND,
+    WEBHOOK_KIND,
+    WEBHOOK_PATH,
+    MalformedDelivery,
+    delivery_message,
+    parse_message,
+    parse_tag_message,
+    tag_message,
+)
 from app.domains.github import webhooks_router
 from tests.domains.github.conftest import APP_ID
 
@@ -43,6 +52,16 @@ def queue(monkeypatch: pytest.MonkeyPatch, private_key_pem: str) -> Iterator[str
     loader.invalidate()
     yield url
     loader.invalidate()
+    settings_module.reset_settings_cache()
+
+
+@pytest.fixture
+def registry_queue(monkeypatch: pytest.MonkeyPatch, queue: str) -> Iterator[str]:
+    """The registry's ingest queue, wired into the settings alongside the webhooks queue."""
+    url = boto3.client("sqs", region_name="us-west-2").create_queue(QueueName="registry-ingest")["QueueUrl"]
+    monkeypatch.setenv("REGISTRY_INGEST_QUEUE_URL", url)
+    settings_module.reset_settings_cache()
+    yield url
     settings_module.reset_settings_cache()
 
 
@@ -167,13 +186,14 @@ def test_a_ping_is_answered_and_not_queued(client, queue):
         ("pull_request", pull_request(head_repository=999)),
         ("pull_request", pull_request(action="closed")),
         ("push", push(ref="refs/tags/v1.0.0")),
+        ("push", push(ref="refs/tags/release-1")),
         ("push", push(deleted=True, after="0" * 40)),
         ("issues", {"action": "opened", "repository": {"id": REPOSITORY_ID, "full_name": REPO}}),
     ],
-    ids=["fork", "closed", "tag", "branch-deleted", "other-event"],
+    ids=["fork", "closed", "tag", "non-semver-tag", "branch-deleted", "other-event"],
 )
 def test_deliveries_the_bridge_ignores_are_acknowledged(client, queue, event, payload):
-    """A fork's pull request, a closed one, a tag, a deleted branch and other events queue nothing."""
+    """A fork's pull request, a closed one, a tag, a deleted branch and other events queue nothing for runs."""
     assert send(client, event, payload).status_code == 202
     assert queued(queue) == []
 
@@ -212,3 +232,70 @@ def test_a_large_message_drops_its_paths(client, queue):
     assert send(client, "push", push(commits=commits)).status_code == 202
     [message] = queued(queue)
     assert message["paths"] is None
+
+
+def test_a_semver_tag_push_goes_to_the_registry_queue(client, queue, registry_queue):
+    """A version tag is queued for the registry and never for the runs function."""
+    response = send(client, "push", push(ref="refs/tags/v1.2.3", head_commit={"id": SHA}))
+    assert response.status_code == 202
+    assert queued(queue) == []
+    [message] = queued(registry_queue)
+    assert message["kind"] == TAG_KIND
+    assert message["tag"] == "v1.2.3"
+    assert message["version"] == "1.2.3"
+    assert message["sha"] == SHA
+    assert message["repository_id"] == str(REPOSITORY_ID)
+    assert message["installation_id"] == INSTALLATION_ID
+    assert parse_tag_message({"body": json.dumps(message)})["version"] == "1.2.3"
+
+
+@pytest.mark.parametrize(
+    ("ref", "version"),
+    [("refs/tags/1.0.0", "1.0.0"), ("refs/tags/v2.0.0-rc.1", "2.0.0-rc.1"), ("refs/tags/v0.10.3", "0.10.3")],
+)
+def test_version_tags_with_and_without_the_v_publish(ref, version):
+    """`vX.Y.Z` and `X.Y.Z` both name a version, prereleases included."""
+    message = tag_message("push", "d-1", push(ref=ref))
+    assert message is not None
+    assert message["version"] == version
+
+
+@pytest.mark.parametrize(
+    "ref",
+    ["refs/tags/release-1", "refs/tags/v1.0", "refs/tags/v01.0.0", "refs/tags/latest", "refs/heads/v1.0.0"],
+)
+def test_other_refs_are_not_versions(ref):
+    """Anything but a semantic version tag publishes nothing."""
+    assert tag_message("push", "d-1", push(ref=ref)) is None
+
+
+def test_a_deleted_tag_publishes_and_unpublishes_nothing(client, queue, registry_queue):
+    """Deleting a tag is acknowledged and queues nothing anywhere."""
+    payload = push(ref="refs/tags/v1.2.3", deleted=True, after="0" * 40)
+    assert send(client, "push", payload).status_code == 202
+    assert queued(queue) == []
+    assert queued(registry_queue) == []
+
+
+def test_an_annotated_tag_publishes_its_commit(client, queue, registry_queue):
+    """For an annotated tag `after` is the tag object, so the head commit names the commit."""
+    tag_object = "e" * 40
+    assert (
+        send(client, "push", push(ref="refs/tags/v1.2.3", after=tag_object, head_commit={"id": SHA})).status_code == 202
+    )
+    [message] = queued(registry_queue)
+    assert message["sha"] == SHA
+
+
+def test_a_tag_with_no_registry_here_is_acknowledged(client, queue):
+    """An environment without the registry queue drops the tag rather than failing the delivery."""
+    assert send(client, "push", push(ref="refs/tags/v1.2.3")).status_code == 202
+    assert queued(queue) == []
+
+
+def test_a_tag_message_missing_a_field_is_malformed():
+    """A message the route did not build parks on the dead letter queue."""
+    with pytest.raises(MalformedDelivery):
+        parse_tag_message({"body": json.dumps({"kind": TAG_KIND, "repo": REPO})})
+    with pytest.raises(MalformedDelivery):
+        parse_tag_message({"body": json.dumps({"kind": WEBHOOK_KIND})})

@@ -1,12 +1,13 @@
 """The module registry protocol against the deployed staging stage.
 
 Read only against a durable fixture: `WebbPulse/registry-proof/null` 0.1.0, published
-by the `v0.1.0` tag push in `WebbPulse/webbpulse-terraform-staging-e2e`. The tag points
-at commit `a8e56530de047bac44a2b5404dadd461a254f3e2` on the `registry-proof` branch,
-which holds the module under `registry-proof/` and the `registry-publish.yml` workflow
-that uploaded it. Keep the branch and the tag. A published version is immutable, and
-the uploads route answers `409 REGISTRY_VERSION_EXISTS` for it, so re-tagging cannot
-change the bytes these cases compare against; a new fixture needs a new version.
+from the `v0.1.0` tag in `WebbPulse/webbpulse-terraform-staging-e2e` by the Actions
+upload route that tag webhook publishing has since replaced. The tag points at commit
+`a8e56530de047bac44a2b5404dadd461a254f3e2` on the `registry-proof` branch, which holds
+the module under `registry-proof/`. The version rows remain with no module row, so no
+repository is connected to it and nothing republishes it. Keep the branch, the tag and
+the rows: a published version is immutable, so these cases always compare against the
+same bytes, and a new fixture needs a new version.
 
 The cases mint `wpk_` keys through `POST /api/v1/api-keys` as the run's signed-in user
 and revoke them on teardown, whatever the outcome. The protocol routes are exposed past

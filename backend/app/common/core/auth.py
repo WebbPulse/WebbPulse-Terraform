@@ -39,6 +39,8 @@ STATE_DOWNLOAD: Final = "state:download"
 """Explicit access to raw state, excluded from ordinary read-only grants."""
 REGISTRY_READ: Final = "registry:read"
 """Reading the module registry, which is what `TF_TOKEN_<host>` carries for `terraform init`."""
+REGISTRY_WRITE: Final = "registry:write"
+"""Connecting registry modules to repositories and deleting them."""
 ADMIN: Final = "admin"
 """Operator settings such as the GitHub App. It does not end in `:read`, so only an
 admin holds it, and a key carries it only when an admin minted it."""
@@ -59,6 +61,7 @@ ALL_SCOPES: Final = (
     RUNS_APPLY,
     STATE_DOWNLOAD,
     REGISTRY_READ,
+    REGISTRY_WRITE,
     ADMIN,
 )
 """Every scope a human or an agent can hold, which is what the contract lists."""
@@ -179,6 +182,7 @@ __all__ = [
     "RUNS_READ",
     "RUNS_WRITE",
     "REGISTRY_READ",
+    "REGISTRY_WRITE",
     "RUN_TOKEN_TENANT",
     "STATE_DOWNLOAD",
     "VARIABLES_READ",

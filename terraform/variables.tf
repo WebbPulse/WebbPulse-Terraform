@@ -157,13 +157,3 @@ variable "adopt_spans_log_group" {
   default     = false
 }
 
-variable "vcs_oidc_audience" {
-  description = "Audience a GitHub Actions OIDC token must carry for POST /api/v1/registry/uploads to accept it. A module publishing workflow requests its token with this audience."
-  type        = string
-  default     = "webbpulse-terraform"
-
-  validation {
-    condition     = length(trimspace(var.vcs_oidc_audience)) > 0
-    error_message = "vcs_oidc_audience must not be empty."
-  }
-}

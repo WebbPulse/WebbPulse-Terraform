@@ -18,7 +18,7 @@ from fastapi import APIRouter
 from webbpulse.events import register_stream_consumer
 
 from ....common.composition.settings import Settings
-from . import ingest
+from . import tags
 
 Handler = Callable[[Mapping[str, Any], Settings | None], None]
 
@@ -41,12 +41,12 @@ def _kind(record: Mapping[str, Any]) -> str:
     return str(body.get("kind", "") or "")
 
 
-def _ingest(record: Mapping[str, Any], settings: Settings | None) -> None:
-    """Hand one upload to the ingest consumer, discarding its outcome."""
-    ingest.handle_record(record, settings=settings)
+def _tag(record: Mapping[str, Any], settings: Settings | None) -> None:
+    """Hand one tag push to the tag consumer, discarding its outcome."""
+    tags.handle_record(record, settings=settings)
 
 
-HANDLERS: dict[str, Handler] = {ingest.INGEST_KIND: _ingest}
+HANDLERS: dict[str, Handler] = {tags.KIND: _tag}
 """Each `kind` this function consumes, against the consumer that owns it."""
 
 
