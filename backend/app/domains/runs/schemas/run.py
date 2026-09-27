@@ -28,8 +28,8 @@ RUN_ROLE_DURATION_SECONDS = 3600
 
 ActorKind = Literal["user", "agent", "vcs", "system"]
 """How a run was triggered: `user` is a person's JWT, `agent` a `wpk_` API key
-acting for the person who minted it, `vcs` a GitHub Actions upload, named by the
-workflow's actor, and `system` the control plane itself, such as the verification
+acting for the person who minted it, `vcs` a GitHub App delivery, named by the
+sender of the push or pull request, and `system` the control plane itself, such as the verification
 run a Quick setup stack starts when it reports back."""
 
 RunSource = Literal["api", "vcs_push", "vcs_pr", "aws_connect"]
@@ -47,15 +47,15 @@ class RunPullRequest(BaseModel):
 class RunVcs(BaseModel):
     """The commit a VCS run was started from.
 
-    Everything except `head_sha` and `base_sha` comes from the verified GitHub
-    Actions token. Those two are what the workflow reported for a pull request and
-    are not verified.
+    Everything comes from the signed GitHub App delivery. For a pull request the
+    commit is GitHub's merge commit, and `head_sha` and `base_sha` are recorded
+    alongside it.
     """
 
     repo: str
     repository_id: str
     sha: str
-    """The commit the token names. For a pull request, GitHub's merge commit."""
+    """The commit the delivery names. For a pull request, GitHub's merge commit."""
     ref: str
     branch: Optional[str] = None
     """The pushed branch. `None` on a pull request."""

@@ -50,7 +50,7 @@ Two buckets, each with its own KMS key, both created by the platform
 | Bucket | Holds | Lifecycle |
 | --- | --- | --- |
 | `webbpulse-terraform-<slug>-state` | Workspace state at `workspaces/<workspace_id>/terraform.tfstate` | Noncurrent versions expire after 365 days, 10 kept |
-| `webbpulse-terraform-<slug>-artifacts` | Config tarballs under `configs/`, plan artifacts and phase logs under `runs/`, VCS uploads under `ingest/` | `configs/` and `runs/` expire after `var.artifact_retention_days`, default 90; `ingest/` after three days |
+| `webbpulse-terraform-<slug>-artifacts` | Config tarballs under `configs/`, plan artifacts and phase logs under `runs/`, VCS ingest tarballs under `ingest/` | `configs/` and `runs/` expire after `var.artifact_retention_days`, default 90; `ingest/` after three days |
 
 The artifacts bucket allows CORS `PUT` from the frontend origin so a
 configuration version uploads straight to S3 over a presigned URL. The runner

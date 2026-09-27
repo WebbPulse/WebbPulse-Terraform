@@ -158,7 +158,7 @@ variable "adopt_spans_log_group" {
 }
 
 variable "vcs_oidc_audience" {
-  description = "Audience a GitHub Actions OIDC token must carry for POST /api/v1/vcs/uploads to accept it. The reusable upload workflow requests its token with this audience."
+  description = "Audience a GitHub Actions OIDC token must carry for POST /api/v1/registry/uploads to accept it. A module publishing workflow requests its token with this audience."
   type        = string
   default     = "webbpulse-terraform"
 

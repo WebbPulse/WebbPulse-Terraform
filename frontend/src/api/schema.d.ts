@@ -980,31 +980,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/vcs/uploads": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Vcs Upload
-         * @description Issue a presigned PUT for a workflow's configuration tarball.
-         *
-         *     The caller sends `Authorization: Bearer <GitHub Actions OIDC token>`. The
-         *     repository, event, branch and pull request number come from its verified
-         *     claims. A retry of the same workflow run attempt returns the same `upload_id`
-         *     with a new URL for the same key.
-         */
-        post: operations["create_vcs_upload_api_v1_vcs_uploads_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/workspaces": {
         parameters: {
             query?: never;
@@ -2506,9 +2481,9 @@ export interface components {
          * RunVcs
          * @description The commit a VCS run was started from.
          *
-         *     Everything except `head_sha` and `base_sha` comes from the verified GitHub
-         *     Actions token. Those two are what the workflow reported for a pull request and
-         *     are not verified.
+         *     Everything comes from the signed GitHub App delivery. For a pull request the
+         *     commit is GitHub's merge commit, and `head_sha` and `base_sha` are recorded
+         *     alongside it.
          */
         RunVcs: {
             /** Base Sha */
@@ -2713,45 +2688,6 @@ export interface components {
             sensitive?: boolean;
             /** Value */
             value: string;
-        };
-        /**
-         * VcsUpload
-         * @description Where to PUT the tarball.
-         *
-         *     A retry of the same workflow run attempt gets the same `upload_id` and a freshly
-         *     signed URL for the same key. Every header is inside the signature and has to be
-         *     sent verbatim.
-         */
-        VcsUpload: {
-            /** Expires In */
-            expires_in: number;
-            /** Headers */
-            headers: {
-                [key: string]: string;
-            };
-            /** Upload Id */
-            upload_id: string;
-            /** Upload Url */
-            upload_url: string;
-        };
-        /**
-         * VcsUploadCreate
-         * @description What the workflow reports alongside its GitHub Actions OIDC token.
-         *
-         *     Only `size_bytes` is used as given. The repository, the event, the branch, the
-         *     pull request number and the commit all come from the verified token, and
-         *     `sha` and `base_sha` are recorded on a pull request as the workflow's
-         *     unverified account of its head and base.
-         */
-        VcsUploadCreate: {
-            /** Base Sha */
-            base_sha?: string | null;
-            /** Pr Number */
-            pr_number?: number | null;
-            /** Sha */
-            sha: string;
-            /** Size Bytes */
-            size_bytes: number;
         };
         /**
          * WebhookConfig
@@ -4848,51 +4784,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
-            };
-        };
-    };
-    create_vcs_upload_api_v1_vcs_uploads_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VcsUploadCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VcsUpload"];
-                };
-            };
-            /** @description The GitHub Actions OIDC token is missing or did not verify. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description No workspace is bound to the repository. `error_code` is `VCS_REPO_NOT_BOUND`. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The token is for neither a branch push nor a pull request. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

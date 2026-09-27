@@ -89,7 +89,7 @@ def github(settings: Settings | None = None) -> Repository:
 
 
 def vcs_uploads(settings: Settings | None = None) -> Repository:
-    """The ingest records `POST /vcs/uploads` writes and the ingest consumer reads."""
+    """The ingest records the webhook consumer writes and the ingest consumer reads."""
     resolved = settings or get_settings()
     return _repository(VCS_UPLOADS, _name(resolved.VCS_UPLOADS_TABLE, VCS_UPLOADS, resolved), resolved)
 
