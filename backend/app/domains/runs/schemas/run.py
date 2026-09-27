@@ -315,23 +315,18 @@ class BackendConfig(BaseModel):
     key: str
     region: str
     kms_key_id: str = ""
+    credentials: VendedCredentials
+    """The state role's keys, narrowed to this workspace's state prefix. The only
+    credentials the backend sees."""
 
 
-class RunRole(BaseModel):
-    """The per workspace role the engine runs as, with the phase session policy.
+class VendedCredentials(BaseModel):
+    """One hour of AWS keys the control plane assumed for a phase."""
 
-    The external id is the workspace id, so a role trusted for one workspace
-    cannot be assumed by a run against another.
-    """
-
-    role_arn: str
-    external_id: str
-    session_policy: dict[str, object]
-    session_policy_arns: list[str] = []
-    """Managed policies the session unions with the inline document. A plan
-    carries `ReadOnlyAccess`, because IAM allows no wildcard in an action's
-    service portion; an apply carries none."""
-    duration_seconds: int = RUN_ROLE_DURATION_SECONDS
+    access_key_id: str
+    secret_access_key: str
+    session_token: str
+    expiration: str = ""
 
 
 class Artifacts(BaseModel):
@@ -376,7 +371,7 @@ class ArtifactUpload(BaseModel):
 class RunBundle(BaseModel):
     """Everything the runner needs for one phase of one run.
 
-    The shape is the runner's `Bundle`: the nested `backend`, `run_role` and
+    The shape is the runner's `Bundle`: the nested `backend`, `aws_credentials` and
     `artifacts` objects are what `runner/app/models.py` validates, as is
     `is_destroy`, which selects `plan -destroy`. The other extra top level fields
     are what the runner ignores for now but the API states about the phase it is
@@ -399,8 +394,14 @@ class RunBundle(BaseModel):
     working_directory: str
     config_url: str
     backend: BackendConfig
-    run_role: RunRole
+    run_role_arn: str
+    aws_credentials: VendedCredentials
+    """The workspace run role's keys for this phase, read only for a plan. The
+    runner hands them to the providers and never assumes a role itself."""
     terraform_variables: dict[str, str]
+    hcl_variables: dict[str, str] = {}
+    """Terraform variables whose values are HCL expressions, which the runner
+    writes to a native tfvars file for the engine to parse."""
     environment_variables: dict[str, str]
     artifacts: Artifacts
 
@@ -415,10 +416,15 @@ class PhaseResult(BaseModel):
     phase: Phase
     exit_code: int
     changes: RunChanges = RunChanges()
-    error: Optional[str] = Field(default="", max_length=4096)
+    error: Optional[str] = Field(default="", max_length=32768)
     """The failure text, empty when the phase succeeded. Absent, null and empty
     all mean the same thing and all normalise to the empty string, so the
     service always reads a str."""
+
+    error_name: Optional[str] = Field(default=None, pattern=r"^[A-Za-z][A-Za-z0-9]{0,63}$")
+    """The runner's short error name when the phase failed before it had a result,
+    such as `AssumeRoleFailed`. Set, it fails the phase's task with that name and
+    `error` as the cause, and records nothing on the run itself."""
 
     @field_validator("error", mode="before")
     @classmethod

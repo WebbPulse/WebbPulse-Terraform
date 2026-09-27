@@ -48,6 +48,10 @@ so its signature fails rather than smuggling a header through."""
 PHASE_STATUS: Final = {"plan": "planning", "apply": "applying"}
 """The run status each phase's task is started in."""
 
+RUNNER_TASK_ATTRIBUTE: Final = "runner_task_id"
+"""Where the exchange records the task it minted for, so the phase result can
+resolve that task's token without the runner calling Step Functions."""
+
 _SIGNED_HEADERS = re.compile(r"SignedHeaders=([a-z0-9;-]+)")
 _ASSUMED_ROLE = re.compile(r"^arn:aws:sts::(\d{12}):assumed-role/([\w+=,.@-]+)/([0-9a-f]{32})$")
 _ARN = re.compile(r"<Arn>([^<]+)</Arn>")
@@ -115,8 +119,8 @@ def _ecs(settings: Settings) -> Any:
     return boto3.client("ecs", region_name=settings.AWS_REGION_NAME or None)
 
 
-def task_phase(task_id: str, run_id: str, *, settings: Settings) -> str:
-    """The phase a running runner task was started for, when it was started for this run."""
+def task_environment(task_id: str, run_id: str, *, settings: Settings) -> dict[str, str]:
+    """The environment overrides of a running runner task, when it was started for this run."""
     if not settings.RUNNER_CLUSTER_ARN:
         raise ExchangeRefused("no runner cluster is configured")
     described = _ecs(settings).describe_tasks(cluster=settings.RUNNER_CLUSTER_ARN, tasks=[task_id])
@@ -132,10 +136,36 @@ def task_phase(task_id: str, run_id: str, *, settings: Settings) -> str:
             environment[str(entry.get("name", ""))] = str(entry.get("value", ""))
     if environment.get("RUN_ID") != run_id:
         raise ExchangeRefused("the task was started for another run")
-    phase = environment.get("PHASE", "")
+    return environment
+
+
+def task_phase(task_id: str, run_id: str, *, settings: Settings) -> str:
+    """The phase a running runner task was started for, when it was started for this run."""
+    phase = task_environment(task_id, run_id, settings=settings).get("PHASE", "")
     if phase not in PHASE_STATUS:
         raise ExchangeRefused("the task names no phase")
     return phase
+
+
+def phase_task_token(run: Mapping[str, Any], phase: str, *, settings: Settings) -> str:
+    """The Step Functions task token of the runner task that exchanged for this run's token.
+
+    Read from the task's own overrides through `DescribeTasks`, never from the
+    caller, so a runner can only ever resolve the token its own phase waits on.
+
+    Raises:
+        ExchangeRefused: No task exchanged for this run, or it no longer matches.
+    """
+    task_id = str(run.get(RUNNER_TASK_ATTRIBUTE, "") or "")
+    if not task_id:
+        raise ExchangeRefused("no runner task has exchanged for this run")
+    environment = task_environment(task_id, str(run["run_id"]), settings=settings)
+    if environment.get("PHASE") != phase:
+        raise ExchangeRefused("the task was started for another phase")
+    token = environment.get("TASK_TOKEN", "")
+    if not token:
+        raise ExchangeRefused("the task carries no task token")
+    return token
 
 
 def exchange(run_id: str, headers: Mapping[str, str], *, settings: Settings | None = None) -> str:
@@ -186,8 +216,8 @@ def _exchange(run_id: str, headers: Mapping[str, str], *, settings: Settings) ->
     try:
         old = repositories.runs(resolved).update(
             {"run_id": run_id},
-            update_expression="SET run_token_hash = :hash",
-            expression_values={":hash": minted.record.key_hash},
+            update_expression=f"SET run_token_hash = :hash, {RUNNER_TASK_ATTRIBUTE} = :task",
+            expression_values={":hash": minted.record.key_hash, ":task": task_id},
             condition=Attr("status").eq(expected),
             return_values="UPDATED_OLD",
         )
@@ -208,10 +238,13 @@ __all__ = [
     "ExchangeRefused",
     "FORWARDED_HEADERS",
     "PHASE_STATUS",
+    "RUNNER_TASK_ATTRIBUTE",
     "RUN_ID_HEADER",
     "STS_BODY",
     "caller_arn",
     "exchange",
+    "phase_task_token",
     "runner_task_id",
+    "task_environment",
     "task_phase",
 ]

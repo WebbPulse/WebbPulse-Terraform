@@ -104,9 +104,13 @@ def run_role_name(workspace_id: str, *, settings: Settings | None = None) -> str
 
 
 def run_role_setup(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """The three values a person needs to build one workspace's run role."""
+    """The three values a person needs to build one workspace's run role.
+
+    The principal is the control plane's credential vending role, the only one a
+    run role may trust: no runner task can assume a workspace role itself.
+    """
     resolved = settings or get_settings()
-    principals = resolved.runner_task_role_arns
+    principals = resolved.run_role_principal_arns
     return {
         "principal_arn": principals[0] if principals else "",
         "principal_arns": principals,
@@ -120,7 +124,10 @@ def render_workspace(item: dict[str, Any], *, settings: Settings | None = None) 
     resolved = settings or get_settings()
     workspace_id = str(item["workspace_id"])
     rendered = {key: value for key, value in item.items() if key not in _PRIVATE_WORKSPACE_FIELDS}
-    return rendered | {"run_role_setup": run_role_setup(workspace_id, settings=resolved)}
+    return rendered | {
+        "run_role_setup": run_role_setup(workspace_id, settings=resolved),
+        "run_role_reconnect_required": aws_connect.reconnect_required(item),
+    }
 
 
 def _connection(

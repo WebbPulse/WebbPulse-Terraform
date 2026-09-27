@@ -11,7 +11,7 @@ module "run_task_failures" {
 
 resource "aws_cloudwatch_event_rule" "runner_task_failed_to_start" {
   name        = "${local.prefix}-runner-task-failed-to-start"
-  description = "Runner Fargate tasks that stopped without ever starting, so the run can be failed before its phase state times out"
+  description = "Runner Fargate tasks that stopped, so a phase whose runner never reported fails at once rather than when its phase state times out"
 
   event_pattern = jsonencode({
     source      = ["aws.ecs"]
@@ -19,7 +19,6 @@ resource "aws_cloudwatch_event_rule" "runner_task_failed_to_start" {
     detail = {
       clusterArn = [module.runner.cluster_arn]
       lastStatus = ["STOPPED"]
-      stopCode   = ["TaskFailedToStart"]
     }
   })
 

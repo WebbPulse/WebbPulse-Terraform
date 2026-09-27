@@ -16,14 +16,17 @@ from tests.conftest import (
     API_BASE_URL,
     LOG_GROUP,
     PLAN_JSON_NO_CHANGES,
+    PROVIDER_SECRET_ACCESS_KEY,
+    PROVIDER_SESSION_TOKEN,
     RUN_ID,
     RUN_TOKEN,
     SECRET_ENVVAR,
     SECRET_HCL_TFVAR,
     SECRET_OUTPUT,
     SECRET_TFVAR,
+    STATE_SECRET_ACCESS_KEY,
+    STATE_SESSION_TOKEN,
     TASK_TOKEN,
-    WORKSPACE_ID,
     ApiRecorder,
     bundle_payload,
     engine_release,
@@ -116,7 +119,7 @@ def test_a_working_directory_the_config_lacks_fails_the_task(
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["ConfigUnpackFailed"]
 
 
 def test_plan_with_no_changes_reports_zero(
@@ -287,7 +290,7 @@ def test_a_release_that_fails_its_checksum_is_refused(
     clients = make_clients(make_transport(bundle, config_tarball, recorder, releases=releases))
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["EngineInstallFailed"]
     assert "EngineInstallFailed" in capsys.readouterr().err
 
 
@@ -393,7 +396,7 @@ def test_apply_without_a_plan_url_fails(
     clients = make_clients(transport)
 
     assert run(make_env("apply"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["PlanUnavailable"]
 
 
 def test_engine_failure_is_reported_as_failure(
@@ -405,8 +408,8 @@ def test_engine_failure_is_reported_as_failure(
 ) -> None:
     """A non zero plan exit that is not the detailed changes code fails the phase.
 
-    Exit 1 is a real terraform failure, so it raises `PlanFailed` and posts no
-    phase result, unlike the 2 that `-detailed-exitcode` uses for changes.
+    Exit 1 is a real terraform failure, so it is posted as `PlanFailed`, unlike
+    the 2 that `-detailed-exitcode` uses for changes.
     """
     fake_engine(plan_exit=1)
     recorder = ApiRecorder()
@@ -414,7 +417,8 @@ def test_engine_failure_is_reported_as_failure(
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["PlanFailed"]
+    assert recorder.phase_results[0]["exit_code"] == 1
 
 
 def test_init_failure_stops_before_the_plan(
@@ -431,7 +435,7 @@ def test_init_failure_stops_before_the_plan(
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["InitFailed"]
 
 
 def test_bundle_fetch_failure_fails_the_task(
@@ -448,7 +452,7 @@ def test_bundle_fetch_failure_fails_the_task(
 
     assert run(make_env("plan"), clients, tmp_path) == 1
     assert recorder.bundle_requests == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["BundleFetchFailed"]
     assert log_stream_messages(f"{RUN_ID}/plan") == []
 
 
@@ -487,7 +491,16 @@ def test_sensitive_values_never_reach_any_log(
 
     assert run(make_env("plan"), clients, tmp_path) == 0
 
-    forbidden = [SECRET_TFVAR, SECRET_ENVVAR, RUN_TOKEN, TASK_TOKEN, WORKSPACE_ID]
+    forbidden = [
+        SECRET_TFVAR,
+        SECRET_ENVVAR,
+        RUN_TOKEN,
+        TASK_TOKEN,
+        PROVIDER_SECRET_ACCESS_KEY,
+        PROVIDER_SESSION_TOKEN,
+        STATE_SECRET_ACCESS_KEY,
+        STATE_SESSION_TOKEN,
+    ]
     haystacks: list[str] = list(log_stream_messages(f"{RUN_ID}/plan"))
     captured = capsys.readouterr()
     haystacks.append(captured.out)
@@ -526,15 +539,20 @@ def test_assume_role_failure_fails_the_task(
     fake_engine: Callable[..., Path],
     tmp_path: Path,
 ) -> None:
-    """A run role that cannot be assumed fails the task without running the engine."""
+    """A run role that refused the control plane fails the phase as `AssumeRoleFailed`.
+
+    The API assumes the role when it serves the bundle, so the refusal arrives as
+    the bundle's 409, and the name is what the run role check reads back.
+    """
     fake_engine()
     recorder = ApiRecorder()
-    bundle = bundle_payload("not-an-arn")
-    transport = make_transport(bundle, config_tarball, recorder)
+    envelope = {"message": "assume role failed: AccessDenied", "error_code": "RUN_ROLE_ASSUME_FAILED"}
+    transport = make_transport(None, config_tarball, recorder, bundle_status=409, bundle_body=envelope)
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["AssumeRoleFailed"]
+    assert log_stream_messages(f"{RUN_ID}/plan") == []
 
 
 def test_a_refused_artifact_upload_names_itself(
@@ -557,7 +575,7 @@ def test_a_refused_artifact_upload_names_itself(
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["ArtifactUploadFailed"]
     assert "ArtifactUploadFailed: plan upload request returned 500" in capsys.readouterr().err
 
 
@@ -613,7 +631,7 @@ def test_clients_build_uses_the_region(aws: None) -> None:
     """The real client factory honours the runner's region."""
     clients = Clients.build("us-west-2")
     assert clients.logs.meta.region_name == "us-west-2"
-    assert clients.sts.meta.region_name == "us-west-2"
+    assert clients.identity is not None
     clients.http.close()
 
 

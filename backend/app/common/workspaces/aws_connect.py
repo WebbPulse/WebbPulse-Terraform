@@ -48,6 +48,15 @@ TOKEN_HASH_ATTRIBUTE: Final = "aws_connect_token_hash"
 TOKEN_EXPIRES_ATTRIBUTE: Final = "aws_connect_token_expires_at"
 CONNECTION_ATTRIBUTE: Final = "aws_connection"
 
+TRUST_VERSION: Final = "2"
+"""The run role trust a Quick setup template grants, carried on its `Connection`.
+
+Version 2 trusts only the credential vending role. A connection recorded with an
+older or no version was made by a stack that trusts the runner task roles, which
+can no longer assume anything, so the workspace shows that it must reconnect."""
+
+TRUST_VERSION_FIELD: Final = "trust_version"
+
 CHECK_FIELDS: Final = ("run_role_checked_at", "run_role_account_id")
 """The recorded check outcome, which belongs to one role and goes when it changes."""
 
@@ -178,6 +187,7 @@ def connect(
     stack_id: str,
     request_id: str,
     physical_id: str | None = None,
+    trust_version: str = "",
     settings: Settings | None = None,
 ) -> ConnectResult:
     """Consume a stack's token and stage the role it created.
@@ -218,6 +228,7 @@ def connect(
         "physical_id": physical,
         "reported_at": now,
         "verification": "pending",
+        TRUST_VERSION_FIELD: trust_version,
     }
     names = {
         "#connection": CONNECTION_ATTRIBUTE,
@@ -349,6 +360,41 @@ def record_verification(run: dict[str, Any], *, settings: Settings | None = None
     return True
 
 
+def record_trust_version(
+    workspace_id: str, physical_id: str, trust_version: str, *, settings: Settings | None = None
+) -> bool:
+    """Record the trust an updated stack now grants, if that stack still holds the connection.
+
+    A stack updated in place with the current template reports the same token,
+    role and physical id, so this is how its workspace stops showing reconnect.
+    """
+    resolved = settings or get_settings()
+    try:
+        repositories.workspaces(resolved).update(
+            {"workspace_id": workspace_id},
+            update_expression="SET #connection.#version = :version",
+            expression_names={"#connection": CONNECTION_ATTRIBUTE, "#version": TRUST_VERSION_FIELD},
+            expression_values={":version": trust_version},
+            condition=Attr(f"{CONNECTION_ATTRIBUTE}.physical_id").eq(physical_id),
+        )
+    except ConditionFailed:
+        return False
+    return True
+
+
+def reconnect_required(workspace: dict[str, Any]) -> bool:
+    """Whether the workspace's run role came from a Quick setup stack with an outdated trust.
+
+    Only a connection that still provides the workspace's role counts. A role built
+    by hand has no connection, and its run role check reports a refused assume.
+    """
+    connection = dict(workspace.get(CONNECTION_ATTRIBUTE) or {})
+    role_arn = str(connection.get("role_arn") or "")
+    if not role_arn or role_arn not in (workspace.get("run_role_arn"), workspace.get("pending_run_role_arn")):
+        return False
+    return str(connection.get(TRUST_VERSION_FIELD) or "") != TRUST_VERSION
+
+
 def current_connection(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     """The workspace's recorded connection, or an empty mapping."""
     resolved = settings or get_settings()
@@ -401,6 +447,8 @@ __all__ = [
     "CONNECTION_ATTRIBUTE",
     "FAILED_RUN_STATUSES",
     "PHYSICAL_ID_PREFIX",
+    "TRUST_VERSION",
+    "TRUST_VERSION_FIELD",
     "TOKEN_EXPIRES_ATTRIBUTE",
     "TOKEN_HASH_ATTRIBUTE",
     "TOKEN_PATTERN",
@@ -415,7 +463,9 @@ __all__ = [
     "fail_verification",
     "hash_token",
     "issue_token",
+    "reconnect_required",
     "record_run",
+    "record_trust_version",
     "record_verification",
     "run_role_name",
     "stack_account",

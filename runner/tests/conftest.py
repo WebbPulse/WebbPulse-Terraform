@@ -68,24 +68,17 @@ def aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 @pytest.fixture
 def run_role_arn(aws: None) -> str:
-    """A role the runner can assume, with the runner task role as its trusted principal."""
-    iam = boto3.client("iam", region_name="us-west-2")
-    trust = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Principal": {"Service": "ecs-tasks.amazonaws.com"},
-                "Action": "sts:AssumeRole",
-                "Condition": {"StringEquals": {"sts:ExternalId": WORKSPACE_ID}},
-            }
-        ],
-    }
-    role = iam.create_role(
-        RoleName="WebbPulse-Terraform-staging-Terraform",
-        AssumeRolePolicyDocument=json.dumps(trust),
-    )
-    return str(role["Role"]["Arn"])
+    """The workspace run role the vended provider keys are a session of."""
+    return "arn:aws:iam::870550636948:role/webbpulse-terraform-staging-workspace-e2e"
+
+
+PROVIDER_ACCESS_KEY_ID = "ASIAPROVIDERKEY00001"
+PROVIDER_SECRET_ACCESS_KEY = "provider-secret-access-key-abcdef0123456789"
+PROVIDER_SESSION_TOKEN = "provider-session-token-abcdef0123456789"
+STATE_ACCESS_KEY_ID = "ASIASTATEKEY00000001"
+STATE_SECRET_ACCESS_KEY = "state-secret-access-key-abcdef0123456789"
+STATE_SESSION_TOKEN = "state-session-token-abcdef0123456789"
+"""The vended keys a bundle carries, which must reach the engine and never a log."""
 
 
 def build_config_tarball(*names: str) -> bytes:
@@ -138,14 +131,19 @@ def bundle_payload(
             "key": f"workspaces/{WORKSPACE_ID}/terraform.tfstate",
             "region": "us-west-2",
             "kms_key_id": "arn:aws:kms:us-west-2:870550636948:key/11111111-2222-3333-4444-555555555555",
-        },
-        "run_role": {
-            "role_arn": run_role_arn,
-            "external_id": WORKSPACE_ID,
-            "session_policy": {
-                "Version": "2012-10-17",
-                "Statement": [{"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": "*"}],
+            "credentials": {
+                "access_key_id": STATE_ACCESS_KEY_ID,
+                "secret_access_key": STATE_SECRET_ACCESS_KEY,
+                "session_token": STATE_SESSION_TOKEN,
+                "expiration": "2026-09-26T13:00:00+00:00",
             },
+        },
+        "run_role_arn": run_role_arn,
+        "aws_credentials": {
+            "access_key_id": PROVIDER_ACCESS_KEY_ID,
+            "secret_access_key": PROVIDER_SECRET_ACCESS_KEY,
+            "session_token": PROVIDER_SESSION_TOKEN,
+            "expiration": "2026-09-26T13:00:00+00:00",
         },
         "environment_variables": {"PROVIDER_TOKEN": SECRET_ENVVAR},
         "terraform_variables": {"db_password": SECRET_TFVAR, "instance_count": 2},
@@ -165,6 +163,10 @@ ARTIFACT_OBJECTS: dict[str, tuple[str, str]] = {
 class ApiRecorder:
     """Records what the runner sent, so assertions can read the posted result back."""
 
+    def failure_names(self) -> list[str]:
+        """The error names of the failures the runner posted, in order."""
+        return [str(result["error_name"]) for result in self.phase_results if "error_name" in result]
+
     def __init__(self) -> None:
         self.phase_results: list[dict[str, Any]] = []
         self.uploads: dict[str, bytes] = {}
@@ -179,6 +181,7 @@ def make_transport(
     recorder: ApiRecorder,
     *,
     bundle_status: int = 200,
+    bundle_body: dict[str, Any] | None = None,
     plan_bytes: bytes = b"fake-plan",
     upload_request_status: int = 200,
     upload_status: int = 200,
@@ -190,8 +193,8 @@ def make_transport(
     The upload route mints a URL that names the declared size, and the PUT handler
     refuses a body whose length does not match it, so a runner that sent the wrong
     `Content-Length` fails here the way S3 fails it. `releases` serves engine
-    release files by URL, and `refused_uploads` names artifact kinds whose upload
-    request is refused.
+    release files by URL, `refused_uploads` names artifact kinds whose upload
+    request is refused and `bundle_body` is a refused bundle's error body.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -204,7 +207,7 @@ def make_transport(
         if path.endswith("/bundle"):
             recorder.bundle_requests += 1
             if bundle_status != 200 or bundle is None:
-                return httpx.Response(bundle_status, json={"detail": "nope"})
+                return httpx.Response(bundle_status, json=bundle_body or {"detail": "nope"})
             return httpx.Response(200, json=bundle)
         if path.endswith("/artifact-uploads"):
             payload = json.loads(request.content)
@@ -354,8 +357,6 @@ def make_clients(transport: httpx.MockTransport) -> Clients:
     """Moto backed AWS clients plus an httpx client wired to the mock transport."""
     return Clients(
         logs=boto3.client("logs", region_name="us-west-2"),
-        sts=boto3.client("sts", region_name="us-west-2"),
-        sfn=boto3.client("stepfunctions", region_name="us-west-2"),
         http=httpx.Client(transport=transport),
         identity=lambda run_id: {"x-webbpulse-run-id": run_id},
     )

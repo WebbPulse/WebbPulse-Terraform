@@ -458,6 +458,9 @@
             "title": "Bucket",
             "type": "string"
           },
+          "credentials": {
+            "$ref": "#/components/schemas/VendedCredentials"
+          },
           "key": {
             "title": "Key",
             "type": "string"
@@ -475,7 +478,8 @@
         "required": [
           "bucket",
           "key",
-          "region"
+          "region",
+          "credentials"
         ],
         "title": "BackendConfig",
         "type": "object"
@@ -1384,7 +1388,7 @@
           "error": {
             "anyOf": [
               {
-                "maxLength": 4096,
+                "maxLength": 32768,
                 "type": "string"
               },
               {
@@ -1393,6 +1397,18 @@
             ],
             "default": "",
             "title": "Error"
+          },
+          "error_name": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Name"
           },
           "exit_code": {
             "title": "Exit Code",
@@ -1923,10 +1939,13 @@
         "type": "object"
       },
       "RunBundle": {
-        "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `run_role` and\n`artifacts` objects are what `runner/app/models.py` validates, as is\n`is_destroy`, which selects `plan -destroy`. The other extra top level fields\nare what the runner ignores for now but the API states about the phase it is\nserving. Uploads are not here: the runner asks\nfor each one's presigned PUT by size once it has the bytes.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
+        "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `aws_credentials` and\n`artifacts` objects are what `runner/app/models.py` validates, as is\n`is_destroy`, which selects `plan -destroy`. The other extra top level fields\nare what the runner ignores for now but the API states about the phase it is\nserving. Uploads are not here: the runner asks\nfor each one's presigned PUT by size once it has the bytes.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
         "properties": {
           "artifacts": {
             "$ref": "#/components/schemas/Artifacts"
+          },
+          "aws_credentials": {
+            "$ref": "#/components/schemas/VendedCredentials"
           },
           "backend": {
             "$ref": "#/components/schemas/BackendConfig"
@@ -1954,6 +1973,14 @@
             "title": "Environment Variables",
             "type": "object"
           },
+          "hcl_variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Hcl Variables",
+            "type": "object"
+          },
           "is_destroy": {
             "default": false,
             "title": "Is Destroy",
@@ -1975,8 +2002,9 @@
             "title": "Run Id",
             "type": "string"
           },
-          "run_role": {
-            "$ref": "#/components/schemas/RunRole"
+          "run_role_arn": {
+            "title": "Run Role Arn",
+            "type": "string"
           },
           "terraform_variables": {
             "additionalProperties": {
@@ -2004,7 +2032,8 @@
           "working_directory",
           "config_url",
           "backend",
-          "run_role",
+          "run_role_arn",
+          "aws_credentials",
           "terraform_variables",
           "environment_variables",
           "artifacts"
@@ -2442,44 +2471,6 @@
         "title": "RunPullRequest",
         "type": "object"
       },
-      "RunRole": {
-        "description": "The per workspace role the engine runs as, with the phase session policy.\n\nThe external id is the workspace id, so a role trusted for one workspace\ncannot be assumed by a run against another.",
-        "properties": {
-          "duration_seconds": {
-            "default": 3600,
-            "title": "Duration Seconds",
-            "type": "integer"
-          },
-          "external_id": {
-            "title": "External Id",
-            "type": "string"
-          },
-          "role_arn": {
-            "title": "Role Arn",
-            "type": "string"
-          },
-          "session_policy": {
-            "additionalProperties": true,
-            "title": "Session Policy",
-            "type": "object"
-          },
-          "session_policy_arns": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Session Policy Arns",
-            "type": "array"
-          }
-        },
-        "required": [
-          "role_arn",
-          "external_id",
-          "session_policy"
-        ],
-        "title": "RunRole",
-        "type": "object"
-      },
       "RunRoleCheck": {
         "description": "Whether the runner can assume a workspace's run role, from its own record.\n\nThe API never calls STS. The answer is the outcome of the runner's AssumeRole\nin the newest run created with the current role ARN that reached it, so a role\nno run has tried yet is `unverified` rather than refused.",
         "properties": {
@@ -2679,7 +2670,7 @@
         "type": "object"
       },
       "RunRoleSetup": {
-        "description": "What a person needs to build the run role for one workspace.\n\nThe role cannot exist before the workspace does: its trust policy names the\nworkspace id as the external id, so the id has to be handed out first. Every\nworkspace response carries these three values so the setup can be followed\nwithout reading the stack's outputs. The runner task roles are the only\nprincipals the trust policy needs: the API never assumes the role.",
+        "description": "What a person needs to build the run role for one workspace.\n\nThe role cannot exist before the workspace does: its trust policy names the\nworkspace id as the external id, so the id has to be handed out first. Every\nworkspace response carries these three values so the setup can be followed\nwithout reading the stack's outputs. The control plane's credential vending\nrole is the only principal the trust policy may name: it assumes the role on\neach phase's behalf, so no runner task holds a path to it.",
         "properties": {
           "external_id": {
             "title": "External Id",
@@ -3164,6 +3155,35 @@
         "title": "VariableWrite",
         "type": "object"
       },
+      "VendedCredentials": {
+        "description": "One hour of AWS keys the control plane assumed for a phase.",
+        "properties": {
+          "access_key_id": {
+            "title": "Access Key Id",
+            "type": "string"
+          },
+          "expiration": {
+            "default": "",
+            "title": "Expiration",
+            "type": "string"
+          },
+          "secret_access_key": {
+            "title": "Secret Access Key",
+            "type": "string"
+          },
+          "session_token": {
+            "title": "Session Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_key_id",
+          "secret_access_key",
+          "session_token"
+        ],
+        "title": "VendedCredentials",
+        "type": "object"
+      },
       "WebhookConfig": {
         "description": "Where the App's webhook now delivers, and the events the bridge expects it to carry.\n\nThe secret is set but never echoed.",
         "properties": {
@@ -3288,6 +3308,11 @@
               }
             ],
             "title": "Run Role Checked At"
+          },
+          "run_role_reconnect_required": {
+            "default": false,
+            "title": "Run Role Reconnect Required",
+            "type": "boolean"
           },
           "run_role_setup": {
             "$ref": "#/components/schemas/RunRoleSetup"
@@ -5942,7 +5967,7 @@
     },
     "/api/v1/runs/{run_id}/phase-result": {
       "post": {
-        "description": "Record a phase's outcome and advance the run. Runner only.",
+        "description": "Record a phase's outcome, advance the run and resolve its task token. Runner only.\n\nThe runner holds no Step Functions permission, so this is how both a result and\na failure reach the waiting state.",
         "operationId": "phase_result_api_v1_runs__run_id__phase_result_post",
         "parameters": [
           {

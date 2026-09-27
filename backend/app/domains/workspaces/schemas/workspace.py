@@ -82,15 +82,15 @@ class RunRoleSetup(BaseModel):
     The role cannot exist before the workspace does: its trust policy names the
     workspace id as the external id, so the id has to be handed out first. Every
     workspace response carries these three values so the setup can be followed
-    without reading the stack's outputs. The runner task roles are the only
-    principals the trust policy needs: the API never assumes the role.
+    without reading the stack's outputs. The control plane's credential vending
+    role is the only principal the trust policy may name: it assumes the role on
+    each phase's behalf, so no runner task holds a path to it.
     """
 
     principal_arn: str
-    """The first runner task role the run role's trust policy has to name."""
+    """The credential vending role the run role's trust policy has to name."""
     principal_arns: list[str] = []
-    """Every runner task role, one per phase. A trust policy naming only the plan
-    role leaves the apply phase unable to assume, so all of them belong in it."""
+    """Every principal the trust policy has to name, which is the vending role alone."""
     external_id: str
     """The workspace id, which the runner sends as `sts:ExternalId`."""
     role_name: str
@@ -279,6 +279,9 @@ class Workspace(WorkspaceBase):
     created_at: str
     updated_at: Optional[str] = None
     run_role_setup: RunRoleSetup
+    run_role_reconnect_required: bool = False
+    """The role came from a Quick setup stack whose trust predates credential vending,
+    so no run can assume it until the stack is updated or Quick setup is run again."""
     pending_run_role_arn: Optional[str] = None
     """A role waiting on its verification run. Runs keep using `run_role_arn` until
     the run role check sees the runner assume it and switches the workspace over."""

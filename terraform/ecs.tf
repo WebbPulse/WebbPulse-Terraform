@@ -6,32 +6,13 @@ locals {
     "arn:aws:iam::*:role/${local.example_run_role_name}",
   ]
 
-  runner_task_statements = concat(
-    [
-      {
-        sid       = "ReportPhaseOutcome"
-        actions   = ["states:SendTaskSuccess", "states:SendTaskFailure", "states:SendTaskHeartbeat"]
-        resources = ["*"]
-      },
-      {
-        sid       = "WriteRunnerLogs"
-        actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-        resources = ["${aws_cloudwatch_log_group.runner.arn}:*"]
-      },
-      {
-        sid       = "AssumeAnyWorkspaceRunRole"
-        actions   = ["sts:AssumeRole", "sts:TagSession"]
-        resources = local.workspace_run_role_arns
-      },
-    ],
-    [
-      for statement in concat(local.bucket_statements["State"], local.bucket_statements["Artifacts"]) : {
-        sid       = statement.Sid
-        actions   = statement.Action
-        resources = statement.Resource
-      }
-    ],
-  )
+  runner_task_statements = [
+    {
+      sid       = "WriteRunnerLogs"
+      actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+      resources = ["${aws_cloudwatch_log_group.runner.arn}:*"]
+    },
+  ]
 }
 
 module "runner" {

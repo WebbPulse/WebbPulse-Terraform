@@ -1,4 +1,4 @@
-"""The task failure consumer: the path that fails a run whose task never started.
+"""The task stop consumer: the path that fails a phase whose task stopped without reporting.
 
 Driven through the HTTP route rather than the handler alone, for the same reason
 the confirmations suite is: the route is what the Lambda Web Adapter posts to and
@@ -72,13 +72,15 @@ def detail(
     last_status: str = "STOPPED",
     stopped_reason: str = STOPPED_REASON,
     environment: list | None = None,
+    phase: str = "plan",
+    containers: list | None = None,
 ) -> dict:
     """The `detail` of one ECS Task State Change event for a phase task."""
     if environment is None:
         environment = [
             {"name": "RUN_ID", "value": run_id},
             {"name": "WORKSPACE_ID", "value": "ws-example"},
-            {"name": "PHASE", "value": "plan"},
+            {"name": "PHASE", "value": phase},
             {"name": "TASK_TOKEN", "value": task_token},
         ]
     return {
@@ -89,6 +91,7 @@ def detail(
         "stopCode": stop_code,
         "stoppedReason": stopped_reason,
         "overrides": {"containerOverrides": [{"name": "plan", "environment": environment}]},
+        "containers": containers or [],
     }
 
 
@@ -217,10 +220,9 @@ def test_an_unknown_run_is_a_batch_item_failure(events_client, recorded):
 @pytest.mark.parametrize(
     "kwargs",
     [
-        pytest.param({"stop_code": "EssentialContainerExited"}, id="container-ran"),
-        pytest.param({"stop_code": "UserInitiated"}, id="stopped-by-hand"),
-        pytest.param({"stop_code": ""}, id="no-stop-code"),
         pytest.param({"last_status": "RUNNING"}, id="still-running"),
+        pytest.param({"phase": "destroy"}, id="no-phase"),
+        pytest.param({"phase": "apply"}, id="another-phase"),
         pytest.param({"environment": []}, id="no-overrides"),
         pytest.param({"environment": [{"name": "RUN_ID", "value": "run-x"}]}, id="no-task-token"),
         pytest.param({"task_token": ""}, id="empty-task-token"),
@@ -229,8 +231,9 @@ def test_an_unknown_run_is_a_batch_item_failure(events_client, recorded):
 def test_a_stop_this_consumer_does_not_own_is_acknowledged(events_client, recorded, created_run, kwargs):
     """Any other task stop is dropped, not retried.
 
-    The rule is narrow but not exact, and every run ends with a task stopping. Parking
-    each of those on the dead letter queue would bury the deliveries that matter.
+    Every run ends with a task stopping. Parking each of those on the dead letter
+    queue would bury the deliveries that matter, and a stop of a phase the run has
+    left is one whose outcome was already reported.
     """
     client = recorded()
 
@@ -267,7 +270,37 @@ def test_parse_body_reads_the_event_shape():
     """The body the rule builds parses to the run, token and reason."""
     parsed = task_failures.parse_body(message("run-01JQ"))
 
-    assert parsed == ("run-01JQ", TASK_TOKEN, STOPPED_REASON)
+    assert parsed == ("run-01JQ", "plan", TASK_TOKEN, task_failures.TASK_FAILURE_ERROR, STOPPED_REASON)
+
+
+@pytest.mark.parametrize("stop_code", ["EssentialContainerExited", "UserInitiated", ""])
+def test_a_runner_that_stops_unreported_fails_its_phase(events_client, recorded, created_run, stop_code):
+    """A runner that ran and died before posting fails as `RunnerStopped`, with its exit code.
+
+    The runner holds no Step Functions permission, so without this the execution
+    would sit on the token until the heartbeat expired.
+    """
+    client = recorded()
+    containers = [{"name": "runner", "exitCode": 137}]
+
+    response = post_batch(
+        events_client,
+        message(
+            created_run["run_id"],
+            stop_code=stop_code,
+            stopped_reason="Essential container exited",
+            containers=containers,
+        ),
+    )
+
+    assert response.json()[BATCH_FAILURES_KEY] == []
+    assert client.calls == [
+        {
+            "taskToken": TASK_TOKEN,
+            "error": task_failures.RUNNER_STOPPED_ERROR,
+            "cause": "Essential container exited; runner exited 137",
+        }
+    ]
 
 
 def test_a_cause_longer_than_step_functions_accepts_is_truncated(events_client, recorded, created_run):
@@ -284,7 +317,9 @@ def test_both_consumers_share_the_one_events_route(events_client, recorded, plan
     """A confirmation and a task stop in one batch each reach their own consumer.
 
     The adapter posts every queue invocation to a single pass-through path, so the
-    dispatch on `kind` is the only thing keeping the two apart.
+    dispatch on `kind` is the only thing keeping the two apart. The plan task's
+    stop reaches the stop consumer, which sends nothing because the run has
+    already left planning.
     """
     from app.domains.runs.consumers import confirmations
 
@@ -303,4 +338,4 @@ def test_both_consumers_share_the_one_events_route(events_client, recorded, plan
 
     assert response.json()[BATCH_FAILURES_KEY] == []
     assert runs_service.get_run(run_id)["confirm_task_token"] == "confirm-token"
-    assert client.calls[0]["taskToken"] == TASK_TOKEN
+    assert client.calls == []

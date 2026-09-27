@@ -45,10 +45,11 @@ def write_backend_override(directory: Path, backend: BackendConfig) -> Path:
     """Write the S3 backend override with native locking on.
 
     The backend names the state profile, so state is always read and written
-    with the runner task's own role while the providers get the run role from the
+    with the vended state keys while the providers get the run role from the
     environment. A run role in another account never reaches the state bucket.
     Only the profile name is written, so neither the plan file nor `.terraform`
-    records a credential.
+    records a credential. CLI workspace states go under the workspace's own
+    prefix too, the only one its state keys can list.
     """
     body = "\n".join(
         [
@@ -56,6 +57,7 @@ def write_backend_override(directory: Path, backend: BackendConfig) -> Path:
             '  backend "s3" {',
             f'    bucket       = "{backend.bucket}"',
             f'    key          = "{backend.key}"',
+            f'    workspace_key_prefix = "{backend.key.rsplit("/", 1)[0]}/env"',
             f'    region       = "{backend.region}"',
             f'    kms_key_id   = "{backend.kms_key_id}"',
             "    encrypt      = true",

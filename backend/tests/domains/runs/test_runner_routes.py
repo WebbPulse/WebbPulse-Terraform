@@ -1,18 +1,81 @@
 """The three routes the runner owns, and the token that gates them.
 
-The bundle carries decrypted sensitive variables and, on an apply, an
-unrestricted session policy, so the gate is the security boundary of this domain
+The bundle carries decrypted sensitive variables and, on an apply, the run
+role's unrestricted session keys, so the gate is the security boundary of this domain
 and is tested from every angle a caller could come at it.
 """
+
+import json
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.common.core.auth import RUNNER_SCOPE
+from app.domains.runs import phase_tasks, vending
 from app.domains.runs import service as runs_service
 from tests.conftest import STATE_KMS_KEY_ARN, mint_key, runner_token
 
 BASE = "/api/v1/runs"
+TASK_TOKEN = "phase-task-token"
+
+
+class RecordingStepFunctions:
+    """Records the task outcomes the phase result route sends."""
+
+    def __init__(self) -> None:
+        self.successes: list[dict[str, Any]] = []
+        self.failures: list[dict[str, Any]] = []
+
+    def send_task_success(self, **kwargs: Any) -> None:
+        """Record a success."""
+        self.successes.append(kwargs)
+
+    def send_task_failure(self, **kwargs: Any) -> None:
+        """Record a failure."""
+        self.failures.append(kwargs)
+
+
+@pytest.fixture
+def stepfunctions(monkeypatch):
+    """The phase's task token resolves to a fixed one and its outcome is recorded."""
+    recorder = RecordingStepFunctions()
+    monkeypatch.setattr(phase_tasks, "phase_token", lambda run, phase, *, settings: TASK_TOKEN)
+    monkeypatch.setattr(phase_tasks, "_stepfunctions", lambda settings: recorder)
+    return recorder
+
+
+class RecordingSTS:
+    """Records every AssumeRole the bundle route makes and returns distinct keys per role."""
+
+    def __init__(self, requests: list[dict[str, Any]], refuse: str = "") -> None:
+        self.requests = requests
+        self.refuse = refuse
+
+    def assume_role(self, **kwargs: Any) -> dict[str, Any]:
+        """Record the request and hand back keys named after the role."""
+        from botocore.exceptions import ClientError
+
+        self.requests.append(kwargs)
+        if self.refuse and kwargs["RoleArn"] == self.refuse:
+            raise ClientError({"Error": {"Code": "AccessDenied", "Message": "not trusted"}}, "AssumeRole")
+        name = kwargs["RoleArn"].rsplit("/", 1)[-1]
+        return {
+            "Credentials": {
+                "AccessKeyId": f"ASIA-{name}",
+                "SecretAccessKey": f"secret-{name}",
+                "SessionToken": f"token-{name}",
+                "Expiration": "2026-09-26T13:00:00Z",
+            }
+        }
+
+
+@pytest.fixture
+def sts_requests(monkeypatch):
+    """The AssumeRole requests the bundle route makes, answered without AWS."""
+    requests: list[dict[str, Any]] = []
+    monkeypatch.setattr(vending, "_sts", lambda settings, credentials=None: RecordingSTS(requests))
+    return requests
 
 
 def test_the_bundle_needs_a_token(client, created_run):
@@ -77,7 +140,7 @@ def test_the_bundle_carries_the_engine_and_the_config(runner_client, created_run
     assert body["engine"] == workspace["engine"]
     assert body["engine_version"] == workspace["engine_version"]
     assert body["config_url"].startswith("https://")
-    assert body["run_role"]["role_arn"] == workspace["run_role_arn"]
+    assert body["run_role_arn"] == workspace["run_role_arn"]
 
 
 def test_the_bundle_says_whether_the_plan_destroys(runner_client, created_run):
@@ -303,70 +366,97 @@ def test_a_token_cannot_mint_an_upload_for_another_run(runner_client):
     assert response.status_code == 401
 
 
-def test_the_bundle_run_role_binds_the_external_id_to_the_workspace(runner_client, created_run, workspace):
-    """The external id is the workspace id, so one workspace's role is not another's.
+def test_the_bundle_vends_the_run_role_through_the_vending_role(
+    runner_client, created_run, workspace, sts_requests, settings
+):
+    """The API assumes the vending role, then the run role with the workspace id as the external id.
 
-    A run role trusted with that condition cannot be assumed by a run against a
-    different workspace even if its arn leaks.
+    The runner receives keys, never a role it could assume itself, so nothing a
+    plan runs can reach another workspace's role through the task.
     """
-    role = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()["run_role"]
-    assert role["external_id"] == workspace["workspace_id"]
-    assert role["duration_seconds"] == 3600
+    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
+    vending_request, run_role_request, state_request = sts_requests
+    assert vending_request["RoleArn"] == settings.RUN_CREDENTIALS_ROLE_ARN
+    assert run_role_request["RoleArn"] == workspace["run_role_arn"]
+    assert run_role_request["ExternalId"] == workspace["workspace_id"]
+    assert run_role_request["DurationSeconds"] == 3600
+    assert state_request["RoleArn"] == settings.RUN_STATE_ROLE_ARN
+    assert "ExternalId" not in state_request
+    role_name = workspace["run_role_arn"].rsplit("/", 1)[-1]
+    assert body["run_role_arn"] == workspace["run_role_arn"]
+    assert body["aws_credentials"]["access_key_id"] == f"ASIA-{role_name}"
+    state_name = settings.RUN_STATE_ROLE_ARN.rsplit("/", 1)[-1]
+    assert body["backend"]["credentials"]["access_key_id"] == f"ASIA-{state_name}"
+    assert "run_role" not in body
 
 
-def test_the_plan_phase_gets_a_read_only_session_policy(runner_client, created_run):
-    """A planning run's policy grants no write outside its own artifacts.
+def test_the_plan_phase_gets_a_read_only_session(runner_client, created_run, sts_requests):
+    """A planning run's workspace session is ReadOnlyAccess, and its state keys only take the lock.
 
     A plan that could write is the whole risk being designed out here: the
-    read-only policy is what makes an unreviewed plan safe to run.
+    read-only session is what makes an unreviewed plan safe to run.
     """
     body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
     assert body["phase"] == "plan"
-    statements = body["run_role"]["session_policy"]["Statement"]
-    assert not any(statement.get("Action") == "*" for statement in statements)
-    assert {statement["Sid"] for statement in statements} == {
-        "StateAndLock",
-        "PlanArtifacts",
-        "StateEncryption",
-    }
+    run_role_request, state_request = sts_requests[1], sts_requests[2]
+    assert run_role_request["PolicyArns"] == [{"arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}]
+    assert "Policy" not in run_role_request
+    sids = {statement["Sid"] for statement in json.loads(state_request["Policy"])["Statement"]}
+    assert sids == {"WorkspaceStateReads", "WorkspaceStateLocks", "ListWorkspaceState", "StateEncryption"}
 
 
-def test_the_plan_bundle_carries_the_managed_read_only_policy_arn(runner_client, created_run):
-    """The bundle hands the runner the ReadOnlyAccess ARN to union in.
-
-    The inline document grants no reads at all now, so a bundle that dropped
-    this field would give a plan a session that cannot refresh state.
-    """
-    role = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()["run_role"]
-    assert role["session_policy_arns"] == ["arn:aws:iam::aws:policy/ReadOnlyAccess"]
-
-
-def test_the_apply_bundle_carries_no_session_policy_arns(auth_client, runner_client, awaiting_confirmation):
-    """An apply's session unions nothing, because its inline policy allows everything."""
-    run_id = awaiting_confirmation["run_id"]
-    auth_client.post(f"{BASE}/{run_id}/confirm")
-    role = runner_client.get(f"{BASE}/{run_id}/bundle").json()["run_role"]
-    assert role["session_policy_arns"] == []
+def test_the_state_keys_are_scoped_to_the_workspace_prefix(runner_client, created_run, workspace, sts_requests):
+    """The state session reaches only `workspaces/<id>/`, so another workspace's state is out of reach."""
+    runner_client.get(f"{BASE}/{created_run['run_id']}/bundle")
+    document = json.loads(sts_requests[2]["Policy"])
+    prefix = f"workspaces/{workspace['workspace_id']}/"
+    for statement in document["Statement"]:
+        if statement["Sid"] == "ListWorkspaceState":
+            assert statement["Condition"]["StringLike"]["s3:prefix"] == [f"{prefix}*"]
+        elif statement["Sid"] != "StateEncryption":
+            assert all(f"/{prefix}" in resource for resource in statement["Resource"])
 
 
-def test_the_apply_phase_gets_an_unrestricted_session_policy(auth_client, runner_client, awaiting_confirmation):
-    """An applying run needs to make the changes its plan described."""
+def test_the_apply_phase_gets_an_unrestricted_session(auth_client, runner_client, awaiting_confirmation, sts_requests):
+    """An applying run needs to make the changes its plan described, and to write its state."""
     run_id = awaiting_confirmation["run_id"]
     auth_client.post(f"{BASE}/{run_id}/confirm")
     body = runner_client.get(f"{BASE}/{run_id}/bundle").json()
     assert body["phase"] == "apply"
-    assert body["run_role"]["session_policy"]["Statement"][0]["Action"] == "*"
+    run_role_request, state_request = sts_requests[-2], sts_requests[-1]
+    assert "PolicyArns" not in run_role_request
+    assert "Policy" not in run_role_request
+    sids = {statement["Sid"] for statement in json.loads(state_request["Policy"])["Statement"]}
+    assert "WorkspaceStateWrites" in sids
 
 
-def test_the_phase_comes_from_the_status_not_the_caller(runner_client, created_run):
-    """A plan-phase runner cannot request the apply policy by asking for it.
+def test_the_phase_comes_from_the_status_not_the_caller(runner_client, created_run, sts_requests):
+    """A plan-phase runner cannot request the apply session by asking for it.
 
     Deriving the phase from the stored status closes the escalation where a
-    compromised plan runner asks for the unrestricted policy.
+    compromised plan runner asks for unrestricted keys.
     """
     body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle", params={"phase": "apply"}).json()
     assert body["phase"] == "plan"
-    assert body["run_role"]["session_policy"]["Statement"][0].get("Action") != "*"
+    assert sts_requests[1]["PolicyArns"] == [{"arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}]
+
+
+def test_a_run_role_that_refuses_the_vending_role_is_409(runner_client, created_run, workspace, monkeypatch):
+    """The refusal is the run role check's failure, which the runner reports as `AssumeRoleFailed`."""
+    requests: list[dict[str, Any]] = []
+    refusing = RecordingSTS(requests, refuse=workspace["run_role_arn"])
+    monkeypatch.setattr(vending, "_sts", lambda settings, credentials=None: refusing)
+    response = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle")
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "RUN_ROLE_ASSUME_FAILED"
+    assert "secret" not in response.text
+
+
+def test_vending_without_a_vending_role_raises(created_run, settings, monkeypatch):
+    """The service refuses outright, so no code path falls back to the runner's own role."""
+    monkeypatch.setattr(settings, "RUN_CREDENTIALS_ROLE_ARN", "")
+    with pytest.raises(vending.VendingUnavailable):
+        runs_service.run_bundle(created_run["run_id"], settings=settings)
 
 
 def test_a_token_cannot_open_a_bundle_for_another_id(runner_client):
@@ -400,8 +490,8 @@ def test_a_human_scope_cannot_report_a_phase(auth_client, created_run):
     assert response.status_code == 401
 
 
-def test_the_runner_reports_a_plan_result(runner_client, created_run):
-    """The runner's own token advances the run."""
+def test_the_runner_reports_a_plan_result(runner_client, created_run, stepfunctions):
+    """The runner's own token advances the run, and the API completes the phase's task for it."""
     response = runner_client.post(
         f"{BASE}/{created_run['run_id']}/phase-result",
         json={"phase": "plan", "exit_code": 0, "changes": {"add": 1, "change": 0, "destroy": 0}, "error": ""},
@@ -410,9 +500,13 @@ def test_the_runner_reports_a_plan_result(runner_client, created_run):
     body = response.json()
     assert body["run_id"] == created_run["run_id"]
     assert body["status"] == "awaiting_confirmation"
+    assert stepfunctions.failures == []
+    (success,) = stepfunctions.successes
+    assert success["taskToken"] == TASK_TOKEN
+    assert json.loads(success["output"]) == {"exit_code": 0, "changes": {"add": 1, "change": 0, "destroy": 0}}
 
 
-def test_the_runner_reports_the_payload_it_actually_sends(runner_client, created_run):
+def test_the_runner_reports_the_payload_it_actually_sends(runner_client, created_run, stepfunctions):
     """The runner's literal payload is accepted, null error and extra fields and all.
 
     The runner posts its own `PhaseResult`, which carries `run_id` and
@@ -436,7 +530,7 @@ def test_the_runner_reports_the_payload_it_actually_sends(runner_client, created
     assert runs_service.get_run(created_run["run_id"]).get("error", "") == ""
 
 
-def test_a_null_error_does_not_become_the_string_none(runner_client, created_run):
+def test_a_null_error_does_not_become_the_string_none(runner_client, created_run, stepfunctions):
     """A failed phase reporting a null error errors on the exit code, not on "None"."""
     response = runner_client.post(
         f"{BASE}/{created_run['run_id']}/phase-result",
@@ -447,17 +541,64 @@ def test_a_null_error_does_not_become_the_string_none(runner_client, created_run
     assert "None" not in runs_service.get_run(created_run["run_id"])["error"]
 
 
-def test_the_runner_reports_a_failure(runner_client, created_run):
-    """A reported failure errors the run."""
+def test_the_runner_reports_a_failure(runner_client, created_run, stepfunctions):
+    """A reported failure errors the run and fails the phase's task."""
     response = runner_client.post(
         f"{BASE}/{created_run['run_id']}/phase-result",
         json={"phase": "plan", "exit_code": 1, "changes": {}, "error": "boom"},
     )
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "errored"
+    assert stepfunctions.successes == []
+    assert [(entry["taskToken"], entry["error"]) for entry in stepfunctions.failures] == [(TASK_TOKEN, "PhaseFailed")]
 
 
-def test_a_phase_result_for_the_wrong_phase_is_409(runner_client, created_run):
+def test_a_named_runner_failure_fails_the_task_with_that_name(runner_client, created_run, stepfunctions):
+    """`error_name` is failed through as is, and the state machine's error path marks the run."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={
+            "phase": "plan",
+            "exit_code": 1,
+            "changes": {},
+            "error": "role refused",
+            "error_name": "AssumeRoleFailed",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "planning"
+    (failure,) = stepfunctions.failures
+    assert failure == {"taskToken": TASK_TOKEN, "error": "AssumeRoleFailed", "cause": "role refused"}
+    assert stepfunctions.successes == []
+
+
+def test_an_error_name_is_a_bare_identifier(runner_client, created_run, stepfunctions):
+    """A name that could smuggle text into the run's error message is refused."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "plan", "exit_code": 1, "changes": {}, "error": "", "error_name": "Bad name."},
+    )
+    assert response.status_code == 422
+    assert stepfunctions.failures == []
+
+
+def test_a_phase_result_whose_task_cannot_be_resolved_is_409(runner_client, created_run, monkeypatch):
+    """With no live runner task behind the token, nothing is recorded and nothing is sent."""
+
+    def unresolved(run, phase, *, settings):
+        raise phase_tasks.PhaseTaskUnresolved("no runner task")
+
+    monkeypatch.setattr(phase_tasks, "phase_token", unresolved)
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "plan", "exit_code": 0, "changes": {}, "error": ""},
+    )
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "PHASE_TASK_UNRESOLVED"
+    assert runs_service.get_run(created_run["run_id"])["status"] == "planning"
+
+
+def test_a_phase_result_for_the_wrong_phase_is_409(runner_client, created_run, stepfunctions):
     """An apply result on a planning run is refused at the route."""
     response = runner_client.post(
         f"{BASE}/{created_run['run_id']}/phase-result",

@@ -46,11 +46,11 @@ def _finish_plan(run_id: str) -> None:
 
 
 def _bundle_role(app, run: dict[str, Any]) -> str:
-    """The role ARN the runner is told to assume for `run`."""
+    """The role ARN the bundle vended credentials for on `run`."""
     with TestClient(app, headers={"Authorization": f"Bearer {runner_token(run['run_id'])}"}) as runner:
         response = runner.get(f"{RUNS}/{run['run_id']}/bundle")
     assert response.status_code == 200, response.text
-    return str(response.json()["run_role"]["role_arn"])
+    return str(response.json()["run_role_arn"])
 
 
 def test_staging_keeps_the_current_role(auth_client, workspace):

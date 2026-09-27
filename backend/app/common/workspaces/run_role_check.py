@@ -58,8 +58,10 @@ EVIDENCE_SCAN_LIMIT: Final = 50
 """How many of a workspace's newest runs are read looking for a verdict."""
 
 RUN_ROLE_ASSUME_FAILED_MESSAGE: Final = (
-    "The runner could not assume the role. Its trust policy has to name every runner task role "
-    "with the workspace id as the external id, and its name has to keep the suggested prefix."
+    "WebbPulse Terraform could not assume the role. Its trust policy has to name the credential "
+    "vending role in the run role setup with the workspace id as the external id, and its name has "
+    "to keep the suggested prefix. A role made by Quick setup before that change needs its stack "
+    "updated with the current template, or Quick setup run again."
 )
 """Why a role the runner could not assume failed, since STS will not say which part."""
 

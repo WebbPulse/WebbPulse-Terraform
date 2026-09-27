@@ -977,7 +977,10 @@ export interface paths {
         put?: never;
         /**
          * Phase Result
-         * @description Record a phase's outcome and advance the run. Runner only.
+         * @description Record a phase's outcome, advance the run and resolve its task token. Runner only.
+         *
+         *     The runner holds no Step Functions permission, so this is how both a result and
+         *     a failure reach the waiting state.
          */
         post: operations["phase_result_api_v1_runs__run_id__phase_result_post"];
         delete?: never;
@@ -1543,6 +1546,7 @@ export interface components {
         BackendConfig: {
             /** Bucket */
             bucket: string;
+            credentials: components["schemas"]["VendedCredentials"];
             /** Key */
             key: string;
             /**
@@ -1934,6 +1938,8 @@ export interface components {
              * @default
              */
             error?: string | null;
+            /** Error Name */
+            error_name?: string | null;
             /** Exit Code */
             exit_code: number;
             /**
@@ -2157,7 +2163,7 @@ export interface components {
          * RunBundle
          * @description Everything the runner needs for one phase of one run.
          *
-         *     The shape is the runner's `Bundle`: the nested `backend`, `run_role` and
+         *     The shape is the runner's `Bundle`: the nested `backend`, `aws_credentials` and
          *     `artifacts` objects are what `runner/app/models.py` validates, as is
          *     `is_destroy`, which selects `plan -destroy`. The other extra top level fields
          *     are what the runner ignores for now but the API states about the phase it is
@@ -2169,6 +2175,7 @@ export interface components {
          */
         RunBundle: {
             artifacts: components["schemas"]["Artifacts"];
+            aws_credentials: components["schemas"]["VendedCredentials"];
             backend: components["schemas"]["BackendConfig"];
             /** Config Url */
             config_url: string;
@@ -2181,6 +2188,13 @@ export interface components {
             engine_version: string;
             /** Environment Variables */
             environment_variables: {
+                [key: string]: string;
+            };
+            /**
+             * Hcl Variables
+             * @default {}
+             */
+            hcl_variables?: {
                 [key: string]: string;
             };
             /**
@@ -2197,7 +2211,8 @@ export interface components {
             plan_only: boolean;
             /** Run Id */
             run_id: string;
-            run_role: components["schemas"]["RunRole"];
+            /** Run Role Arn */
+            run_role_arn: string;
             /** Terraform Variables */
             terraform_variables: {
                 [key: string]: string;
@@ -2402,33 +2417,6 @@ export interface components {
             url: string;
         };
         /**
-         * RunRole
-         * @description The per workspace role the engine runs as, with the phase session policy.
-         *
-         *     The external id is the workspace id, so a role trusted for one workspace
-         *     cannot be assumed by a run against another.
-         */
-        RunRole: {
-            /**
-             * Duration Seconds
-             * @default 3600
-             */
-            duration_seconds?: number;
-            /** External Id */
-            external_id: string;
-            /** Role Arn */
-            role_arn: string;
-            /** Session Policy */
-            session_policy: {
-                [key: string]: unknown;
-            };
-            /**
-             * Session Policy Arns
-             * @default []
-             */
-            session_policy_arns?: string[];
-        };
-        /**
          * RunRoleCheck
          * @description Whether the runner can assume a workspace's run role, from its own record.
          *
@@ -2509,8 +2497,9 @@ export interface components {
          *     The role cannot exist before the workspace does: its trust policy names the
          *     workspace id as the external id, so the id has to be handed out first. Every
          *     workspace response carries these three values so the setup can be followed
-         *     without reading the stack's outputs. The runner task roles are the only
-         *     principals the trust policy needs: the API never assumes the role.
+         *     without reading the stack's outputs. The control plane's credential vending
+         *     role is the only principal the trust policy may name: it assumes the role on
+         *     each phase's behalf, so no runner task holds a path to it.
          */
         RunRoleSetup: {
             /** External Id */
@@ -2756,6 +2745,23 @@ export interface components {
             value: string;
         };
         /**
+         * VendedCredentials
+         * @description One hour of AWS keys the control plane assumed for a phase.
+         */
+        VendedCredentials: {
+            /** Access Key Id */
+            access_key_id: string;
+            /**
+             * Expiration
+             * @default
+             */
+            expiration?: string;
+            /** Secret Access Key */
+            secret_access_key: string;
+            /** Session Token */
+            session_token: string;
+        };
+        /**
          * WebhookConfig
          * @description Where the App's webhook now delivers, and the events the bridge expects it to carry.
          *
@@ -2807,6 +2813,11 @@ export interface components {
             run_role_arn?: string | null;
             /** Run Role Checked At */
             run_role_checked_at?: string | null;
+            /**
+             * Run Role Reconnect Required
+             * @default false
+             */
+            run_role_reconnect_required?: boolean;
             run_role_setup: components["schemas"]["RunRoleSetup"];
             /**
              * Speculative Plans

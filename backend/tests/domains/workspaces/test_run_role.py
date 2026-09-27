@@ -15,7 +15,7 @@ from app.common.db.tables import RUNS_COLLECTION
 from app.common.workspaces import run_role_check
 from app.domains.runs import service as runs_service
 from app.domains.workspaces import service
-from tests.conftest import RUN_ROLE_NAME_PREFIX, RUNNER_TASK_ROLE_ARNS, WORKSPACE_PAYLOAD
+from tests.conftest import RUN_CREDENTIALS_ROLE_ARN, RUN_ROLE_NAME_PREFIX, RUNNER_TASK_ROLE_ARNS, WORKSPACE_PAYLOAD
 
 BASE = "/api/v1/workspaces"
 
@@ -89,8 +89,8 @@ def test_create_still_rejects_a_too_short_run_role(auth_client):
 def test_every_workspace_response_carries_the_run_role_setup(auth_client, workspace):
     """The three values needed to build the role ride on the create response."""
     setup = workspace["run_role_setup"]
-    assert setup["principal_arns"] == RUNNER_TASK_ROLE_ARNS
-    assert setup["principal_arn"] == RUNNER_TASK_ROLE_ARNS[0]
+    assert setup["principal_arns"] == [RUN_CREDENTIALS_ROLE_ARN]
+    assert setup["principal_arn"] == RUN_CREDENTIALS_ROLE_ARN
     assert setup["external_id"] == workspace["workspace_id"]
     assert setup["role_name"] == RUN_ROLE_NAME_PREFIX + workspace["workspace_id"].removeprefix("ws-")
 
@@ -402,9 +402,15 @@ def test_a_real_plan_only_run_is_the_check(auth_client, plan_only_run):
     assert body["run_id"] == plan_only_run["run_id"]
 
 
-def test_the_setup_names_every_runner_task_role(workspace):
-    """A trust policy naming only one phase's role would break the other phase."""
-    assert len(workspace["run_role_setup"]["principal_arns"]) == len(RUNNER_TASK_ROLE_ARNS)
+def test_the_setup_trusts_the_vending_role_and_no_runner_task_role(workspace):
+    """A run role trusts only the control plane's vending role, never a runner task role.
+
+    Plan time code can reach the task role's credentials, so a trust naming it
+    would hand a plan the run role without the read only session policy.
+    """
+    principals = workspace["run_role_setup"]["principal_arns"]
+    assert principals == [RUN_CREDENTIALS_ROLE_ARN]
+    assert not set(principals) & set(RUNNER_TASK_ROLE_ARNS)
 
 
 def test_a_run_role_can_be_attached_after_the_fact(auth_client):

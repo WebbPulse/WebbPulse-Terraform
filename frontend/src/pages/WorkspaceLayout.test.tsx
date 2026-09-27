@@ -1143,6 +1143,34 @@ describe('Connect AWS', () => {
     ).toHaveTextContent('123456789012');
   });
 
+  it('asks for a reconnect when the stack predates credential vending', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        aws_connection: aReport(),
+        run_role_reconnect_required: true,
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const notice = await screen.findByTestId('aws-reconnect-required');
+    expect(notice).toHaveTextContent('Reconnect required');
+    expect(notice).toHaveTextContent('123456789012');
+  });
+
+  it('shows no reconnect notice for a current stack', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ aws_connection: aReport() })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    await screen.findByTestId('connected-account');
+    expect(
+      screen.queryByTestId('aws-reconnect-required')
+    ).not.toBeInTheDocument();
+  });
+
   it('shows the reported account as connected and links the verification run', async () => {
     apiMock.getWorkspace.mockResolvedValue(
       aWorkspace({
