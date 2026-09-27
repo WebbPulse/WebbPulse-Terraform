@@ -564,6 +564,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/github/app/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Configure Webhook
+         * @description Point the App's webhook at this API and set its secret from the `app` secret.
+         */
+        post: operations["configure_webhook_api_v1_github_app_webhook_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/github/install-state": {
         parameters: {
             query?: never;
@@ -2691,6 +2711,22 @@ export interface components {
             size_bytes: number;
         };
         /**
+         * WebhookConfig
+         * @description Where the App's webhook now delivers, and the events the bridge expects it to carry.
+         *
+         *     The secret is set but never echoed.
+         */
+        WebhookConfig: {
+            /** Content Type */
+            content_type: string;
+            /** Events */
+            events: string[];
+            /** Insecure Ssl */
+            insecure_ssl: string;
+            /** Url */
+            url: string;
+        };
+        /**
          * Workspace
          * @description A stored workspace, with everything the run role setup needs.
          */
@@ -4102,6 +4138,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ManifestStart"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    configure_webhook_api_v1_github_app_webhook_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookConfig"];
                 };
             };
             /** @description Request validation failed. */

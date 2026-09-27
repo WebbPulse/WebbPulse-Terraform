@@ -3009,6 +3009,38 @@
         "title": "VcsUploadCreate",
         "type": "object"
       },
+      "WebhookConfig": {
+        "description": "Where the App's webhook now delivers, and the events the bridge expects it to carry.\n\nThe secret is set but never echoed.",
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "insecure_ssl": {
+            "title": "Insecure Ssl",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "content_type",
+          "insecure_ssl",
+          "events"
+        ],
+        "title": "WebhookConfig",
+        "type": "object"
+      },
       "Workspace": {
         "description": "A stored workspace, with everything the run role setup needs.",
         "properties": {
@@ -4677,6 +4709,38 @@
           }
         },
         "summary": "Start Manifest",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/app/webhook": {
+      "post": {
+        "description": "Point the App's webhook at this API and set its secret from the `app` secret.",
+        "operationId": "configure_webhook_api_v1_github_app_webhook_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Configure Webhook",
         "tags": [
           "github"
         ]

@@ -40,6 +40,7 @@ from webbpulse.ops.config import SecretStore
 from ...common.composition.settings import Settings, get_settings
 from ...common.db import repositories
 from ...common.github.loader import github_app_settings, invalidate
+from ...common.github.webhooks import WEBHOOK_PATH, webhook_secret
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,9 @@ PERMISSIONS: Final = {
 }
 """What the App asks for: read a repository's code, report runs back on commits and PRs."""
 
+WEBHOOK_EVENTS: Final = ("push", "pull_request")
+"""The events the VCS bridge acts on; a tag push arrives as a `push`."""
+
 
 class AppAlreadyConfigured(Exception):
     """The environment already has its one App."""
@@ -95,6 +99,14 @@ class SlugMissing(Exception):
 
 class InstallationNotFound(Exception):
     """No stored installation carries that id."""
+
+
+class WebhookUrlMissing(Exception):
+    """No API origin is configured, so there is nowhere to point the webhook."""
+
+
+class WebhookSecretMissing(Exception):
+    """The `app` secret holds no webhook secret to sign deliveries with."""
 
 
 def http_client() -> httpx.Client | None:
@@ -141,25 +153,72 @@ def _app_client(settings: Settings) -> GitHubAppClient:
     return GitHubAppClient.from_settings(_app_settings(settings), client=http_client())
 
 
-def _fetch_app(settings: GitHubAppSettings) -> dict[str, Any]:
-    """The App as `GET /app` describes it, read with the App JWT."""
+def _app_request(settings: GitHubAppSettings, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+    """One call GitHub authenticates with the App JWT rather than an installation token."""
     with GitHubAppClient.from_settings(settings) as app:
         jwt = app.app_jwt()
     http = http_client() or httpx.Client(timeout=APP_READ_TIMEOUT_SECONDS, follow_redirects=False)
     with http:
         try:
-            response = http.get(
-                f"{API_ROOT}/app",
+            response = http.request(
+                method,
+                f"{API_ROOT}{path}",
+                json=body,
                 headers={"Accept": ACCEPT, "X-GitHub-Api-Version": API_VERSION, "Authorization": f"Bearer {jwt}"},
             )
         except httpx.HTTPError as exc:
-            raise GitHubError("GET /app did not answer", method="GET", path="/app") from exc
+            raise GitHubError(f"{method} {path} did not answer", method=method, path=path) from exc
     if response.status_code >= 400:
         raise GitHubError(
-            f"GET /app answered {response.status_code}", method="GET", path="/app", status_code=response.status_code
+            f"{method} {path} answered {response.status_code}",
+            method=method,
+            path=path,
+            status_code=response.status_code,
         )
-    body = response.json()
+    return response.json()
+
+
+def _fetch_app(settings: GitHubAppSettings) -> dict[str, Any]:
+    """The App as `GET /app` describes it, read with the App JWT."""
+    body = _app_request(settings, "GET", "/app")
     return body if isinstance(body, dict) else {}
+
+
+def webhook_url(settings: Settings) -> str:
+    """Where GitHub delivers the App's webhooks: this API's webhook route."""
+    base = settings.API_BASE_URL.strip().rstrip("/")
+    if not base:
+        raise WebhookUrlMissing
+    return f"{base}{WEBHOOK_PATH}"
+
+
+def sync_webhook(settings: Settings | None = None) -> dict[str, Any]:
+    """Point the App's webhook at this API and sign it with the `app` secret's webhook secret.
+
+    GitHub's `PATCH /app/hook/config` sets the URL, the payload format and the secret.
+    Whether the hook is active and which events it carries are only settable on the
+    App's settings page, so those stay a manual step. The secret is never returned.
+    """
+    resolved = settings or get_settings()
+    configured = _app_settings(resolved)
+    url = webhook_url(resolved)
+    secret = webhook_secret(resolved)
+    if secret is None:
+        raise WebhookSecretMissing
+    body = _app_request(
+        configured,
+        "PATCH",
+        "/app/hook/config",
+        {"url": url, "content_type": "json", "secret": secret, "insecure_ssl": "0"},
+    )
+    answered = body if isinstance(body, dict) else {}
+    logger.info("GitHub App webhook configured", extra={"event": "github.app.webhook_configured", "url": url})
+    return {
+        "url": str(answered.get("url") or url),
+        "content_type": str(answered.get("content_type") or "json"),
+        "insecure_ssl": str(answered.get("insecure_ssl") or "0"),
+        "events": list(WEBHOOK_EVENTS),
+    }
 
 
 def refresh_app(settings: Settings | None = None) -> None:
@@ -277,9 +336,14 @@ def consume_state(value: str | None, purpose: str, settings: Settings | None = N
 
 
 def manifest_for(name: str, settings: Settings) -> dict[str, Any]:
-    """The App manifest GitHub creates the App from."""
+    """The App manifest GitHub creates the App from.
+
+    With an API origin configured the App subscribes to the bridge's events and
+    delivers them to this API, and GitHub generates the webhook secret the
+    conversion stores. Without one the App is created with no webhook.
+    """
     base = _frontend_base(settings)
-    return {
+    manifest: dict[str, Any] = {
         "name": name,
         "url": base,
         "redirect_url": f"{base}{CREATED_PATH}",
@@ -289,6 +353,11 @@ def manifest_for(name: str, settings: Settings) -> dict[str, Any]:
         "default_permissions": dict(PERMISSIONS),
         "default_events": [],
     }
+    try:
+        url = webhook_url(settings)
+    except WebhookUrlMissing:
+        return manifest
+    return {**manifest, "default_events": list(WEBHOOK_EVENTS), "hook_attributes": {"url": url, "active": True}}
 
 
 def default_app_name(settings: Settings) -> str:

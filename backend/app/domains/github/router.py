@@ -34,6 +34,7 @@ from .schemas.github import (
     ManifestStart,
     ManifestStartRequest,
     RepositoryList,
+    WebhookConfig,
 )
 
 router = APIRouter(prefix="/github", dependencies=[Depends(scopes(ADMIN))])
@@ -49,6 +50,8 @@ SLUG_MISSING = "GITHUB_APP_SLUG_MISSING"
 GITHUB_UNAVAILABLE = "GITHUB_UNAVAILABLE"
 CODE_REJECTED = "GITHUB_MANIFEST_CODE_REJECTED"
 SECRET_WRITE_FAILED = "GITHUB_SECRET_WRITE_FAILED"
+WEBHOOK_URL_MISSING = "GITHUB_WEBHOOK_URL_MISSING"
+WEBHOOK_SECRET_MISSING = "GITHUB_WEBHOOK_SECRET_MISSING"
 
 
 def _error(status_code: int, message: str, error_code: str) -> HTTPException:
@@ -79,6 +82,10 @@ def _github_errors() -> Iterator[None]:
         raise _error(409, "No frontend URL is configured for the callbacks.", FRONTEND_URL_MISSING) from error
     except service.SlugMissing as error:
         raise _error(409, "The GitHub App's slug is unknown, so it cannot be installed.", SLUG_MISSING) from error
+    except service.WebhookUrlMissing as error:
+        raise _error(409, "No API URL is configured for the webhook.", WEBHOOK_URL_MISSING) from error
+    except service.WebhookSecretMissing as error:
+        raise _error(409, "The app secret holds no webhook secret.", WEBHOOK_SECRET_MISSING) from error
     except service.InstallationNotFound as error:
         raise _error(404, "No such installation.", "NOT_FOUND") from error
     except GitHubNotConfigured as error:
@@ -123,6 +130,13 @@ def convert_manifest(
             return service.complete_manifest(code=payload.code, state=payload.state, actor=_actor(current))
         except (GitHubNotFound, GitHubUnprocessable) as error:
             raise _error(400, "GitHub did not accept that code. Create the App again.", CODE_REJECTED) from error
+
+
+@router.post("/app/webhook", response_model=WebhookConfig)
+def configure_webhook() -> dict[str, Any]:
+    """Point the App's webhook at this API and set its secret from the `app` secret."""
+    with _github_errors():
+        return service.sync_webhook()
 
 
 @router.post("/install-state", response_model=InstallStart)

@@ -45,6 +45,7 @@ class FakeGitHub:
     repositories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     conversions: dict[str, dict[str, Any]] = field(default_factory=dict)
     app: dict[str, Any] | None = None
+    hook_config: dict[str, Any] = field(default_factory=dict)
     requests: list[httpx.Request] = field(default_factory=list)
     failure: int | None = None
 
@@ -54,6 +55,10 @@ class FakeGitHub:
         if self.failure is not None:
             return httpx.Response(self.failure, json={"message": "failed"})
         path = request.url.path
+        if path == "/app/hook/config" and request.method == "PATCH":
+            self.hook_config.update(json.loads(request.content))
+            shown = {**self.hook_config, "secret": "********"} if "secret" in self.hook_config else self.hook_config
+            return httpx.Response(200, json=shown)
         if path == "/app":
             return (
                 httpx.Response(200, json=self.app) if self.app else httpx.Response(404, json={"message": "Not Found"})
