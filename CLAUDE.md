@@ -282,6 +282,22 @@ same source cancels that source's pending runs and discards one awaiting
 confirmation; a late older upload starts nothing. A workspace with no run role is
 skipped.
 
+### VCS webhooks
+
+The App's webhooks are the second way in, running alongside the uploads until
+they replace them. GitHub posts to `POST /api/v1/github/webhooks` (no
+authorizer); `WebhookSignatureMiddleware` (`app/common/github/webhooks.py`), the
+outermost layer of the github function, checks `X-Hub-Signature-256` against the
+app secret's `GITHUB_WEBHOOK_SECRET` and answers 401 before routing. A branch push
+or a same-repository pull request (opened, synchronize, reopened) is queued on
+`github-webhooks`; forks, tags and other events are acknowledged and dropped.
+`app/domains/runs/consumers/webhooks.py` resolves the commit (a pull request waits
+for GitHub's merge commit and uses it, reporting on the head), takes the changed
+paths from the push payload or `/pulls/{n}/files`, fetches the tarball with an
+installation token and writes the same record and `ingest/` object, repacked with
+`.webbpulse/changed-paths.txt`. A delivery no workspace would run on is reported
+"No runs needed" without a fetch. The upload id derives from the delivery id.
+
 ### VCS run reporting
 
 The runs table streams (filtered to `vcs_*` runs) to the runs function, and

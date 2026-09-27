@@ -53,6 +53,10 @@ class Domain:
     """Tags applied when the routers mount, shared by both roots."""
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra keyword arguments for `create_app`."""
+    install_outer_middleware: Callable[["FastAPI", Settings], None] | None = None
+    """Adds middleware outside every other layer, so it runs before routing and the app.
+
+    Both roots call it last, which in Starlette makes it the outermost layer."""
 
     @property
     def service_name(self) -> str:
@@ -120,6 +124,20 @@ def _github_routers() -> "list[APIRouter]":
     return [router]
 
 
+def _github_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
+    """The webhook route, which carries its full path and no admin guard."""
+    from app.domains.github.webhooks_router import router
+
+    return [router]
+
+
+def _github_outer_middleware(app: "FastAPI", settings: Settings) -> None:
+    """The webhook signature gate, outside everything else on the github function."""
+    from ..github.webhooks import WebhookSignatureMiddleware
+
+    app.add_middleware(WebhookSignatureMiddleware, settings=settings)
+
+
 def _registry_routers() -> "list[APIRouter]":
     """Import and return the registry domain's `/api/v1` routers."""
     from app.domains.registry.router import router
@@ -158,7 +176,9 @@ DOMAINS: Final[dict[str, Domain]] = {
         name="github",
         title="WebbPulse Terraform GitHub",
         load_routers=_github_routers,
+        load_unprefixed_routers=_github_unprefixed_routers,
         router_tags=("github",),
+        install_outer_middleware=_github_outer_middleware,
     ),
     "registry": Domain(
         name="registry",
@@ -207,6 +227,8 @@ def build_domain_app(domain: Domain | str, *, settings: Settings | None = None) 
 
     app.add_middleware(TrailingSlashMiddleware, router=app.router)
     app.add_middleware(DomainHeaderMiddleware, domain=resolved_domain.name)
+    if resolved_domain.install_outer_middleware is not None:
+        resolved_domain.install_outer_middleware(app, resolved)
     return app
 
 

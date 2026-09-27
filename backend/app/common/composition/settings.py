@@ -78,6 +78,10 @@ class Settings(BaseServiceSettings):
     RUNNER_LOG_GROUP: str = ""
     WORKSPACE_CLEANUP_QUEUE_URL: str = ""
     """The queue a workspace delete sends its S3 purge to. Unset, the delete purges inline."""
+    GITHUB_WEBHOOKS_QUEUE_URL: str = ""
+    """The queue the webhook route sends each verified delivery to, for the runs function."""
+    API_BASE_URL: str = ""
+    """The API's public origin, which the App's webhook URL is built on."""
     APP_SECRETS_ARN: str = ""
     """The one JSON app secret every runtime key is read from.
 

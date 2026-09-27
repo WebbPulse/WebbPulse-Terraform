@@ -24,7 +24,7 @@ from webbpulse.events import register_stream_consumer
 
 from ....common.composition.settings import Settings
 from ....common.workspaces import cleanup
-from . import confirmations, ingest, reports, task_failures
+from . import confirmations, ingest, reports, task_failures, webhooks
 
 _log = logging.getLogger(__name__)
 
@@ -59,11 +59,17 @@ def _ingest(record: Mapping[str, Any], settings: Settings | None) -> None:
     ingest.handle_record(record, settings=settings)
 
 
+def _webhook(record: Mapping[str, Any], settings: Settings | None) -> None:
+    """Hand one verified GitHub delivery to the webhooks consumer, discarding the upload id."""
+    webhooks.handle_record(record, settings=settings)
+
+
 HANDLERS: dict[str, Handler] = {
     confirmations.CONFIRMATION_KIND: lambda record, settings: confirmations.handle_record(record, settings=settings),
     task_failures.TASK_FAILURE_KIND: lambda record, settings: task_failures.handle_record(record, settings=settings),
     ingest.INGEST_KIND: lambda record, settings: _ingest(record, settings),
     cleanup.CLEANUP_KIND: lambda record, settings: cleanup.handle_record(record, settings=settings),
+    webhooks.KIND: lambda record, settings: _webhook(record, settings),
 }
 """Each `kind` this function consumes, against the consumer that owns it."""
 
