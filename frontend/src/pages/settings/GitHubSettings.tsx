@@ -1,4 +1,4 @@
-/** Global settings for GitHub: create the App, install it and see what it reaches. Admin only. */
+/** Global settings for GitHub: create the App, point its webhook here, install it and see what it reaches. Admin only. */
 
 import { useState } from 'react';
 import {
@@ -12,9 +12,11 @@ import {
   type GitHubAppStatus,
   type Installation,
   type InstallationList,
+  type WebhookConfig,
 } from '../../api';
 import {
   Button,
+  CopyButton,
   Dialog,
   EmptyState,
   ErrorNotice,
@@ -46,6 +48,12 @@ const CRUMBS = [{ label: 'Settings' }] as const;
 /** The organization the create form starts with. */
 const DEFAULT_ORGANIZATION = 'WebbPulse';
 
+/** How GitHub's settings page names each webhook event the bridge needs. */
+const EVENT_LABELS: Readonly<Record<string, string>> = {
+  push: 'Pushes',
+  pull_request: 'Pull requests',
+};
+
 /** Who owns a new App: an organization, or the signed-in GitHub account. */
 type Owner = 'organization' | 'personal';
 
@@ -76,6 +84,7 @@ export function GitHubSettings(): React.ReactElement {
       ) : status.configured ? (
         <>
           <AppSummary app={status} />
+          <Webhook app={status} />
           <Installations app={status} />
         </>
       ) : (
@@ -315,6 +324,124 @@ function AppSummary({ app }: { app: GitHubAppStatus }): React.ReactElement {
       >
         <FinishSetup app={app} />
       </Collapsible>
+    </Section>
+  );
+}
+
+/** The App's webhook: one click points it at this API and sets its signing secret. */
+function Webhook({ app }: { app: GitHubAppStatus }): React.ReactElement {
+  const [synced, setSynced] = useState<WebhookConfig | null>(null);
+  const sync = useMutationWithRefetch(
+    () => api.syncGitHubWebhook(),
+    GITHUB_APP_KEY
+  );
+
+  const run = async (): Promise<void> => {
+    try {
+      setSynced(await sync.mutate());
+    } catch {
+      return;
+    }
+  };
+
+  const settingsUrl = app.settings_url ?? '';
+
+  return (
+    <Section
+      title="Webhook"
+      description="Where GitHub sends push and pull request events. Syncing points the App's hook at this API and sets its signing secret."
+      actions={
+        <div className="flex items-center gap-3">
+          {synced !== null && sync.error == null && !sync.isMutating ? (
+            <span
+              role="status"
+              className="inline-flex items-center gap-1.5 text-sm text-success"
+            >
+              <span
+                aria-hidden="true"
+                className="size-1.5 rounded-full bg-success"
+              />
+              Webhook synced.
+            </span>
+          ) : null}
+          <Button
+            variant="primary"
+            busy={sync.isMutating}
+            busyLabel="Syncing the webhook"
+            onClick={() => {
+              void run();
+            }}
+          >
+            Sync webhook
+          </Button>
+        </div>
+      }
+    >
+      <ErrorNotice error={sync.error} />
+      {synced === null ? (
+        <p className="text-sm text-text-muted">
+          GitHub does not report the current hook here. Sync to set it and see
+          where deliveries go.
+        </p>
+      ) : (
+        <dl
+          aria-label="Webhook configuration"
+          className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3"
+        >
+          <div className="sm:col-span-3">
+            <dt className="text-xs text-text-faint">Payload URL</dt>
+            <dd className="flex items-center gap-2">
+              <span className="font-mono break-all text-text">
+                {synced.url}
+              </span>
+              <CopyButton value={synced.url} subject="payload URL" />
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-text-faint">Content type</dt>
+            <dd className="font-mono text-text">
+              {synced.content_type === 'json'
+                ? 'application/json'
+                : synced.content_type}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-text-faint">SSL verification</dt>
+            <dd
+              className={
+                synced.insecure_ssl === '0' ? 'text-text' : 'text-warning'
+              }
+            >
+              {synced.insecure_ssl === '0' ? 'Enabled' : 'Disabled'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-text-faint">Events</dt>
+            <dd className="text-text">
+              {synced.events
+                .map((event) => EVENT_LABELS[event] ?? event)
+                .join(', ')}
+            </dd>
+          </div>
+        </dl>
+      )}
+      <p className="text-xs text-text-faint">
+        GitHub has no API for the Active setting or the event subscriptions.
+        Check both on the{' '}
+        {settingsUrl === '' ? (
+          "App's settings page"
+        ) : (
+          <a
+            href={settingsUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-accent hover:underline"
+          >
+            App's settings page
+          </a>
+        )}
+        .
+      </p>
     </Section>
   );
 }

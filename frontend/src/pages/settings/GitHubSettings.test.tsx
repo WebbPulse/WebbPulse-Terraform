@@ -241,6 +241,86 @@ describe('GitHubSettings', () => {
     expect(apiMock.removeGitHubInstallation).toHaveBeenCalledWith('77');
   });
 
+  it('syncs the webhook and shows where it now delivers', async () => {
+    apiMock.getGitHubApp.mockResolvedValue(anApp());
+    apiMock.listGitHubInstallations.mockResolvedValue({ items: [] });
+    apiMock.syncGitHubWebhook.mockResolvedValue({
+      url: 'https://api.staging.terraform.webbpulse.com/api/v1/github/webhooks',
+      content_type: 'json',
+      insecure_ssl: '0',
+      events: ['push', 'pull_request'],
+    });
+
+    renderPage();
+
+    const section = await screen.findByRole('region', { name: 'Webhook' });
+    expect(
+      within(section).getByText(/GitHub does not report the current hook/)
+    ).toBeInTheDocument();
+    expect(
+      within(section).getByRole('link', { name: "App's settings page" })
+    ).toHaveAttribute('href', anApp().settings_url);
+
+    await userEvent.click(
+      within(section).getByRole('button', { name: 'Sync webhook' })
+    );
+
+    expect(apiMock.syncGitHubWebhook).toHaveBeenCalledTimes(1);
+    expect(await within(section).findByRole('status')).toHaveTextContent(
+      'Webhook synced.'
+    );
+    expect(
+      within(section).getByText(
+        'https://api.staging.terraform.webbpulse.com/api/v1/github/webhooks'
+      )
+    ).toBeInTheDocument();
+    expect(within(section).getByText('application/json')).toBeInTheDocument();
+    expect(within(section).getByText('Enabled')).toBeInTheDocument();
+    expect(
+      within(section).getByText('Pushes, Pull requests')
+    ).toBeInTheDocument();
+    expect(
+      within(section).getByRole('button', { name: 'Copy payload URL' })
+    ).toBeInTheDocument();
+    expect(within(section).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows why a webhook sync failed and claims no success', async () => {
+    apiMock.getGitHubApp.mockResolvedValue(anApp());
+    apiMock.listGitHubInstallations.mockResolvedValue({ items: [] });
+    apiMock.syncGitHubWebhook.mockRejectedValue(
+      new Error('The app secret holds no webhook secret.')
+    );
+
+    renderPage();
+
+    const section = await screen.findByRole('region', { name: 'Webhook' });
+    await userEvent.click(
+      within(section).getByRole('button', { name: 'Sync webhook' })
+    );
+
+    expect(await within(section).findByRole('alert')).toHaveTextContent(
+      'The app secret holds no webhook secret.'
+    );
+    expect(
+      within(section).queryByText('Webhook synced.')
+    ).not.toBeInTheDocument();
+    expect(within(section).queryByText('Payload URL')).not.toBeInTheDocument();
+  });
+
+  it('offers no webhook sync before an App exists', async () => {
+    apiMock.getGitHubApp.mockResolvedValue(noApp());
+
+    renderPage();
+
+    expect(
+      await screen.findByRole('form', { name: 'Create a GitHub App' })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Sync webhook' })
+    ).not.toBeInTheDocument();
+  });
+
   it('counts selected repositories when GitHub reported them', async () => {
     apiMock.getGitHubApp.mockResolvedValue(anApp());
     apiMock.listGitHubInstallations.mockResolvedValue({

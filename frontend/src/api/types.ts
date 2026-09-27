@@ -238,6 +238,9 @@ export type ManifestStart = Schemas['ManifestStart'];
 /** The create callback's code and state, forwarded to the API. */
 export type ManifestConversionRequest = Schemas['ManifestConversionRequest'];
 
+/** Where the App's webhook now delivers, and the events to subscribe on GitHub. */
+export type WebhookConfig = Schemas['WebhookConfig'];
+
 /** The App's install URL, carrying a one-time state. */
 export type InstallStart = Schemas['InstallStart'];
 

@@ -94,6 +94,22 @@ describe('TerraformApi workspaces', () => {
     expect(transport.requests[0]?.body).toBeUndefined();
   });
 
+  it('syncs the GitHub webhook with an empty POST', async () => {
+    const answer = {
+      url: 'https://api.staging.terraform.webbpulse.com/api/v1/github/webhooks',
+      content_type: 'json',
+      insecure_ssl: '0',
+      events: ['push', 'pull_request'],
+    };
+    const { api, transport } = apiOver({
+      'POST /api/v1/github/app/webhook': { body: answer },
+    });
+    expect(await api.syncGitHubWebhook()).toEqual(answer);
+    expect(transport.requests[0]?.method).toBe('POST');
+    expect(transport.requests[0]?.path).toBe('/api/v1/github/app/webhook');
+    expect(transport.requests[0]?.body).toBeUndefined();
+  });
+
   it('sends a confirm or discard comment as the body', async () => {
     const { api, transport } = apiOver({
       'POST /api/v1/runs/run-1/confirm': { body: aRun('applying') },
