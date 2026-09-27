@@ -118,7 +118,7 @@ def create_run(
         raise _not_found("No such config version.") from error
     except service.ConfigVersionNotReady as error:
         raise _conflict("That config version has no uploaded configuration.") from error
-    return service.render_run(created) | {"run_token": created.get("run_token")}
+    return service.render_run(created)
 
 
 @router.get(

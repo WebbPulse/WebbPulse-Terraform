@@ -2055,7 +2055,7 @@
         "type": "object"
       },
       "RunCreated": {
-        "description": "A newly created run. Carries the run token only when the run started.\n\nA queued run has no execution and so no token: the token is minted when the\nstate machine starts, which is when the run ahead of it finishes.",
+        "description": "A newly created run.\n\nIt carries no run token: only the runner task holds one, obtained by\ntrading its signed task identity, so no caller ever sees the plaintext.",
         "properties": {
           "actor": {
             "anyOf": [
@@ -2182,17 +2182,6 @@
             "default": false,
             "title": "Run Role Check",
             "type": "boolean"
-          },
-          "run_token": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Token"
           },
           "source": {
             "default": "api",

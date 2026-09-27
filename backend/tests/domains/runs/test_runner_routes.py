@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.common.core.auth import RUNNER_SCOPE
 from app.domains.runs import service as runs_service
-from tests.conftest import STATE_KMS_KEY_ARN, mint_key
+from tests.conftest import STATE_KMS_KEY_ARN, mint_key, runner_token
 
 BASE = "/api/v1/runs"
 
@@ -98,7 +98,7 @@ def test_a_destroy_runs_bundle_asks_for_a_destroy_plan(
             "is_destroy": True,
         },
     ).json()
-    with TestClient(app, headers={"Authorization": f"Bearer {created['run_token']}"}) as runner:
+    with TestClient(app, headers={"Authorization": f"Bearer {runner_token(created['run_id'])}"}) as runner:
         body = runner.get(f"{BASE}/{created['run_id']}/bundle").json()
     assert body["is_destroy"] is True
     assert body["phase"] == "plan"

@@ -165,8 +165,8 @@ export type RunVcs = Schemas['RunVcs'];
 /**
  * A newly created run.
  *
- * `run_token` is present only when the run started: a queued run has no
- * execution and so no token until the run ahead of it finishes.
+ * It carries no run token: only the runner task holds one, obtained by
+ * proving its task identity.
  */
 export type RunCreated = Schemas['RunCreated'];
 
