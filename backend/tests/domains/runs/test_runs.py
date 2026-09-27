@@ -7,7 +7,7 @@ import boto3
 from app.common.db.tables import RUNS, local_table_name
 from app.domains.runs import service as runs_service
 from app.domains.workspaces import service as workspaces_service
-from tests.conftest import ENVIRONMENT, REGION, WORKSPACE_PAYLOAD
+from tests.conftest import ENVIRONMENT, REGION, WORKSPACE_PAYLOAD, runner_token
 
 BASE = "/api/v1/runs"
 
@@ -38,9 +38,15 @@ def test_create_starts_the_run(created_run):
     assert created_run["execution_arn"]
 
 
-def test_create_returns_a_run_token(created_run):
-    """A started run carries the token its runner will authenticate with."""
-    assert created_run["run_token"].startswith("wpk_")
+def test_create_returns_no_run_token(auth_client, workspace, uploaded_config_version, state_machine):
+    """Only the runner task holds a run token, so the person who started the run never sees one."""
+    response = auth_client.post(
+        BASE,
+        json=create_body(workspace["workspace_id"], uploaded_config_version["config_version_id"]),
+    )
+    assert response.status_code == 201, response.text
+    assert "run_token" not in response.json()
+    assert not stored_run(response.json()["run_id"]).get("run_token_hash")
 
 
 def test_the_run_token_is_stored_only_as_a_hash(created_run):
@@ -50,28 +56,26 @@ def test_the_run_token_is_stored_only_as_a_hash(created_run):
     assert created_run["run_token"] not in str(item)
 
 
-def test_the_execution_input_carries_the_run_token(created_run):
-    """The token travels on the execution input, which is how the runner gets it.
+def test_the_execution_input_carries_no_run_token(created_run):
+    """Nothing secret goes on the execution input, which Step Functions keeps in its history.
 
-    The state machine reads `$.run_token` into both container overrides, so a
-    start that omits it produces a task that exits before it fetches a bundle.
+    The runner exchanges its signed task identity for the token instead, so the
+    input is only what the state machine routes on.
     """
     client = boto3.client("stepfunctions", region_name=REGION)
     described = client.describe_execution(executionArn=created_run["execution_arn"])
     execution_input = json.loads(described["input"])
-    assert execution_input["run_token"] == created_run["run_token"]
+    assert set(execution_input) == {"run_id", "workspace_id", "plan_only"}
     assert execution_input["run_id"] == created_run["run_id"]
     assert execution_input["workspace_id"]
     assert execution_input["plan_only"] is False
 
 
 def test_starting_an_already_started_run_is_a_no_op(created_run):
-    """A second start returns the run untouched rather than minting a second token.
+    """A second start returns the run untouched and leaves the runner's token alone.
 
     The execution is named for the run id, so a real second start would raise
-    `ExecutionAlreadyExists`. Worse, it would overwrite the token hash the running
-    execution's runner is already authenticating with, locking that runner out of
-    its own bundle.
+    `ExecutionAlreadyExists`.
     """
     run_id = created_run["run_id"]
     first_hash = stored_run(run_id)["run_token_hash"]
@@ -79,7 +83,6 @@ def test_starting_an_already_started_run_is_a_no_op(created_run):
     again = runs_service.start_run(run_id)
 
     assert again["execution_arn"] == created_run["execution_arn"]
-    assert "run_token" not in again
     assert stored_run(run_id)["run_token_hash"] == first_hash
 
 
@@ -176,7 +179,7 @@ def test_a_second_run_queues_behind_the_first(
     body = response.json()
     assert body["status"] == "pending"
     assert body["queued_behind"] == created_run["run_id"]
-    assert body["run_token"] is None
+    assert "run_token" not in body
     assert body["execution_arn"] is None
 
 
@@ -437,7 +440,7 @@ def test_the_bundle_does_not_write_the_config_version_row(app, auth_client, work
     put_config_object(version["key"])
     created = auth_client.post(BASE, json=create_body(workspace_id, version["config_version_id"])).json()
 
-    with TestClient(app, headers={"Authorization": f"Bearer {created['run_token']}"}) as runner:
+    with TestClient(app, headers={"Authorization": f"Bearer {runner_token(created['run_id'])}"}) as runner:
         response = runner.get(f"{BASE}/{created['run_id']}/bundle")
 
     assert response.status_code == 200, response.text

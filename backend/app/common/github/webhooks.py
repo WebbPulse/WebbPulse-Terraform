@@ -248,6 +248,12 @@ def delivery_message(event: str, delivery: str, payload: Mapping[str, Any]) -> O
     return None
 
 
+def semver_version(tag: str) -> Optional[str]:
+    """The version a `vX.Y.Z` or `X.Y.Z` tag name publishes, or `None` for any other tag."""
+    match = _SEMVER_TAG_REF.match(f"refs/tags/{tag}")
+    return match.group("version") if match else None
+
+
 def tag_message(event: str, delivery: str, payload: Mapping[str, Any]) -> Optional[dict[str, Any]]:
     """The registry message for a push of a semantic version tag, or `None` for anything else.
 
@@ -348,6 +354,7 @@ __all__ = [
     "delivery_message",
     "parse_message",
     "parse_tag_message",
+    "semver_version",
     "tag_message",
     "webhook_secret",
 ]

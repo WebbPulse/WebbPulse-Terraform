@@ -25,6 +25,8 @@ class ModuleCreate(BaseModel):
     """The repository as `owner/name`."""
     name: Optional[str] = Field(default=None, min_length=1, max_length=64)
     provider: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    import_tags: bool = True
+    """Import the repository's existing `vX.Y.Z` and `X.Y.Z` tags; false leaves them for a resync."""
 
 
 class ModuleVersion(BaseModel):
@@ -56,6 +58,14 @@ class Module(BaseModel):
     versions: list[ModuleVersion]
 
 
+class ModuleSync(BaseModel):
+    """A queued import of a module's existing tags."""
+
+    source: str
+    delivery: str
+    """The id the sync and every tag message it queues carry, for tracing."""
+
+
 class ModuleList(BaseModel):
     """Every module in the registry."""
 
@@ -67,6 +77,7 @@ __all__ = [
     "Module",
     "ModuleCreate",
     "ModuleList",
+    "ModuleSync",
     "ModuleVersion",
     "VersionStatus",
 ]

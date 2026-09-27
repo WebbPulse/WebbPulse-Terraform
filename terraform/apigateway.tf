@@ -72,12 +72,13 @@ locals {
   } : {}
 
   registry_routes = contains(keys(local.lambda_domains), "registry") ? {
-    "GET /v1/modules/{namespace}/{name}/{provider}/versions"           = { integration = "registry", authorization_type = "NONE" }
-    "GET /v1/modules/{namespace}/{name}/{provider}/{version}/download" = { integration = "registry", authorization_type = "NONE" }
-    "GET /api/v1/registry/modules"                                     = { integration = "registry" }
-    "POST /api/v1/registry/modules"                                    = { integration = "registry" }
-    "GET /api/v1/registry/modules/{namespace}/{name}/{provider}"       = { integration = "registry" }
-    "DELETE /api/v1/registry/modules/{namespace}/{name}/{provider}"    = { integration = "registry" }
+    "GET /v1/modules/{namespace}/{name}/{provider}/versions"             = { integration = "registry", authorization_type = "NONE" }
+    "GET /v1/modules/{namespace}/{name}/{provider}/{version}/download"   = { integration = "registry", authorization_type = "NONE" }
+    "GET /api/v1/registry/modules"                                       = { integration = "registry" }
+    "POST /api/v1/registry/modules"                                      = { integration = "registry" }
+    "GET /api/v1/registry/modules/{namespace}/{name}/{provider}"         = { integration = "registry" }
+    "POST /api/v1/registry/modules/{namespace}/{name}/{provider}/resync" = { integration = "registry" }
+    "DELETE /api/v1/registry/modules/{namespace}/{name}/{provider}"      = { integration = "registry" }
   } : {}
 
   product_routes = merge(

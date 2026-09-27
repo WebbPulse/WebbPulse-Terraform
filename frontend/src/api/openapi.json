@@ -1127,6 +1127,11 @@
       "ModuleCreate": {
         "description": "A module to connect to a GitHub repository the App is installed on.\n\nLike HCP Terraform's publish from VCS: from then on a push of a `vX.Y.Z` or\n`X.Y.Z` tag to the repository publishes that version. The namespace is the\nrepository owner. A name and provider left out come from a\n`terraform-<provider>-<name>` repository name.",
         "properties": {
+          "import_tags": {
+            "default": true,
+            "title": "Import Tags",
+            "type": "boolean"
+          },
           "name": {
             "anyOf": [
               {
@@ -1182,6 +1187,25 @@
           "modules"
         ],
         "title": "ModuleList",
+        "type": "object"
+      },
+      "ModuleSync": {
+        "description": "A queued import of a module's existing tags.",
+        "properties": {
+          "delivery": {
+            "title": "Delivery",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "delivery"
+        ],
+        "title": "ModuleSync",
         "type": "object"
       },
       "ModuleVersion": {
@@ -2055,7 +2079,7 @@
         "type": "object"
       },
       "RunCreated": {
-        "description": "A newly created run. Carries the run token only when the run started.\n\nA queued run has no execution and so no token: the token is minted when the\nstate machine starts, which is when the run ahead of it finishes.",
+        "description": "A newly created run.\n\nIt carries no run token: only the runner task holds one, obtained by\ntrading its signed task identity, so no caller ever sees the plaintext.",
         "properties": {
           "actor": {
             "anyOf": [
@@ -2182,17 +2206,6 @@
             "default": false,
             "title": "Run Role Check",
             "type": "boolean"
-          },
-          "run_token": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Token"
           },
           "source": {
             "default": "api",
@@ -5162,7 +5175,7 @@
         ]
       },
       "post": {
-        "description": "Connect a module to a repository; each `vX.Y.Z` or `X.Y.Z` tag pushed there publishes it.\n\nTags pushed before the module existed are not published. Push a new tag, or\ndelete and push an existing one again.",
+        "description": "Connect a module to a repository; each `vX.Y.Z` or `X.Y.Z` tag pushed there publishes it.\n\nThe repository's existing semantic version tags are imported in the\nbackground unless `import_tags` is false. Other tags are ignored.",
         "operationId": "create_module_api_v1_registry_modules_post",
         "requestBody": {
           "content": {
@@ -5330,6 +5343,82 @@
           }
         },
         "summary": "Get Module",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}/resync": {
+      "post": {
+        "description": "Queue an import of every semantic version tag in the module's repository.\n\nPicks up tags pushed before the module was connected, or pushed more than\nthree at once, when GitHub sends no push event. Published versions are left alone.",
+        "operationId": "resync_module_api_v1_registry_modules__namespace___name___provider__resync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleSync"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No module connected to a repository sits at the address."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "503": {
+            "description": "The sync could not be queued."
+          }
+        },
+        "summary": "Resync Module",
         "tags": [
           "registry"
         ]

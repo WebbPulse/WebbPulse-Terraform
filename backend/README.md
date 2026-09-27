@@ -16,7 +16,7 @@ app/
     workspaces/    workspaces, variables, config versions
     runs/          runs, the runner's bundle, artifact uploads and phase results
       consumers/   the queue consumers and the one route they share
-    registry/      the Terraform module registry protocol, modules connected to repositories, tag publishing
+    registry/      the Terraform module registry protocol, modules connected to repositories, tag publishing and tag import
 e2e/               the deployed-stage suite, extending webbpulse.e2e
 tests/
   common/          the auth chain and every route's scope guard
