@@ -24,14 +24,14 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any, Final, Mapping, Optional
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, Repository, new_ulid, now_iso
 
 from ...common.composition.settings import Settings, get_settings
-from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store
+from ...common.core.auth import api_key_store
 from ...common.db import repositories
 from ...common.db.tables import (
     RUNS_BY_RECENCY_INDEX,
@@ -356,7 +356,7 @@ def create_run(
     the workspace's staged `pending_run_role_arn` instead, is always plan only, and
     is the one run that assumes that role before the workspace switches to it.
 
-    Returns the stored run, carrying `run_token` only when an execution started.
+    Returns the stored run.
 
     Args:
         payload: The validated create body.
@@ -430,47 +430,26 @@ def create_run(
 
 
 def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """Mint this run's token, start its execution and move it to `planning`.
+    """Start this run's execution and move it to `planning`.
 
-    A run that already carries an `execution_arn` is returned untouched. Starting
-    it again would mint a second token, overwrite the hash of the one the running
-    execution is already carrying, and hit `ExecutionAlreadyExists` on the name,
-    which is the run id. The caller gets no `run_token` back in that case, because
-    the live plaintext only ever existed on the first start.
+    A run that already carries an `execution_arn` is returned untouched, since
+    starting it again would hit `ExecutionAlreadyExists` on the name, which is
+    the run id.
 
-    The token is minted before the execution starts because it travels on the
-    execution input: the state machine reads `$.run_token` into the plan and the
-    apply container overrides, which is the only way the runner gets a
-    `RUN_TOKEN`. The row is stamped before the start call so a crash between the
-    two leaves a run that can be reconciled rather than a token with no run.
-
-    The execution input is the one place the plaintext is written down, and the
-    state machine runs with `include_execution_data` off so it never reaches the
-    execution log. Only the hash is stored on the row.
+    No run token is minted here. A token on the execution input would be
+    written into the execution history, so the runner task instead trades its
+    signed task identity for one at `POST /runs/{id}/runner-token`
+    (`runner_tokens.exchange`), which stores its hash on the row.
 
     The semaphore is pruned immediately before the start, so a slot leaked by any
     cause heals itself the next time someone starts a run rather than sitting in
     `AcquireSemaphore` retrying for an hour. It runs before rather than after
     because this run is about to contend for a slot itself.
-
-    Returns the run with `run_token` set, which is the only time the plaintext
-    reaches a caller.
     """
-    from webbpulse.identity.api_keys import mint
-
     resolved = settings or get_settings()
     run = get_run(run_id, settings=resolved)
     if run.get("execution_arn"):
         return run
-
-    minted = mint(
-        user_id=run_id,
-        tenant_id=RUN_TOKEN_TENANT,
-        scopes=(RUNNER_SCOPE,),
-        name=f"run token {run_id}",
-        expires_at=datetime.now(timezone.utc) + RUN_TOKEN_TTL,
-        store=api_key_store(resolved),
-    )
 
     execution_arn = ""
     if resolved.RUN_STATE_MACHINE_ARN:
@@ -483,25 +462,21 @@ def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any
                     "run_id": run_id,
                     "workspace_id": str(run["workspace_id"]),
                     "plan_only": bool(run.get("plan_only", False)),
-                    "run_token": minted.plaintext,
                 }
             ),
         )
         execution_arn = str(started.get("executionArn", ""))
 
-    updated = _update_run(
+    return _update_run(
         run_id,
         {
             "status": "planning",
             "started_at": now_iso(),
             "execution_arn": execution_arn,
-            "run_token_hash": minted.record.key_hash,
             "queued_behind": None,
         },
         settings=resolved,
     )
-    updated["run_token"] = minted.plaintext
-    return updated
 
 
 def _update_run(

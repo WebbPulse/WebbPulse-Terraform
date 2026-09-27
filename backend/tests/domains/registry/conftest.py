@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+import boto3
 import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -78,6 +79,8 @@ class FakeGitHub:
     redirect: str = CODELOAD
     requests: list[httpx.Request] = field(default_factory=list)
     failure: int | None = None
+    tags: list[tuple[str, str]] = field(default_factory=list)
+    tags_status: int = 200
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         """Answer one request as GitHub would."""
@@ -97,9 +100,20 @@ class FakeGitHub:
             return httpx.Response(201, json={"token": "ghs_test", "expires_at": "2099-01-01T00:00:00Z"})
         if path == "/installation/repositories":
             return httpx.Response(200, json={"total_count": len(self.repositories), "repositories": self.repositories})
+        if re.fullmatch(r"/repos/[^/]+/[^/]+/tags", path):
+            if self.tags_status != 200:
+                return httpx.Response(self.tags_status, json={"message": "failed"})
+            size = int(request.url.params.get("per_page", "30"))
+            page = int(request.url.params.get("page", "1"))
+            listed = self.tags[(page - 1) * size : page * size]
+            return httpx.Response(200, json=[{"name": name, "commit": {"sha": sha}} for name, sha in listed])
         if re.fullmatch(r"/repos/[^/]+/[^/]+/tarball/\w+", path):
             return httpx.Response(302, headers={"Location": self.redirect})
         return httpx.Response(404, json={"message": "Not Found"})
+
+    def tag_pages(self) -> int:
+        """How many pages of tags were requested."""
+        return sum(1 for request in self.requests if request.url.path.endswith("/tags"))
 
     def tarball_fetches(self) -> int:
         """How many times an archive was requested from the API."""
@@ -134,6 +148,29 @@ def github(monkeypatch: pytest.MonkeyPatch, private_key_pem: str) -> FakeGitHub:
     monkeypatch.setattr(service, "http_client", client)
     monkeypatch.setattr(tags, "http_client", client)
     return fake
+
+
+@pytest.fixture
+def ingest_queue(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """The registry's ingest queue, wired into the settings."""
+    url = boto3.client("sqs", region_name="us-west-2").create_queue(QueueName="registry-ingest")["QueueUrl"]
+    monkeypatch.setenv("REGISTRY_INGEST_QUEUE_URL", url)
+    settings_module.reset_settings_cache()
+    yield url
+    settings_module.reset_settings_cache()
+
+
+def drain(url: str) -> list[dict[str, Any]]:
+    """Take every message off the queue, oldest first as far as SQS promises, as records."""
+    client = boto3.client("sqs", region_name="us-west-2")
+    records: list[dict[str, Any]] = []
+    while True:
+        messages = client.receive_message(QueueUrl=url, MaxNumberOfMessages=10).get("Messages", [])
+        if not messages:
+            return records
+        for message in messages:
+            records.append({"body": message["Body"]})
+            client.delete_message(QueueUrl=url, ReceiptHandle=message["ReceiptHandle"])
 
 
 def tag_record(version: str = "1.2.3", *, sha: str = SHA, delivery: str = "d-1", prefix: str = "v") -> dict[str, Any]:

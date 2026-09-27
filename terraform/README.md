@@ -137,6 +137,6 @@ Everything else takes its default.
 | `runner_image_tag` | The runner image tag the task definitions point at. Unlike a Lambda image it is not ignored, so a revision follows it |
 | `route53_zone_id`, `route53_write_role_arn` | The parent zone and the role that writes into it, both required when `staging_profile` is `full` |
 | `staging_access_gate`, `staging_access_users` | Staging only: put the site and API behind the email gate, and who may sign in |
-| `identity_jwt_mode` | `off`, `gate` or `native`. Staging uses `gate`, production `native` |
+| `identity_jwt_mode` | `off`, `gate`, `lambda` or `native`. Staging uses `gate`, production `lambda`, which passes `wpk_` agent keys through. Production refuses `off` and `gate` at plan time |
 | `adopt_spans_log_group` | `false` until the first span is written, then `true`; see Transaction Search |
 | `example_workspace_id` | The `ws-` id of the example workspace. Non-empty creates the example run role for the first end to end run; empty, the default, creates nothing. See `examples/first-run/README.md` |

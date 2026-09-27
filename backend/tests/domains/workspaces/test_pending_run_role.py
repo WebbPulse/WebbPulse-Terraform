@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.common.workspaces import run_role_check
 from app.domains.runs import service as runs_service
-from tests.conftest import WORKSPACE_PAYLOAD
+from tests.conftest import WORKSPACE_PAYLOAD, runner_token
 
 BASE = "/api/v1/workspaces"
 RUNS = "/api/v1/runs"
@@ -47,7 +47,7 @@ def _finish_plan(run_id: str) -> None:
 
 def _bundle_role(app, run: dict[str, Any]) -> str:
     """The role ARN the bundle vended credentials for on `run`."""
-    with TestClient(app, headers={"Authorization": f"Bearer {run['run_token']}"}) as runner:
+    with TestClient(app, headers={"Authorization": f"Bearer {runner_token(run['run_id'])}"}) as runner:
         response = runner.get(f"{RUNS}/{run['run_id']}/bundle")
     assert response.status_code == 200, response.text
     return str(response.json()["run_role_arn"])

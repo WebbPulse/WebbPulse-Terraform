@@ -152,8 +152,9 @@ that Root A is exactly the union of the Root B applications.
 ### Auth
 
 A person arrives with a JWT the API Gateway authorizer has already verified, an
-agent with a `wpk_` API key that the gate authorizer passes through by prefix and
-`claims_or_api_key` verifies in process. Both render as the same claims object,
+agent with a `wpk_` API key that the gateway authorizer (the staging gate, or the
+`lambda` mode authorizer in production) passes through by prefix and
+`claims_or_api_key` verifies in process, with `live_scopes` reloading the owner. Both render as the same claims object,
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
 runner routes, `POST /github/webhooks` (a webhook signature), the registry protocol
@@ -267,7 +268,7 @@ GitHub App is installed on, resolved like a workspace's `vcs_repo` (422
 `VCS_REPO_NOT_INSTALLED`, 409 `GITHUB_NOT_CONFIGURED` with no App). The namespace is
 the owner; the name and provider come from the body or from
 `terraform-<provider>-<name>`. The module is the repository root, with no
-subdirectory. Connecting imports no existing tags. `GET` and `DELETE
+subdirectory. `GET` and `DELETE
 /api/v1/registry/modules/{ns}/{name}/{provider}` read and remove a module, the
 delete taking every version row and tarball with it.
 
@@ -282,9 +283,24 @@ directories, no `.git`, `.terraform`, state or links, a root `.tf` required, at 
 reason. A published version is immutable, so a redelivery or a retag is skipped
 without a fetch; a failed or pending one is retried by a new tag push. A GitHub
 fault raises so SQS retries. Other tags are ignored and deleting a tag unpublishes
-nothing. GitHub sends no push event when more than three tags are pushed at once,
-so push tags one at a time. In Root A the consumer route is shadowed by the runs
-consumer at the same pass-through path, so tests call `route_record` directly.
+nothing.
+
+Connecting also imports the repository's existing tags, unless the body sets
+`import_tags: false`, and `POST .../{ns}/{name}/{provider}/resync`
+(`registry:write`, 202) does it again, like HCP's resync. That covers tags pushed
+while nothing was connected and GitHub sending no push event when more than three
+tags are pushed at once. Both queue a `module_sync` message on `registry-ingest`;
+`consumers/sync.py` lists tags through the installation token (`list_tags` in
+`app/common/github/archive.py`, at most 10 pages of 100), keeps the semver ones
+(`v` preferred over a bare duplicate), skips versions published or failed at the
+same commit, and queues up to 100 of the newest as `module_tag` messages carrying
+a `module` key, which the tag consumer honours by publishing for that module only.
+So a tag reaching both paths publishes once. A sync that cannot be queued at
+connect is logged and the module still connects; the resync answers 503
+`REGISTRY_SYNC_UNAVAILABLE`. The registry function may send to its own queue.
+
+In Root A the consumer route is shadowed by the runs consumer at the same
+pass-through path, so tests call `route_record` directly.
 
 ### VCS ingest
 
@@ -493,7 +509,7 @@ its own login user per run through `/api/auth/e2e/users`, which is gated by
 the staging end-to-end test repository, part of the staging environment in the
 same way as the `webbpulse-terraform-staging-e2e` AWS account. It is declared in
 the WebbPulse-Platform repository factory with the topics `webbpulse-terraform`,
-`staging` and `e2e`, is load bearing for staging e2e; its `registry-proof` branch and `v0.1.0` tag are the durable registry fixture `backend/e2e/test_registry.py` installs, published before tag webhook publishing and connected to no module.
+`staging` and `e2e`, is load bearing for staging e2e; its `registry-proof` branch and `v0.1.0` tag are the durable registry fixture `backend/e2e/test_registry.py` installs, published before tag webhook publishing and connected to no module. Its `registry-backfill-fixture` branch (a root `main.tf` only) carries the `v0.2.0` tag and the non-semver `registry-backfill-fixture` tag that `backend/e2e/test_registry_backfill.py` imports on connect and on resync; keep both tags where they are.
 The staging GitHub App is installed on it and not on this repository, it carries
 the caller workflow and a copy of `examples/first-run`, and the staging
 `first-run` workspace is bound to it. VCS runs, check runs and the pull request

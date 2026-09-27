@@ -2,7 +2,8 @@
 
 Creating and deleting a module needs `registry:write`, which only an admin holds;
 reading needs `registry:read`. Publishing has no route: a semantic version tag
-pushed to a connected repository arrives through the GitHub App's webhook.
+pushed to a connected repository arrives through the GitHub App's webhook, and
+connecting or resyncing a module imports the tags the repository already holds.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from webbpulse.integrations.github import GitHubError, GitHubRateLimited
 from ...common.core.auth import REGISTRY_READ, REGISTRY_WRITE, claims, scopes
 from ...common.github.repositories import RepositoryNotInstalled
 from . import service
-from .schemas.registry import Module, ModuleCreate, ModuleList
+from .schemas.registry import Module, ModuleCreate, ModuleList, ModuleSync
 
 router = APIRouter(prefix="/registry")
 
@@ -28,6 +29,7 @@ NOT_FOUND_CODE = "REGISTRY_NOT_FOUND"
 VCS_REPO_NOT_INSTALLED_CODE = "VCS_REPO_NOT_INSTALLED"
 GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
 GITHUB_NOT_CONFIGURED_CODE = "GITHUB_NOT_CONFIGURED"
+SYNC_UNAVAILABLE_CODE = "REGISTRY_SYNC_UNAVAILABLE"
 
 Segment = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[0-9A-Za-z_-]+$")]
 
@@ -86,12 +88,14 @@ def _connect_errors() -> Iterator[None]:
 def create_module(payload: ModuleCreate, current: AuthorizerClaims = Depends(claims)) -> dict[str, Any]:
     """Connect a module to a repository; each `vX.Y.Z` or `X.Y.Z` tag pushed there publishes it.
 
-    Tags pushed before the module existed are not published. Push a new tag, or
-    delete and push an existing one again.
+    The repository's existing semantic version tags are imported in the
+    background unless `import_tags` is false. Other tags are ignored.
     """
     with _connect_errors():
         try:
-            return service.create_module(payload.vcs_repo, payload.name, payload.provider, _actor(current))
+            return service.create_module(
+                payload.vcs_repo, payload.name, payload.provider, _actor(current), import_tags=payload.import_tags
+            )
         except service.InvalidModuleName as error:
             raise _error(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error), INVALID_MODULE_NAME_CODE) from error
         except service.ModuleExists as error:
@@ -118,6 +122,34 @@ def get_module(namespace: Segment, name: Segment, provider: Segment) -> dict[str
         raise _error(status.HTTP_404_NOT_FOUND, f"{error} was not found.", NOT_FOUND_CODE) from error
 
 
+@router.post(
+    "/modules/{namespace}/{name}/{provider}/resync",
+    response_model=ModuleSync,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(scopes(REGISTRY_WRITE))],
+    responses={
+        404: {"description": "No module connected to a repository sits at the address."},
+        503: {"description": "The sync could not be queued."},
+    },
+)
+def resync_module(
+    namespace: Segment, name: Segment, provider: Segment, current: AuthorizerClaims = Depends(claims)
+) -> dict[str, str]:
+    """Queue an import of every semantic version tag in the module's repository.
+
+    Picks up tags pushed before the module was connected, or pushed more than
+    three at once, when GitHub sends no push event. Published versions are left alone.
+    """
+    try:
+        return service.resync_module(namespace, name, provider, _actor(current))
+    except service.ModuleNotFound as error:
+        raise _error(status.HTTP_404_NOT_FOUND, f"{error} was not found.", NOT_FOUND_CODE) from error
+    except service.SyncUnavailable as error:
+        raise _error(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "The tag sync could not be queued.", SYNC_UNAVAILABLE_CODE
+        ) from error
+
+
 @router.delete(
     "/modules/{namespace}/{name}/{provider}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -139,6 +171,7 @@ __all__ = [
     "INVALID_MODULE_NAME_CODE",
     "MODULE_EXISTS_CODE",
     "NOT_FOUND_CODE",
+    "SYNC_UNAVAILABLE_CODE",
     "VCS_REPO_NOT_INSTALLED_CODE",
     "router",
 ]

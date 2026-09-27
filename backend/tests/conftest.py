@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import os
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -82,7 +83,7 @@ from moto import mock_aws  # noqa: E402
 from webbpulse.identity.api_keys import API_KEY_TABLE, mint  # noqa: E402
 
 from app.common.composition import settings as settings_module  # noqa: E402
-from app.common.core.auth import ALL_SCOPES, RUN_TOKEN_TENANT, api_key_store  # noqa: E402
+from app.common.core.auth import ALL_SCOPES, RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store  # noqa: E402
 from app.common.db.tables import ALL_TABLES, local_table_name, table_definition  # noqa: E402
 
 REGION = "us-west-2"
@@ -176,6 +177,32 @@ def client(app):
     """A client with no credentials, for asserting that a route refuses one."""
     with TestClient(app) as test_client:
         yield test_client
+
+
+def runner_token(run_id: str) -> str:
+    """The run token a runner task of `run_id` holds, as the exchange leaves it.
+
+    Minted and stored as the run's `run_token_hash` exactly as
+    `runner_tokens.exchange` does once a task has proved its identity, which the
+    exchange's own tests cover.
+    """
+    from app.common.db import repositories
+    from app.domains.runs.service import RUN_TOKEN_TTL
+
+    minted = mint(
+        user_id=run_id,
+        tenant_id=RUN_TOKEN_TENANT,
+        scopes=(RUNNER_SCOPE,),
+        name=f"run token {run_id}",
+        expires_at=datetime.now(timezone.utc) + RUN_TOKEN_TTL,
+        store=api_key_store(),
+    )
+    repositories.runs(settings_module.get_settings()).update(
+        {"run_id": run_id},
+        update_expression="SET run_token_hash = :hash",
+        expression_values={":hash": minted.record.key_hash},
+    )
+    return minted.plaintext
 
 
 def mint_key(*scopes: str, user_id: str = "user-test") -> str:
@@ -280,7 +307,7 @@ def runner_log_group():
 
 @pytest.fixture
 def created_run(auth_client, workspace, uploaded_config_version, state_machine):
-    """A started run, carrying the run token minted when its execution began."""
+    """A started run, carrying the run token its runner task would have exchanged for."""
     response = auth_client.post(
         "/api/v1/runs",
         json={
@@ -291,7 +318,8 @@ def created_run(auth_client, workspace, uploaded_config_version, state_machine):
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    created = response.json()
+    return created | {"run_token": runner_token(created["run_id"])}
 
 
 @pytest.fixture

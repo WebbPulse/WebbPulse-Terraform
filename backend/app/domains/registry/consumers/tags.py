@@ -6,6 +6,10 @@ For every module connected to the repository, the version row is claimed
 token, repacked with the module at its root, stored under `registry/modules/` and
 the row moved to `published`.
 
+A tag sync queues the same message for each tag it imports, carrying a `module`
+partition key so only that module publishes it; everything past that is shared,
+so a tag the webhook and a sync both deliver publishes once.
+
 Delivery is at least once and GitHub may redeliver. A version already published
 is left alone, so a redelivery, or the same version tagged again, changes
 nothing. An archive that fails a check marks the version `failed` and is
@@ -171,7 +175,7 @@ def publish(
 
 
 def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None) -> dict[str, str]:
-    """Publish the tagged version of every module connected to the repository.
+    """Publish the tagged version of every module connected to the repository, or only the one it names.
 
     Returns each module address against its outcome; a repository with no
     connected module, or an environment with no App, publishes nothing.
@@ -183,6 +187,8 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
     resolved = settings or get_settings()
     message = parse_tag_message(record)
     modules = service.connected_modules(str(message["repository_id"]), settings=resolved)
+    if message.get("module"):
+        modules = [row for row in modules if str(row["pk"]) == str(message["module"])]
     extra = {"delivery": message["delivery"], "repository": message["repo"], "tag": message["tag"]}
     if not modules:
         _log.info(

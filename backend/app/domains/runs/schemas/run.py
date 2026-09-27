@@ -191,13 +191,11 @@ class RunList(BaseModel):
 
 
 class RunCreated(Run):
-    """A newly created run. Carries the run token only when the run started.
+    """A newly created run.
 
-    A queued run has no execution and so no token: the token is minted when the
-    state machine starts, which is when the run ahead of it finishes.
+    It carries no run token: only the runner task holds one, obtained by
+    trading its signed task identity, so no caller ever sees the plaintext.
     """
-
-    run_token: Optional[str] = None
 
 
 class LogEvent(BaseModel):
