@@ -178,7 +178,6 @@ module "lambda_domain" {
       VCS_OIDC_AUDIENCE = var.vcs_oidc_audience
 
       REGISTRY_REPOSITORIES = jsonencode(local.registry_repositories)
-      REGISTRY_API_URL      = "https://${local.api_host}"
 
       IDENTITY_TABLE_PREFIX = local.prefix
 
