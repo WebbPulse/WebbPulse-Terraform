@@ -156,8 +156,8 @@ agent with a `wpk_` API key that the gate authorizer passes through by prefix an
 `claims_or_api_key` verifies in process. Both render as the same claims object,
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
-runner routes, `POST /vcs/uploads` and `POST /registry/uploads` (GitHub Actions
-OIDC tokens, verified in process), the registry protocol under `/v1/modules`
+runner routes, `POST /registry/uploads` (a GitHub Actions OIDC token, verified
+in process), `POST /github/webhooks` (a webhook signature), the registry protocol under `/v1/modules`
 (a `wpk_` key only) and the anonymous identity documents do not. The scopes are
 `workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}`,
 `runs:{read,write,apply}`, `state:download` and `registry:read`.
@@ -246,37 +246,21 @@ consumer at the same pass-through path, so tests call `route_record` directly.
 
 ### VCS ingest
 
-The VCS bridge's ingest half. A GitHub Actions job running the org
-`terraform-run.yml` calls `POST /api/v1/vcs/uploads` with
-`Authorization: Bearer <GitHub Actions OIDC token>` and
-`{sha, pr_number, base_sha, size_bytes}`. The token is verified against GitHub's
-JWKS for issuer `https://token.actions.githubusercontent.com` and the audience
-`VCS_OIDC_AUDIENCE` (default `webbpulse-terraform`), and it is the only source of
-truth: repository, repository id, event, branch, pull request number (from
-`refs/pull/<n>/merge`) and commit all come from its claims. The body's head and
-base shas are stored marked unverified and decide nothing. There are no per
-repository roles and no repository map: a workspace binds itself with `vcs_repo`.
-Connecting a repository (create or PATCH) resolves it through the GitHub App from
-the `app` secret the workspaces function already reads: the App JWT finds the
-installation and its token lists the repositories, which records
-`vcs_repository_id`, `vcs_installation_id` and the canonical name and defaults
-`tracked_branch` to the default branch. A repository the App cannot see is 422
-`VCS_REPO_NOT_INSTALLED`, and a GitHub failure is 502/503 `GITHUB_UNAVAILABLE`.
-With no App configured the binding is by name and the first upload records the
-id. Either way a rename keeps the binding and a new repository under the old name
-does not inherit it. `working_directory` is normalized to a clean relative path,
-`tracked_branch` must be a valid git branch name, and trigger patterns are trimmed.
+The VCS bridge's ingest half. A workspace binds itself to a repository with
+`vcs_repo`; there are no per repository roles and no repository map. Connecting a
+repository (create or PATCH) resolves it through the GitHub App from the `app`
+secret the workspaces function already reads: the App JWT finds the installation
+and its token lists the repositories, which records `vcs_repository_id`,
+`vcs_installation_id` and the canonical name and defaults `tracked_branch` to the
+default branch. A repository the App cannot see is 422 `VCS_REPO_NOT_INSTALLED`,
+and a GitHub failure is 502/503 `GITHUB_UNAVAILABLE`. A rename keeps the binding
+and a new repository under the old name does not inherit it. `working_directory`
+is normalized to a clean relative path, `tracked_branch` must be a valid git branch
+name, and trigger patterns are trimmed.
 
-The route writes an ingest record to `vcs-uploads` (three day TTL) and answers
-exactly 201 `{upload_id, upload_url, headers, expires_in}`, a presigned PUT to
-`ingest/<upload_id>.tar.gz`. A repository no workspace binds is 404
-`VCS_REPO_NOT_BOUND` before anything is written, an event other than a branch push
-or a pull request is 422 `VCS_EVENT_UNSUPPORTED`, and every error carries a top
-level `error_code`. The upload id is derived from the repository id, the commit,
-the workflow run and its attempt, so a retried request returns the same id and a
-freshly signed URL for the same key and never writes a second record.
-
-S3 Object Created on `ingest/` goes through EventBridge to the
+The webhook consumer (below) writes an ingest record to `vcs-uploads` (three day
+TTL) and the tarball to `ingest/<upload_id>.tar.gz`. S3 Object Created on `ingest/`
+goes through EventBridge to the
 `vcs-ingest` queue as `config_ingested`, and `app/domains/runs/consumers/ingest.py`
 reads the record by the upload id in the key, never the object's metadata. For
 each bound workspace it applies the branch filter (a push needs `tracked_branch`),
@@ -287,15 +271,14 @@ against `.webbpulse/changed-paths.txt` (empty patterns mean
 filter. It copies the tarball to a config version and creates a run sourced `vcs_push` (normal) or
 `vcs_pr` (plan only) with a `vcs` block and a `vcs` actor. The config version and
 run ids are derived from the upload and the workspace, so a redelivered message or
-a PUT retried into a second S3 event creates nothing new. A newer upload from the
+a second S3 event for the same object creates nothing new. A newer upload from the
 same source cancels that source's pending runs and discards one awaiting
 confirmation; a late older upload starts nothing. A workspace with no run role is
 skipped.
 
 ### VCS webhooks
 
-The App's webhooks are the second way in, running alongside the uploads until
-they replace them. GitHub posts to `POST /api/v1/github/webhooks` (no
+GitHub posts to `POST /api/v1/github/webhooks` (no
 authorizer); `WebhookSignatureMiddleware` (`app/common/github/webhooks.py`), the
 outermost layer of the github function, checks `X-Hub-Signature-256` against the
 app secret's `GITHUB_WEBHOOK_SECRET` and answers 401 before routing. A branch push

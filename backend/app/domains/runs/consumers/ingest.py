@@ -4,10 +4,10 @@ An EventBridge rule on the artifacts bucket's `Object Created` events under
 `ingest/` stamps `config_ingested` on the message. The object key names an upload
 id, and everything this consumer trusts about the upload, the repository, the
 event, the branch, the pull request and the commit, comes from the ingest record
-the upload route wrote under that id from a verified GitHub token. Nothing is read
-from the object's metadata, and a key with no record is dropped.
+the webhook consumer wrote under that id from a signed GitHub App delivery. Nothing
+is read from the object's metadata, and a key with no record is dropped.
 
-Delivery is at least once, and the workflow's PUT retries, so one key can fire
+Delivery is at least once, and a rewritten object fires again, so one key can fire
 twice. Every id this writes is derived from the upload id and the workspace id,
 so a redelivery finds its own config version and its own run already there and
 does nothing new.
@@ -48,7 +48,7 @@ INGEST_KIND = "config_ingested"
 """The `kind` the EventBridge rule's input transformer stamps on the message."""
 
 CHANGED_PATHS_MEMBER = ".webbpulse/changed-paths.txt"
-"""Where the workflow writes the paths the commit changed, one per line. A `*`
+"""Where the paths the commit changed are written, one per line. A `*`
 line, or no such file, means every path."""
 
 MAX_CHANGED_PATHS_BYTES = 5_000_000

@@ -99,9 +99,8 @@ def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
 def _runs_routers() -> "list[APIRouter]":
     """Import and return the runs domain's routers."""
     from app.domains.runs.router import router
-    from app.domains.runs.vcs_router import router as vcs_router
 
-    return [router, vcs_router]
+    return [router]
 
 
 def _runs_unprefixed_routers(settings: Settings) -> "list[APIRouter]":

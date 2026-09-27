@@ -11,7 +11,7 @@ module "vcs_ingest" {
 
 resource "aws_cloudwatch_event_rule" "vcs_ingest_object_created" {
   name        = "${local.prefix}-vcs-ingest-object-created"
-  description = "Config tarballs a GitHub Actions workflow uploaded under ingest/ through a presigned VCS upload"
+  description = "Config tarballs the GitHub App webhook consumer wrote under ingest/"
 
   event_pattern = jsonencode({
     source      = ["aws.s3"]

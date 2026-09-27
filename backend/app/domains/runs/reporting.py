@@ -26,8 +26,8 @@ The aggregate follows the same way. The newest check of a name is the one GitHub
 shows and the one every later report finds.
 
 The commit a report lands on is checked through the App first. A push reports on the
-token's signed commit once the branch is confirmed to contain it. A pull request
-reports on its head, which the workflow sent unsigned, so the head must be a parent of
+delivery's commit once the branch is confirmed to contain it. A pull request
+reports on its head, which is recorded rather than trusted, so the head must be a parent of
 the signed merge commit and must be, or have been, a commit of that pull request. A
 commit that fails either check gets nothing.
 

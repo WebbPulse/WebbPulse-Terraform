@@ -50,10 +50,10 @@ class Settings(BaseServiceSettings):
     module's own ten tables, which the package names from a prefix rather than from
     the environment."""
     VCS_UPLOADS_TABLE: str = ""
-    """The ingest records a GitHub Actions upload writes, expired by TTL."""
+    """The ingest records a GitHub App delivery writes, expired by TTL."""
 
     VCS_OIDC_AUDIENCE: str = "webbpulse-terraform"
-    """The audience a GitHub Actions OIDC token must carry to request an upload."""
+    """The audience a GitHub Actions OIDC token must carry to request a registry upload."""
 
     REGISTRY_TABLE: str = ""
     """The module registry's one table: module versions and their upload records."""
