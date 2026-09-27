@@ -53,10 +53,21 @@ locals {
           batch_size                         = 10
           maximum_batching_window_in_seconds = 1
           maximum_retry_attempts             = 2
-          filter_patterns = [jsonencode({
-            eventName = ["INSERT", "MODIFY"]
-            dynamodb  = { NewImage = { source = { S = [{ prefix = "vcs_" }] } } }
-          })]
+          filter_patterns = [
+            jsonencode({
+              eventName = ["INSERT", "MODIFY"]
+              dynamodb  = { NewImage = { source = { S = [{ prefix = "vcs_" }] } } }
+            }),
+            jsonencode({
+              eventName = ["MODIFY"]
+              dynamodb = {
+                NewImage = {
+                  status      = { S = ["applied", "planned_and_finished", "errored", "cancelled", "discarded"] }
+                  finished_at = { S = [{ exists = false }] }
+                }
+              }
+            }),
+          ]
         }
       }
     }

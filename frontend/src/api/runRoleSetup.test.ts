@@ -11,6 +11,7 @@ import {
   accountStatus,
   accountStatusLabel,
   connectionLabel,
+  connectionVerification,
   hasRunRole,
   isConnected,
   isRunRoleMissing,
@@ -239,5 +240,35 @@ describe('PERMISSIONS_CHOICES', () => {
       'read_only',
       'none',
     ]);
+  });
+});
+
+describe('connectionVerification', () => {
+  const arn = aWorkspace().run_role_arn ?? '';
+  const connection = {
+    status: 'connected' as const,
+    role_arn: arn,
+    run_id: 'run-1',
+    verification: 'failed' as const,
+    verification_error: 'The run failed with InitFailed.',
+  };
+
+  it('reads the verification a stack report recorded for the role', () => {
+    expect(connectionVerification(connection, arn)).toEqual({
+      state: 'failed',
+      error: 'The run failed with InitFailed.',
+      runId: 'run-1',
+    });
+  });
+
+  it('has nothing for another role, an unreported link or an older record', () => {
+    expect(connectionVerification(connection, `${arn}-other`)).toBeNull();
+    expect(
+      connectionVerification({ ...connection, status: 'waiting' }, arn)
+    ).toBeNull();
+    expect(
+      connectionVerification({ ...connection, verification: null }, arn)
+    ).toBeNull();
+    expect(connectionVerification(null, arn)).toBeNull();
   });
 });

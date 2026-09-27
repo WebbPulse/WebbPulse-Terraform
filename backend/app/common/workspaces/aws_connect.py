@@ -217,6 +217,7 @@ def connect(
         "request_id": request_id,
         "physical_id": physical,
         "reported_at": now,
+        "verification": "pending",
     }
     names = {
         "#connection": CONNECTION_ATTRIBUTE,
@@ -261,6 +262,91 @@ def record_run(workspace_id: str, request_id: str, run_id: str, *, settings: Set
         )
     except ConditionFailed:
         pass
+
+
+def fail_verification(workspace_id: str, request_id: str, error: str, *, settings: Settings | None = None) -> None:
+    """Show the connection a request recorded as failed, when its verification run never started."""
+    resolved = settings or get_settings()
+    try:
+        repositories.workspaces(resolved).update(
+            {"workspace_id": workspace_id},
+            update_expression=(
+                "SET #connection.verification = :failed, #connection.verification_error = :error, "
+                "#connection.verified_at = :now"
+            ),
+            expression_names={"#connection": CONNECTION_ATTRIBUTE},
+            expression_values={":failed": "failed", ":error": error, ":now": now_iso()},
+            condition=Attr(f"{CONNECTION_ATTRIBUTE}.request_id").eq(request_id),
+        )
+    except ConditionFailed:
+        pass
+
+
+VERIFIED_RUN_STATUSES: Final = frozenset({"planned_and_finished", "applied", "discarded"})
+"""Terminal statuses a run reaches only after its plan finished cleanly on the role."""
+
+FAILED_RUN_STATUSES: Final = frozenset({"errored", "cancelled"})
+"""Terminal statuses of a run that ended without proving the role."""
+
+UNSETTLED_VERIFICATIONS: Final = ("pending", "failed")
+"""Verifications a later run on the same role may still settle."""
+
+
+def _verification_failure(run: dict[str, Any]) -> str:
+    """The words a failed verification shows, from the run that failed it."""
+    if str(run.get("status", "")) == "cancelled":
+        return "The verification run was cancelled before it finished."
+    return str(run.get("error") or "") or "The verification run errored."
+
+
+def record_verification(run: dict[str, Any], *, settings: Settings | None = None) -> bool:
+    """Settle the connection's verification from a run that reached a terminal status.
+
+    The connection's own verification run always settles it. Any other run on the
+    same role settles it too while it is still pending or failed, so a person who
+    fixes the cause and runs again sees the connection verified without reconnecting,
+    while a later failure of an unrelated plan never takes a verified connection back.
+    A cancel of a run that is not the connection's own proves nothing and is ignored.
+    Returns whether the connection changed.
+    """
+    resolved = settings or get_settings()
+    status = str(run.get("status", ""))
+    if status in VERIFIED_RUN_STATUSES:
+        outcome = "verified"
+    elif status in FAILED_RUN_STATUSES:
+        outcome = "failed"
+    else:
+        return False
+    run_id = str(run.get("run_id", ""))
+    role_arn = str(run.get("run_role_arn") or "")
+    workspace_id = str(run.get("workspace_id", ""))
+    if not run_id or not role_arn or not workspace_id:
+        return False
+    own = Attr(f"{CONNECTION_ATTRIBUTE}.run_id").eq(run_id)
+    settles = own
+    if status != "cancelled":
+        settles = own | Attr(f"{CONNECTION_ATTRIBUTE}.verification").is_in(list(UNSETTLED_VERIFICATIONS))
+    names = {"#connection": CONNECTION_ATTRIBUTE}
+    values: dict[str, Any] = {":outcome": outcome, ":run": run_id, ":now": now_iso()}
+    expression = "SET #connection.verification = :outcome, #connection.run_id = :run, #connection.verified_at = :now"
+    if outcome == "failed":
+        expression += ", #connection.verification_error = :error"
+        values[":error"] = _verification_failure(run)
+    else:
+        expression += " REMOVE #connection.verification_error"
+    try:
+        repositories.workspaces(resolved).update(
+            {"workspace_id": workspace_id},
+            update_expression=expression,
+            expression_names=names,
+            expression_values=values,
+            condition=Attr(f"{CONNECTION_ATTRIBUTE}.status").eq("connected")
+            & Attr(f"{CONNECTION_ATTRIBUTE}.role_arn").eq(role_arn)
+            & settles,
+        )
+    except ConditionFailed:
+        return False
+    return True
 
 
 def current_connection(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
@@ -313,20 +399,24 @@ def disconnect(workspace_id: str, *, stack_id: str, physical_id: str, settings: 
 
 __all__ = [
     "CONNECTION_ATTRIBUTE",
+    "FAILED_RUN_STATUSES",
     "PHYSICAL_ID_PREFIX",
     "TOKEN_EXPIRES_ATTRIBUTE",
     "TOKEN_HASH_ATTRIBUTE",
     "TOKEN_PATTERN",
     "TOKEN_TTL_SECONDS",
+    "VERIFIED_RUN_STATUSES",
     "ConnectOutcome",
     "ConnectResult",
     "connect",
     "current_connection",
     "disconnect",
     "expected_role_arn",
+    "fail_verification",
     "hash_token",
     "issue_token",
     "record_run",
+    "record_verification",
     "run_role_name",
     "stack_account",
 ]

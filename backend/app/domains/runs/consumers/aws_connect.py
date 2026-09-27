@@ -203,13 +203,17 @@ def _starter_config(workspace: Mapping[str, Any], *, settings: Settings) -> str:
     return config_version_id
 
 
+VERIFY_START_FAILED_MESSAGE = "The verification run could not be started. Start a plan only run to verify the role."
+"""What a connection whose verification run never started shows."""
+
+
 def _verify(workspace_id: str, account_id: str, pending: bool, request_id: str, *, settings: Settings) -> None:
     """Start the plan only run that proves the runner can assume the new role.
 
     A staged role gets a `run_role_check` run, which switches the workspace over when
     it finishes; a role taken at once gets an ordinary plan only run, whose end
-    records the check. Failing to start it leaves the role connected but unverified,
-    which the workspace page offers to check, so it never fails the stack.
+    records the check. Failing to start it shows the connection's verification as
+    failed, which the workspace page offers to retry, and never fails the stack.
     """
     try:
         workspace = workspace_reads.get_workspace(workspace_id, settings=settings)
@@ -237,6 +241,7 @@ def _verify(workspace_id: str, account_id: str, pending: bool, request_id: str, 
                 "error": type(error).__name__,
             },
         )
+        aws_connect.fail_verification(workspace_id, request_id, VERIFY_START_FAILED_MESSAGE, settings=settings)
         return
     aws_connect.record_run(workspace_id, request_id, str(run["run_id"]), settings=settings)
 

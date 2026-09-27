@@ -542,3 +542,152 @@ def test_is_connect_request_recognises_only_the_shape():
     assert not consumer.is_connect_request(_record({**body, "kind": "confirmation"}))
     assert not consumer.is_connect_request({"messageId": "m", "body": "not json"})
     assert not consumer.is_connect_request(_record({"RequestType": "Create"}))
+
+
+def _verifying(auth_client, *, with_role: bool = False) -> tuple[str, str]:
+    """A workspace a stack just connected, with the id of the verification run it started."""
+    workspace_id = _workspace(auth_client, with_role=with_role)["workspace_id"]
+    _handle(_request("Create", workspace_id, _token(auth_client, workspace_id)))
+    return workspace_id, str(_row(workspace_id)["aws_connection"]["run_id"])
+
+
+def _plan_succeeds(run_id: str) -> None:
+    """Report a clean plan for a plan only run, which the API ends `planned_and_finished`."""
+    from app.domains.runs import service
+
+    service.record_phase_result(
+        run_id, {"phase": "plan", "exit_code": 0, "changes": {"add": 0, "change": 0, "destroy": 0}, "error": ""}
+    )
+
+
+def _state_machine_errors(run_id: str, error: str) -> None:
+    """End a run the way `MarkErrored` does, then settle it as the stream would."""
+    from app.domains.runs import service
+
+    repositories.runs(settings_module.get_settings()).update(
+        {"run_id": run_id},
+        update_expression="SET #status = :status, #error = :error",
+        expression_names={"#status": "status", "#error": "error"},
+        expression_values={":status": "errored", ":error": error},
+    )
+    assert service.settle_run(run_id) is not None
+
+
+def test_a_reported_stack_is_pending_verification(auth_client, answers, state_machine):
+    """Reporting back only says the role exists, so the connection waits on its run."""
+    workspace_id, _run_id = _verifying(auth_client)
+    connection = auth_client.get(f"/api/v1/workspaces/{workspace_id}").json()["aws_connection"]
+    assert connection["status"] == "connected"
+    assert connection["verification"] == "pending"
+    assert connection["verification_error"] is None
+
+
+def test_a_clean_verification_run_verifies_the_connection(auth_client, answers, state_machine):
+    """The run finishing its plan is what shows the connection verified."""
+    workspace_id, run_id = _verifying(auth_client)
+    _plan_succeeds(run_id)
+    connection = auth_client.get(f"/api/v1/workspaces/{workspace_id}").json()["aws_connection"]
+    assert connection["verification"] == "verified"
+    assert connection["verified_at"]
+    assert connection["run_id"] == run_id
+
+
+def test_a_verification_run_that_errors_fails_the_connection(auth_client, answers, state_machine):
+    """A run that assumed the role but could not initialise shows failed, with why and which run."""
+    workspace_id, run_id = _verifying(auth_client)
+    _state_machine_errors(run_id, "The run failed with InitFailed.")
+    connection = auth_client.get(f"/api/v1/workspaces/{workspace_id}").json()["aws_connection"]
+    assert connection["status"] == "connected"
+    assert connection["verification"] == "failed"
+    assert connection["verification_error"] == "The run failed with InitFailed."
+    assert connection["run_id"] == run_id
+
+
+def test_a_verification_run_that_never_starts_fails_the_connection(auth_client, answers, state_machine, monkeypatch):
+    """The stack still succeeds, and the connection says the run did not start."""
+    from app.domains.runs import service
+
+    def refused(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        """Fail the way a throttled table would."""
+        raise RuntimeError("throttled")
+
+    monkeypatch.setattr(service, "create_run", refused)
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    _handle(_request("Create", workspace_id, _token(auth_client, workspace_id)))
+
+    assert answers["sent"][0]["body"]["Status"] == "SUCCESS"
+    connection = _row(workspace_id)["aws_connection"]
+    assert connection["verification"] == "failed"
+    assert connection["verification_error"] == consumer.VERIFY_START_FAILED_MESSAGE
+
+
+def test_a_later_clean_run_on_the_role_settles_a_failed_verification(auth_client, answers, state_machine):
+    """Fixing the cause and running again verifies the connection without reconnecting."""
+    workspace_id, run_id = _verifying(auth_client)
+    _state_machine_errors(run_id, "The run failed with InitFailed.")
+    retry = auth_client.post(
+        "/api/v1/runs",
+        json={"workspace_id": workspace_id, "config_version_id": _config_of(auth_client, run_id), "plan_only": True},
+    ).json()
+    _plan_succeeds(retry["run_id"])
+    connection = _row(workspace_id)["aws_connection"]
+    assert connection["verification"] == "verified"
+    assert connection["run_id"] == retry["run_id"]
+    assert "verification_error" not in connection
+
+
+def test_a_later_failure_never_unverifies_a_connection(auth_client, answers, state_machine):
+    """Once verified, an unrelated run failing is that run's problem, not the connection's."""
+    workspace_id, run_id = _verifying(auth_client)
+    _plan_succeeds(run_id)
+    later = auth_client.post(
+        "/api/v1/runs",
+        json={"workspace_id": workspace_id, "config_version_id": _config_of(auth_client, run_id), "plan_only": True},
+    ).json()
+    _state_machine_errors(later["run_id"], "The run failed with PlanFailed.")
+    connection = _row(workspace_id)["aws_connection"]
+    assert connection["verification"] == "verified"
+    assert connection["run_id"] == run_id
+
+
+def test_cancelling_the_verification_run_fails_the_verification(auth_client, answers, state_machine):
+    """A cancelled verification proves nothing, and says so rather than staying pending."""
+    workspace_id, run_id = _verifying(auth_client)
+    assert auth_client.post(f"/api/v1/runs/{run_id}/cancel").status_code == 200
+    connection = _row(workspace_id)["aws_connection"]
+    assert connection["verification"] == "failed"
+    assert "cancelled" in connection["verification_error"]
+
+
+def test_a_staged_role_whose_verification_run_errors_is_not_switched_to(auth_client, answers, state_machine):
+    """Assuming the role is not enough: a verification that fails after AssumeRole keeps the working role."""
+    from app.common.workspaces import run_role_check
+
+    workspace_id, run_id = _verifying(auth_client, with_role=True)
+    _state_machine_errors(run_id, "The run failed with InitFailed.")
+
+    row = _row(workspace_id)
+    assert row["run_role_arn"] == WORKSPACE_PAYLOAD["run_role_arn"]
+    assert row["pending_run_role_arn"] == _role(workspace_id)
+    assert row["aws_connection"]["verification"] == "failed"
+    pending = auth_client.get(f"/api/v1/workspaces/{workspace_id}/run-role/check").json()["pending"]
+    assert pending["connected"] is False
+    assert pending["status"] == "failed"
+    assert pending["error"].startswith(run_role_check.PENDING_RUN_FAILED_PREFIX)
+    assert "InitFailed" in pending["error"]
+    assert pending["run_id"] == run_id
+
+
+def test_a_staged_role_whose_verification_run_finishes_is_switched_to(auth_client, answers, state_machine):
+    """The same run ending cleanly switches the workspace over and verifies the connection."""
+    workspace_id, run_id = _verifying(auth_client, with_role=True)
+    _plan_succeeds(run_id)
+    row = _row(workspace_id)
+    assert row["run_role_arn"] == _role(workspace_id)
+    assert "pending_run_role_arn" not in row
+    assert row["aws_connection"]["verification"] == "verified"
+
+
+def _config_of(auth_client, run_id: str) -> str:
+    """The config version a run planned, so a retry plans the same thing."""
+    return str(auth_client.get(f"/api/v1/runs/{run_id}").json()["config_version_id"])

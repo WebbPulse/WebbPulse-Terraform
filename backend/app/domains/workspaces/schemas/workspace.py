@@ -236,6 +236,11 @@ AwsConnectionStatus = Literal["waiting", "connected", "expired", "disconnected"]
 """Where a Quick setup stack is: link handed out, stack reported back, link unused
 past its expiry, or stack deleted."""
 
+AwsConnectionVerification = Literal["pending", "verified", "failed"]
+"""Where the run that proves a reported role stands: still going, finished cleanly, or
+ended without finishing. A stack reporting back only says the role exists; this is
+whether a run could actually use it."""
+
 
 class AwsConnection(BaseModel):
     """What the last Quick setup link and its stack reported, for the UI to follow live."""
@@ -255,7 +260,14 @@ class AwsConnection(BaseModel):
     reported_at: Optional[datetime] = None
     """When the stack reported back."""
     run_id: Optional[str] = None
-    """The verification run started when the stack reported back."""
+    """The verification run: the one started when the stack reported back, or the
+    latest run on the role to settle a pending or failed verification."""
+    verification: Optional[AwsConnectionVerification] = None
+    """Whether that run proved the role. Absent on connections recorded before it existed."""
+    verification_error: Optional[str] = None
+    """Why the verification failed, when it did."""
+    verified_at: Optional[datetime] = None
+    """When the verification reached `verified` or `failed`."""
     disconnected_at: Optional[datetime] = None
 
 
@@ -303,7 +315,7 @@ class PendingRunRoleCheck(BaseModel):
 
     role_arn: str
     connected: bool
-    """True once a verification run proved the runner assumed this role."""
+    """True once a verification run assumed this role and finished its plan."""
     status: RunRoleCheckStatus
     account_id: Optional[str] = None
     error: Optional[str] = None

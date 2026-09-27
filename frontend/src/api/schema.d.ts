@@ -1473,6 +1473,12 @@ export interface components {
              * @enum {string}
              */
             status: "waiting" | "connected" | "expired" | "disconnected";
+            /** Verification */
+            verification?: ("pending" | "verified" | "failed") | null;
+            /** Verification Error */
+            verification_error?: string | null;
+            /** Verified At */
+            verified_at?: string | null;
         };
         /**
          * BackendConfig

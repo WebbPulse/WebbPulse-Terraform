@@ -14,10 +14,12 @@ The answer is one of three:
 - `unverified`: no run with a verdict has used this ARN yet, so a plan only run is
   the check.
 
-A role staged as `pending_run_role_arn` is answered the same way. Runs keep the
-current role until a verification run proves the staged one, and the recording
-check then switches the workspace over, so a half finished setup never breaks a
-workspace that works.
+A role staged as `pending_run_role_arn` is held to more: its verification run has
+to finish its plan, not merely get past AssumeRole, because a role the runner can
+assume but cannot plan with (a state backend it cannot reach, say) would break
+every run once the workspace switched to it. Runs keep the current role until a
+verification run proves the staged one, and the recording check then switches the
+workspace over, so a half finished setup never breaks a workspace that works.
 
 Both functions record it: the workspaces function when someone asks, and the runs
 function after every run reaches a terminal status, which is what switches a staged
@@ -73,6 +75,9 @@ PENDING_UNVERIFIED_MESSAGE: Final = (
 )
 """What a staged role no verification run has tried yet reads as."""
 
+PENDING_RUN_FAILED_PREFIX: Final = "The verification run assumed this role but did not finish its plan"
+"""What a staged role reads as when its verification run got past AssumeRole and then failed."""
+
 _FAILURE_NAME = re.compile(r"failed with (\w+)")
 _ENGINE_EXIT = re.compile(r"^The (plan|apply) phase exited")
 _ACCOUNT_ID = re.compile(r"^arn:aws[\w-]*:iam::(\d{12}):role/")
@@ -125,8 +130,25 @@ def _evidence(workspace_id: str, role_arn: str, settings: Settings) -> tuple[dic
     return None
 
 
-def _outcome(workspace_id: str, role_arn: str, *, unverified: str, settings: Settings) -> dict[str, Any]:
-    """The runner's verdict on one role ARN, from the newest run that reached one."""
+def _failed_to_finish(run: dict[str, Any]) -> str:
+    """Why a staged role's verification run, which assumed the role, still does not prove it."""
+    error = str(run.get("error", "") or "").strip()
+    return f"{PENDING_RUN_FAILED_PREFIX}: {error}" if error else f"{PENDING_RUN_FAILED_PREFIX}."
+
+
+def _outcome(
+    workspace_id: str,
+    role_arn: str,
+    *,
+    unverified: str,
+    settings: Settings,
+    require_success: bool = False,
+) -> dict[str, Any]:
+    """The runner's verdict on one role ARN, from the newest run that reached one.
+
+    With `require_success`, a run that assumed the role but then failed counts as a
+    failure rather than a connection, which is the bar a staged role has to clear.
+    """
     found = _evidence(workspace_id, role_arn, settings)
     if found is None:
         return {
@@ -139,6 +161,15 @@ def _outcome(workspace_id: str, role_arn: str, *, unverified: str, settings: Set
         }
     run, verdict = found
     checked_at = str(run.get("finished_at") or run.get("updated_at") or run.get("created_at") or "") or None
+    if verdict == "connected" and require_success and str(run.get("status", "")) not in ASSUMED_STATUSES:
+        return {
+            "connected": False,
+            "status": "failed",
+            "account_id": None,
+            "error": _failed_to_finish(run),
+            "run_id": str(run["run_id"]),
+            "checked_at": checked_at,
+        }
     if verdict == "failed":
         return {
             "connected": False,
@@ -164,7 +195,8 @@ def probe_run_role(workspace_id: str, *, settings: Settings | None = None) -> di
     Reads the workspace's newest runs and answers from the first one created with
     the current role ARN that reached AssumeRole. No credentials are requested, so
     the API holds no path into the account the role lives in. A staged
-    `pending_run_role_arn` is answered the same way under `pending`.
+    `pending_run_role_arn` is answered under `pending`, and only a run that
+    finished its plan on it counts as connected.
 
     Raises:
         WorkspaceNotFound: No such workspace.
@@ -181,7 +213,13 @@ def probe_run_role(workspace_id: str, *, settings: Settings | None = None) -> di
     if pending_arn:
         pending = {
             "role_arn": pending_arn,
-            **_outcome(workspace_id, pending_arn, unverified=PENDING_UNVERIFIED_MESSAGE, settings=resolved),
+            **_outcome(
+                workspace_id,
+                pending_arn,
+                unverified=PENDING_UNVERIFIED_MESSAGE,
+                settings=resolved,
+                require_success=True,
+            ),
         }
     return outcome | {"pending": pending}
 
@@ -189,8 +227,8 @@ def probe_run_role(workspace_id: str, *, settings: Settings | None = None) -> di
 def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     """Probe the workspace's run role, switch to a staged role that proved out, and stamp the outcome.
 
-    The probe itself is `probe_run_role`. A staged role a verification run assumed
-    becomes the workspace's `run_role_arn` here, conditional on it still being the
+    The probe itself is `probe_run_role`. A staged role whose verification run
+    finished its plan becomes the workspace's `run_role_arn` here, conditional on it still being the
     staged one, and the check is read again for it. What this adds besides is the
     record the UI reads between visits: the moment and the account on a success,
     both cleared otherwise, so a stale success cannot outlive a broken trust policy.

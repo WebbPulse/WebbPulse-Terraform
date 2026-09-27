@@ -204,10 +204,19 @@ def test_a_failed_record_never_blocks_the_run_ending(
 
 @pytest.mark.parametrize(
     ("status", "error"),
-    [("errored", "The run failed with AssumeRoleFailed."), ("cancelled", None)],
+    [
+        ("errored", "The run failed with AssumeRoleFailed."),
+        ("errored", "The run failed with InitFailed."),
+        ("errored", "The plan phase exited 1."),
+        ("cancelled", None),
+    ],
 )
 def test_an_unproven_role_is_never_switched_to(auth_client, workspace, settings, status, error):
-    """A refused or unfinished verification leaves the working role in place."""
+    """A refused, failed or unfinished verification leaves the working role in place.
+
+    A run that got past AssumeRole and then failed counts too: a staged role has to
+    carry a whole plan before the workspace switches to it.
+    """
     from webbpulse.dynamodb import new_ulid
 
     from app.common.db import repositories

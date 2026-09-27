@@ -1189,6 +1189,88 @@ describe('Connect AWS', () => {
     ).toBeEnabled();
   });
 
+  it('shows a connection as verifying while its verification run is going', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        run_role_checked_at: null,
+        run_role_account_id: null,
+        aws_connection: aReport({ verification: 'pending' }),
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(within(connected).getByTestId('verifying-badge')).toHaveTextContent(
+      'Verifying'
+    );
+    expect(
+      within(connected).queryByTestId('verified-badge')
+    ).not.toBeInTheDocument();
+    expect(
+      within(connected).getByTestId('verification-status')
+    ).toHaveAttribute('data-connection', 'pending');
+    expect(
+      within(connected).getByTestId('verification-run-link')
+    ).toBeInTheDocument();
+  });
+
+  it('marks a connection verified once its verification run succeeded', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        aws_connection: aReport({
+          verification: 'verified',
+          verified_at: '2026-09-26T00:05:00Z',
+        }),
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(
+      await within(connected).findByTestId('verified-badge')
+    ).toHaveTextContent('Verified');
+    expect(
+      within(connected).queryByTestId('verification-status')
+    ).not.toBeInTheDocument();
+    expect(
+      within(connected).queryByTestId('verification-run-link')
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows a failed verification with its error and a link to the run, even when the role was assumed', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        aws_connection: aReport({
+          verification: 'failed',
+          verification_error: 'The run failed with InitFailed.',
+          verified_at: '2026-09-26T00:05:00Z',
+        }),
+      })
+    );
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(
+      await within(connected).findByTestId('verification-failed-badge')
+    ).toHaveTextContent('Verification failed');
+    expect(
+      within(connected).queryByTestId('verified-badge')
+    ).not.toBeInTheDocument();
+    const status = within(connected).getByTestId('verification-status');
+    expect(status).toHaveAttribute('data-connection', 'failed');
+    expect(status).toHaveTextContent('The run failed with InitFailed.');
+    expect(
+      within(connected).getByTestId('verification-run-link')
+    ).toHaveAttribute(
+      'href',
+      '/workspaces/ws-01J000000000000000000000/runs/run-01J000000000000000000009'
+    );
+  });
+
   it('opens the setup paths from Change role and keeps the current role on the way out', async () => {
     apiMock.getWorkspace.mockResolvedValue(aWorkspace());
 
