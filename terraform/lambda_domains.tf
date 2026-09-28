@@ -2,6 +2,7 @@ locals {
   lambda_domains_declared = {
     workspaces = {
       memory            = 512
+      timeout           = local.lambda_domain_timeout
       tables            = ["workspaces", "variables", "config-versions", "users"]
       read_tables       = ["runs"]
       buckets           = true
@@ -11,6 +12,7 @@ locals {
     }
     runs = {
       memory        = 512
+      timeout       = local.lambda_domain_timeout
       tables        = ["runs", "vcs-uploads"]
       read_tables   = ["workspaces", "variables", "config-versions", "users"]
       buckets       = true
@@ -73,6 +75,7 @@ locals {
     }
     github = {
       memory            = 256
+      timeout           = local.lambda_domain_timeout
       tables            = ["github"]
       read_tables       = ["users"]
       buckets           = false
@@ -170,7 +173,7 @@ module "lambda_domain" {
   architectures = ["arm64"]
   memory_size   = each.value.memory
 
-  timeout = try(each.value.timeout, local.lambda_domain_timeout)
+  timeout = each.value.timeout
 
   sqs_event_sources             = each.value.sqs_event_sources
   dynamodb_stream_event_sources = each.value.stream_sources
