@@ -1630,6 +1630,33 @@
         "title": "PlanResourceChange",
         "type": "object"
       },
+      "RegistryCredentials": {
+        "description": "The run's module registry key, which the runner sets as `TF_TOKEN_<host>` for init only.",
+        "properties": {
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "hosts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hosts",
+          "token",
+          "expires_at"
+        ],
+        "title": "RegistryCredentials",
+        "type": "object"
+      },
       "Repository": {
         "description": "One repository an installation covers.",
         "properties": {
@@ -1997,6 +2024,16 @@
           "plan_only": {
             "title": "Plan Only",
             "type": "boolean"
+          },
+          "registry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegistryCredentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "run_id": {
             "title": "Run Id",

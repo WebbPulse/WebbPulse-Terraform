@@ -2054,6 +2054,18 @@ export interface components {
             type: string;
         };
         /**
+         * RegistryCredentials
+         * @description The run's module registry key, which the runner sets as `TF_TOKEN_<host>` for init only.
+         */
+        RegistryCredentials: {
+            /** Expires At */
+            expires_at: string;
+            /** Hosts */
+            hosts: string[];
+            /** Token */
+            token: string;
+        };
+        /**
          * Repository
          * @description One repository an installation covers.
          */
@@ -2209,6 +2221,7 @@ export interface components {
             phase: "plan" | "apply";
             /** Plan Only */
             plan_only: boolean;
+            registry?: components["schemas"]["RegistryCredentials"] | null;
             /** Run Id */
             run_id: string;
             /** Run Role Arn */

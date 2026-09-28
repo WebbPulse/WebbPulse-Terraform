@@ -19,7 +19,15 @@ from app.engine import build_environment, parse_apply_changes, parse_changes
 from app.install import release_urls
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
 from app.main import redact_outputs
-from app.models import BackendConfig, Bundle, Changes, PhaseResult, VendedCredentials, hcl_literal_fragments
+from app.models import (
+    BackendConfig,
+    Bundle,
+    Changes,
+    PhaseResult,
+    VendedCredentials,
+    hcl_literal_fragments,
+    token_variable,
+)
 from tests.conftest import (
     LOG_GROUP,
     PLAN_JSON_NO_CHANGES,
@@ -567,3 +575,24 @@ def test_release_urls_follow_each_projects_layout() -> None:
         "https://github.com/opentofu/opentofu/releases/download/v1.9.0/tofu_1.9.0_SHA256SUMS",
         "tofu_1.9.0_linux_amd64.zip",
     )
+
+
+@pytest.mark.parametrize(
+    ("host", "variable"),
+    [
+        ("terraform.webbpulse.com", "TF_TOKEN_terraform_webbpulse_com"),
+        ("staging.terraform-e2e.webbpulse.com", "TF_TOKEN_staging_terraform__e2e_webbpulse_com"),
+    ],
+)
+def test_token_variables_follow_the_engines_host_encoding(host: str, variable: str) -> None:
+    """Dots become underscores and hyphens double underscores."""
+    assert token_variable(host) == variable
+
+
+def test_the_registry_token_is_a_sensitive_value(run_role_arn: str) -> None:
+    """The redactor holds the registry token like any other secret in the bundle."""
+    bundle = Bundle.model_validate(
+        bundle_payload(run_role_arn) | {"registry": {"hosts": ["terraform.webbpulse.com"], "token": "wpk_abcdefghijkl"}}
+    )
+    assert "wpk_abcdefghijkl" in bundle.sensitive_values()
+    assert bundle.init_environment() == {"TF_TOKEN_terraform_webbpulse_com": "wpk_abcdefghijkl"}

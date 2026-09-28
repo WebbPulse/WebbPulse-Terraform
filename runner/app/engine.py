@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Sequence, cast
+from typing import Mapping, Sequence, cast
 
 from app.logs import LogSink
 from app.models import Changes, Engine
@@ -63,19 +63,27 @@ class EngineRunner:
         self._environment = environment
         self._sink = sink
 
-    def run(self, arguments: Sequence[str], *, capture: bool = False) -> tuple[int, str]:
+    def run(
+        self,
+        arguments: Sequence[str],
+        *,
+        capture: bool = False,
+        extra_environment: Mapping[str, str] | None = None,
+    ) -> tuple[int, str]:
         """Run one subcommand, streaming combined output to the sink line by line.
 
         `capture` returns stdout instead of streaming it, for the JSON producing
         subcommands whose output is a document rather than progress.
+        `extra_environment` is added for this subcommand alone.
         """
         command = [self._binary, *arguments]
+        environment = {**self._environment, **(extra_environment or {})}
         self._sink.write(f"$ {self._engine} {' '.join(arguments)}")
         if capture:
             completed = subprocess.run(  # noqa: S603
                 command,
                 cwd=self._directory,
-                env=self._environment,
+                env=environment,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -86,7 +94,7 @@ class EngineRunner:
         process = subprocess.Popen(  # noqa: S603
             command,
             cwd=self._directory,
-            env=self._environment,
+            env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -98,9 +106,13 @@ class EngineRunner:
         process.stdout.close()
         return process.wait(), ""
 
-    def init(self) -> int:
-        """Initialise the working directory against the S3 backend."""
-        exit_code, _ = self.run(["init", "-input=false"])
+    def init(self, extra_environment: Mapping[str, str] | None = None) -> int:
+        """Initialise the working directory against the S3 backend.
+
+        `extra_environment` carries the registry credential, which only `init`
+        needs, since it is the one subcommand that downloads modules.
+        """
+        exit_code, _ = self.run(["init", "-input=false"], extra_environment=extra_environment)
         return exit_code
 
     def plan(self, *, destroy: bool = False) -> int:

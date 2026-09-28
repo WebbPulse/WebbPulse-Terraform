@@ -41,6 +41,8 @@ TASK_TOKEN = "task-token-do-not-log-klmnopqrst"
 SECRET_TFVAR = "super-secret-database-password-1234"
 SECRET_ENVVAR = "secret-provider-credential-567890abc"
 SECRET_HCL_TFVAR = '["secret-list-member-abcdefghij", "secret-list-member-klmnopqrst"]'
+REGISTRY_TOKEN = "wpk_registry-token-do-not-log-abcdefghij"
+REGISTRY_HOST = "staging.terraform-e2e.webbpulse.com"
 """A sensitive variable whose value is an HCL expression. The expression is the
 secret, so it is the expression the redactor has to mask."""
 
@@ -277,6 +279,9 @@ if SUBCOMMAND == "version":
     else:
         print("Terraform v" + VERSION)
     sys.exit(0)
+for key in sorted(os.environ):
+    if key.startswith("TF_TOKEN_"):
+        print(SUBCOMMAND + " holds " + key + "=" + os.environ[key])
 if SUBCOMMAND == "init":
     print("Initializing the backend...")
     if ECHO:
