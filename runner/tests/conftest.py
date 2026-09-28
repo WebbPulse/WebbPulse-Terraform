@@ -177,6 +177,32 @@ class ApiRecorder:
         self.bundle_requests = 0
         self.heartbeats: list[dict[str, Any]] = []
         self.heartbeat_headers: list[dict[str, str]] = []
+        self.credential_requests: list[dict[str, Any]] = []
+
+
+REFRESHED_ACCESS_KEY_ID = "ASIAREFRESHEDKEY0001"
+REFRESHED_SECRET_ACCESS_KEY = "refreshed-secret-access-key-abcdef0123456789"
+REFRESHED_SESSION_TOKEN = "refreshed-session-token-abcdef0123456789"
+REFRESHED_STATE_SECRET_ACCESS_KEY = "refreshed-state-secret-access-key-abcdef01234"
+REFRESHED_STATE_SESSION_TOKEN = "refreshed-state-session-token-abcdef01234567"
+
+
+def refreshed_payload(expiration: str = "2099-01-01T00:00:00+00:00") -> dict[str, Any]:
+    """What `POST /runs/{id}/credentials` answers with: both sessions, freshly vended."""
+    return {
+        "aws_credentials": {
+            "access_key_id": REFRESHED_ACCESS_KEY_ID,
+            "secret_access_key": REFRESHED_SECRET_ACCESS_KEY,
+            "session_token": REFRESHED_SESSION_TOKEN,
+            "expiration": expiration,
+        },
+        "backend_credentials": {
+            "access_key_id": "ASIAREFRESHEDSTATE01",
+            "secret_access_key": REFRESHED_STATE_SECRET_ACCESS_KEY,
+            "session_token": REFRESHED_STATE_SESSION_TOKEN,
+            "expiration": expiration,
+        },
+    }
 
 
 def make_transport(
@@ -192,6 +218,7 @@ def make_transport(
     releases: dict[str, bytes] | None = None,
     refused_uploads: frozenset[str] = frozenset(),
     heartbeat_status: int = 204,
+    credentials_status: int = 200,
 ) -> httpx.MockTransport:
     """An httpx transport serving the bundle, the config tarball and the artifact uploads.
 
@@ -200,7 +227,8 @@ def make_transport(
     `Content-Length` fails here the way S3 fails it. `releases` serves engine
     release files by URL, `refused_uploads` names artifact kinds whose upload
     request is refused, `bundle_body` is a refused bundle's error body and
-    `heartbeat_status` is what every heartbeat is answered with.
+    `heartbeat_status` is what every heartbeat is answered with and
+    `credentials_status` what every credential refresh is.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -240,6 +268,13 @@ def make_transport(
                     heartbeat_status, json={"detail": {"error_code": "PHASE_TASK_ENDED", "message": "ended"}}
                 )
             return httpx.Response(heartbeat_status)
+        if path.endswith("/credentials"):
+            recorder.credential_requests.append(json.loads(request.content))
+            if credentials_status != 200:
+                return httpx.Response(
+                    credentials_status, json={"detail": {"error_code": "PHASE_MISMATCH", "message": "moved on"}}
+                )
+            return httpx.Response(200, json=refreshed_payload())
         if path.endswith("/phase-result"):
             recorder.phase_results.append(json.loads(request.content))
             return httpx.Response(204)

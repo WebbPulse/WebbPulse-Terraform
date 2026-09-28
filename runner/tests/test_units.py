@@ -212,15 +212,16 @@ def test_build_environment_drops_the_runner_tokens(tmp_path: Path) -> None:
     }
     environment = build_environment(
         base,
-        {"AWS_ACCESS_KEY_ID": "run-role-key", "AWS_SECRET_ACCESS_KEY": "s", "AWS_SESSION_TOKEN": "t"},
         {"PROVIDER_TOKEN": SECRET_ENVVAR},
         "us-west-2",
         tmp_path,
+        {"AWS_PROFILE": "webbpulse-run"},
     )
     assert "RUN_TOKEN" not in environment
     assert "TASK_TOKEN" not in environment
     assert "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" not in environment
-    assert environment["AWS_ACCESS_KEY_ID"] == "run-role-key"
+    assert "AWS_ACCESS_KEY_ID" not in environment
+    assert environment["AWS_PROFILE"] == "webbpulse-run"
     assert environment["PROVIDER_TOKEN"] == SECRET_ENVVAR
     assert environment["HOME"] == "/home/runner"
     assert environment["TF_IN_AUTOMATION"] == "1"
