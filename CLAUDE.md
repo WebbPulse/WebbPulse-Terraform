@@ -341,6 +341,17 @@ verifies the detached signature against the SSM public key
 stores everything under `registry/providers/`. The download answer carries presigned
 URLs and that key as `signing_keys.gpg_public_keys`.
 
+Publishing needs no App: the provider repo's release workflow, run by
+`workflow_dispatch` with a tag and an environment, signs with that environment's key
+and its OIDC role (`<prefix>-provider-release`, which may write only
+`registry/provider-uploads/webbpulse/webbpulse/*`) uploads the same files to
+`registry/provider-uploads/<ns>/<type>/<version>/<run>/`, then `upload.json`
+(`repository`, `tag`, `actor`, `run_url`) last. EventBridge queues that object on
+`registry-ingest` as `provider_upload`; `handle_upload` checks the folder against
+`upload.json`, creates the provider row without an App binding if none exists (a
+later connect adopts it), runs the same verification and deletes the folder once the
+version is settled.
+
 ### Terraform login
 
 `login.v1` in the discovery document makes `terraform login <SPA host>` work like

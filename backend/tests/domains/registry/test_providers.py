@@ -399,3 +399,124 @@ def test_the_protocol_needs_registry_read(app: Any, scoped_client: Any) -> None:
         assert anonymous.get("/v1/providers/WebbPulse/webbpulse/versions").status_code == 401
     with scoped_client(WORKSPACES_READ) as client:
         assert client.get("/v1/providers/WebbPulse/webbpulse/versions").status_code == 403
+
+
+def upload(
+    settings: Any,
+    files: dict[str, bytes],
+    *,
+    version: str = VERSION,
+    upload_id: str = "123-1",
+    request: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Upload a release the way the release workflow's OIDC role does, returning the record EventBridge queues."""
+    s3 = boto3.client("s3", region_name="us-west-2")
+    folder = f"{consumer.UPLOADS_PREFIX}webbpulse/webbpulse/{version}/{upload_id}/"
+    for name, data in files.items():
+        s3.put_object(Bucket=settings.ARTIFACTS_BUCKET, Key=folder + name, Body=data)
+    body = request if request is not None else {"repository": REPO, "tag": f"v{version}", "actor": "octocat"}
+    s3.put_object(Bucket=settings.ARTIFACTS_BUCKET, Key=folder + "upload.json", Body=json.dumps(body).encode())
+    message = {"kind": consumer.UPLOAD, "bucket": settings.ARTIFACTS_BUCKET, "key": folder + "upload.json"}
+    return {"body": json.dumps(message)}
+
+
+def _uploads_left(settings: Any) -> int:
+    """How many objects remain under the uploads prefix."""
+    listed = boto3.client("s3", region_name="us-west-2").list_objects_v2(
+        Bucket=settings.ARTIFACTS_BUCKET, Prefix=consumer.UPLOADS_PREFIX
+    )
+    return int(listed.get("KeyCount", 0))
+
+
+def test_an_upload_publishes_without_an_app_and_terraform_can_install_it(
+    settings: Any, signing_parameters: SigningKey, reader: Any
+) -> None:
+    """A signed upload creates the provider, publishes the version and clears its folder."""
+    dispatch.route_record(upload(settings, build_release(signing_parameters)), settings=settings)
+
+    row = _row(settings)
+    assert row["status"] == service.PUBLISHED, row.get("error")
+    assert row["delivery"] == "upload-123-1"
+    provider_row = repositories.registry(settings).get(providers.provider_row_key("WebbPulse", "webbpulse")) or {}
+    assert provider_row["vcs_repo"] == REPO
+    assert "vcs_installation_id" not in provider_row
+    assert _uploads_left(settings) == 0
+    download = reader.get(f"/v1/providers/WebbPulse/webbpulse/{VERSION}/download/linux/amd64")
+    assert download.status_code == 200
+    assert download.json()["shasum"] == hashlib.sha256(b"linux build").hexdigest()
+
+
+def test_an_upload_of_a_published_version_is_skipped(settings: Any, signing_parameters: SigningKey) -> None:
+    """A second upload of the same version changes nothing and is still cleared."""
+    files = build_release(signing_parameters)
+    assert consumer.handle_upload(upload(settings, files), settings=settings) == service.PUBLISHED
+
+    assert consumer.handle_upload(upload(settings, files, upload_id="124-1"), settings=settings) == consumer.SKIPPED
+    assert _row(settings)["delivery"] == "upload-123-1"
+    assert _uploads_left(settings) == 0
+
+
+def test_an_upload_signed_by_another_key_fails(settings: Any, signing_parameters: SigningKey, reader: Any) -> None:
+    """The environment's own key is still the only one that publishes."""
+    record = upload(settings, build_release(SigningKey.generate()))
+
+    assert consumer.handle_upload(record, settings=settings) == service.FAILED
+    assert "signature" in _row(settings)["error"]
+    assert reader.get("/v1/providers/WebbPulse/webbpulse/versions").status_code == 404
+    assert _uploads_left(settings) == 0
+
+
+def test_an_upload_missing_a_listed_zip_fails(settings: Any, signing_parameters: SigningKey) -> None:
+    """Every platform the signed list names must be in the folder."""
+    files = build_release(signing_parameters)
+    del files[f"{STEM}darwin_arm64.zip"]
+
+    assert consumer.handle_upload(upload(settings, files), settings=settings) == service.FAILED
+    assert "darwin_arm64.zip" in _row(settings)["error"]
+
+
+@pytest.mark.parametrize(
+    "request_body",
+    [
+        {"repository": "WebbPulse/terraform-provider-other", "tag": TAG},
+        {"repository": REPO, "tag": "v9.9.9"},
+        {"repository": REPO},
+    ],
+)
+def test_an_upload_that_disagrees_with_its_folder_is_refused(
+    settings: Any, signing_parameters: SigningKey, request_body: dict[str, Any]
+) -> None:
+    """The repository and tag must name the address and version the folder sits under."""
+    record = upload(settings, build_release(signing_parameters), request=request_body)
+
+    assert consumer.handle_upload(record, settings=settings) == service.FAILED
+    assert _row(settings) == {}
+    assert _uploads_left(settings) == 0
+
+
+def test_an_upload_outside_the_uploads_prefix_is_ignored(settings: Any) -> None:
+    """Only keys shaped like an upload folder's upload.json are read."""
+    record = {
+        "body": json.dumps({"kind": consumer.UPLOAD, "bucket": settings.ARTIFACTS_BUCKET, "key": "ingest/x.tar.gz"})
+    }
+    other = {"body": json.dumps({"kind": consumer.UPLOAD, "bucket": "elsewhere", "key": "registry/x"})}
+
+    assert consumer.handle_upload(record, settings=settings) == consumer.SKIPPED
+    assert consumer.handle_upload(other, settings=settings) == consumer.SKIPPED
+    with pytest.raises(MalformedDelivery):
+        consumer.parse_upload_message({"body": json.dumps({"kind": consumer.UPLOAD})})
+
+
+def test_connecting_adopts_a_provider_uploads_created(
+    settings: Any, auth_client: Any, releases: Releases, signing_parameters: SigningKey
+) -> None:
+    """Connecting through the App later binds the upload-only provider and keeps its versions."""
+    consumer.handle_upload(upload(settings, build_release(signing_parameters)), settings=settings)
+
+    response = auth_client.post(BASE, json={"vcs_repo": REPO, "import_releases": False})
+
+    assert response.status_code == 201, response.text
+    provider_row = repositories.registry(settings).get(providers.provider_row_key("WebbPulse", "webbpulse")) or {}
+    assert provider_row["vcs_installation_id"]
+    assert _row(settings)["status"] == service.PUBLISHED
+    assert auth_client.post(BASE, json={"vcs_repo": REPO}).status_code == 409

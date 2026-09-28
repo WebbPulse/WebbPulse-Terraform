@@ -135,6 +135,9 @@ def create_provider(
 ) -> dict[str, Any]:
     """Connect a new provider to a repository the App is installed on, then queue its release import.
 
+    A provider that only release workflow uploads created, with no App binding, is
+    adopted rather than refused, keeping its published versions.
+
     Raises:
         InvalidProviderName: The repository is not named `terraform-provider-<type>`.
         RegistryUnavailable: The environment has no GitHub App.
@@ -158,7 +161,9 @@ def create_provider(
         "created_at": now_iso(),
     }
     try:
-        repositories.registry(resolved).put(row, condition=Attr("pk").not_exists())
+        repositories.registry(resolved).put(
+            row, condition=Attr("pk").not_exists() | Attr("vcs_installation_id").not_exists()
+        )
     except ConditionFailed as error:
         raise ProviderExists(f"{namespace}/{type_}") from error
     _log.info(
