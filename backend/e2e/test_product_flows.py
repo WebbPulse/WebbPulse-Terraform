@@ -22,6 +22,7 @@ from __future__ import annotations
 import io
 import tarfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -230,12 +231,13 @@ class TestConfigVersions:
 class TestRunLifecycle:
     """The run lifecycle end to end: plan, confirm, apply, and the paths that do not apply."""
 
-    def test_plan_and_apply(self, api: Any, workspace: dict[str, Any]) -> None:
+    def test_plan_and_apply(self, api: Any, workspace: dict[str, Any], step_up_again: Callable[[], Any]) -> None:
         """A run plans, confirms and applies, then a destroy run removes what it applied.
 
         The destroy is part of the case rather than of cleanup, so the workspace is left
         managing no resources and a failed destroy fails the case instead of leaving a
-        `random_pet` behind unnoticed.
+        `random_pet` behind unnoticed. Confirming and deleting are step-up gated and the
+        plan and apply can outlast the window, so each of those steps up right before it.
         """
         workspace_id = workspace["workspace_id"]
         config_version_id = _upload(api, workspace_id)
@@ -244,13 +246,13 @@ class TestRunLifecycle:
         planned = _wait_for(api, run_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
         _require_status(planned, ("planned", "awaiting_confirmation"), "plan")
 
-        _require_delete_refused(api, workspace_id, "WORKSPACE_HAS_ACTIVE_RUN", force=True)
+        _require_delete_refused(step_up_again(), workspace_id, "WORKSPACE_HAS_ACTIVE_RUN", force=True)
 
         logs = api.get(f"/api/v1/runs/{run_id}/logs", params={"phase": "plan"})
         assert logs.status_code == 200, logs.text[:400]
         assert isinstance(logs.json()["events"], list)
 
-        confirmed = api.post(f"/api/v1/runs/{run_id}/confirm")
+        confirmed = step_up_again().post(f"/api/v1/runs/{run_id}/confirm")
         assert confirmed.status_code in (200, 202), confirmed.text[:400]
 
         applied = _wait_for(api, run_id, APPLY_TERMINAL, APPLY_TIMEOUT_SECONDS)
@@ -259,7 +261,7 @@ class TestRunLifecycle:
         apply_logs = api.get(f"/api/v1/runs/{run_id}/logs", params={"phase": "apply"})
         assert apply_logs.status_code == 200, apply_logs.text[:400]
 
-        _require_delete_refused(api, workspace_id, "WORKSPACE_MANAGES_RESOURCES", force=False)
+        _require_delete_refused(step_up_again(), workspace_id, "WORKSPACE_MANAGES_RESOURCES", force=False)
 
         destroy_id = _create_run(api, workspace_id, config_version_id, plan_only=False, is_destroy=True)
         destroy_planned = _wait_for(api, destroy_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
@@ -267,13 +269,13 @@ class TestRunLifecycle:
         assert destroy_planned["is_destroy"] is True, _describe(destroy_planned)
         assert (destroy_planned.get("changes") or {}).get("destroy", 0) >= 1, _describe(destroy_planned)
 
-        destroy_confirmed = api.post(f"/api/v1/runs/{destroy_id}/confirm")
+        destroy_confirmed = step_up_again().post(f"/api/v1/runs/{destroy_id}/confirm")
         assert destroy_confirmed.status_code in (200, 202), destroy_confirmed.text[:400]
 
         destroyed = _wait_for(api, destroy_id, APPLY_TERMINAL, APPLY_TIMEOUT_SECONDS)
         _require_status(destroyed, APPLY_SUCCESS, "destroy apply")
 
-        deleted = api.delete(f"/api/v1/workspaces/{workspace_id}")
+        deleted = step_up_again().delete(f"/api/v1/workspaces/{workspace_id}")
         assert deleted.status_code == 204, (
             f"the safe delete after the destroy answered {deleted.status_code}: {deleted.text[:400]}"
         )

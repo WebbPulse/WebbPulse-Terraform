@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from webbpulse.identity.claims import AuthorizerClaims
 from webbpulse.integrations.github import GitHubError, GitHubRateLimited
 
-from ...common.core.auth import REGISTRY_READ, REGISTRY_WRITE, claims, scopes
+from ...common.core.auth import REGISTRY_READ, REGISTRY_WRITE, claims, scopes, sudo
 from ...common.github.repositories import RepositoryNotInstalled
 from . import service
 from .schemas.registry import Module, ModuleCreate, ModuleList, ModuleSync, ModuleVersionDetail
@@ -80,7 +80,7 @@ def _connect_errors() -> Iterator[None]:
     "/modules",
     response_model=Module,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(scopes(REGISTRY_WRITE))],
+    dependencies=[Depends(sudo(REGISTRY_WRITE))],
     responses={
         409: {"description": "A module already sits at the address, or there is no GitHub App."},
         422: {"description": "The App is not installed on the repository, or the address is not valid."},
@@ -168,7 +168,7 @@ def resync_module(
 @router.delete(
     "/modules/{namespace}/{name}/{provider}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(scopes(REGISTRY_WRITE))],
+    dependencies=[Depends(sudo(REGISTRY_WRITE))],
     responses={404: {"description": "No module sits at the address."}},
 )
 def delete_module(namespace: Segment, name: Segment, provider: Segment) -> Response:

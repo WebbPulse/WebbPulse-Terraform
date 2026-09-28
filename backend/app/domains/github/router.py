@@ -3,6 +3,10 @@
 The two callbacks GitHub redirects to land on the SPA, which forwards their query here.
 That keeps every route behind the authorizer: the state in the query is the CSRF check,
 and the admin session is what ties the callback to the person who started the flow.
+
+Every change to the App's settings needs a login within the step-up window: starting
+the manifest or an install, syncing the webhook and forgetting an installation. The
+callbacks that finish a flow are bound to a state only such a start issued.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from webbpulse.integrations.github import (
 )
 from webbpulse.ops.config import ConfigToolError
 
-from ...common.core.auth import ADMIN, claims, scopes
+from ...common.core.auth import ADMIN, claims, recent_auth, scopes
 from . import service
 from .schemas.github import (
     GitHubAppStatus,
@@ -108,7 +112,7 @@ def get_app() -> dict[str, Any]:
 @router.post("/app/manifest", response_model=ManifestStart)
 def start_manifest(
     payload: ManifestStartRequest,
-    current: AuthorizerClaims = Depends(claims),
+    current: AuthorizerClaims = Depends(recent_auth),
 ) -> dict[str, Any]:
     """Issue a manifest state; the SPA then posts the manifest to `action_url`."""
     with _github_errors():
@@ -132,7 +136,7 @@ def convert_manifest(
             raise _error(400, "GitHub did not accept that code. Create the App again.", CODE_REJECTED) from error
 
 
-@router.post("/app/webhook", response_model=WebhookConfig)
+@router.post("/app/webhook", response_model=WebhookConfig, dependencies=[Depends(recent_auth)])
 def configure_webhook() -> dict[str, Any]:
     """Point the App's webhook at this API and set its secret from the `app` secret."""
     with _github_errors():
@@ -140,7 +144,7 @@ def configure_webhook() -> dict[str, Any]:
 
 
 @router.post("/install-state", response_model=InstallStart)
-def start_install(current: AuthorizerClaims = Depends(claims)) -> dict[str, Any]:
+def start_install(current: AuthorizerClaims = Depends(recent_auth)) -> dict[str, Any]:
     """Issue an install state and the GitHub URL that carries it."""
     with _github_errors():
         return service.start_install(actor=_actor(current))
@@ -173,7 +177,11 @@ def refresh_installation(installation_id: int = InstallationId) -> dict[str, Any
         return service.refresh_installation(installation_id)
 
 
-@router.delete("/installations/{installation_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/installations/{installation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(recent_auth)],
+)
 def remove_installation(installation_id: int = InstallationId) -> Response:
     """Forget one installation here. It stays installed on GitHub until removed there."""
     with _github_errors():

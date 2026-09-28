@@ -10,6 +10,7 @@ import { loadAppConfig } from '@webbpulse/config';
 import {
   createAuthClient,
   describeAuthError,
+  StepUpCancelledError,
   type AuthClient,
 } from '@webbpulse/auth';
 import { identityOriginFrom as packageIdentityOriginFrom } from '@webbpulse/auth/browser';
@@ -86,11 +87,26 @@ export function identityOriginFrom(apiBaseUrl: string): string {
  *
  * `describeAuthError` unwraps the WebbPulse envelope the control plane and the
  * identity routes both answer with, so one renderer covers a failed plan and a
- * refused sign-in alike. The fallback is this product's own wording.
+ * refused sign-in alike. A dismissed password prompt says nothing changed. The
+ * fallback is this product's own wording.
  */
 export function describeError(error: unknown): string {
+  if (error instanceof StepUpCancelledError) {
+    return 'Your password was not confirmed, so nothing changed.';
+  }
   return describeAuthError(error, 'The request failed. Please try again.');
 }
+
+/**
+ * The shape of `withStepUp` from `useStepUp`: wraps a call so a
+ * `STEP_UP_REQUIRED` refusal prompts for a password and replays it once.
+ */
+export type StepUpWrapper = <TArgs extends unknown[], TResult>(
+  fn: (...args: TArgs) => Promise<TResult>
+) => (...args: TArgs) => Promise<TResult>;
+
+/** The gate used while no step-up prompt is mounted: the call as it is. */
+const passThrough: StepUpWrapper = (fn) => fn;
 
 /** Options for {@link TerraformApi}. */
 export interface TerraformApiOptions {
@@ -115,6 +131,9 @@ export class TerraformApi {
   /** The auth client holding the access token and spending the refresh cookie. */
   private readonly auth: AuthClient<unknown>;
 
+  /** The wrapper gated calls go through; a pass through until a prompt mounts. */
+  private stepUpGate: StepUpWrapper = passThrough;
+
   constructor(options: TerraformApiOptions = {}) {
     const baseUrl = options.baseUrl ?? API_BASE_URL;
     const credentials = 'include' as const;
@@ -134,6 +153,25 @@ export class TerraformApi {
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       ...(options.retries === undefined ? {} : { retries: options.retries }),
     });
+  }
+
+  /**
+   * Routes every step-up gated call through `gate`, the `withStepUp` of the one
+   * mounted prompt, so a `STEP_UP_REQUIRED` refusal asks for the password and
+   * replays the call once. Returns a function that detaches the gate again.
+   */
+  setStepUpGate(gate: StepUpWrapper): () => void {
+    this.stepUpGate = gate;
+    return () => {
+      if (this.stepUpGate === gate) {
+        this.stepUpGate = passThrough;
+      }
+    };
+  }
+
+  /** Sends a step-up gated call through the mounted prompt, if there is one. */
+  private sudo<T>(call: () => Promise<T>): Promise<T> {
+    return this.stepUpGate(call)();
   }
 
   /**
@@ -186,10 +224,12 @@ export class TerraformApi {
     body: WorkspaceUpdate,
     options: RequestOptions = {}
   ): Promise<Workspace> {
-    const response = await this.client.patch<Workspace>(
-      `/workspaces/${encodeURIComponent(workspaceId)}`,
-      body,
-      options
+    const response = await this.sudo(() =>
+      this.client.patch<Workspace>(
+        `/workspaces/${encodeURIComponent(workspaceId)}`,
+        body,
+        options
+      )
     );
     return response.data;
   }
@@ -204,11 +244,13 @@ export class TerraformApi {
     { force = false }: { force?: boolean } = {},
     options: RequestOptions = {}
   ): Promise<void> {
-    await this.client.delete(
-      `/workspaces/${encodeURIComponent(workspaceId)}`,
-      force
-        ? { ...options, query: { ...options.query, force: 'true' } }
-        : options
+    await this.sudo(() =>
+      this.client.delete(
+        `/workspaces/${encodeURIComponent(workspaceId)}`,
+        force
+          ? { ...options, query: { ...options.query, force: 'true' } }
+          : options
+      )
     );
   }
 
@@ -252,10 +294,12 @@ export class TerraformApi {
     body: RunRoleQuickSetupCreate,
     options: RequestOptions = {}
   ): Promise<RunRoleQuickSetup> {
-    const response = await this.client.post<RunRoleQuickSetup>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/run-role/quick-setup`,
-      body,
-      options
+    const response = await this.sudo(() =>
+      this.client.post<RunRoleQuickSetup>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/run-role/quick-setup`,
+        body,
+        options
+      )
     );
     return response.data;
   }
@@ -279,10 +323,12 @@ export class TerraformApi {
     body: VariableWrite,
     options: RequestOptions = {}
   ): Promise<Variable> {
-    const response = await this.client.put<Variable>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(key)}`,
-      body,
-      options
+    const response = await this.sudo(() =>
+      this.client.put<Variable>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(key)}`,
+        body,
+        options
+      )
     );
     return response.data;
   }
@@ -293,9 +339,11 @@ export class TerraformApi {
     key: string,
     options: RequestOptions = {}
   ): Promise<void> {
-    await this.client.delete(
-      `/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(key)}`,
-      options
+    await this.sudo(() =>
+      this.client.delete(
+        `/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(key)}`,
+        options
+      )
     );
   }
 
@@ -393,10 +441,12 @@ export class TerraformApi {
     comment = '',
     options: RequestOptions = {}
   ): Promise<Run> {
-    const response = await this.client.post<Run>(
-      `/runs/${encodeURIComponent(runId)}/confirm`,
-      comment.trim() === '' ? undefined : { comment },
-      options
+    const response = await this.sudo(() =>
+      this.client.post<Run>(
+        `/runs/${encodeURIComponent(runId)}/confirm`,
+        comment.trim() === '' ? undefined : { comment },
+        options
+      )
     );
     return response.data;
   }
@@ -491,10 +541,8 @@ export class TerraformApi {
     body: ManifestStartRequest = {},
     options: RequestOptions = {}
   ): Promise<ManifestStart> {
-    const response = await this.client.post<ManifestStart>(
-      '/github/app/manifest',
-      body,
-      options
+    const response = await this.sudo(() =>
+      this.client.post<ManifestStart>('/github/app/manifest', body, options)
     );
     return response.data;
   }
@@ -520,10 +568,8 @@ export class TerraformApi {
   async syncGitHubWebhook(
     options: RequestOptions = {}
   ): Promise<WebhookConfig> {
-    const response = await this.client.post<WebhookConfig>(
-      '/github/app/webhook',
-      undefined,
-      options
+    const response = await this.sudo(() =>
+      this.client.post<WebhookConfig>('/github/app/webhook', undefined, options)
     );
     return response.data;
   }
@@ -532,10 +578,12 @@ export class TerraformApi {
   async startGitHubInstall(
     options: RequestOptions = {}
   ): Promise<InstallStart> {
-    const response = await this.client.post<InstallStart>(
-      '/github/install-state',
-      undefined,
-      options
+    const response = await this.sudo(() =>
+      this.client.post<InstallStart>(
+        '/github/install-state',
+        undefined,
+        options
+      )
     );
     return response.data;
   }
@@ -582,9 +630,11 @@ export class TerraformApi {
     installationId: string,
     options: RequestOptions = {}
   ): Promise<void> {
-    await this.client.delete(
-      `/github/installations/${encodeURIComponent(installationId)}`,
-      options
+    await this.sudo(() =>
+      this.client.delete(
+        `/github/installations/${encodeURIComponent(installationId)}`,
+        options
+      )
     );
   }
 
@@ -599,10 +649,8 @@ export class TerraformApi {
     body: ApiKeyCreate,
     options: RequestOptions = {}
   ): Promise<ApiKeyCreated> {
-    const response = await this.client.post<ApiKeyCreated>(
-      '/api-keys',
-      body,
-      options
+    const response = await this.sudo(() =>
+      this.client.post<ApiKeyCreated>('/api-keys', body, options)
     );
     return response.data;
   }
@@ -612,9 +660,11 @@ export class TerraformApi {
     keyId: string,
     options: RequestOptions = {}
   ): Promise<ApiKey> {
-    const response = await this.client.delete<ApiKey>(
-      `/api-keys/${encodeURIComponent(keyId)}`,
-      options
+    const response = await this.sudo(() =>
+      this.client.delete<ApiKey>(
+        `/api-keys/${encodeURIComponent(keyId)}`,
+        options
+      )
     );
     return response.data;
   }
@@ -645,10 +695,8 @@ export class TerraformApi {
     body: ModuleCreate,
     options: RequestOptions = {}
   ): Promise<Module> {
-    const response = await this.client.post<Module>(
-      '/registry/modules',
-      body,
-      options
+    const response = await this.sudo(() =>
+      this.client.post<Module>('/registry/modules', body, options)
     );
     return response.data;
   }
@@ -704,7 +752,9 @@ export class TerraformApi {
     provider: string,
     options: RequestOptions = {}
   ): Promise<void> {
-    await this.client.delete(modulePath(namespace, name, provider), options);
+    await this.sudo(() =>
+      this.client.delete(modulePath(namespace, name, provider), options)
+    );
   }
 }
 

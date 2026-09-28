@@ -18,13 +18,14 @@ from __future__ import annotations
 
 from typing import Any, Callable, Coroutine, Final
 
+import anyio.from_thread
 from fastapi import Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from starlette.responses import Response
 from webbpulse.identity.api_keys import ApiKeyRecord, ApiKeyStore, DynamoApiKeyStore, verify
 from webbpulse.identity.claims import AuthorizerClaims
-from webbpulse.identity.scopes import bearer_credential, claims_or_api_key, require_scopes
+from webbpulse.identity.scopes import bearer_credential, claims_or_api_key, require_recent_auth, require_scopes
 
 from ..composition.settings import Settings, get_settings
 from ..db.identity_tables import identity_table_prefix
@@ -154,6 +155,40 @@ def scopes(*required: str) -> Any:
     return require_scopes(*required, claims_dependency=claims)
 
 
+STEP_UP_MAX_AGE_SECONDS: Final = 15 * 60
+"""How recent a person's login must be for a sensitive change, like HCP and GitHub sudo mode.
+
+A person whose login is older gets a 401 `STEP_UP_REQUIRED` and confirms their password
+through `/api/auth/step-up`. An agent key has no login to age and passes; its scopes are
+what limit it."""
+
+recent_auth = require_recent_auth(STEP_UP_MAX_AGE_SECONDS, claims_dependency=claims)
+"""The step-up gate on its own, for a route that already checks its caller another way."""
+
+
+def sudo(*required: str) -> Any:
+    """A dependency requiring `required` and then a login within `STEP_UP_MAX_AGE_SECONDS`.
+
+    The scope check runs first, so a caller who could never make the change gets a 403
+    rather than a password prompt that leads nowhere.
+    """
+    return require_recent_auth(STEP_UP_MAX_AGE_SECONDS, claims_dependency=scopes(*required))
+
+
+def ensure_recent_auth(current: AuthorizerClaims) -> None:
+    """Apply the step-up gate from inside a sync route, for a change only sometimes sensitive.
+
+    Such as a PATCH that happens to change the run role: the route decides from the body
+    and the stored row, then raises the same 401 `recent_auth` would.
+    """
+    anyio.from_thread.run(_recent_auth_check, current)
+
+
+async def _recent_auth_check(current: AuthorizerClaims) -> None:
+    """Run the package gate against claims this request already resolved."""
+    await recent_auth(current)
+
+
 def unauthenticated() -> HTTPException:
     """The 401 every failed run token path raises, with no detail of which check failed."""
     return HTTPException(
@@ -240,6 +275,7 @@ __all__ = [
     "RUN_TOKEN_TENANT",
     "RunnerRoute",
     "STATE_DOWNLOAD",
+    "STEP_UP_MAX_AGE_SECONDS",
     "VARIABLES_READ",
     "VARIABLES_WRITE",
     "WORKSPACES_READ",
@@ -247,9 +283,12 @@ __all__ = [
     "Depends",
     "api_key_store",
     "claims",
+    "ensure_recent_auth",
     "key_owner_scopes",
+    "recent_auth",
     "require_run_token",
     "run_token_record",
     "scopes",
+    "sudo",
     "unauthenticated",
 ]

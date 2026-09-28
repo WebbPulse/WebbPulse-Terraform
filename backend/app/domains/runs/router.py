@@ -24,6 +24,7 @@ from ...common.core.auth import (
     claims,
     require_run_token,
     scopes,
+    sudo,
     unauthenticated,
 )
 from ...common.workspaces import reads as workspace_reads
@@ -189,14 +190,14 @@ def get_run(run_id: str = RunId) -> dict[str, Any]:
 @router.post(
     "/runs/{run_id}/confirm",
     response_model=Run,
-    dependencies=[Depends(scopes(RUNS_APPLY))],
+    dependencies=[Depends(sudo(RUNS_APPLY))],
 )
 def confirm_run(
     run_id: str = RunId,
     payload: Optional[RunDecisionRequest] = Body(default=None),
     current: AuthorizerClaims = Depends(claims),
 ) -> dict[str, Any]:
-    """Apply a planned run. Needs `runs:apply`, not `runs:write`.
+    """Apply a planned run. Needs `runs:apply`, not `runs:write`, and a person's recent login.
 
     The body is optional; its comment is kept on the run with the confirming actor.
     """

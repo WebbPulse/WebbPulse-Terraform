@@ -27,6 +27,7 @@ export type ApiMock = {
 export function createApiMock(): ApiMock {
   const names: (keyof TerraformApi)[] = [
     'getAuthClient',
+    'setStepUpGate',
     'listWorkspaces',
     'createWorkspace',
     'getWorkspace',

@@ -13,7 +13,9 @@ runs in production, and the run token gate can only be tested this way.
 from __future__ import annotations
 
 import base64
+import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -225,6 +227,32 @@ def seed_user(user_id: str, *, is_admin: bool = True, disabled: bool = False) ->
                 disabled=disabled,
             )
         )
+
+
+def person_headers(
+    *,
+    user_id: str = "user-human",
+    scopes: tuple[str, ...] | None = None,
+    roles: tuple[str, ...] = (),
+    auth_age: int | None = 0,
+) -> dict[str, str]:
+    """The request context header a route behind the JWT authorizer sees for a person.
+
+    The gateway flattens every claim to a string, so `roles` goes down as the bracketed
+    form and `scope` as the space-joined one, which is what `coerce_claims` parses back.
+    `auth_age` is how many seconds ago the person signed in, stamped as `auth_time`; None
+    leaves the claim out, as an MCP OAuth token does.
+    """
+    from webbpulse.http import REQUEST_CONTEXT_HEADER
+
+    claims: dict[str, str] = {
+        "sub": user_id,
+        "scope": " ".join(ALL_SCOPES if scopes is None else scopes),
+        "roles": json.dumps(list(roles)),
+    }
+    if auth_age is not None:
+        claims["auth_time"] = str(int(time.time()) - auth_age)
+    return {REQUEST_CONTEXT_HEADER: json.dumps({"authorizer": {"jwt": {"claims": claims}}})}
 
 
 def mint_key(*scopes: str, user_id: str = "user-test") -> str:

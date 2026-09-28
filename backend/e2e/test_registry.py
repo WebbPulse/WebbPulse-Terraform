@@ -30,7 +30,7 @@ import subprocess
 import sys
 import tarfile
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -77,15 +77,20 @@ def _mint(api: Any, e2e_env: Any, label: str, scopes: list[str]) -> dict[str, An
 
 
 @pytest.fixture(scope="module")
-def registry_keys(api: Any, e2e_env: Any) -> Iterator[dict[str, dict[str, Any]]]:
-    """A `registry:read` key and a key without it, both revoked on teardown."""
+def registry_keys(e2e_env: Any, step_up_again: Callable[[], Any]) -> Iterator[dict[str, dict[str, Any]]]:
+    """A `registry:read` key and a key without it, both revoked on teardown.
+
+    Minting and revoking are step-up gated, so each side steps up first.
+    """
     minted: dict[str, dict[str, Any]] = {}
     try:
+        api = step_up_again()
         minted["read"] = _mint(api, e2e_env, "registry-read", [REGISTRY_READ])
         minted["other"] = _mint(api, e2e_env, "registry-none", [OTHER_SCOPE])
         yield minted
     finally:
         failures = []
+        api = step_up_again()
         for label, body in minted.items():
             response = api.delete(f"/api/v1/api-keys/{body['key_id']}")
             if response.status_code != 200 or not response.json().get("revoked_at"):
