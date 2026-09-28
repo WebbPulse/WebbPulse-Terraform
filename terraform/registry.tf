@@ -1,6 +1,6 @@
 module "registry_ingest" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/sqs-queue"
-  version = "~> 2.27"
+  version = "~> 2.32"
 
   name = "${local.prefix}-registry-ingest"
 

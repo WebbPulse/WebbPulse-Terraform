@@ -43,6 +43,8 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `monitoring.tf`, `management.tf` | The three aggregate alarms in production, budgets |
 | `transaction_search.tf` | The shared `transaction-search` module: the X-Ray trace segment destination, the spans log resource policy and the indexing rule |
 | `example_run_role.tf` | The run role for the first end to end run, gated on `var.example_workspace_id` |
+| `config.tf` | The operator-owned `/<prefix>/config` SSM parameter |
+| `env/*.tfvars` | Non-secret per environment config, including `identity_jwt_mode` (`gate` in staging, `lambda` in production; production refuses `off` and `gate` at plan time) |
 | `outputs.tf` | Everything the workflows and the GitHub environment variables read |
 
 ## Hostnames
@@ -70,6 +72,11 @@ it.
 Set `bootstrap_image_tag` by hand as a workspace variable on the HCP workspace,
 not through the factory. It must be `sha-` followed by a full 40 character
 commit sha, which is the tag the image build pushes.
+
+In a fresh account every domain's repository is new, so run 2 also sets
+`domain_image_tags` for `github` and `registry` to the same tag. Run 1 creates
+no authorizer: the identity JWT authorizer needs routes, and there are none
+until the functions exist.
 
 The tag is read only when a function is created. It can expire out of ECR,
 which keeps three tagged images, without affecting a running function, so
@@ -124,9 +131,20 @@ Terraform allows `import` only there, and it targets the module's log group. Nei
 workspace refuses to plan. `reduced` skips the custom domains and the gate;
 `full` adds both.
 
+## Configuration
+
+Non-secret per environment config lives in `env/<environment>.tfvars`, which
+WebbPulse-Platform loads on every plan through the workspace's `TF_CLI_ARGS_plan`
+(`-var-file`). A value there overrides a workspace variable of the same name, so
+the image tags stay hand-set workspace variables and never go in the file.
+Secrets live only in the `app` secret and are set with `webbpulse-config secret
+set`. Private non-secret config lives in the SSM parameter `/<prefix>/config`,
+which `config.tf` creates as `{}` and never writes again; set keys with
+`webbpulse-config config set`.
+
 ## Variables set on the workspace
 
-Everything else takes its default.
+Everything else takes its default or comes from `env/<environment>.tfvars`.
 
 | Variable | Value |
 | --- | --- |
@@ -137,6 +155,5 @@ Everything else takes its default.
 | `runner_image_tag` | The runner image tag the task definitions point at. Unlike a Lambda image it is not ignored, so a revision follows it |
 | `route53_zone_id`, `route53_write_role_arn` | The parent zone and the role that writes into it, both required when `staging_profile` is `full` |
 | `staging_access_gate`, `staging_access_users` | Staging only: put the site and API behind the email gate, and who may sign in |
-| `identity_jwt_mode` | `off`, `gate`, `lambda` or `native`. Staging uses `gate`, production `lambda`, which passes `wpk_` agent keys through. Production refuses `off` and `gate` at plan time |
 | `adopt_spans_log_group` | `false` until the first span is written, then `true`; see Transaction Search |
 | `example_workspace_id` | The `ws-` id of the example workspace. Non-empty creates the example run role for the first end to end run; empty, the default, creates nothing. See `examples/first-run/README.md` |
