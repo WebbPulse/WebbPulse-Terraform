@@ -53,7 +53,7 @@ variable "run_concurrency_cap" {
 
 module "run_state_machine" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/step-functions"
-  version = "~> 2.32"
+  version = "~> 2.33"
 
   name = "${local.prefix}-run"
 

@@ -106,7 +106,7 @@ locals {
 
 module "github_actions_role" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "~> 2.27"
+  version = "~> 2.33"
 
   role_name = "${local.prefix}-github-actions-deploy"
 
@@ -184,7 +184,7 @@ module "github_actions_role" {
 
 module "github_actions_ci_role" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "~> 2.27"
+  version = "~> 2.33"
 
   role_name        = "${local.prefix}-github-actions-ci"
   role_description = "Read-only CodeArtifact access for pull request CI in WebbPulse/WebbPulse-Terraform. Deploy permissions live on the separate github-actions-deploy role."

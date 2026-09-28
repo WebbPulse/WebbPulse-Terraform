@@ -2,7 +2,7 @@ module "access_gate" {
   count = local.access_gate_count
 
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/staging-access-gate"
-  version = "~> 2.32"
+  version = "~> 2.33"
 
   name          = local.access_gate_name
   cookie_domain = local.host
@@ -13,6 +13,10 @@ module "access_gate" {
   http_api_id       = module.api.api_id
   http_api_attached = local.access_gate_enabled
   invite_login_url  = "https://${local.host}/"
+
+  invite_email_subject = "WebbPulse Terraform access"
+  invite_email_message = "You have been given access to WebbPulse Terraform at https://${local.host}/\n\nUsername: {username}\nTemporary password: {####}\n\nOpen the site, sign in with these, and choose a new password when prompted."
+  invite_sms_message   = "WebbPulse Terraform at ${local.host}. Username {username}, temporary password {####}"
 
   identity_jwt = local.identity_jwt_gate_enforced ? {
     issuer           = local.identity_issuer
