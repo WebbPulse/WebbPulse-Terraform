@@ -762,6 +762,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Version
+         * @description One version with its readme, inputs, outputs, provider requirements, resources and submodules.
+         */
+        get: operations["get_version_api_v1_registry_modules__namespace___name___provider__versions__version__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -1848,12 +1868,90 @@ export interface components {
             vcs_repo: string;
         };
         /**
+         * ModuleDocs
+         * @description What a published version documents, read from its tarball when it published.
+         */
+        ModuleDocs: {
+            /** Inputs */
+            inputs: components["schemas"]["ModuleInput"][];
+            /** Outputs */
+            outputs: components["schemas"]["ModuleOutput"][];
+            /** Parse Errors */
+            parse_errors: string[];
+            /** Providers */
+            providers: components["schemas"]["ModuleProvider"][];
+            /** Readme */
+            readme?: string | null;
+            /** Resources */
+            resources: components["schemas"]["ModuleResource"][];
+            /** Submodules */
+            submodules: components["schemas"]["Submodule"][];
+        };
+        /**
+         * ModuleInput
+         * @description One input variable, as a module page lists it.
+         */
+        ModuleInput: {
+            /** Default */
+            default?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name: string;
+            /** Required */
+            required: boolean;
+            /**
+             * Sensitive
+             * @default false
+             */
+            sensitive?: boolean;
+            /** Type */
+            type?: string | null;
+        };
+        /**
          * ModuleList
          * @description Every module in the registry.
          */
         ModuleList: {
             /** Modules */
             modules: components["schemas"]["Module"][];
+        };
+        /**
+         * ModuleOutput
+         * @description One output value.
+         */
+        ModuleOutput: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Sensitive
+             * @default false
+             */
+            sensitive?: boolean;
+        };
+        /**
+         * ModuleProvider
+         * @description One provider requirement from `required_providers`.
+         */
+        ModuleProvider: {
+            /** Name */
+            name: string;
+            /** Source */
+            source?: string | null;
+            /** Version */
+            version?: string | null;
+        };
+        /**
+         * ModuleResource
+         * @description One managed resource the module declares.
+         */
+        ModuleResource: {
+            /** Name */
+            name: string;
+            /** Type */
+            type: string;
         };
         /**
          * ModuleSync
@@ -1893,6 +1991,26 @@ export interface components {
             tag?: string | null;
             /** Version */
             version: string;
+        };
+        /**
+         * ModuleVersionDetail
+         * @description One version of a module with its documentation, for the module page.
+         */
+        ModuleVersionDetail: {
+            /** Created At */
+            created_at?: string | null;
+            docs?: components["schemas"]["ModuleDocs"] | null;
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Provider */
+            provider: string;
+            /** Source */
+            source: string;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
+            version: components["schemas"]["ModuleVersion"];
         };
         /**
          * PendingRunRoleCheck
@@ -2661,6 +2779,26 @@ export interface components {
             items: components["schemas"]["StateVersion"][];
             /** Next Page Token */
             next_page_token?: string | null;
+        };
+        /**
+         * Submodule
+         * @description A module under `modules/`, which a source reaches with `//modules/<name>`.
+         */
+        Submodule: {
+            /** Inputs */
+            inputs: components["schemas"]["ModuleInput"][];
+            /** Name */
+            name: string;
+            /** Outputs */
+            outputs: components["schemas"]["ModuleOutput"][];
+            /** Path */
+            path: string;
+            /** Providers */
+            providers: components["schemas"]["ModuleProvider"][];
+            /** Readme */
+            readme?: string | null;
+            /** Resources */
+            resources: components["schemas"]["ModuleResource"][];
         };
         /**
          * ValidationErrorDetail
@@ -4621,6 +4759,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_version_api_v1_registry_modules__namespace___name___provider__versions__version__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                name: string;
+                provider: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleVersionDetail"];
+                };
+            };
+            /** @description The module has no such version. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };

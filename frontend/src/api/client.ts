@@ -28,6 +28,11 @@ import type {
   InstallationCallback,
   InstallationList,
   InstallStart,
+  Module,
+  ModuleCreate,
+  ModuleList,
+  ModuleSync,
+  ModuleVersionDetail,
   ManifestConversionRequest,
   ManifestStart,
   ManifestStartRequest,
@@ -625,6 +630,87 @@ export class TerraformApi {
     );
     return response.data;
   }
+
+  /** Lists every private registry module with its versions. */
+  async listModules(options: RequestOptions = {}): Promise<ModuleList> {
+    const response = await this.client.get<ModuleList>(
+      '/registry/modules',
+      options
+    );
+    return response.data;
+  }
+
+  /** Connects a module to a repository the GitHub App is installed on. */
+  async createModule(
+    body: ModuleCreate,
+    options: RequestOptions = {}
+  ): Promise<Module> {
+    const response = await this.client.post<Module>(
+      '/registry/modules',
+      body,
+      options
+    );
+    return response.data;
+  }
+
+  /** Reads one module and every version of it. */
+  async getModule(
+    namespace: string,
+    name: string,
+    provider: string,
+    options: RequestOptions = {}
+  ): Promise<Module> {
+    const response = await this.client.get<Module>(
+      modulePath(namespace, name, provider),
+      options
+    );
+    return response.data;
+  }
+
+  /** Reads one version of a module with its documentation. */
+  async getModuleVersion(
+    namespace: string,
+    name: string,
+    provider: string,
+    version: string,
+    options: RequestOptions = {}
+  ): Promise<ModuleVersionDetail> {
+    const response = await this.client.get<ModuleVersionDetail>(
+      `${modulePath(namespace, name, provider)}/versions/${encodeURIComponent(version)}`,
+      options
+    );
+    return response.data;
+  }
+
+  /** Queues an import of every semantic version tag in the module's repository. */
+  async resyncModule(
+    namespace: string,
+    name: string,
+    provider: string,
+    options: RequestOptions = {}
+  ): Promise<ModuleSync> {
+    const response = await this.client.post<ModuleSync>(
+      `${modulePath(namespace, name, provider)}/resync`,
+      undefined,
+      options
+    );
+    return response.data;
+  }
+
+  /** Removes a module with every version. Configurations pinned to it stop resolving. */
+  async deleteModule(
+    namespace: string,
+    name: string,
+    provider: string,
+    options: RequestOptions = {}
+  ): Promise<void> {
+    await this.client.delete(modulePath(namespace, name, provider), options);
+  }
+}
+
+/** The API path of one module. */
+function modulePath(namespace: string, name: string, provider: string): string {
+  return `/registry/modules/${[namespace, name, provider].map(encodeURIComponent).join('/')}`;
 }
 
 /**

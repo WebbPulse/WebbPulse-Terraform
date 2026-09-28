@@ -134,6 +134,21 @@ def test_connecting_imports_the_existing_tags(api: Any, e2e_env: Any, connect: C
     assert module["vcs_repo"].lower() == REPOSITORY.lower()
 
     _assert_imported(_wait_for(api, name, _settled))
+    _assert_documented(api, name)
+
+
+def _assert_documented(api: Any, name: str) -> None:
+    """The module page's read of the published version carries its readme and its one output."""
+    response = api.get(f"{_path(name)}/versions/{VERSION}")
+    assert response.status_code == 200, f"reading {VERSION} answered {response.status_code}: {response.text[:400]}"
+    body = response.json()
+    assert body["version"]["status"] == "published"
+    docs = body["docs"]
+    assert docs is not None, "the published version carries no documentation"
+    assert docs["readme"], "the fixture's README.md was not read"
+    assert [output["name"] for output in docs["outputs"]] == ["fixture"]
+    assert docs["inputs"] == []
+    assert docs["parse_errors"] == []
 
 
 def test_resync_imports_tags_left_behind(api: Any, e2e_env: Any, connect: Callable[..., dict[str, Any]]) -> None:

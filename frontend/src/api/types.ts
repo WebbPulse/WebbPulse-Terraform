@@ -276,3 +276,42 @@ export type ApiKeyCreated = Schemas['ApiKeyCreated'];
 
 /** The caller's API keys, newest first. */
 export type ApiKeyList = Schemas['ApiKeyList'];
+
+/** One private registry module with every version published or attempted. */
+export type Module = Schemas['Module'];
+
+/** Every module in the private registry. */
+export type ModuleList = Schemas['ModuleList'];
+
+/** The body that connects a module to a repository. */
+export type ModuleCreate = Schemas['ModuleCreate'];
+
+/** One version of a module and where its publishing stands. */
+export type ModuleVersion = Schemas['ModuleVersion'];
+
+/** Where a module version's publishing stands. */
+export type ModuleVersionStatus = ModuleVersion['status'];
+
+/** One version with the documentation read from its tarball. */
+export type ModuleVersionDetail = Schemas['ModuleVersionDetail'];
+
+/** The readme, inputs, outputs, providers, resources and submodules of a version. */
+export type ModuleDocs = Schemas['ModuleDocs'];
+
+/** One input variable of a module. */
+export type ModuleInput = Schemas['ModuleInput'];
+
+/** One output of a module. */
+export type ModuleOutput = Schemas['ModuleOutput'];
+
+/** One provider requirement of a module. */
+export type ModuleProvider = Schemas['ModuleProvider'];
+
+/** One resource a module declares. */
+export type ModuleResource = Schemas['ModuleResource'];
+
+/** One submodule under `modules/`. */
+export type Submodule = Schemas['Submodule'];
+
+/** A queued tag import for a module. */
+export type ModuleSync = Schemas['ModuleSync'];

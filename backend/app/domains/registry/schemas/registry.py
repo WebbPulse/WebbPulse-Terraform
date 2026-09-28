@@ -58,6 +58,80 @@ class Module(BaseModel):
     versions: list[ModuleVersion]
 
 
+class ModuleInput(BaseModel):
+    """One input variable, as a module page lists it."""
+
+    name: str
+    type: Optional[str] = None
+    description: Optional[str] = None
+    default: Optional[str] = None
+    """The default rendered as HCL; `None` when the input is required."""
+    required: bool
+    sensitive: bool = False
+
+
+class ModuleOutput(BaseModel):
+    """One output value."""
+
+    name: str
+    description: Optional[str] = None
+    sensitive: bool = False
+
+
+class ModuleProvider(BaseModel):
+    """One provider requirement from `required_providers`."""
+
+    name: str
+    source: Optional[str] = None
+    version: Optional[str] = None
+
+
+class ModuleResource(BaseModel):
+    """One managed resource the module declares."""
+
+    type: str
+    name: str
+
+
+class Submodule(BaseModel):
+    """A module under `modules/`, which a source reaches with `//modules/<name>`."""
+
+    name: str
+    path: str
+    readme: Optional[str] = None
+    inputs: list[ModuleInput]
+    outputs: list[ModuleOutput]
+    providers: list[ModuleProvider]
+    resources: list[ModuleResource]
+
+
+class ModuleDocs(BaseModel):
+    """What a published version documents, read from its tarball when it published."""
+
+    readme: Optional[str] = None
+    inputs: list[ModuleInput]
+    outputs: list[ModuleOutput]
+    providers: list[ModuleProvider]
+    resources: list[ModuleResource]
+    submodules: list[Submodule]
+    parse_errors: list[str]
+    """Files left out because they did not parse or passed the size bounds."""
+
+
+class ModuleVersionDetail(BaseModel):
+    """One version of a module with its documentation, for the module page."""
+
+    namespace: str
+    name: str
+    provider: str
+    source: str
+    vcs_repo: Optional[str] = None
+    created_at: Optional[str] = None
+    version: ModuleVersion
+    docs: Optional[ModuleDocs] = None
+    """`None` for a version not published, or whose documentation could not be read."""
+
+
 class ModuleSync(BaseModel):
     """A queued import of a module's existing tags."""
 
@@ -76,8 +150,15 @@ __all__ = [
     "MAX_MODULE_BYTES",
     "Module",
     "ModuleCreate",
+    "ModuleDocs",
+    "ModuleInput",
     "ModuleList",
+    "ModuleOutput",
+    "ModuleProvider",
+    "ModuleResource",
     "ModuleSync",
     "ModuleVersion",
+    "ModuleVersionDetail",
+    "Submodule",
     "VersionStatus",
 ]

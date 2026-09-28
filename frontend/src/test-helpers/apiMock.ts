@@ -61,6 +61,12 @@ export function createApiMock(): ApiMock {
     'listApiKeys',
     'createApiKey',
     'revokeApiKey',
+    'listModules',
+    'createModule',
+    'getModule',
+    'getModuleVersion',
+    'resyncModule',
+    'deleteModule',
   ];
   const mock = {} as Record<string, Mock>;
   for (const name of names) {

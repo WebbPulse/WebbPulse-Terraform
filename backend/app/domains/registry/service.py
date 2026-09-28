@@ -24,9 +24,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import tempfile
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Final, Iterable, Mapping, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Final, Iterable, Mapping, Optional, cast
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, now_iso
@@ -34,6 +36,7 @@ from webbpulse.dynamodb import ConditionFailed, now_iso
 from ...common.composition.settings import Settings, get_settings
 from ...common.db import repositories
 from ...common.github import repositories as github_repositories
+from . import docs
 
 if TYPE_CHECKING:  # pragma: no cover
     import httpx
@@ -107,6 +110,14 @@ def module_key(namespace: str, name: str, provider: str, version: str) -> str:
     It ends in `.tar.gz` so Terraform's getter reads the presigned URL as an archive.
     """
     return module_prefix(namespace, name, provider) + f"{version}.tar.gz"
+
+
+def docs_key(namespace: str, name: str, provider: str, version: str) -> str:
+    """Where a published version's extracted documentation lives, beside its tarball.
+
+    Under the module's prefix, so deleting the module takes it too.
+    """
+    return module_prefix(namespace, name, provider) + f"{version}.docs.json"
 
 
 def module_for(repository: str, name: Optional[str], provider: Optional[str]) -> tuple[str, str, str]:
@@ -405,6 +416,95 @@ def get_module(namespace: str, name: str, provider: str, *, settings: Settings |
     return module_view(head, [row for row in rows if row.get("sk") != MODULE_SK])
 
 
+def _s3(settings: Settings) -> Any:
+    """An S3 client. Imported late so nothing connects at import."""
+    import boto3
+
+    return boto3.client("s3", region_name=settings.AWS_REGION_NAME or None, endpoint_url=settings.s3_endpoint_url)
+
+
+def store_docs(
+    tarball: Path, namespace: str, name: str, provider: str, version: str, *, settings: Settings
+) -> dict[str, Any]:
+    """Extract the documentation of a packed module and store it beside the tarball."""
+    extracted = docs.extract(tarball)
+    _s3(settings).put_object(
+        Bucket=settings.ARTIFACTS_BUCKET,
+        Key=docs_key(namespace, name, provider, version),
+        Body=json.dumps(extracted, separators=(",", ":")).encode(),
+        ContentType="application/json",
+    )
+    return extracted
+
+
+def _stored_docs(key: str, *, settings: Settings) -> Optional[dict[str, Any]]:
+    """The stored documentation at `key` when present and of the current shape."""
+    from botocore.exceptions import ClientError
+
+    try:
+        body = _s3(settings).get_object(Bucket=settings.ARTIFACTS_BUCKET, Key=key)["Body"].read()
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+            return None
+        raise
+    try:
+        stored = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(stored, dict) or stored.get("schema") != docs.DOCS_SCHEMA:
+        return None
+    return cast(dict[str, Any], stored)
+
+
+def _docs_for(row: Mapping[str, Any], *, settings: Settings) -> Optional[dict[str, Any]]:
+    """A published version's documentation, extracted now when it never was or its shape is old.
+
+    `None` when the extraction fails, which is logged; the page still shows the version.
+    """
+    namespace, name, provider, version = (str(row[field]) for field in ("namespace", "name", "provider", "version"))
+    stored = _stored_docs(docs_key(namespace, name, provider, version), settings=settings)
+    if stored is not None:
+        return stored
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            tarball = Path(scratch) / "module.tar.gz"
+            _s3(settings).download_file(settings.ARTIFACTS_BUCKET, str(row["key"]), str(tarball))
+            return store_docs(tarball, namespace, name, provider, version, settings=settings)
+    except Exception as error:  # noqa: BLE001
+        _log.warning(
+            "Could not extract a module version's documentation.",
+            extra={
+                "event": "registry.docs.unavailable",
+                "module_address": f"{namespace}/{name}/{provider}",
+                "version": version,
+            },
+            exc_info=error,
+        )
+        return None
+
+
+def get_version(
+    namespace: str, name: str, provider: str, version: str, *, settings: Settings | None = None
+) -> dict[str, Any]:
+    """One version of a module with its documentation, as the module page shows it.
+
+    Only a published version has documentation; a pending or failed one carries `None`.
+
+    Raises:
+        ModuleNotFound: The module has no such version.
+    """
+    resolved = settings or get_settings()
+    table = repositories.registry(resolved)
+    row = table.get({"pk": module_pk(namespace, name, provider), "sk": version_sk(version)})
+    if not row:
+        raise ModuleNotFound(f"{namespace}/{name}/{provider} {version}")
+    head = table.get(module_row_key(namespace, name, provider)) or row
+    view = module_view(head, [])
+    del view["versions"]
+    published = row.get("status") == PUBLISHED and bool(row.get("key"))
+    return {**view, "version": _version_view(row), "docs": _docs_for(row, settings=resolved) if published else None}
+
+
 def delete_module(namespace: str, name: str, provider: str, *, settings: Settings | None = None) -> None:
     """Remove a module, every version of it and every stored tarball.
 
@@ -449,8 +549,10 @@ __all__ = [
     "connected_modules",
     "create_module",
     "delete_module",
+    "docs_key",
     "download_url",
     "get_module",
+    "get_version",
     "http_client",
     "list_modules",
     "module_for",
@@ -463,6 +565,7 @@ __all__ = [
     "request_sync",
     "resync_module",
     "sqs_client",
+    "store_docs",
     "version_order",
     "version_rows",
     "version_sk",
