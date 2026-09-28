@@ -491,6 +491,20 @@ phase as `PhaseInterrupted`. The plan and apply states carry `HeartbeatSeconds`
 silent or over budget runner is stopped by the state machine and the run errors
 with a message saying which.
 
+Google and Azure get HCP style workload identity. The control plane is an OIDC issuer
+(`terraform/oidc_issuer.tf`, `oidc.<stage host>`, anonymous discovery and JWKS from a
+KMS RSA key only the runs function may sign with). A workspace setting
+`TFC_GCP_PROVIDER_AUTH` (with `TFC_GCP_WORKLOAD_PROVIDER_NAME`, optionally
+`TFC_GCP_RUN_SERVICE_ACCOUNT_EMAIL`) or `TFC_AZURE_PROVIDER_AUTH` (with
+`TFC_AZURE_RUN_CLIENT_ID`) gets a one hour RS256 token per cloud in the bundle and on
+each refresh (`vending.mint_workload_identity`, `sub`
+`workspace:<id>:run_phase:<phase>`); a flag without its setting is a 409
+`WORKLOAD_IDENTITY_MISCONFIGURED`, reported as `WorkloadIdentityMisconfigured`. The
+runner (`app/workload_identity.py`) writes owner only token files, an
+`external_account` credential for `GOOGLE_APPLICATION_CREDENTIALS`, and
+`ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH` and `ARM_CLIENT_ID` for Azure, and redacts
+the tokens. `backend/e2e/test_workload_identity.py` verifies both inside a real plan.
+
 ---
 
 ## Conventions

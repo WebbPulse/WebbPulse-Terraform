@@ -735,7 +735,8 @@ def test_a_refresh_vends_the_phase_again(runner_client, created_run, workspace, 
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert set(body) == {"aws_credentials", "backend_credentials"}
+    assert set(body) == {"aws_credentials", "backend_credentials", "workload_identity"}
+    assert body["workload_identity"] is None
     vending_request, run_role_request, state_request = sts_requests
     assert vending_request["RoleArn"] == settings.RUN_CREDENTIALS_ROLE_ARN
     assert run_role_request["RoleArn"] == workspace["run_role_arn"]

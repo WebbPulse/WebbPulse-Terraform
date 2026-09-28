@@ -187,6 +187,30 @@ REFRESHED_STATE_SECRET_ACCESS_KEY = "refreshed-state-secret-access-key-abcdef012
 REFRESHED_STATE_SESSION_TOKEN = "refreshed-state-session-token-abcdef01234567"
 
 
+GCP_IDENTITY_TOKEN = "eyJhbGciOiJSUzI1NiJ9.gcp-identity-claims.gcp-signature"
+AZURE_IDENTITY_TOKEN = "eyJhbGciOiJSUzI1NiJ9.azure-identity-claims.azure-signature"
+GCP_AUDIENCE = "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/p"
+GCP_SERVICE_ACCOUNT = "runs@example.iam.gserviceaccount.com"
+AZURE_CLIENT_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def workload_identity_payload(
+    gcp_token: str = GCP_IDENTITY_TOKEN,
+    azure_token: str = AZURE_IDENTITY_TOKEN,
+    expiration: str = "2099-01-01T00:00:00Z",
+) -> dict[str, Any]:
+    """The Google and Azure identity tokens a workspace asking for both is given."""
+    return {
+        "gcp": {
+            "token": gcp_token,
+            "expiration": expiration,
+            "audience": GCP_AUDIENCE,
+            "service_account_email": GCP_SERVICE_ACCOUNT,
+        },
+        "azure": {"token": azure_token, "expiration": expiration, "client_id": AZURE_CLIENT_ID},
+    }
+
+
 def refreshed_payload(expiration: str = "2099-01-01T00:00:00+00:00") -> dict[str, Any]:
     """What `POST /runs/{id}/credentials` answers with: both sessions, freshly vended."""
     return {
@@ -334,8 +358,14 @@ if SUBCOMMAND == "init":
     print("Initializing the backend...")
     if ECHO:
         for key in sorted(os.environ):
-            if key.startswith(("TF_VAR_", "PROVIDER_", "AWS_")):
+            if key.startswith(("TF_VAR_", "PROVIDER_", "AWS_", "GOOGLE_", "ARM_")):
                 print("env " + key + "=" + os.environ[key])
+        for key in ("ARM_OIDC_TOKEN_FILE_PATH",):
+            if key in os.environ:
+                print("token file " + open(os.environ[key]).read())
+        if "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
+            source = json.load(open(os.environ["GOOGLE_APPLICATION_CREDENTIALS"]))["credential_source"]["file"]
+            print("token file " + open(source).read())
         for name in sorted(os.listdir(".")):
             if name.endswith(".tfvars.json") or name.endswith(".tfvars"):
                 print("tfvars file " + name)

@@ -451,6 +451,30 @@
         "title": "AwsConnection",
         "type": "object"
       },
+      "AzureWorkloadIdentity": {
+        "description": "A phase's Azure identity token and the client id it federates with.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "expiration": {
+            "title": "Expiration",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expiration",
+          "client_id"
+        ],
+        "title": "AzureWorkloadIdentity",
+        "type": "object"
+      },
       "BackendConfig": {
         "description": "The S3 backend the runner initialises against.\n\n`kms_key_id` carries the key ARN. The name is the backend block's own\nargument name, so the runner writes it into the override verbatim.",
         "properties": {
@@ -652,6 +676,35 @@
           "error_code"
         ],
         "title": "ErrorResponse",
+        "type": "object"
+      },
+      "GcpWorkloadIdentity": {
+        "description": "A phase's Google identity token and what the runner needs to hand it to the provider.",
+        "properties": {
+          "audience": {
+            "title": "Audience",
+            "type": "string"
+          },
+          "expiration": {
+            "title": "Expiration",
+            "type": "string"
+          },
+          "service_account_email": {
+            "default": "",
+            "title": "Service Account Email",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expiration",
+          "audience"
+        ],
+        "title": "GcpWorkloadIdentity",
         "type": "object"
       },
       "GitHubAppStatus": {
@@ -2619,6 +2672,16 @@
             "title": "Working Directory",
             "type": "string"
           },
+          "workload_identity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkloadIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "workspace_id": {
             "title": "Workspace Id",
             "type": "string"
@@ -3405,6 +3468,16 @@
           },
           "backend_credentials": {
             "$ref": "#/components/schemas/VendedCredentials"
+          },
+          "workload_identity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkloadIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3933,6 +4006,33 @@
           "events"
         ],
         "title": "WebhookConfig",
+        "type": "object"
+      },
+      "WorkloadIdentity": {
+        "description": "The identity tokens a workspace's `TFC_GCP_PROVIDER_AUTH` and `TFC_AZURE_PROVIDER_AUTH` ask for.",
+        "properties": {
+          "azure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AzureWorkloadIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gcp": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GcpWorkloadIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "WorkloadIdentity",
         "type": "object"
       },
       "Workspace": {

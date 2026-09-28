@@ -140,6 +140,15 @@ class Settings(BaseServiceSettings):
     one hour role chaining ceiling. The runner refreshes before expiry, so a shorter
     session only means more refreshes; `run_credentials_duration_seconds` reads it."""
 
+    OIDC_ISSUER_URL: str = ""
+    """The control plane's OIDC issuer, `https://oidc.<host>`, the `iss` of every
+    workload identity token a run gets for Google or Azure. Empty means the issuer
+    is off, and a workspace asking for workload identity fails its run."""
+
+    OIDC_SIGNING_KEY_ARN: str = ""
+    """The KMS RSA key that signs workload identity tokens now. Its key policy lets
+    only the runs function sign, and the issuer publishes its public half."""
+
     RUN_ROLE_NAME_PREFIX: str = ""
     """The prefix every workspace run role name carries, `${local.prefix}-workspace-`.
     The runner's AssumeRole grant is scoped to it, so a role named outside it cannot

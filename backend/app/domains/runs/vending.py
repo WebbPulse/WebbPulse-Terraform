@@ -15,12 +15,24 @@ Both sessions last at most an hour, the role chaining ceiling, which a long
 phase outlives. The runner therefore asks for a fresh pair before they expire
 through `POST /runs/{id}/credentials`, which vends again exactly as the bundle
 did, for the phase the run is still in.
+
+Google and Azure are reached the way HCP Terraform's dynamic credentials reach
+them: the control plane is an OIDC issuer, and a workspace that sets
+`TFC_GCP_PROVIDER_AUTH` or `TFC_AZURE_PROVIDER_AUTH` gets an identity token per
+phase, signed with the issuer's KMS key, which the cloud trades for its own
+credentials. The tokens are minted beside the AWS sessions and refreshed with
+them.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
+import time
+import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -44,6 +56,14 @@ class RunRoleAssumeFailed(Exception):
 
 class StateCredentialsFailed(Exception):
     """The state role could not be assumed, which is a fault in this deployment, not the workspace's."""
+
+
+class WorkloadIdentityMisconfigured(Exception):
+    """The workspace asks for Google or Azure workload identity without what that needs."""
+
+
+class WorkloadIdentityUnavailable(VendingUnavailable):
+    """This deployment has no OIDC issuer, or its signing key refused, so no token can be minted."""
 
 
 @dataclass(frozen=True)
@@ -193,13 +213,203 @@ def vend(
     return provider, state
 
 
+WORKLOAD_IDENTITY_LIFETIME_SECONDS: Final = 3600
+"""How long a workload identity token is valid, HCP's hour. The runner refreshes it with the AWS sessions."""
+
+KMS_SIGNING_ALGORITHM: Final = "RSASSA_PKCS1_V1_5_SHA_256"
+"""The KMS algorithm behind RS256."""
+
+KMS_RAW_MESSAGE_LIMIT: Final = 4096
+"""The largest message KMS signs raw; a longer signing input is sent as its SHA-256 digest."""
+
+AZURE_DEFAULT_AUDIENCE: Final = "api://AzureADTokenExchange"
+"""The audience an Azure federated identity credential expects unless the workspace names another."""
+
+GCP_AUDIENCE_PREFIX: Final = "//iam.googleapis.com/"
+"""What a Google workload identity provider's full resource name is prefixed with as an audience."""
+
+
+def _flag(environment: Mapping[str, str], key: str) -> bool:
+    """Whether a workspace variable is set to true, as HCP reads its `TFC_*_PROVIDER_AUTH` flags."""
+    return environment.get(key, "").strip().lower() == "true"
+
+
+def _phase_value(environment: Mapping[str, str], provider: str, suffix: str, phase: Phase) -> str:
+    """HCP's per phase override, `TFC_<P>_<PHASE>_<suffix>`, falling back to `TFC_<P>_RUN_<suffix>`."""
+    specific = environment.get(f"TFC_{provider}_{phase.upper()}_{suffix}", "").strip()
+    return specific or environment.get(f"TFC_{provider}_RUN_{suffix}", "").strip()
+
+
+def _b64url(data: bytes) -> str:
+    """Base64url without padding, as JOSE encodes each part."""
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _json_part(value: Mapping[str, Any]) -> str:
+    """One JOSE header or claims part."""
+    return _b64url(json.dumps(value, separators=(",", ":"), sort_keys=True).encode())
+
+
+def key_id(key_arn: str) -> str:
+    """The `kid` a KMS key is published under by the issuer: its key id."""
+    return key_arn.rsplit("/", 1)[-1]
+
+
+def workload_identity_claims(
+    *,
+    issuer: str,
+    audience: str,
+    workspace_id: str,
+    workspace_name: str,
+    run_id: str,
+    phase: Phase,
+    now: int,
+) -> dict[str, Any]:
+    """The claims of one phase's identity token, named as HCP Terraform names them."""
+    return {
+        "iss": issuer,
+        "sub": f"workspace:{workspace_id}:run_phase:{phase}",
+        "aud": audience,
+        "iat": now,
+        "nbf": now,
+        "exp": now + WORKLOAD_IDENTITY_LIFETIME_SECONDS,
+        "jti": uuid.uuid4().hex,
+        "terraform_workspace_id": workspace_id,
+        "terraform_workspace_name": workspace_name,
+        "terraform_run_id": run_id,
+        "terraform_run_phase": phase,
+    }
+
+
+def _kms(settings: Settings) -> Any:
+    """A KMS client as the function's own role. Imported late."""
+    import boto3
+
+    return boto3.client("kms", region_name=settings.AWS_REGION_NAME or None)
+
+
+def sign_token(claims: Mapping[str, Any], *, key_arn: str, kms: Any) -> str:
+    """A compact RS256 JWT over `claims`, signed by KMS so the private key never leaves it."""
+    header = {"alg": "RS256", "kid": key_id(key_arn), "typ": "JWT"}
+    signing_input = f"{_json_part(header)}.{_json_part(claims)}"
+    message = signing_input.encode("ascii")
+    if len(message) <= KMS_RAW_MESSAGE_LIMIT:
+        request = {"Message": message, "MessageType": "RAW"}
+    else:
+        request = {"Message": hashlib.sha256(message).digest(), "MessageType": "DIGEST"}
+    response = kms.sign(KeyId=key_arn, SigningAlgorithm=KMS_SIGNING_ALGORITHM, **request)
+    return f"{signing_input}.{_b64url(bytes(response['Signature']))}"
+
+
+def _requested(environment: Mapping[str, str], phase: Phase) -> dict[str, dict[str, str]]:
+    """What each requested cloud needs besides its token, checked before anything is signed.
+
+    Raises:
+        WorkloadIdentityMisconfigured: A requested cloud lacks its provider or client id.
+    """
+    wanted: dict[str, dict[str, str]] = {}
+    if _flag(environment, "TFC_GCP_PROVIDER_AUTH"):
+        provider_name = environment.get("TFC_GCP_WORKLOAD_PROVIDER_NAME", "").strip().strip("/")
+        if not provider_name:
+            raise WorkloadIdentityMisconfigured(
+                "TFC_GCP_PROVIDER_AUTH is true but TFC_GCP_WORKLOAD_PROVIDER_NAME is not set."
+            )
+        provider_audience = f"{GCP_AUDIENCE_PREFIX}{provider_name}"
+        wanted["gcp"] = {
+            "token_audience": environment.get("TFC_GCP_WORKLOAD_IDENTITY_AUDIENCE", "").strip() or provider_audience,
+            "audience": provider_audience,
+            "service_account_email": _phase_value(environment, "GCP", "SERVICE_ACCOUNT_EMAIL", phase),
+        }
+    if _flag(environment, "TFC_AZURE_PROVIDER_AUTH"):
+        client_id = _phase_value(environment, "AZURE", "CLIENT_ID", phase)
+        if not client_id:
+            raise WorkloadIdentityMisconfigured(
+                f"TFC_AZURE_PROVIDER_AUTH is true but neither TFC_AZURE_RUN_CLIENT_ID nor "
+                f"TFC_AZURE_{phase.upper()}_CLIENT_ID is set."
+            )
+        wanted["azure"] = {
+            "token_audience": environment.get("TFC_AZURE_WORKLOAD_IDENTITY_AUDIENCE", "").strip()
+            or AZURE_DEFAULT_AUDIENCE,
+            "client_id": client_id,
+        }
+    return wanted
+
+
+def mint_workload_identity(
+    *,
+    environment: Mapping[str, str],
+    workspace_id: str,
+    workspace_name: str,
+    run_id: str,
+    phase: Phase,
+    settings: Settings,
+    now: int | None = None,
+    kms: Any = None,
+) -> dict[str, dict[str, str]] | None:
+    """One phase's Google and Azure identity tokens, for the clouds the workspace asks for.
+
+    None when it asks for neither. Each entry carries the token, its expiry and
+    what the runner needs to hand it to the provider: the workload provider
+    audience and service account for Google, the client id for Azure. Nothing
+    about a token is logged.
+
+    Raises:
+        WorkloadIdentityMisconfigured: A requested cloud lacks its provider or client id.
+        WorkloadIdentityUnavailable: There is no issuer, or KMS refused to sign.
+    """
+    wanted = _requested(environment, phase)
+    if not wanted:
+        return None
+    if not settings.OIDC_ISSUER_URL or not settings.OIDC_SIGNING_KEY_ARN:
+        raise WorkloadIdentityUnavailable(
+            "This control plane has no OIDC issuer, so Google and Azure workload identity are unavailable."
+        )
+    issued_at = int(time.time()) if now is None else now
+    expiration = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(issued_at + WORKLOAD_IDENTITY_LIFETIME_SECONDS))
+    client = kms or _kms(settings)
+    minted: dict[str, dict[str, str]] = {}
+    for cloud, details in wanted.items():
+        claims = workload_identity_claims(
+            issuer=settings.OIDC_ISSUER_URL.rstrip("/"),
+            audience=details["token_audience"],
+            workspace_id=workspace_id,
+            workspace_name=workspace_name,
+            run_id=run_id,
+            phase=phase,
+            now=issued_at,
+        )
+        try:
+            token = sign_token(claims, key_arn=settings.OIDC_SIGNING_KEY_ARN, kms=client)
+        except Exception as error:
+            raise WorkloadIdentityUnavailable(f"the OIDC signing key could not sign: {_error_text(error)}") from error
+        entry = {key: value for key, value in details.items() if key != "token_audience"}
+        minted[cloud] = {"token": token, "expiration": expiration, **entry}
+    _log.info(
+        "Minted a run phase its workload identity tokens.",
+        extra={
+            "event": "runs.workload_identity.minted",
+            "run_id": run_id,
+            "phase": phase,
+            "workspace_id": workspace_id,
+            "clouds": sorted(minted),
+        },
+    )
+    return minted
+
+
 __all__ = [
     "RunRoleAssumeFailed",
     "StateCredentialsFailed",
     "VendedCredentials",
     "VendingUnavailable",
+    "WorkloadIdentityMisconfigured",
+    "WorkloadIdentityUnavailable",
+    "key_id",
+    "mint_workload_identity",
     "run_role_request",
     "session_name",
+    "sign_token",
     "state_role_request",
     "vend",
+    "workload_identity_claims",
 ]

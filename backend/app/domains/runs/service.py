@@ -1398,6 +1398,7 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         VendingUnavailable: No vending role is configured or it cannot be assumed.
         RunRoleAssumeFailed: The run role is unset or now refuses the vending role.
         StateCredentialsFailed: The state role could not be assumed.
+        WorkloadIdentityMisconfigured: The variables ask for workload identity without what it needs.
     """
     resolved = settings or get_settings()
     run_id = str(run["run_id"])
@@ -1410,11 +1411,43 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         phase=phase,
         settings=resolved,
     )
+    identity = _workload_identity(
+        workspace_reads.resolved_variables(workspace_id, settings=resolved)["env"],
+        workspace_id,
+        str(workspace.get("name", "")),
+        run_id,
+        phase,
+        settings=resolved,
+    )
     _log.info(
         "Refreshed a run phase's credentials.",
         extra={"event": "runs.credentials.refreshed", "run_id": run_id, "phase": phase},
     )
-    return {"aws_credentials": provider.as_dict(), "backend_credentials": state.as_dict()}
+    return {
+        "aws_credentials": provider.as_dict(),
+        "backend_credentials": state.as_dict(),
+        "workload_identity": identity,
+    }
+
+
+def _workload_identity(
+    environment: Mapping[str, str],
+    workspace_id: str,
+    workspace_name: str,
+    run_id: str,
+    phase: Phase,
+    *,
+    settings: Settings,
+) -> dict[str, dict[str, str]] | None:
+    """The phase's Google and Azure identity tokens, when the workspace's variables ask for them."""
+    return vending.mint_workload_identity(
+        environment=environment,
+        workspace_id=workspace_id,
+        workspace_name=workspace_name,
+        run_id=run_id,
+        phase=phase,
+        settings=settings,
+    )
 
 
 def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
@@ -1437,6 +1470,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         VendingUnavailable: No vending role is configured or it cannot be assumed.
         RunRoleAssumeFailed: The workspace's run role is unset or refused the vending role.
         StateCredentialsFailed: The state role could not be assumed.
+        WorkloadIdentityMisconfigured: The variables ask for workload identity without what it needs.
     """
     from webbpulse.storage import presigned_get
 
@@ -1467,6 +1501,9 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         run_id=run_id,
         phase=phase,
         settings=resolved,
+    )
+    identity = _workload_identity(
+        variables["env"], workspace_id, str(workspace.get("name", "")), run_id, phase, settings=resolved
     )
 
     return {
@@ -1499,6 +1536,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "environment_variables": variables["env"],
         "artifacts": _artifacts(run_id, settings=resolved),
         "registry": registry_credentials.issue(run, settings=resolved),
+        "workload_identity": identity,
     }
 
 
