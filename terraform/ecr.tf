@@ -1,6 +1,6 @@
 module "registry" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/ecr-repository"
-  version = "~> 2.27"
+  version = "~> 2.32"
 
   name_prefix = local.project
 

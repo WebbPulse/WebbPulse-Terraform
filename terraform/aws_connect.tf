@@ -41,7 +41,7 @@ resource "aws_sns_topic_policy" "aws_connect" {
 
 module "aws_connect" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/sqs-queue"
-  version = "~> 2.27"
+  version = "~> 2.32"
 
   name = "${local.prefix}-aws-connect"
 
