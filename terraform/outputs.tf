@@ -192,3 +192,8 @@ output "provider_signing_public_key_parameters" {
   description = "SSM parameter names holding the public half of the provider release signing key, keyed public_key (ASCII armor) and key_id (long key id), for the registry to serve"
   value       = local.provider_signing_parameters
 }
+
+output "provider_acceptance_role_arn" {
+  description = "ARN of the role the provider repository's acceptance workflow assumes in staging, set as ACCEPTANCE_ROLE_ARN on its staging-acceptance environment; null in production"
+  value       = one(module.provider_acceptance_role[*].role_arn)
+}
