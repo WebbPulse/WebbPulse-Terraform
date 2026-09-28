@@ -112,6 +112,25 @@ def _settle(row_key: Mapping[str, str], sha: str, values: Mapping[str, Any], *, 
     return True
 
 
+def _document(packed: Path, module: Mapping[str, Any], version: str, *, settings: Settings) -> None:
+    """Store the version's documentation. Never fails the publish: the page extracts it on a first view."""
+    try:
+        service.store_docs(
+            packed,
+            str(module["namespace"]),
+            str(module["name"]),
+            str(module["provider"]),
+            version,
+            settings=settings,
+        )
+    except Exception as error:  # noqa: BLE001
+        _log.warning(
+            "Published a version without its documentation.",
+            extra={"event": "registry.docs.unextracted", "version": version},
+            exc_info=error,
+        )
+
+
 def publish(
     module: Mapping[str, Any],
     message: Mapping[str, Any],
@@ -162,6 +181,7 @@ def publish(
             destination,
             ExtraArgs={"ContentType": service.MODULE_CONTENT_TYPE},
         )
+        _document(packed, module, version, settings=settings)
     settled = _settle(
         row_key,
         sha,

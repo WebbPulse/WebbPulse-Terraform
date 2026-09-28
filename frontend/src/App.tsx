@@ -7,11 +7,14 @@ import { api } from './api';
 import { Layout, RequireAuth, RequireGuest } from './components';
 import {
   ApiKeys,
+  ConnectModule,
   GitHubCreated,
   GitHubSettings,
   GitHubSetup,
+  ModuleDetail,
   NewWorkspace,
   NotFound,
+  Registry,
   RunDetail,
   Runs,
   SignIn,
@@ -46,6 +49,12 @@ export function AppRoutes(): React.ReactElement {
         {workspaceRoutes()}
         <Route path="/runs" element={<Runs />} />
         <Route path="/runs/:runId" element={<RunDetail />} />
+        <Route path="/registry" element={<Registry />} />
+        <Route path="/registry/new" element={<ConnectModule />} />
+        <Route
+          path="/registry/:namespace/:name/:provider"
+          element={<ModuleDetail />}
+        />
         <Route path="/settings/api-keys" element={<ApiKeys />} />
         <Route path="/settings/github" element={<GitHubSettings />} />
         <Route path="/settings/github/created" element={<GitHubCreated />} />

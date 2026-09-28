@@ -312,6 +312,14 @@ So a tag reaching both paths publishes once. A sync that cannot be queued at
 connect is logged and the module still connects; the resync answers 503
 `REGISTRY_SYNC_UNAVAILABLE`. The registry function may send to its own queue.
 
+The module page reads `GET .../{ns}/{name}/{provider}/versions/{version}`
+(`registry:read`): the version row plus `docs`, the readme, inputs, outputs,
+provider requirements, resources and each `modules/<name>` submodule, read with
+`python-hcl2` by `app/domains/registry/docs.py` (bounded file sizes and counts; a
+file that does not parse lands in `parse_errors`). The tag consumer stores them at
+`<version>.docs.json` beside the tarball, best effort; a missing document or one
+older than `docs.DOCS_SCHEMA` is extracted from the tarball on the first view.
+
 In Root A the consumer route is shadowed by the runs consumer at the same
 pass-through path, so tests call `route_record` directly.
 

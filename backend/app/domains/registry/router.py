@@ -19,7 +19,7 @@ from webbpulse.integrations.github import GitHubError, GitHubRateLimited
 from ...common.core.auth import REGISTRY_READ, REGISTRY_WRITE, claims, scopes
 from ...common.github.repositories import RepositoryNotInstalled
 from . import service
-from .schemas.registry import Module, ModuleCreate, ModuleList, ModuleSync
+from .schemas.registry import Module, ModuleCreate, ModuleList, ModuleSync, ModuleVersionDetail
 
 router = APIRouter(prefix="/registry")
 
@@ -32,6 +32,7 @@ GITHUB_NOT_CONFIGURED_CODE = "GITHUB_NOT_CONFIGURED"
 SYNC_UNAVAILABLE_CODE = "REGISTRY_SYNC_UNAVAILABLE"
 
 Segment = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[0-9A-Za-z_-]+$")]
+Version = Annotated[str, Path(min_length=5, max_length=128, pattern=r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")]
 
 
 def _error(status_code: int, message: str, error_code: str) -> HTTPException:
@@ -118,6 +119,20 @@ def get_module(namespace: Segment, name: Segment, provider: Segment) -> dict[str
     """One module and every version of it."""
     try:
         return service.get_module(namespace, name, provider)
+    except service.ModuleNotFound as error:
+        raise _error(status.HTTP_404_NOT_FOUND, f"{error} was not found.", NOT_FOUND_CODE) from error
+
+
+@router.get(
+    "/modules/{namespace}/{name}/{provider}/versions/{version}",
+    response_model=ModuleVersionDetail,
+    dependencies=[Depends(scopes(REGISTRY_READ))],
+    responses={404: {"description": "The module has no such version."}},
+)
+def get_version(namespace: Segment, name: Segment, provider: Segment, version: Version) -> dict[str, Any]:
+    """One version with its readme, inputs, outputs, provider requirements, resources and submodules."""
+    try:
+        return service.get_version(namespace, name, provider, version)
     except service.ModuleNotFound as error:
         raise _error(status.HTTP_404_NOT_FOUND, f"{error} was not found.", NOT_FOUND_CODE) from error
 

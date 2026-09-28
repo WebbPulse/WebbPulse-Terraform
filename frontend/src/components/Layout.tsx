@@ -76,6 +76,26 @@ const SECTIONS: readonly {
       </svg>
     ),
   },
+  {
+    to: '/registry',
+    label: 'Registry',
+    icon: (
+      <svg viewBox="0 0 16 16" className="size-4" fill="none">
+        <path
+          d="M8 1.75 13.5 4.75v6.5L8 14.25 2.5 11.25v-6.5L8 1.75Z"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M2.75 4.9 8 7.75l5.25-2.85M8 7.75v6.25"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
 ];
 
 /** The signed in person's own settings, open to everyone. */

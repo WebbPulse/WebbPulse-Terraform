@@ -1176,6 +1176,131 @@
         "title": "ModuleCreate",
         "type": "object"
       },
+      "ModuleDocs": {
+        "description": "What a published version documents, read from its tarball when it published.",
+        "properties": {
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleInput"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleOutput"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "parse_errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Parse Errors",
+            "type": "array"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleProvider"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "readme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readme"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleResource"
+            },
+            "title": "Resources",
+            "type": "array"
+          },
+          "submodules": {
+            "items": {
+              "$ref": "#/components/schemas/Submodule"
+            },
+            "title": "Submodules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputs",
+          "outputs",
+          "providers",
+          "resources",
+          "submodules",
+          "parse_errors"
+        ],
+        "title": "ModuleDocs",
+        "type": "object"
+      },
+      "ModuleInput": {
+        "description": "One input variable, as a module page lists it.",
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "name",
+          "required"
+        ],
+        "title": "ModuleInput",
+        "type": "object"
+      },
       "ModuleList": {
         "description": "Every module in the registry.",
         "properties": {
@@ -1191,6 +1316,91 @@
           "modules"
         ],
         "title": "ModuleList",
+        "type": "object"
+      },
+      "ModuleOutput": {
+        "description": "One output value.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ModuleOutput",
+        "type": "object"
+      },
+      "ModuleProvider": {
+        "description": "One provider requirement from `required_providers`.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ModuleProvider",
+        "type": "object"
+      },
+      "ModuleResource": {
+        "description": "One managed resource the module declares.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name"
+        ],
+        "title": "ModuleResource",
         "type": "object"
       },
       "ModuleSync": {
@@ -1298,6 +1508,71 @@
           "created_at"
         ],
         "title": "ModuleVersion",
+        "type": "object"
+      },
+      "ModuleVersionDetail": {
+        "description": "One version of a module with its documentation, for the module page.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "docs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModuleDocs"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
+          },
+          "version": {
+            "$ref": "#/components/schemas/ModuleVersion"
+          }
+        },
+        "required": [
+          "namespace",
+          "name",
+          "provider",
+          "source",
+          "version"
+        ],
+        "title": "ModuleVersionDetail",
         "type": "object"
       },
       "PendingRunRoleCheck": {
@@ -3037,6 +3312,68 @@
           "items"
         ],
         "title": "StateVersionList",
+        "type": "object"
+      },
+      "Submodule": {
+        "description": "A module under `modules/`, which a source reaches with `//modules/<name>`.",
+        "properties": {
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleInput"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleOutput"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleProvider"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "readme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readme"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleResource"
+            },
+            "title": "Resources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "inputs",
+          "outputs",
+          "providers",
+          "resources"
+        ],
+        "title": "Submodule",
         "type": "object"
       },
       "ValidationErrorDetail": {
@@ -5481,6 +5818,91 @@
           }
         },
         "summary": "Resync Module",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}/versions/{version}": {
+      "get": {
+        "description": "One version with its readme, inputs, outputs, provider requirements, resources and submodules.",
+        "operationId": "get_version_api_v1_registry_modules__namespace___name___provider__versions__version__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 5,
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleVersionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "The module has no such version."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Version",
         "tags": [
           "registry"
         ]
