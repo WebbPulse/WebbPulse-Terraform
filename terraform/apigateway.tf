@@ -171,9 +171,9 @@ locals {
         integration          = "workspaces"
         require_identity_jwt = true
       }
+      "GET /api/auth/passkeys/availability" = { integration = "workspaces" }
     },
     local.passkeys_enabled ? {
-      "GET /api/auth/passkeys/availability"  = { integration = "workspaces" }
       "POST /api/auth/login/passkey/options" = { integration = "workspaces" }
       "POST /api/auth/login/passkey/verify"  = { integration = "workspaces" }
       "POST /api/auth/passkeys/register/options" = {
