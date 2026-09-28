@@ -49,8 +49,6 @@ _DOCUMENT_ENVIRONMENT = {
 
 _PRODUCTION_DOCUMENT_FLAGS = {
     "IDENTITY_EPHEMERAL_USERS_ENABLED": "false",
-    "IDENTITY_PASSKEYS_ENABLED": "false",
-    "IDENTITY_PASSKEYS_PASSWORDLESS": "false",
 }
 
 WEB_ORIGIN_GATED_REASON = (
@@ -65,9 +63,9 @@ _WEB_ORIGIN_FIXTURES = frozenset({"http", "page", "signed_in_page", "context", "
 def _document_settings(environment: str) -> dict[str, str]:
     """The settings the document is built with, carrying the deployed environment's flags.
 
-    Terraform declares the passkey and ephemeral user routes outside production only, so
-    a production run builds its document with them off; otherwise the coverage and
-    reachability groups would expect routes production deliberately does not serve.
+    Terraform declares the ephemeral user routes outside production only, so a production
+    run builds its document with them off; otherwise the coverage and reachability groups
+    would expect routes production deliberately does not serve. Passkeys are on everywhere.
     """
     settings = dict(_DOCUMENT_ENVIRONMENT)
     if environment.strip().lower() == "production":

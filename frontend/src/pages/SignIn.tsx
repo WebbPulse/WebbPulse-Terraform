@@ -1,13 +1,40 @@
-/** The sign-in page: a password leg, then a TOTP leg when one is asked for. */
+/** The sign-in page: a password or passkey leg, then a TOTP leg when one is asked for. */
 
 import { useState } from 'react';
-import { useAuth } from '@webbpulse/auth/react';
+import type { PasskeySignInOutcome } from '@webbpulse/auth';
+import {
+  useAuth,
+  useAuthClient,
+  usePasskeySignInButton,
+} from '@webbpulse/auth/react';
+import {
+  PASSKEY_AVAILABILITY_PATH,
+  identityUrl,
+  passkeyLoginAvailability,
+} from '@webbpulse/discovery';
 
+import { API_BASE_URL, identityOriginFrom } from '../api';
 import { Button, ErrorNotice, Field, INPUT_CLASS, Mark } from '../components';
 
+/** Asks the identity service whether a passkey is a way in on this deployment. */
+function probePasskeyLogin(): Promise<'available' | 'unavailable' | 'unknown'> {
+  return passkeyLoginAvailability(
+    identityUrl(identityOriginFrom(API_BASE_URL), PASSKEY_AVAILABILITY_PATH)
+  );
+}
+
+/** Props for {@link SignIn}. */
+export interface SignInProps {
+  /** Whether to arm passkey autofill on mount. Off in tests. */
+  conditionalPasskey?: boolean;
+}
+
 /** The sign-in form, with the MFA step the first leg can ask for. */
-export function SignIn(): React.ReactElement {
+export function SignIn({
+  conditionalPasskey = true,
+}: SignInProps = {}): React.ReactElement {
   const { login, completeTotp, isBusy } = useAuth();
+  const client = useAuthClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -25,6 +52,26 @@ export function SignIn(): React.ReactElement {
       setError(thrown);
     }
   };
+
+  const handlePasskey = (result: PasskeySignInOutcome): void => {
+    if (!result.ok) {
+      setError(new Error(result.message));
+      return;
+    }
+    setError(null);
+    if (result.kind === 'mfa-required') {
+      setTicket(result.ticket);
+    }
+  };
+
+  const passkey = usePasskeySignInButton({
+    client,
+    probe: probePasskeyLogin,
+    email,
+    conditional: conditionalPasskey,
+    onResult: handlePasskey,
+    onError: setError,
+  });
 
   const submitCode = async (): Promise<void> => {
     if (ticket === null) {
@@ -54,7 +101,7 @@ export function SignIn(): React.ReactElement {
             </h2>
             <p className="mt-0.5 text-xs text-text-faint">
               {ticket === null
-                ? 'Use the account your administrator gave you.'
+                ? 'Use the account your administrator gave you, or a passkey you added to it.'
                 : 'Enter the code from your authenticator app, or a recovery code.'}
             </p>
           </div>
@@ -74,7 +121,9 @@ export function SignIn(): React.ReactElement {
                     type="email"
                     required
                     autoFocus
-                    autoComplete="username"
+                    autoComplete={
+                      passkey.conditional ? 'username webauthn' : 'username'
+                    }
                     value={email}
                     onChange={(event) => {
                       setEmail(event.target.value);
@@ -107,6 +156,30 @@ export function SignIn(): React.ReactElement {
               >
                 Sign in
               </Button>
+              {passkey.offered ? (
+                <>
+                  <div
+                    aria-hidden="true"
+                    className="flex items-center gap-3 text-xs text-text-faint"
+                  >
+                    <span className="h-px flex-1 bg-line" />
+                    or
+                    <span className="h-px flex-1 bg-line" />
+                  </div>
+                  <Button
+                    className="w-full"
+                    busy={passkey.busy}
+                    busyLabel="Waiting for your passkey"
+                    disabled={isBusy}
+                    onClick={() => {
+                      setError(null);
+                      void passkey.signIn();
+                    }}
+                  >
+                    Sign in with passkey
+                  </Button>
+                </>
+              ) : null}
             </form>
           ) : (
             <form

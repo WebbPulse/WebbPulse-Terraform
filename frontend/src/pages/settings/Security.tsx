@@ -1,4 +1,4 @@
-/** Account security: turn an authenticator app on or off and replace its recovery codes. */
+/** Account security: manage passkeys, turn an authenticator app on or off and replace its recovery codes. */
 
 import { useMemo, useState } from 'react';
 import type { AuthClient } from '@webbpulse/auth';
@@ -13,6 +13,7 @@ import {
   INPUT_CLASS,
   PageHeader,
 } from '../../components';
+import { PasskeysSection } from './PasskeysSection';
 
 /** The page's crumbs, the page itself left to the title. */
 const CRUMBS = [{ label: 'Account' }] as const;
@@ -249,7 +250,8 @@ function CodePrompt({
 
 /** The account security page. */
 export function Security(): React.ReactElement {
-  const client = useDescribedClient(useAuthClient());
+  const authClient = useAuthClient();
+  const client = useDescribedClient(authClient);
   const totp = useTotpPanel({
     client,
     messages: {
@@ -271,8 +273,12 @@ export function Security(): React.ReactElement {
       <PageHeader
         title="Security"
         crumbs={CRUMBS}
-        description="A second factor for signing in: a six digit code from an authenticator app, with one time recovery codes as a fallback."
+        description="Passkeys to sign in without a password, and a second factor for password sign-in: a six digit code from an authenticator app, with one time recovery codes as a fallback."
       />
+      <PasskeysSection client={authClient} />
+      <h2 className="text-sm font-medium text-text-strong">
+        Authenticator app
+      </h2>
       {error === null ? null : (
         <p
           role="alert"

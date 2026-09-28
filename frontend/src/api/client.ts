@@ -12,6 +12,7 @@ import {
   describeAuthError,
   StepUpCancelledError,
   type AuthClient,
+  type WebAuthnAdapter,
 } from '@webbpulse/auth';
 import { identityOriginFrom as packageIdentityOriginFrom } from '@webbpulse/auth/browser';
 
@@ -93,12 +94,12 @@ export function identityOriginFrom(apiBaseUrl: string): string {
  *
  * `describeAuthError` unwraps the WebbPulse envelope the control plane and the
  * identity routes both answer with, so one renderer covers a failed plan and a
- * refused sign-in alike. A dismissed password prompt says nothing changed. The
+ * refused sign-in alike. A dismissed step-up prompt says nothing changed. The
  * fallback is this product's own wording.
  */
 export function describeError(error: unknown): string {
   if (error instanceof StepUpCancelledError) {
-    return 'Your password was not confirmed, so nothing changed.';
+    return 'You did not confirm it is you, so nothing changed.';
   }
   return describeAuthError(error, 'The request failed. Please try again.');
 }
@@ -122,6 +123,8 @@ export interface TerraformApiOptions {
   fetch?: typeof globalThis.fetch;
   /** Retry attempts for idempotent methods. Defaults to the client's own. */
   retries?: number;
+  /** Injected for tests. Defaults to `navigator.credentials`. */
+  webAuthn?: WebAuthnAdapter;
 }
 
 /**
@@ -146,6 +149,7 @@ export class TerraformApi {
 
     this.auth = createAuthClient({
       baseUrl: identityOriginFrom(baseUrl),
+      ...(options.webAuthn === undefined ? {} : { webAuthn: options.webAuthn }),
       clientOptions: {
         credentials,
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),

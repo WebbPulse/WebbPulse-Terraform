@@ -1,7 +1,8 @@
-/** The one "Confirm your password" prompt every step-up gated action goes through. */
+/** The one "Confirm it is you" prompt every step-up gated action goes through. */
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { useStepUp } from '@webbpulse/auth/react';
+import { passkeysSupported } from '@webbpulse/auth';
+import { useStepUp, type StepUpFailure } from '@webbpulse/auth/react';
 
 import { api as defaultApi, type TerraformApi } from '../api';
 import { Button } from './Button';
@@ -22,7 +23,7 @@ export interface StepUpBoundaryProps {
  * sensitive variables, confirming a run, GitHub App settings and the module
  * registry) need a sign-in from the last few minutes. When the server refuses
  * one with `STEP_UP_REQUIRED`, the call is parked, this prompt asks for the
- * password, and the call is sent once more. Cancelling rejects the call, so the
+ * password or a passkey, and the call is sent once more. Cancelling rejects the call, so the
  * page that made it shows that nothing changed.
  */
 export function StepUpBoundary({
@@ -40,14 +41,28 @@ export function StepUpBoundary({
       {gate.open ? (
         <ConfirmPasswordDialog
           maxAge={gate.maxAge}
-          error={gate.error?.message ?? null}
+          error={stepUpErrorMessage(gate.error)}
           busy={gate.pending}
           onSubmit={(password) => gate.submit({ password })}
+          onPasskey={
+            passkeysSupported() ? () => gate.submit({ passkey: true }) : null
+          }
           onCancel={gate.cancel}
         />
       ) : null}
     </>
   );
+}
+
+/** The sentence for a failed confirmation, or null when there is nothing to say. */
+export function stepUpErrorMessage(error: StepUpFailure | null): string | null {
+  if (error === null) {
+    return null;
+  }
+  if ('reason' in error && error.reason === 'cancelled') {
+    return null;
+  }
+  return error.message;
 }
 
 /** How long a confirmation lasts, in words, from the challenge's `max_age`. */
@@ -65,15 +80,18 @@ export interface ConfirmPasswordDialogProps {
   error: string | null;
   busy: boolean;
   onSubmit: (password: string) => Promise<boolean>;
+  /** Confirms with a passkey instead, or null where this browser cannot. */
+  onPasskey?: (() => Promise<boolean>) | null;
   onCancel: () => void;
 }
 
-/** The password prompt itself: one field, a cancel and a confirm. */
+/** The prompt itself: a password field, a passkey option, a cancel and a confirm. */
 export function ConfirmPasswordDialog({
   maxAge,
   error,
   busy,
   onSubmit,
+  onPasskey = null,
   onCancel,
 }: ConfirmPasswordDialogProps): React.ReactElement {
   const [password, setPassword] = useState('');
@@ -93,11 +111,11 @@ export function ConfirmPasswordDialog({
           onCancel();
         }
       }}
-      title="Confirm your password"
+      title="Confirm it is you"
       description={`This action needs a recent sign-in. You will not be asked again for ${confirmationWindow(maxAge)}.`}
     >
       <form
-        aria-label="Confirm your password"
+        aria-label="Confirm it is you"
         className="space-y-4"
         onSubmit={(event) => {
           event.preventDefault();
@@ -122,7 +140,16 @@ export function ConfirmPasswordDialog({
             />
           )}
         </Field>
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex items-center justify-end gap-2 pt-1">
+          {onPasskey === null ? null : (
+            <Button
+              className="mr-auto"
+              disabled={busy}
+              onClick={() => void onPasskey()}
+            >
+              Use a passkey
+            </Button>
+          )}
           <Button variant="ghost" disabled={busy} onClick={onCancel}>
             Cancel
           </Button>

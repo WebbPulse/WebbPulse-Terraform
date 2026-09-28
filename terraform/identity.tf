@@ -17,10 +17,9 @@ variable "identity_rp_name" {
 }
 
 variable "passkeys_enabled" {
-  description = "Whether the passkey routes are declared. Null derives it from the environment: true in staging, false in production."
+  description = "Whether the passkey routes are declared. On in every environment."
   type        = bool
-  default     = null
-  nullable    = true
+  default     = true
 }
 
 variable "ephemeral_users_enabled" {
@@ -31,18 +30,17 @@ variable "ephemeral_users_enabled" {
 }
 
 variable "passkeys_passwordless" {
-  description = "Whether a passkey is a way in as well as a credential. Null derives it from the environment: true in staging, false in production."
+  description = "Whether a passkey is a way in as well as a credential. On in every environment."
   type        = bool
-  default     = null
-  nullable    = true
+  default     = true
 }
 
 locals {
   ephemeral_users_enabled = var.ephemeral_users_enabled != null ? var.ephemeral_users_enabled : var.environment != "production"
 
-  passkeys_enabled = var.passkeys_enabled != null ? var.passkeys_enabled : var.environment != "production"
+  passkeys_enabled = var.passkeys_enabled
 
-  passkeys_passwordless = var.passkeys_passwordless != null ? var.passkeys_passwordless : var.environment != "production"
+  passkeys_passwordless = var.passkeys_enabled && var.passkeys_passwordless
 }
 
 module "identity" {
