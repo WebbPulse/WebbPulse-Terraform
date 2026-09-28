@@ -37,6 +37,29 @@ def script() -> Any:
     sys.modules.pop(spec.name, None)
 
 
+@pytest.fixture(autouse=True)
+def restored_environ() -> Iterator[None]:
+    """The script sets environment defaults in-process, so each test gets them undone."""
+    snapshot = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(snapshot)
+    settings_module.reset_settings_cache()
+
+
+def _create_identity_tables(prefix: str) -> None:
+    """The identity module's tables under `prefix`, created once per moto session."""
+    import boto3
+    from webbpulse.identity import TABLES
+
+    client = boto3.client("dynamodb", region_name="us-west-2")
+    existing = set(client.list_tables()["TableNames"])
+    for spec in TABLES:
+        request = spec.create_table_request(prefix)
+        if request["TableName"] not in existing:
+            client.create_table(**request)
+
+
 @pytest.fixture
 def staging_environment(identity_tables: str) -> Iterator[None]:
     """`ENVIRONMENT=staging` with the password set, which is what the script needs.
@@ -48,15 +71,7 @@ def staging_environment(identity_tables: str) -> Iterator[None]:
     table the rest of the suite reads.
     """
     del identity_tables
-    import boto3
-    from webbpulse.identity import TABLES
-
-    client = boto3.client("dynamodb", region_name="us-west-2")
-    existing = set(client.list_tables()["TableNames"])
-    for spec in TABLES:
-        request = spec.create_table_request("webbpulse-terraform-staging")
-        if request["TableName"] not in existing:
-            client.create_table(**request)
+    _create_identity_tables("webbpulse-terraform-staging")
 
     previous_environment = os.environ.get("ENVIRONMENT")
     previous_password = os.environ.get("CONTROL_PLANE_USER_PASSWORD")
@@ -161,3 +176,70 @@ def test_it_refuses_an_environment_it_does_not_know(script: Any, staging_environ
     del staging_environment
     with pytest.raises(SystemExit):
         script.main(["--environment", "test", EMAIL])
+
+
+@pytest.fixture
+def production_environment(identity_tables: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A shell with no `ENVIRONMENT`, as the owner's is, and prod-prefixed identity tables."""
+    del identity_tables
+    _create_identity_tables("webbpulse-terraform-prod")
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.delenv("IDENTITY_TABLE_PREFIX", raising=False)
+    monkeypatch.setenv("CONTROL_PLANE_USER_PASSWORD", PASSWORD)
+    settings_module.reset_settings_cache()
+
+
+def test_production_defaults_come_from_the_flag(script: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An owner shell with nothing set resolves to the deployed prod names."""
+    for name in ("ENVIRONMENT", "USERS_TABLE", "IDENTITY_TABLE_PREFIX"):
+        monkeypatch.delenv(name, raising=False)
+    assert script._apply_environment_defaults("production") is None
+    assert os.environ["ENVIRONMENT"] == "production"
+    assert os.environ["USERS_TABLE"] == "webbpulse-terraform-prod-users"
+    assert os.environ["IDENTITY_TABLE_PREFIX"] == "webbpulse-terraform-prod"
+
+
+def test_the_production_allowlist_is_the_gate_allowlist(script: Any) -> None:
+    """The owner addresses are read from `access_gate_users` in production.tfvars."""
+    assert script.owner_allowlist() == frozenset({"tyler@webbpulse.com", "tylert2610@gmail.com"})
+
+
+def test_production_refuses_an_address_off_the_allowlist(script: Any, production_environment: None) -> None:
+    """Production only ever creates an owner the edge gate already admits."""
+    del production_environment
+    assert script.main(["--environment", "production", EMAIL]) == 1
+    assert UserRepository().get_by_email(EMAIL) is None
+
+
+def test_production_creates_an_allowlisted_owner(script: Any, production_environment: None) -> None:
+    """An allowlisted address, matched case-insensitively, becomes a verified admin."""
+    del production_environment
+    assert script.main(["--environment", "production", "Tyler@WebbPulse.com"]) == 0
+    stored = UserRepository().get_by_email("Tyler@WebbPulse.com")
+    assert stored is not None
+    assert stored.is_admin is True
+
+
+def test_the_password_is_read_at_a_hidden_prompt(
+    script: Any, staging_environment: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no password variable on a terminal, it is typed twice and never echoed."""
+    del staging_environment
+    monkeypatch.delenv("CONTROL_PLANE_USER_PASSWORD", raising=False)
+    monkeypatch.setattr(script.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(script.getpass, "getpass", lambda prompt="": PASSWORD)
+    assert script.main(["--environment", "staging", EMAIL]) == 0
+    assert UserRepository().get_by_email(EMAIL) is not None
+
+
+def test_two_different_typed_passwords_write_nothing(
+    script: Any, staging_environment: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typo in the repeat is a refusal rather than an account nobody can sign in to."""
+    del staging_environment
+    monkeypatch.delenv("CONTROL_PLANE_USER_PASSWORD", raising=False)
+    monkeypatch.setattr(script.sys.stdin, "isatty", lambda: True)
+    answers = iter([PASSWORD, PASSWORD + "x"])
+    monkeypatch.setattr(script.getpass, "getpass", lambda prompt="": next(answers))
+    assert script.main(["--environment", "staging", EMAIL]) == 1
+    assert UserRepository().get_by_email(EMAIL) is None

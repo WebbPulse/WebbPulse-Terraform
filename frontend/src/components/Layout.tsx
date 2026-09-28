@@ -125,6 +125,20 @@ const ACCOUNT_SECTIONS: readonly {
       </svg>
     ),
   },
+  {
+    to: '/settings/security',
+    label: 'Security',
+    icon: (
+      <svg viewBox="0 0 16 16" className="size-4" fill="none">
+        <path
+          d="M8 1.75 13 3.5v4c0 3-2.1 5.4-5 6.75C5.1 12.9 3 10.5 3 7.5v-4L8 1.75Z"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
 ];
 
 /** The admin only sections under global settings. */

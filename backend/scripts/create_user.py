@@ -9,24 +9,25 @@ Re-runnable: an existing user is updated rather than recreated, and the password
 credential is overwritten, so running it twice is not an error and rotating a password is
 the same command again.
 
-The password comes from `CONTROL_PLANE_USER_PASSWORD` rather than an argument, so it never
-reaches a shell history or a process listing, and nothing secret is printed.
+The password is typed at a hidden prompt, twice, or read from `CONTROL_PLANE_USER_PASSWORD`
+when that is set (the staging e2e user is seeded that way). It is never an argument, so it
+never reaches a shell history or a process listing, and nothing secret is printed.
 
-`--environment` must be given and must match `ENVIRONMENT`. The flag exists so that
-pointing a shell at staging and running the production command writes nothing: an admin
-account is a credential, and the account it lands in has to be stated rather than
-inherited from whatever the environment happened to hold.
+`--environment` must be given. When `ENVIRONMENT` is set it must match, so pointing a shell
+at staging and running the production command writes nothing. When it is unset it is taken
+from the flag, and the users table and identity prefix default to that environment's
+deployed names. In production the address must be one of `access_gate_users` in
+`terraform/env/production.tfvars`, the owner allowlist the edge gate already admits.
 
-Usage (from backend/):
-    AWS_PROFILE=... ENVIRONMENT=staging \\
-      WORKSPACES_TABLE=... USERS_TABLE=... \\
-      CONTROL_PLANE_USER_PASSWORD='...' \\
-      uv run python scripts/create_user.py --environment staging someone@webbpulse.com
+Usage (from backend/, owner bootstrap on production):
+    AWS_PROFILE=WebbPulse-Terraform-Production/AdministratorAccess \\
+      uv run python scripts/create_user.py --environment production tyler@webbpulse.com
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import sys
 from pathlib import Path
@@ -40,6 +41,15 @@ PASSWORD_VARIABLE: Final = "CONTROL_PLANE_USER_PASSWORD"
 ALLOWED_ENVIRONMENTS: Final = ("staging", "production")
 """The environments this script will write to. `local` and `test` are excluded
 deliberately: the suite and the local stack seed their own rows."""
+
+DEPLOYED_PREFIXES: Final = {
+    "staging": "webbpulse-terraform-staging",
+    "production": "webbpulse-terraform-prod",
+}
+"""Each environment's `local.prefix`, which names its users table and identity tables."""
+
+OWNER_ALLOWLIST_FILE: Final = Path(__file__).resolve().parents[2] / "terraform" / "env" / "production.tfvars"
+"""The tfvars whose `access_gate_users` is the production owner allowlist."""
 
 
 def _credential_store(settings: Any) -> Any:
@@ -102,6 +112,45 @@ def create_user(email: str, password: str, settings: Any) -> str:
     return user.id
 
 
+def owner_allowlist(path: Path = OWNER_ALLOWLIST_FILE) -> frozenset[str]:
+    """The lowercased addresses in `access_gate_users`, or none when the file lacks them."""
+    import hcl2
+
+    parsed: Any = hcl2.loads(path.read_text(encoding="utf-8"))
+    users = parsed.get("access_gate_users") or []
+    return frozenset(str(user).strip().strip('"').lower() for user in users if str(user).strip())
+
+
+def _apply_environment_defaults(environment: str) -> str | None:
+    """Default `ENVIRONMENT` and the table names from the flag, or return why not.
+
+    An `ENVIRONMENT` already set to something else is a refusal, never overwritten.
+    """
+    current = os.environ.get("ENVIRONMENT", "").strip().lower()
+    if current and current != environment:
+        return (
+            f"--environment is {environment!r} but ENVIRONMENT is {current!r}. "
+            "Nothing was written. Point the shell at the intended account and say which one it is."
+        )
+    prefix = DEPLOYED_PREFIXES[environment]
+    os.environ.setdefault("ENVIRONMENT", environment)
+    os.environ.setdefault("USERS_TABLE", f"{prefix}-users")
+    os.environ.setdefault("IDENTITY_TABLE_PREFIX", prefix)
+    return None
+
+
+def _read_password() -> str:
+    """The password from the environment, else typed twice at a hidden prompt, else empty."""
+    password = os.environ.get(PASSWORD_VARIABLE, "")
+    if password or not sys.stdin.isatty():
+        return password
+    first = getpass.getpass("New password: ")
+    if first != getpass.getpass("Repeat the password: "):
+        print("The two passwords differ. Nothing was written.", file=sys.stderr)
+        return ""
+    return first
+
+
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     """The parsed arguments: the address, and the environment it must match."""
     parser = argparse.ArgumentParser(description="Create or update a verified admin user with a password credential.")
@@ -119,26 +168,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Create the user and return 0, or print why nothing was written and return 1."""
     arguments = _parse(argv)
 
+    refusal = _apply_environment_defaults(arguments.environment)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 1
+
     from app.common.config import get_settings
 
     settings = get_settings()
     resolved = settings.ENVIRONMENT.strip().lower()
-    if resolved != arguments.environment:
-        print(
-            f"--environment is {arguments.environment!r} but ENVIRONMENT is {resolved!r}. "
-            "Nothing was written. Point the shell at the intended account and say which one it is.",
-            file=sys.stderr,
-        )
-        return 1
-
-    password = os.environ.get(PASSWORD_VARIABLE, "")
-    if not password:
-        print(f"{PASSWORD_VARIABLE} must be set. Nothing was written.", file=sys.stderr)
-        return 1
 
     email = arguments.email.strip()
     if not email:
         print("The address is empty. Nothing was written.", file=sys.stderr)
+        return 1
+
+    if arguments.environment == "production" and email.lower() not in owner_allowlist():
+        print(
+            "In production the address must be one of access_gate_users in "
+            "terraform/env/production.tfvars. Nothing was written.",
+            file=sys.stderr,
+        )
+        return 1
+
+    password = _read_password()
+    if not password:
+        print(
+            f"Type the password at the prompt or set {PASSWORD_VARIABLE}. Nothing was written.",
+            file=sys.stderr,
+        )
         return 1
 
     try:
@@ -148,6 +206,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     print(f"{email} is a verified admin in {resolved} with id {user_id}")
+    if resolved == "production":
+        print("Next: sign in at https://terraform.webbpulse.com, then add an authenticator app at /settings/security.")
     return 0
 
 
