@@ -41,24 +41,26 @@ export function RequireAuth({ children }: RequireAuthProps): ReactNode {
 }
 
 /**
- * Holds a guest route back until the session settles, then sends a signed in
- * visitor on to the page they were headed for, or the workspaces list.
+ * Holds a guest route back until the session settles once, then sends a signed
+ * in visitor on to the page they were headed for, or the workspaces list.
  *
- * A guest guard waits on `isBusy` as well as `isLoading`, so a sign-in form
- * mid-request is not thrown away and an MFA challenge is not lost with it.
+ * The spinner is gated on `isLoading` alone, so a sign-in form stays mounted
+ * while its own login call is in flight and keeps the MFA ticket that call
+ * returns. The redirect also waits on `!isBusy`, so a second leg in flight is
+ * not cut short by a navigation.
  */
 export function RequireGuest({ children }: RequireAuthProps): ReactNode {
   const { isLoading, isBusy, isAuthenticated } = useAuth();
   const location = useLocation();
 
-  if (isLoading || isBusy) {
+  if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Spinner label="Checking your session" />
       </div>
     );
   }
-  if (isAuthenticated) {
+  if (isAuthenticated && !isBusy) {
     return <Navigate to={returnPath(location.state)} replace />;
   }
   return children;

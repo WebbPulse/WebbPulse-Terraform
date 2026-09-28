@@ -61,11 +61,17 @@ def _provider_sync(record: Mapping[str, Any], settings: Settings | None) -> None
     providers.handle_sync(record, settings=settings)
 
 
+def _upload(record: Mapping[str, Any], settings: Settings | None) -> None:
+    """Hand one release workflow upload to the provider consumer, discarding its outcome."""
+    providers.handle_upload(record, settings=settings)
+
+
 HANDLERS: dict[str, Handler] = {
     tags.KIND: _tag,
     sync.KIND: _sync,
     providers.RELEASE: _release,
     providers.SYNC: _provider_sync,
+    providers.UPLOAD: _upload,
 }
 """Each `kind` this function consumes, against the consumer that owns it."""
 

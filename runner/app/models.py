@@ -124,6 +124,42 @@ class VendedCredentials(BaseModel):
         return [value for value in (self.secret_access_key, self.session_token) if value]
 
 
+class GcpWorkloadIdentity(BaseModel):
+    """A phase's Google identity token and what the Google provider needs to exchange it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    token: str
+    expiration: str = ""
+    audience: str
+    """The workload identity provider as Google STS names it, `//iam.googleapis.com/<provider>`."""
+    service_account_email: str = ""
+    """The service account to impersonate; empty uses the federated identity directly."""
+
+
+class AzureWorkloadIdentity(BaseModel):
+    """A phase's Azure identity token and the client id it federates with."""
+
+    model_config = ConfigDict(frozen=True)
+
+    token: str
+    expiration: str = ""
+    client_id: str
+
+
+class WorkloadIdentity(BaseModel):
+    """The identity tokens the workspace's `TFC_GCP_PROVIDER_AUTH` and `TFC_AZURE_PROVIDER_AUTH` ask for."""
+
+    model_config = ConfigDict(frozen=True)
+
+    gcp: GcpWorkloadIdentity | None = None
+    azure: AzureWorkloadIdentity | None = None
+
+    def secrets(self) -> list[str]:
+        """The tokens, which must never reach a log line."""
+        return [entry.token for entry in (self.gcp, self.azure) if entry and entry.token]
+
+
 class RefreshedCredentials(BaseModel):
     """A fresh pair of sessions for the running phase, from `POST /runs/{id}/credentials`."""
 
@@ -131,10 +167,13 @@ class RefreshedCredentials(BaseModel):
 
     aws_credentials: VendedCredentials
     backend_credentials: VendedCredentials
+    workload_identity: WorkloadIdentity | None = None
+    """Fresh Google and Azure identity tokens, absent unless the workspace asks for them."""
 
     def secrets(self) -> list[str]:
-        """Both sessions' parts that must never reach a log line."""
-        return [*self.aws_credentials.secrets(), *self.backend_credentials.secrets()]
+        """Both sessions' parts and any identity token, none of which may reach a log line."""
+        identity = self.workload_identity.secrets() if self.workload_identity else []
+        return [*self.aws_credentials.secrets(), *self.backend_credentials.secrets(), *identity]
 
 
 def token_variable(host: str) -> str:
@@ -243,6 +282,9 @@ class Bundle(BaseModel):
     """The private registry credential for `init`. A bundle from a control plane with
     no registry host, or one that predates it, carries none."""
 
+    workload_identity: WorkloadIdentity | None = None
+    """Google and Azure identity tokens for this phase, absent unless the workspace asks for them."""
+
     def init_environment(self) -> dict[str, str]:
         """The variables `init` alone adds to the engine's environment."""
         return self.registry.environment() if self.registry else {}
@@ -262,6 +304,8 @@ class Bundle(BaseModel):
         values.extend(self.backend.credentials.secrets())
         if self.registry and self.registry.token:
             values.append(self.registry.token)
+        if self.workload_identity:
+            values.extend(self.workload_identity.secrets())
         return values
 
 

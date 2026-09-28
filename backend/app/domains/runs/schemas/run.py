@@ -348,6 +348,34 @@ class RegistryCredentials(BaseModel):
     expires_at: str
 
 
+class GcpWorkloadIdentity(BaseModel):
+    """A phase's Google identity token and what the runner needs to hand it to the provider."""
+
+    token: str
+    """An RS256 JWT from the control plane's OIDC issuer, valid for an hour."""
+    expiration: str
+    audience: str
+    """The workload identity provider as Google STS names it, `//iam.googleapis.com/<provider>`."""
+    service_account_email: str = ""
+    """The service account to impersonate; empty uses the federated identity directly."""
+
+
+class AzureWorkloadIdentity(BaseModel):
+    """A phase's Azure identity token and the client id it federates with."""
+
+    token: str
+    """An RS256 JWT from the control plane's OIDC issuer, valid for an hour."""
+    expiration: str
+    client_id: str
+
+
+class WorkloadIdentity(BaseModel):
+    """The identity tokens a workspace's `TFC_GCP_PROVIDER_AUTH` and `TFC_AZURE_PROVIDER_AUTH` ask for."""
+
+    gcp: Optional[GcpWorkloadIdentity] = None
+    azure: Optional[AzureWorkloadIdentity] = None
+
+
 ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
 """The objects a phase uploads: the binary plan, its JSON rendering, the
 redacted transcript and, after an apply, the outputs with sensitive values
@@ -414,6 +442,8 @@ class RunBundle(BaseModel):
     registry: Optional[RegistryCredentials] = None
     """The private registry credential for `terraform init`, absent where no registry
     host is configured."""
+    workload_identity: Optional[WorkloadIdentity] = None
+    """Google and Azure identity tokens for this phase, absent unless the workspace asks for them."""
 
 
 class PhaseResult(BaseModel):
@@ -475,6 +505,8 @@ class RunnerCredentials(BaseModel):
 
     aws_credentials: VendedCredentials
     backend_credentials: VendedCredentials
+    workload_identity: Optional[WorkloadIdentity] = None
+    """Fresh Google and Azure identity tokens, absent unless the workspace asks for them."""
 
 
 class RunnerTokenRequest(BaseModel):

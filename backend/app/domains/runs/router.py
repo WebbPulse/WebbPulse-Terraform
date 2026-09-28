@@ -86,6 +86,11 @@ RUN_ROLE_ASSUME_FAILED_CODE = "RUN_ROLE_ASSUME_FAILED"
 """The code a bundle carries when the workspace's run role refused the vending role.
 The runner reports it as `AssumeRoleFailed`, which is what the run role check reads."""
 
+WORKLOAD_IDENTITY_MISCONFIGURED_CODE = "WORKLOAD_IDENTITY_MISCONFIGURED"
+"""The code a bundle or refresh carries when `TFC_GCP_PROVIDER_AUTH` or `TFC_AZURE_PROVIDER_AUTH`
+is set without the provider name or client id it needs. The runner reports it as
+`WorkloadIdentityMisconfigured`."""
+
 RUN_CREDENTIALS_UNAVAILABLE_CODE = "RUN_CREDENTIALS_UNAVAILABLE"
 """The code a bundle carries when this deployment could not vend credentials at all."""
 
@@ -309,6 +314,8 @@ def run_bundle(run_id: str = RunId) -> dict[str, Any]:
         return service.run_bundle(run_id)
     except vending.RunRoleAssumeFailed as error:
         raise _conflict(str(error), error_code=RUN_ROLE_ASSUME_FAILED_CODE) from error
+    except vending.WorkloadIdentityMisconfigured as error:
+        raise _conflict(str(error), error_code=WORKLOAD_IDENTITY_MISCONFIGURED_CODE) from error
     except (vending.VendingUnavailable, vending.StateCredentialsFailed) as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -432,6 +439,8 @@ def runner_credentials(payload: RunnerCredentialsRequest, run_id: str = RunId) -
         ) from error
     except vending.RunRoleAssumeFailed as error:
         raise _conflict(str(error), error_code=RUN_ROLE_ASSUME_FAILED_CODE) from error
+    except vending.WorkloadIdentityMisconfigured as error:
+        raise _conflict(str(error), error_code=WORKLOAD_IDENTITY_MISCONFIGURED_CODE) from error
     except (vending.VendingUnavailable, vending.StateCredentialsFailed) as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

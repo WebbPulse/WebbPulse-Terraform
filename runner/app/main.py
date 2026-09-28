@@ -26,6 +26,7 @@ from app.heartbeat import Heartbeat
 from app.logs import CloudWatchLogSink, Redactor
 from app.models import Bundle, Changes, PhaseResult, RunnerEnv, RunnerEnvError
 from app.refresher import CredentialRefresher
+from app.workload_identity import WorkloadIdentityFiles
 
 if TYPE_CHECKING:
     from mypy_boto3_logs.client import CloudWatchLogsClient
@@ -35,6 +36,9 @@ else:
 
 RUN_ROLE_ASSUME_FAILED_CODE = "RUN_ROLE_ASSUME_FAILED"
 """The bundle's error code when the workspace's run role refused the control plane."""
+
+WORKLOAD_IDENTITY_MISCONFIGURED_CODE = "WORKLOAD_IDENTITY_MISCONFIGURED"
+"""The bundle's error code when the workspace asks for Google or Azure workload identity without its details."""
 
 
 class PhaseFailure(RuntimeError):
@@ -229,6 +233,8 @@ def _run_phase(
     except ApiError as error:
         if error.error_code == RUN_ROLE_ASSUME_FAILED_CODE:
             raise PhaseFailure("AssumeRoleFailed", str(error)) from error
+        if error.error_code == WORKLOAD_IDENTITY_MISCONFIGURED_CODE:
+            raise PhaseFailure("WorkloadIdentityMisconfigured", str(error)) from error
         raise PhaseFailure("BundleFetchFailed", str(error)) from error
     redactor.extend(bundle.sensitive_values())
 
@@ -247,15 +253,22 @@ def _run_phase(
 
     credentials = CredentialFiles(directory / "aws")
     credentials.write(bundle.aws_credentials, bundle.backend.credentials)
+    identity_files = WorkloadIdentityFiles(directory / "identity")
+    identity_files.write(bundle.workload_identity)
     environment = engine.build_environment(
         dict(os.environ),
         bundle.environment_variables,
         bundle.backend.region,
         engine_directory,
-        credentials.environment(),
+        {**credentials.environment(), **identity_files.environment()},
     )
     refresher = CredentialRefresher(
-        api.refresh_credentials, credentials, redactor, sink.write, env.heartbeat_interval_seconds
+        api.refresh_credentials,
+        credentials,
+        redactor,
+        sink.write,
+        env.heartbeat_interval_seconds,
+        identity=identity_files,
     )
     with refresher:
         return _run_engine(env, clients, directory, api, sink, interrupt, bundle, engine_directory, environment)

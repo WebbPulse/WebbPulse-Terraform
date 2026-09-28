@@ -341,6 +341,17 @@ verifies the detached signature against the SSM public key
 stores everything under `registry/providers/`. The download answer carries presigned
 URLs and that key as `signing_keys.gpg_public_keys`.
 
+Publishing needs no App: the provider repo's release workflow, run by
+`workflow_dispatch` with a tag and an environment, signs with that environment's key
+and its OIDC role (`<prefix>-provider-release`, which may write only
+`registry/provider-uploads/webbpulse/webbpulse/*`) uploads the same files to
+`registry/provider-uploads/<ns>/<type>/<version>/<run>/`, then `upload.json`
+(`repository`, `tag`, `actor`, `run_url`) last. EventBridge queues that object on
+`registry-ingest` as `provider_upload`; `handle_upload` checks the folder against
+`upload.json`, creates the provider row without an App binding if none exists (a
+later connect adopts it), runs the same verification and deletes the folder once the
+version is settled.
+
 ### Terraform login
 
 `login.v1` in the discovery document makes `terraform login <SPA host>` work like
@@ -480,6 +491,20 @@ phase as `PhaseInterrupted`. The plan and apply states carry `HeartbeatSeconds`
 silent or over budget runner is stopped by the state machine and the run errors
 with a message saying which.
 
+Google and Azure get HCP style workload identity. The control plane is an OIDC issuer
+(`terraform/oidc_issuer.tf`, `oidc.<stage host>`, anonymous discovery and JWKS from a
+KMS RSA key only the runs function may sign with). A workspace setting
+`TFC_GCP_PROVIDER_AUTH` (with `TFC_GCP_WORKLOAD_PROVIDER_NAME`, optionally
+`TFC_GCP_RUN_SERVICE_ACCOUNT_EMAIL`) or `TFC_AZURE_PROVIDER_AUTH` (with
+`TFC_AZURE_RUN_CLIENT_ID`) gets a one hour RS256 token per cloud in the bundle and on
+each refresh (`vending.mint_workload_identity`, `sub`
+`workspace:<id>:run_phase:<phase>`); a flag without its setting is a 409
+`WORKLOAD_IDENTITY_MISCONFIGURED`, reported as `WorkloadIdentityMisconfigured`. The
+runner (`app/workload_identity.py`) writes owner only token files, an
+`external_account` credential for `GOOGLE_APPLICATION_CREDENTIALS`, and
+`ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH` and `ARM_CLIENT_ID` for Azure, and redacts
+the tokens. `backend/e2e/test_workload_identity.py` verifies both inside a real plan.
+
 ---
 
 ## Conventions
@@ -493,8 +518,9 @@ with a message saying which.
   explicit exception and should say why.
 - User-facing copy says "software engineer", never "developer". No em dashes and
   no tagline language.
-- Route guards: a spinner while `isLoading`, a redirect on `!isAuthenticated`,
-  and guest guards also wait on `!isBusy`.
+- Route guards: a spinner while `isLoading` only, a redirect on `!isAuthenticated`,
+  and a guest guard redirects only once `!isBusy`. Never unmount a form on `isBusy`:
+  it drops the MFA ticket the password leg returns.
 - Use `tyler@webbpulse.com` for management addresses.
 - Nothing is clicked in the console. Infrastructure changes go through Terraform.
 

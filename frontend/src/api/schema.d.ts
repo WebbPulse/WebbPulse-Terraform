@@ -1707,6 +1707,18 @@ export interface components {
             verified_at?: string | null;
         };
         /**
+         * AzureWorkloadIdentity
+         * @description A phase's Azure identity token and the client id it federates with.
+         */
+        AzureWorkloadIdentity: {
+            /** Client Id */
+            client_id: string;
+            /** Expiration */
+            expiration: string;
+            /** Token */
+            token: string;
+        };
+        /**
          * BackendConfig
          * @description The S3 backend the runner initialises against.
          *
@@ -1825,6 +1837,23 @@ export interface components {
              * @default false
              */
             success?: boolean;
+        };
+        /**
+         * GcpWorkloadIdentity
+         * @description A phase's Google identity token and what the runner needs to hand it to the provider.
+         */
+        GcpWorkloadIdentity: {
+            /** Audience */
+            audience: string;
+            /** Expiration */
+            expiration: string;
+            /**
+             * Service Account Email
+             * @default
+             */
+            service_account_email?: string;
+            /** Token */
+            token: string;
         };
         /**
          * GitHubAppStatus
@@ -2628,6 +2657,7 @@ export interface components {
             };
             /** Working Directory */
             working_directory: string;
+            workload_identity?: components["schemas"]["WorkloadIdentity"] | null;
             /** Workspace Id */
             workspace_id: string;
         };
@@ -2962,6 +2992,7 @@ export interface components {
         RunnerCredentials: {
             aws_credentials: components["schemas"]["VendedCredentials"];
             backend_credentials: components["schemas"]["VendedCredentials"];
+            workload_identity?: components["schemas"]["WorkloadIdentity"] | null;
         };
         /**
          * RunnerCredentialsRequest
@@ -3238,6 +3269,14 @@ export interface components {
             insecure_ssl: string;
             /** Url */
             url: string;
+        };
+        /**
+         * WorkloadIdentity
+         * @description The identity tokens a workspace's `TFC_GCP_PROVIDER_AUTH` and `TFC_AZURE_PROVIDER_AUTH` ask for.
+         */
+        WorkloadIdentity: {
+            azure?: components["schemas"]["AzureWorkloadIdentity"] | null;
+            gcp?: components["schemas"]["GcpWorkloadIdentity"] | null;
         };
         /**
          * Workspace

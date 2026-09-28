@@ -197,3 +197,13 @@ output "provider_acceptance_role_arn" {
   description = "ARN of the role the provider repository's acceptance workflow assumes in staging, set as ACCEPTANCE_ROLE_ARN on its staging-acceptance environment; null in production"
   value       = one(module.provider_acceptance_role[*].role_arn)
 }
+
+output "oidc_issuer_url" {
+  description = "The control plane's OIDC issuer, the iss of every workload identity token and what a Google provider or an Azure federated credential trusts. Empty when the issuer is off"
+  value       = local.oidc_issuer_enabled ? local.oidc_issuer_url : ""
+}
+
+output "oidc_signing_key_arn" {
+  description = "The KMS key that signs workload identity tokens now. Empty when the issuer is off"
+  value       = local.oidc_active_key
+}

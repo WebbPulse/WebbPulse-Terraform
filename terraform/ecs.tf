@@ -1,10 +1,10 @@
 locals {
   runner_image = "${module.registry.repository_urls["runner"]}:${local.runner_image_tag}"
 
-  workspace_run_role_arns = [
+  workspace_run_role_arns = concat([
     "arn:aws:iam::*:role/${local.prefix}-workspace-*",
     "arn:aws:iam::*:role/${local.example_run_role_name}",
-  ]
+  ], var.external_run_role_arns)
 
   runner_task_statements = [
     {
