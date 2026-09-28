@@ -13,19 +13,27 @@ export interface WorkspaceNavProps {
   compact?: boolean;
 }
 
-/** The sections of a workspace, in rail order. */
+/**
+ * The sections of a workspace, in rail order.
+ *
+ * Overview, Runs, Variables and Settings lead, in the order the hosted product
+ * this replaces puts them. Configuration versions follows rather than sitting
+ * between Runs and Variables, because it is a section this control plane has
+ * and that one does not.
+ */
 const SECTIONS: readonly { path: string; label: string; end?: boolean }[] = [
   { path: '', label: 'Overview', end: true },
   { path: 'runs', label: 'Runs' },
-  { path: 'configuration-versions', label: 'Configuration versions' },
   { path: 'variables', label: 'Variables' },
-  { path: 'settings', label: 'Settings' },
+  { path: 'settings/general', label: 'Settings' },
+  { path: 'configuration-versions', label: 'Configuration versions' },
 ];
 
 /** The settings pages, in rail order. */
 const SETTINGS: readonly { path: string; label: string }[] = [
   { path: 'general', label: 'General' },
   { path: 'run-role', label: 'AWS account' },
+  { path: 'version-control', label: 'Version Control' },
   { path: 'deletion', label: 'Destruction and deletion' },
 ];
 

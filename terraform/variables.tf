@@ -76,6 +76,23 @@ variable "bootstrap_image_tag" {
   }
 }
 
+variable "domain_image_tags" {
+  description = "Per domain image tags that override bootstrap_image_tag at create time, keyed by domain name. A domain declared with its own image tag, today only github, is left out of the function map until it has an entry here, because its ECR repository holds no image until the first deploy after the apply that creates it. image_uri is ignored after create, so deploys own it."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for tag in values(var.domain_image_tags) : can(regex("^sha-[0-9a-f]{40}$", tag))])
+    error_message = "Every domain_image_tags value must be sha- followed by a full 40 character commit sha, which is the tag the container image build pushes."
+  }
+}
+
+variable "github_app_slug" {
+  description = "Fallback slug of the operator owned GitHub App, passed to the Lambdas as GITHUB_APP_SLUG. The slug the manifest flow stores in the github table wins over it, so leave it empty unless an App was created outside that flow."
+  type        = string
+  default     = ""
+}
+
 variable "runner_image_tag" {
   description = "Pin the plan and apply task definitions to one runner image tag, for example sha-<commit>. Leave it null, the default, and the task definitions follow the environment tag that Deploy Runner moves on every deploy, which is the normal path. Set it only to hold the runner on a known image; unlike a Lambda image this is not under ignore_changes, so a task definition revision follows this value."
   type        = string
@@ -108,18 +125,23 @@ variable "artifact_retention_days" {
 }
 
 variable "identity_jwt_mode" {
-  description = "Which mechanism enforces identity access tokens at the gateway: the staging gate's Lambda authorizer (gate), API Gateway's own JWT authorizer (native), or nothing (off)."
+  description = "Which mechanism enforces identity access tokens at the gateway: the staging gate's Lambda authorizer (gate), a REQUEST authorizer built from the same source that also passes wpk_ agent keys through (lambda), API Gateway's own JWT authorizer (native), or nothing (off). Production must use lambda or native."
   type        = string
   default     = "off"
 
   validation {
-    condition     = contains(["native", "gate", "off"], var.identity_jwt_mode)
-    error_message = "identity_jwt_mode must be one of native, gate or off."
+    condition     = contains(["lambda", "native", "gate", "off"], var.identity_jwt_mode)
+    error_message = "identity_jwt_mode must be one of lambda, native, gate or off."
   }
 
   validation {
-    condition     = var.identity_jwt_mode != "native" || var.environment != "staging"
-    error_message = "identity_jwt_mode must not be native in staging. Every route there carries the staging access gate's REQUEST authorizer and a route takes exactly one authorizer, so a native JWT authorizer has no slot to occupy. Use gate, which moves the same check into the gate's own Lambda."
+    condition     = !contains(["native", "lambda"], var.identity_jwt_mode) || var.environment != "staging"
+    error_message = "identity_jwt_mode must not be native or lambda in staging. Every route there carries the staging access gate's REQUEST authorizer and a route takes exactly one authorizer, so a second authorizer has no slot to occupy. Use gate, which moves the same check into the gate's own Lambda."
+  }
+
+  validation {
+    condition     = var.environment != "production" || contains(["lambda", "native"], var.identity_jwt_mode)
+    error_message = "identity_jwt_mode must be lambda or native in production. The staging gate does not exist there, so gate and off both leave every product route open at the gateway. Use lambda, which also admits wpk_ agent keys."
   }
 }
 
@@ -139,3 +161,4 @@ variable "adopt_spans_log_group" {
   type        = bool
   default     = false
 }
+

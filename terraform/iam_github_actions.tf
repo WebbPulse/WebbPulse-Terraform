@@ -8,6 +8,8 @@ locals {
 
   github_subject_prefix = "repo:WebbPulse@${local.github_org_id}/WebbPulse-Terraform@${local.github_repo_id}"
 
+  github_deploy_branch = var.environment == "production" ? "main" : "staging"
+
   artifacts_account_id = "432410731887"
 
   codeartifact_domain_arn = "arn:aws:codeartifact:${var.aws_region}:${local.artifacts_account_id}:domain/webbpulse"
@@ -108,10 +110,7 @@ module "github_actions_role" {
 
   role_name = "${local.prefix}-github-actions-deploy"
 
-  subjects = [
-    "${local.github_subject_prefix}:environment:staging",
-    "${local.github_subject_prefix}:environment:production",
-  ]
+  subjects = ["${local.github_subject_prefix}:environment:${var.environment}"]
 
   policy_statements = concat([
     {
@@ -195,8 +194,7 @@ module "github_actions_ci_role" {
 
   subjects = [
     "${local.github_subject_prefix}:pull_request",
-    "${local.github_subject_prefix}:ref:refs/heads/staging",
-    "${local.github_subject_prefix}:ref:refs/heads/main",
+    "${local.github_subject_prefix}:ref:refs/heads/${local.github_deploy_branch}",
   ]
 
   inline_policy_name = "codeartifact-read"

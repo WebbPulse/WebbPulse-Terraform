@@ -49,11 +49,38 @@ class Settings(BaseServiceSettings):
     """The account rows the identity hooks read and write. Separate from the identity
     module's own ten tables, which the package names from a prefix rather than from
     the environment."""
+    VCS_UPLOADS_TABLE: str = ""
+    """The ingest records a GitHub App delivery writes, expired by TTL."""
+
+    REGISTRY_TABLE: str = ""
+    """The module registry's one table: modules and their versions."""
+
+    REGISTRY_INGEST_QUEUE_URL: str = ""
+    """The queue the webhook route sends each semantic version tag push to, for the
+    registry function. Unset, tag pushes are acknowledged and dropped."""
+
+    GITHUB_TABLE: str = ""
+    """The GitHub domain's one table: the App row, one-time states and installations."""
+
+    GITHUB_APP_SLUG: str = ""
+    """Fallback App slug. The slug the manifest flow stores in the GitHub table wins."""
+
+    IDENTITY_FRONTEND_BASE_URL: str = ""
+    """The SPA's origin, which the App manifest's callback URLs are built on."""
 
     STATE_BUCKET: str = ""
     ARTIFACTS_BUCKET: str = ""
     RUN_STATE_MACHINE_ARN: str = ""
     RUNNER_LOG_GROUP: str = ""
+    WORKSPACE_CLEANUP_QUEUE_URL: str = ""
+    """The queue a workspace delete sends its S3 purge to. Unset, the delete purges inline."""
+    GITHUB_WEBHOOKS_QUEUE_URL: str = ""
+    """The queue the webhook route sends each verified delivery to, for the runs function."""
+    AWS_CONNECT_TOPIC_ARN: str = ""
+    """The SNS topic a Quick setup stack's custom resource reports to. Unset, the
+    template carries no custom resource and the link needs the account id."""
+    API_BASE_URL: str = ""
+    """The API's public origin, which the App's webhook URL is built on."""
     APP_SECRETS_ARN: str = ""
     """The one JSON app secret every runtime key is read from.
 
@@ -87,6 +114,19 @@ class Settings(BaseServiceSettings):
 
     One role per phase, so a trust policy that names only the first leaves the
     apply phase unable to assume. `runner_task_role_arns` splits it."""
+
+    RUNNER_CLUSTER_ARN: str = ""
+    """The ECS cluster runner tasks run on. The runner token exchange describes the
+    calling task there to learn which run and phase it was started for."""
+
+    RUN_CREDENTIALS_ROLE_ARN: str = ""
+    """The one principal every workspace run role trusts. The runs function
+    assumes it to vend each run phase its credentials, so no runner task holds
+    a path to a workspace role. `run_role_principal_arns` is what a trust names."""
+
+    RUN_STATE_ROLE_ARN: str = ""
+    """The state bucket role the vending role assumes, with a session policy
+    narrowing it to one workspace's state, for the S3 backend's credentials."""
 
     RUN_ROLE_NAME_PREFIX: str = ""
     """The prefix every workspace run role name carries, `${local.prefix}-workspace-`.
@@ -156,6 +196,11 @@ class Settings(BaseServiceSettings):
     def runner_task_role_arns(self) -> list[str]:
         """Every runner task role ARN, in the order Terraform set them."""
         return [arn.strip() for arn in self.RUNNER_TASK_ROLE_ARN.split(",") if arn.strip()]
+
+    @property
+    def run_role_principal_arns(self) -> list[str]:
+        """The principals a workspace run role trusts: the vending role alone."""
+        return [self.RUN_CREDENTIALS_ROLE_ARN] if self.RUN_CREDENTIALS_ROLE_ARN else []
 
     @property
     def dynamodb_endpoint_url(self) -> str | None:

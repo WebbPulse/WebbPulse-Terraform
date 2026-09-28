@@ -1,10 +1,25 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      name="description"
+      content="Workspaces, variables and runs for WebbPulse Terraform."
+    />
     <title>WebbPulse Terraform</title>
+    <script>
+      try {
+        var stored = localStorage.getItem('webbpulse-terraform-theme');
+        if (stored === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      } catch (error) {
+        void error;
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

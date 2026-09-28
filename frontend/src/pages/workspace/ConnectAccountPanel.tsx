@@ -1,20 +1,29 @@
 /** Everything a person needs to let runs into their AWS account. */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   invalidateQueries,
   useMutationWithRefetch,
 } from '@webbpulse/api-client/react';
 
 import {
+  PERMISSIONS_CHOICES,
   SNIPPET_FORMATS,
+  accountIdFromArn,
+  accountStatus,
   api,
-  isConnected,
+  connectionVerification,
   runRoleArnProblem,
   runRolePrefix,
   snippetFor,
   trustedPrincipals,
+  type AwsConnection,
+  type ConnectionVerification,
+  type PendingRunRoleCheck,
   type RunRoleCheck,
+  type RunRolePermissions,
+  type RunRoleQuickSetup,
   type SnippetFormat,
   type Workspace,
 } from '../../api';
@@ -27,55 +36,876 @@ import {
   INPUT_CLASS,
   SegmentedControl,
   formatDateTime,
+  runPath,
 } from '../../components';
+import { useOptionalWorkspace, type WorkspaceKeys } from '../workspaceContext';
+import { latestUploaded } from './settings/latestUploaded';
+
+/** How often the workspace is reread while a stack is expected to report back. */
+export const CONNECT_POLL_INTERVAL_MS = 3_000;
+
+/** How often the check is reread while the verification run is still going. */
+export const VERIFY_POLL_INTERVAL_MS = 5_000;
 
 /** Props for {@link ConnectAccountPanel}. */
 export interface ConnectAccountPanelProps {
   workspace: Workspace;
-  /** The refetch key the workspace read is registered under. */
-  queryKey: string;
-  /** Folds the role creation snippets behind a disclosure. */
-  collapsible?: boolean;
+  /** The live run role check the workspace frame shares, or null until it answers. */
+  runRoleCheck: RunRoleCheck | null;
+  /** The workspace frame's refetch keys, so a save or a check refreshes every reader. */
+  keys: WorkspaceKeys;
 }
 
-/** The explanation, the role snippets, and the ARN form with its check. */
+/** Whether a link is out and its stack has not reported back yet. */
+function isWaiting(connection: AwsConnection | null): boolean {
+  if (connection?.status !== 'waiting') {
+    return false;
+  }
+  const expiresAt = connection.expires_at ?? null;
+  return expiresAt === null || Date.parse(expiresAt) > Date.now();
+}
+
+/** Whether a link ran out before any stack reported back. */
+function isExpired(connection: AwsConnection | null): boolean {
+  return (
+    connection?.status === 'expired' ||
+    (connection?.status === 'waiting' && !isWaiting(connection))
+  );
+}
+
+/** The connection a stack reported for `arn`, when that role is still the one it names. */
+function connectionFor(
+  connection: AwsConnection | null,
+  arn: string
+): AwsConnection | null {
+  return connection?.status === 'connected' && connection.role_arn === arn
+    ? connection
+    : null;
+}
+
+/**
+ * Rereads the workspace while a stack is due to report back, and the check while
+ * the verification run it started has not answered yet or its outcome is still
+ * pending.
+ */
+function useConnectionPolling(
+  workspace: Workspace,
+  runRoleCheck: RunRoleCheck | null,
+  keys: WorkspaceKeys
+): void {
+  const connection = workspace.aws_connection ?? null;
+  const waiting = isWaiting(connection);
+  const staged =
+    connection?.pending === true &&
+    connection.role_arn === (workspace.pending_run_role_arn ?? null);
+  const unverifiedRole =
+    connection?.pending !== true &&
+    connection?.role_arn === (workspace.run_role_arn ?? null) &&
+    accountStatus(workspace, runRoleCheck).state === 'unverified';
+  const verifying =
+    connection?.status === 'connected' &&
+    ((Boolean(connection.run_id) && (staged || unverifiedRole)) ||
+      connection.verification === 'pending');
+
+  useEffect(() => {
+    if (!waiting) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      invalidateQueries(keys.workspace);
+    }, CONNECT_POLL_INTERVAL_MS);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [waiting, keys.workspace]);
+
+  useEffect(() => {
+    if (!verifying) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      invalidateQueries(keys.workspace);
+      invalidateQueries(keys.runRoleCheck);
+    }, VERIFY_POLL_INTERVAL_MS);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [verifying, keys.workspace, keys.runRoleCheck]);
+
+  const reportedAt =
+    connection?.status === 'connected'
+      ? (connection.reported_at ?? null)
+      : null;
+  const seenReport = useRef(reportedAt);
+  useEffect(() => {
+    if (seenReport.current === reportedAt) {
+      return;
+    }
+    seenReport.current = reportedAt;
+    if (reportedAt !== null) {
+      invalidateQueries(keys.runs);
+      invalidateQueries(keys.runRoleCheck);
+    }
+  }, [reportedAt, keys.runs, keys.runRoleCheck]);
+}
+
+/**
+ * The saved role as a connected card, or the ways to connect one.
+ *
+ * With a role saved the card leads, as HCP Terraform shows a configured
+ * integration, and Change role opens the setup paths. Without one, Connect AWS
+ * comes first: it opens AWS CloudFormation in whatever account the person is
+ * signed in to, and the stack reports its account and role back, so the panel
+ * follows it from waiting to connected with nothing typed or copied. The manual
+ * path is folded away for anyone creating the role with their own tooling.
+ */
 export function ConnectAccountPanel({
   workspace,
-  queryKey,
-  collapsible = false,
+  runRoleCheck,
+  keys,
 }: ConnectAccountPanelProps): React.ReactElement {
   const { run_role_setup: setup } = workspace;
+  const savedArn = workspace.run_role_arn ?? null;
+  const pendingArn = workspace.pending_run_role_arn ?? null;
+  const connection = workspace.aws_connection ?? null;
+  const [changing, setChanging] = useState(savedArn === null);
+  useConnectionPolling(workspace, runRoleCheck, keys);
+
+  const reportedAt =
+    connection?.status === 'connected'
+      ? (connection.reported_at ?? null)
+      : null;
+  const seenReport = useRef(reportedAt);
+  useEffect(() => {
+    if (seenReport.current !== reportedAt) {
+      seenReport.current = reportedAt;
+      if (reportedAt !== null) {
+        setChanging(false);
+      }
+    }
+  }, [reportedAt]);
+
+  const pending =
+    pendingArn === null ? null : (
+      <PendingRole
+        workspace={workspace}
+        arn={pendingArn}
+        check={
+          runRoleCheck?.pending?.role_arn === pendingArn
+            ? runRoleCheck.pending
+            : null
+        }
+        keys={keys}
+      />
+    );
+  const reconnect = workspace.run_role_reconnect_required ? (
+    <ReconnectNotice connection={connection} />
+  ) : null;
+  if (savedArn !== null && !changing) {
+    return (
+      <div className="space-y-5">
+        {reconnect}
+        {pending}
+        <ConnectedRole
+          workspace={workspace}
+          arn={savedArn}
+          runRoleCheck={runRoleCheck}
+          keys={keys}
+          onChange={() => {
+            setChanging(true);
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div className="space-y-5">
+      {reconnect}
+      {pending}
+      {savedArn === null ? null : (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2 text-sm">
+          <span className="min-w-0 text-text-muted">
+            Current role:{' '}
+            <code className="font-mono text-xs break-all text-text">
+              {savedArn}
+            </code>
+          </span>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setChanging(false);
+            }}
+          >
+            Keep the current role
+          </Button>
+        </div>
+      )}
+      {savedArn === null && connection?.status === 'disconnected' ? (
+        <p
+          data-testid="aws-connect-disconnected"
+          className="max-w-prose text-sm text-text-muted"
+        >
+          The AWS CloudFormation stack for account{' '}
+          <code className="font-mono text-text">
+            {connection.account_id ?? 'unknown'}
+          </code>{' '}
+          was deleted, so this workspace has no role to run as. Connect AWS
+          again to create a new one.
+        </p>
+      ) : null}
       <p className="max-w-prose text-sm text-text-muted">
         Runs assume an IAM role in your AWS account to read and write your
-        infrastructure. Create the role below with a trust policy that names the
-        runner and this workspace's external id, then save its ARN here.
+        infrastructure. Connect AWS creates that role with one AWS
+        CloudFormation stack. The role trusts only WebbPulse Terraform, and only
+        when it presents this workspace's id.
       </p>
-      <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
-        <ValueRow label="Role name" value={setup.role_name} />
-        {trustedPrincipals(setup).map((arn, index) => (
-          <ValueRow
-            key={arn}
-            label={index === 0 ? 'Trusted principals' : ''}
-            value={arn}
+      <QuickSetup workspace={workspace} keys={keys} />
+      <details className="group rounded-md border border-line">
+        <summary className="cursor-pointer px-3 py-2 text-sm text-text select-none hover:text-text-strong">
+          Set up the role manually
+        </summary>
+        <div className="space-y-5 border-t border-line p-3">
+          <p className="max-w-prose text-sm text-text-muted">
+            Create the role with your own Terraform, CloudFormation or the AWS
+            CLI, then save its ARN.
+          </p>
+          <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
+            <ValueRow label="Role name" value={setup.role_name} />
+            {trustedPrincipals(setup).map((arn, index) => (
+              <ValueRow
+                key={arn}
+                label={index === 0 ? 'Trusted principals' : ''}
+                value={arn}
+              />
+            ))}
+            <ValueRow label="External id" value={setup.external_id} />
+          </dl>
+          <RoleSnippets workspace={workspace} />
+          <RoleArnForm workspace={workspace} keys={keys} />
+          <ConnectionCheck
+            workspace={workspace}
+            runRoleCheck={runRoleCheck}
+            keys={keys}
           />
-        ))}
-        <ValueRow label="External id" value={setup.external_id} />
-      </dl>
-      {collapsible ? (
-        <details className="group rounded-md border border-line">
-          <summary className="cursor-pointer px-3 py-2 text-sm text-text select-none hover:text-text-strong">
-            Role creation snippets
-          </summary>
-          <div className="border-t border-line p-3">
-            <RoleSnippets workspace={workspace} />
-          </div>
-        </details>
-      ) : (
-        <RoleSnippets workspace={workspace} />
-      )}
-      <RoleArnForm workspace={workspace} queryKey={queryKey} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+/**
+ * The role came from a stack whose trust predates credential vending, so runs
+ * can no longer assume it. The stack name is the role name, so a second stack
+ * cannot be created beside it: the old one is deleted first.
+ */
+function ReconnectNotice({
+  connection,
+}: {
+  connection: AwsConnection | null;
+}): React.ReactElement {
+  const account = connection?.account_id ?? null;
+  return (
+    <div
+      role="alert"
+      data-testid="aws-reconnect-required"
+      className="space-y-2 rounded-lg border border-warning-line bg-warning-soft/30 px-4 py-3 text-sm"
+    >
+      <p className="font-medium text-warning">Reconnect required</p>
+      <p className="max-w-prose text-text-muted">
+        This role was created from an older AWS CloudFormation template that
+        trusts the runner directly. Runs now get their credentials from
+        WebbPulse Terraform, so they can no longer assume this role. Delete the
+        stack
+        {account === null ? null : (
+          <>
+            {' '}
+            in account <code className="font-mono text-text">{account}</code>
+          </>
+        )}
+        , then choose Connect AWS again to create the role with the current
+        trust.
+      </p>
+    </div>
+  );
+}
+
+/** A link to the verification run a stack's report started, when there is one. */
+function VerificationRunLink({
+  workspace,
+  connection,
+}: {
+  workspace: Workspace;
+  connection: AwsConnection | null;
+}): React.ReactElement | null {
+  const runId = connection?.run_id ?? null;
+  if (runId === null) {
+    return null;
+  }
+  return (
+    <Link
+      to={runPath({ run_id: runId, workspace_id: workspace.workspace_id })}
+      data-testid="verification-run-link"
+      className="text-sm text-accent underline-offset-2 hover:underline"
+    >
+      View the verification run
+    </Link>
+  );
+}
+
+/**
+ * The badge beside a connected account: Verified, Verifying while the run the
+ * stack started is going, or Verification failed once it ended badly.
+ */
+function VerificationBadge({
+  verified,
+  verification,
+}: {
+  verified: boolean;
+  verification: ConnectionVerification | null;
+}): React.ReactElement | null {
+  if (verified) {
+    return (
+      <span
+        data-testid="verified-badge"
+        className="rounded-full border border-success/40 px-2 py-0.5 text-xs font-medium text-success"
+      >
+        Verified
+      </span>
+    );
+  }
+  if (verification?.state === 'pending') {
+    return (
+      <span
+        data-testid="verifying-badge"
+        className="rounded-full border border-line px-2 py-0.5 text-xs font-medium text-text-muted"
+      >
+        Verifying
+      </span>
+    );
+  }
+  if (verification?.state === 'failed') {
+    return (
+      <span
+        data-testid="verification-failed-badge"
+        className="rounded-full border border-danger/40 px-2 py-0.5 text-xs font-medium text-danger"
+      >
+        Verification failed
+      </span>
+    );
+  }
+  return null;
+}
+
+/** The sentence under a connection whose verification run has not succeeded. */
+function VerificationOutcome({
+  verification,
+}: {
+  verification: ConnectionVerification | null;
+}): React.ReactElement | null {
+  if (verification?.state === 'pending') {
+    return (
+      <StatusLine
+        tone="neutral"
+        testValue="pending"
+        testId="verification-status"
+      >
+        The stack reported back and the verification run is running. It only
+        plans, and changes nothing.
+      </StatusLine>
+    );
+  }
+  if (verification?.state === 'failed') {
+    return (
+      <StatusLine tone="bad" testValue="failed" testId="verification-status">
+        {verification.error ?? 'The verification run failed.'}
+      </StatusLine>
+    );
+  }
+  return null;
+}
+
+/** The connected state: the account, the role ARN, whether it is verified, and Change role. */
+function ConnectedRole({
+  workspace,
+  arn,
+  runRoleCheck,
+  keys,
+  onChange,
+}: {
+  workspace: Workspace;
+  arn: string;
+  runRoleCheck: RunRoleCheck | null;
+  keys: WorkspaceKeys;
+  onChange: () => void;
+}): React.ReactElement {
+  const accountId = accountIdFromArn(arn);
+  const verification = connectionVerification(
+    workspace.aws_connection ?? null,
+    arn
+  );
+  const verified =
+    verification === null
+      ? accountStatus(workspace, runRoleCheck).state === 'connected'
+      : verification.state === 'verified';
+  const reported = connectionFor(workspace.aws_connection ?? null, arn);
+  return (
+    <section
+      aria-label="Connected AWS account"
+      data-testid="connected-account"
+      className="rounded-lg border border-line bg-panel"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
+        <div className="min-w-0">
+          <h3 className="flex flex-wrap items-center gap-2 text-sm font-semibold text-text-strong">
+            <span>
+              Connected to AWS account{' '}
+              <span className="font-mono">{accountId ?? 'unknown'}</span>
+            </span>
+            <VerificationBadge
+              verified={verified}
+              verification={verification}
+            />
+          </h3>
+          <p className="mt-0.5 text-xs text-text-muted">
+            Runs assume this role to read and write your infrastructure.
+          </p>
+        </div>
+        <Button variant="secondary" onClick={onChange}>
+          Change role
+        </Button>
+      </div>
+      <div className="space-y-4 px-4 py-4">
+        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
+          <ValueRow label="Role ARN" value={arn} />
+        </dl>
+        <VerificationOutcome verification={verification} />
+        <ConnectionCheck
+          workspace={workspace}
+          runRoleCheck={runRoleCheck}
+          keys={keys}
+        />
+        {verified ? null : (
+          <VerificationRunLink workspace={workspace} connection={reported} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * A role staged beside the working one, as HCP Terraform keeps an integration
+ * in place until the new credentials are proven.
+ *
+ * Runs keep the current role. The verification run is plan only and assumes the
+ * staged role, and the workspace switches over once it connects. A stack that
+ * reported back has already started that run. Discarding the staged role leaves
+ * the current one as it is.
+ */
+function PendingRole({
+  workspace,
+  arn,
+  check,
+  keys,
+}: {
+  workspace: Workspace;
+  arn: string;
+  check: PendingRunRoleCheck | null;
+  keys: WorkspaceKeys;
+}): React.ReactElement {
+  const navigate = useNavigate();
+  const context = useOptionalWorkspace();
+  const latest = latestUploaded(context?.versions ?? []);
+  const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const discard = useMutationWithRefetch(
+    () =>
+      api.updateWorkspace(workspace.workspace_id, {
+        pending_run_role_arn: null,
+      }),
+    keys.workspace
+  );
+  const accountId = accountIdFromArn(arn);
+  const status = check?.status ?? 'unverified';
+  const reported = connectionFor(workspace.aws_connection ?? null, arn);
+  const started = (reported?.run_id ?? null) !== null;
+
+  const verify = async (): Promise<void> => {
+    if (latest === null) {
+      return;
+    }
+    setVerifying(true);
+    setError(null);
+    try {
+      const run = await api.createRun({
+        workspace_id: workspace.workspace_id,
+        config_version_id: latest.config_version_id,
+        run_role_check: true,
+        message: `Verify the run role in AWS account ${accountId ?? 'unknown'}`,
+      });
+      invalidateQueries(keys.runs);
+      void navigate(
+        runPath({ run_id: run.run_id, workspace_id: workspace.workspace_id })
+      );
+    } catch (thrown) {
+      setError(thrown);
+      setVerifying(false);
+    }
+  };
+
+  return (
+    <section
+      aria-label="Pending AWS account"
+      data-testid="pending-account"
+      className="rounded-lg border border-line bg-panel"
+    >
+      <div className="border-b border-line px-4 py-3">
+        <h3 className="text-sm font-semibold text-text-strong">
+          Switching to AWS account{' '}
+          <span className="font-mono">{accountId ?? 'unknown'}</span>
+        </h3>
+        <p className="mt-0.5 text-xs text-text-muted">
+          Runs keep the current role until a verification run assumes this one.
+          The workspace switches over as soon as it connects.
+        </p>
+      </div>
+      <div className="space-y-4 px-4 py-4">
+        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
+          <ValueRow label="Role ARN" value={arn} />
+        </dl>
+        {status === 'failed' ? (
+          <StatusLine tone="bad" testValue="failed">
+            {pendingFailure(check?.error ?? null)}
+          </StatusLine>
+        ) : status === 'connected' ? (
+          <StatusLine tone="ok" testValue="connected">
+            The verification run assumed this role. Switching the workspace
+            over.
+          </StatusLine>
+        ) : started ? (
+          <StatusLine tone="neutral" testValue="unverified">
+            The stack reported back and the verification run started. It only
+            plans, and changes nothing.
+          </StatusLine>
+        ) : (
+          <StatusLine tone="neutral" testValue="unverified">
+            Not verified yet. Once the AWS CloudFormation stack is created,
+            start the verification run. It only plans, and changes nothing.
+          </StatusLine>
+        )}
+        {status === 'connected' ? null : (
+          <VerificationRunLink workspace={workspace} connection={reported} />
+        )}
+        {latest === null && !started ? (
+          <p className="text-xs text-text-faint">
+            Upload a configuration version first, so the verification run has
+            something to plan.
+          </p>
+        ) : null}
+        <ErrorNotice error={error ?? discard.error} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant={started ? 'secondary' : 'primary'}
+            busy={verifying}
+            busyLabel="Starting the verification run"
+            disabled={latest === null || status === 'connected'}
+            onClick={() => {
+              void verify();
+            }}
+          >
+            {started
+              ? 'Start another verification run'
+              : 'Start verification run'}
+          </Button>
+          <Button
+            variant="secondary"
+            busy={discard.isMutating}
+            busyLabel="Discarding the new role"
+            onClick={() => {
+              void discard
+                .mutate()
+                .then(() => {
+                  invalidateQueries(keys.runRoleCheck);
+                })
+                .catch(() => undefined);
+            }}
+          >
+            Discard the new role
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Connect AWS: the permissions choice and the button that opens AWS
+ * CloudFormation quick create in whatever account the person is signed in to.
+ *
+ * The tab is opened blank inside the click, before the request, because a
+ * window opened after an await is treated as a popup and blocked. It is pointed
+ * at the console once the link arrives, and closed again if the request fails.
+ */
+function QuickSetup({
+  workspace,
+  keys,
+}: {
+  workspace: Workspace;
+  keys: WorkspaceKeys;
+}): React.ReactElement {
+  const [permissions, setPermissions] =
+    useState<RunRolePermissions>('administrator');
+  const [launched, setLaunched] = useState<RunRoleQuickSetup | null>(null);
+  const [blocked, setBlocked] = useState(false);
+  const connection = workspace.aws_connection ?? null;
+  const waiting = isWaiting(connection);
+
+  const start = useMutationWithRefetch(
+    (body: { permissions: RunRolePermissions }) =>
+      api.startRunRoleQuickSetup(workspace.workspace_id, body),
+    keys.workspace
+  );
+  const choice =
+    PERMISSIONS_CHOICES.find((entry) => entry.id === permissions) ??
+    PERMISSIONS_CHOICES[0];
+
+  const launch = async (): Promise<void> => {
+    const tab = window.open('', '_blank');
+    if (tab !== null) {
+      tab.opener = null;
+    }
+    try {
+      const answer = await start.mutate({ permissions });
+      invalidateQueries(keys.runRoleCheck);
+      setLaunched(answer);
+      setBlocked(tab === null);
+      if (tab !== null) {
+        tab.location.href = answer.console_url;
+      }
+    } catch {
+      tab?.close();
+    }
+  };
+
+  return (
+    <section
+      aria-labelledby="connect-aws-title"
+      className="rounded-lg border border-line bg-panel"
+    >
+      <div className="border-b border-line px-4 py-3">
+        <h3
+          id="connect-aws-title"
+          className="text-sm font-semibold text-text-strong"
+        >
+          Connect an AWS account
+        </h3>
+        <p className="mt-0.5 text-xs text-text-muted">
+          Opens AWS CloudFormation in the account you are signed in to. The
+          stack creates the role and reports back here, so there is nothing to
+          type or copy. A workspace that already has a role keeps it until the
+          new one is verified.
+        </p>
+      </div>
+      <form
+        aria-label="Connect AWS"
+        className="space-y-3 px-4 py-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void launch();
+        }}
+      >
+        <div className="max-w-sm">
+          <Field label="Permissions policy" hint={choice?.hint}>
+            {(control) => (
+              <select
+                {...control}
+                value={permissions}
+                onChange={(event) => {
+                  setPermissions(event.target.value as RunRolePermissions);
+                }}
+                className={INPUT_CLASS}
+              >
+                {PERMISSIONS_CHOICES.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+        </div>
+        <ErrorNotice error={start.error} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="submit"
+            variant={waiting ? 'secondary' : 'primary'}
+            busy={start.isMutating}
+            busyLabel="Preparing the AWS CloudFormation stack"
+          >
+            {waiting ? 'Connect AWS again' : 'Connect AWS'}
+          </Button>
+        </div>
+      </form>
+      <ConnectProgress
+        connection={connection}
+        launched={launched}
+        blocked={blocked}
+      />
+    </section>
+  );
+}
+
+/**
+ * Where the last link stands: waiting on the stack, or run out unused.
+ *
+ * Waiting is amber because a person has to finish it in AWS. A connected stack
+ * needs nothing here, since the connected card takes over the panel.
+ */
+function ConnectProgress({
+  connection,
+  launched,
+  blocked,
+}: {
+  connection: AwsConnection | null;
+  launched: RunRoleQuickSetup | null;
+  blocked: boolean;
+}): React.ReactElement | null {
+  if (isWaiting(connection)) {
+    const expiresAt = connection?.expires_at ?? null;
+    return (
+      <div
+        data-testid="aws-connect-waiting"
+        className="space-y-3 border-t border-warning-line bg-warning-soft/30 px-4 py-4 text-sm"
+      >
+        <p
+          role="status"
+          className="flex items-center gap-2 font-medium text-warning"
+        >
+          <span
+            aria-hidden="true"
+            className="inline-block size-2 shrink-0 animate-pulse rounded-full bg-warning"
+          />
+          Waiting for the stack in AWS
+        </p>
+        {blocked && launched !== null ? (
+          <p className="text-text-muted">
+            Your browser blocked the new tab.{' '}
+            <a
+              href={launched.console_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent underline-offset-2 hover:underline"
+            >
+              Open AWS CloudFormation
+            </a>
+            .
+          </p>
+        ) : null}
+        <ol className="list-decimal space-y-1.5 pl-5 text-text-muted marker:text-text-faint">
+          <li>
+            Check the AWS account in the top right of the console. The role is
+            created in whichever account you are signed in to.
+          </li>
+          <li>
+            Tick the acknowledgement that AWS CloudFormation might create IAM
+            resources with custom names, then choose Create stack.
+          </li>
+          <li>
+            This page updates when the stack reports back, and a plan only run
+            verifies the connection.
+          </li>
+        </ol>
+        {expiresAt === null ? null : (
+          <p className="text-xs text-text-faint">
+            The link works until {formatDateTime(expiresAt)}. Connect AWS again
+            for a fresh one.
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (isExpired(connection)) {
+    return (
+      <div
+        data-testid="aws-connect-expired"
+        className="border-t border-line px-4 py-4 text-sm text-text-muted"
+      >
+        <p role="status">
+          The last link expired before a stack reported back. Connect AWS again
+          for a fresh one.
+        </p>
+      </div>
+    );
+  }
+  return null;
+}
+
+/** The live connection state and the button that records it on the workspace. */
+function ConnectionCheck({
+  workspace,
+  runRoleCheck,
+  keys,
+}: {
+  workspace: Workspace;
+  runRoleCheck: RunRoleCheck | null;
+  keys: WorkspaceKeys;
+}): React.ReactElement {
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<unknown>(null);
+  const [result, setResult] = useState<RunRoleCheck | null>(null);
+  const unsaved = (workspace.run_role_arn ?? null) === null;
+
+  const shownCheck = useRef(runRoleCheck);
+  useEffect(() => {
+    if (shownCheck.current !== runRoleCheck) {
+      shownCheck.current = runRoleCheck;
+      setResult(null);
+    }
+  }, [runRoleCheck]);
+
+  const shownArn = useRef(workspace.run_role_arn);
+  useEffect(() => {
+    if (shownArn.current !== workspace.run_role_arn) {
+      shownArn.current = workspace.run_role_arn;
+      setResult(null);
+    }
+  }, [workspace.run_role_arn]);
+
+  const check = async (): Promise<void> => {
+    setChecking(true);
+    setCheckError(null);
+    try {
+      const outcome = await api.checkRunRole(workspace.workspace_id);
+      setResult(outcome);
+      invalidateQueries(keys.workspace);
+      invalidateQueries(keys.runRoleCheck);
+    } catch (thrown) {
+      setCheckError(thrown);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="secondary"
+          busy={checking}
+          busyLabel="Checking the latest runs"
+          disabled={unsaved}
+          title={unsaved ? 'Save a role ARN first.' : undefined}
+          onClick={() => {
+            void check();
+          }}
+        >
+          Check connection
+        </Button>
+        <ConnectionStatus
+          workspace={workspace}
+          check={result ?? runRoleCheck}
+        />
+      </div>
+      <ErrorNotice error={checkError} />
     </div>
   );
 }
@@ -132,21 +962,18 @@ function RoleSnippets({
   );
 }
 
-/** The ARN input with its save and connection check. */
+/** The ARN input for a role created outside quick setup. */
 function RoleArnForm({
   workspace,
-  queryKey,
+  keys,
 }: {
   workspace: Workspace;
-  queryKey: string;
+  keys: WorkspaceKeys;
 }): React.ReactElement {
   const { run_role_setup: setup } = workspace;
   const [arn, setArn] = useState(workspace.run_role_arn ?? '');
   const [problem, setProblem] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [checkError, setCheckError] = useState<unknown>(null);
-  const [result, setResult] = useState<RunRoleCheck | null>(null);
 
   useEffect(() => {
     setArn(workspace.run_role_arn ?? '');
@@ -156,11 +983,10 @@ function RoleArnForm({
   const save = useMutationWithRefetch(
     (value: string) =>
       api.updateWorkspace(workspace.workspace_id, { run_role_arn: value }),
-    queryKey
+    keys.workspace
   );
 
   const dirty = arn.trim() !== (workspace.run_role_arn ?? '');
-  const unsaved = (workspace.run_role_arn ?? null) === null;
 
   const submit = async (): Promise<void> => {
     setSaved(false);
@@ -173,25 +999,10 @@ function RoleArnForm({
     setProblem(null);
     try {
       await save.mutate(value);
-      setResult(null);
+      invalidateQueries(keys.runRoleCheck);
       setSaved(true);
     } catch {
       return;
-    }
-  };
-
-  const check = async (): Promise<void> => {
-    setChecking(true);
-    setCheckError(null);
-    setSaved(false);
-    try {
-      const outcome = await api.checkRunRole(workspace.workspace_id);
-      setResult(outcome);
-      invalidateQueries([queryKey]);
-    } catch (thrown) {
-      setCheckError(thrown);
-    } finally {
-      setChecking(false);
     }
   };
 
@@ -234,104 +1045,86 @@ function RoleArnForm({
         )}
       </Field>
       <ErrorNotice error={save.error} />
-      <ErrorNotice error={checkError} />
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="submit"
-          variant={dirty || unsaved ? 'primary' : 'secondary'}
+          variant={dirty ? 'primary' : 'secondary'}
           busy={save.isMutating}
           busyLabel="Saving the role ARN"
-          disabled={arn.trim() === ''}
+          disabled={arn.trim() === '' || !dirty}
         >
           Save
         </Button>
-        <Button
-          variant={dirty || unsaved ? 'secondary' : 'primary'}
-          busy={checking}
-          busyLabel="Checking the connection"
-          disabled={unsaved || dirty}
-          title={
-            dirty
-              ? 'Save the ARN before checking it.'
-              : unsaved
-                ? 'Save a role ARN first.'
-                : undefined
-          }
-          onClick={() => {
-            void check();
-          }}
-        >
-          Check connection
-        </Button>
         {saved ? (
           <span role="status" className="text-sm text-success">
-            Saved. Now check the connection.
+            Saved. Start a plan only run to prove the runner can assume it.
           </span>
         ) : null}
       </div>
-      <ConnectionStatus workspace={workspace} result={result} />
     </form>
   );
 }
 
-/** The outcome of the last check, fresh from the button or as persisted. */
+/** What the runner's record says about the role, fresh or as last recorded. */
 function ConnectionStatus({
   workspace,
-  result,
+  check,
 }: {
   workspace: Workspace;
-  result: RunRoleCheck | null;
+  check: RunRoleCheck | null;
 }): React.ReactElement | null {
-  const checkedAt = workspace.run_role_checked_at ?? null;
-  if (result !== null) {
-    const error = result.error ?? null;
-    return result.connected ? (
-      <StatusLine tone="ok" testValue="connected">
-        Connected to account{' '}
-        <code className="font-mono">{result.account_id ?? 'unknown'}</code>.
-      </StatusLine>
-    ) : (
-      <StatusLine tone="bad" testValue="failed">
-        Could not assume the role
-        {error === null ? '.' : `: ${error}`}
-      </StatusLine>
-    );
-  }
-  if ((workspace.run_role_arn ?? null) === null) {
+  const status = accountStatus(workspace, check);
+  const checkedAt = status.checkedAt;
+  if (status.state === 'missing') {
     return null;
   }
-  if (isConnected(workspace)) {
+  if (status.state === 'connected') {
     return (
       <StatusLine tone="ok" testValue="connected">
-        Connected to account{' '}
-        <code className="font-mono">{workspace.run_role_account_id}</code>
-        {checkedAt === null ? '.' : `, checked ${formatDateTime(checkedAt)}.`}
+        The runner assumed this role in account{' '}
+        <code className="font-mono">{status.accountId ?? 'unknown'}</code>
+        {checkedAt === null ? '.' : `, ${formatDateTime(checkedAt)}.`}
       </StatusLine>
     );
   }
-  if (checkedAt !== null) {
+  if (status.state === 'failed') {
     return (
       <StatusLine tone="bad" testValue="failed">
-        The last check, {formatDateTime(checkedAt)}, could not assume the role.
-        Check again once the trust policy is in place.
+        The runner could not assume the role
+        {checkedAt === null ? '' : ` on ${formatDateTime(checkedAt)}`}.{' '}
+        {status.error ?? ''}
       </StatusLine>
     );
   }
   return (
-    <StatusLine tone="neutral" testValue="unchecked">
-      Not checked yet.
+    <StatusLine tone="neutral" testValue="unverified">
+      {status.error ??
+        'Not verified yet. The first run proves the runner can assume the role.'}
     </StatusLine>
   );
+}
+
+/**
+ * Why a staged role was not switched to. The check's error already says so when
+ * the run assumed the role but did not finish its plan.
+ */
+function pendingFailure(error: string | null): string {
+  if (error?.startsWith('The verification run') === true) {
+    return error;
+  }
+  return `The verification run could not assume this role. ${error ?? ''}`.trim();
 }
 
 /** One status sentence with a coloured dot. */
 function StatusLine({
   tone,
   testValue,
+  testId = 'run-role-status',
   children,
 }: {
   tone: 'ok' | 'bad' | 'neutral';
   testValue: string;
+  testId?: string;
   children: React.ReactNode;
 }): React.ReactElement {
   const dot = {
@@ -347,7 +1140,7 @@ function StatusLine({
   return (
     <p
       role="status"
-      data-testid="run-role-status"
+      data-testid={testId}
       data-connection={testValue}
       className={`flex items-start gap-2 text-sm ${text}`}
     >

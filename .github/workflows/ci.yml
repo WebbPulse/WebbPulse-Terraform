@@ -117,7 +117,7 @@ jobs:
         uv lock --upgrade-package webbpulse &&
         uv sync --locked &&
         uv run --no-sync python -c "import importlib.metadata as m; print('webbpulse', m.version('webbpulse'))"
-      ruff-target: "app tests"
+      ruff-target: "app e2e tests"
       typecheck-command: pyright
       security-commands: |
         bandit -r app -ll

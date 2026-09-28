@@ -10,8 +10,17 @@ the same claims object, so a key-authenticated test covers `require_scopes` as i
 runs in production, and the run token gate can only be tested this way.
 """
 
+from __future__ import annotations
+
 import base64
+import json
 import os
+import time
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from webbpulse.testing import CheckedKey
 
 pytest_plugins = ["webbpulse.testing"]
 """The package's own fixtures."""
@@ -30,6 +39,8 @@ RUNNER_TASK_ROLE_ARNS = [
 ]
 RUNNER_TASK_ROLE_ARN = ",".join(RUNNER_TASK_ROLE_ARNS)
 RUN_ROLE_NAME_PREFIX = f"{TABLE_PREFIX}-workspace-"
+RUN_CREDENTIALS_ROLE_ARN = f"arn:aws:iam::870550636948:role/{TABLE_PREFIX}-run-credentials"
+RUN_STATE_ROLE_ARN = f"arn:aws:iam::870550636948:role/{TABLE_PREFIX}-run-state"
 
 os.environ.update(
     {
@@ -47,6 +58,8 @@ os.environ.update(
         "VARIABLES_TABLE": f"{TABLE_PREFIX}-variables",
         "CONFIG_VERSIONS_TABLE": f"{TABLE_PREFIX}-config-versions",
         "USERS_TABLE": f"{TABLE_PREFIX}-users",
+        "GITHUB_TABLE": f"{TABLE_PREFIX}-github",
+        "REGISTRY_TABLE": f"{TABLE_PREFIX}-registry",
         "STATE_BUCKET": STATE_BUCKET,
         "STATE_KMS_KEY_ARN": STATE_KMS_KEY_ARN,
         "ARTIFACTS_BUCKET": ARTIFACTS_BUCKET,
@@ -54,6 +67,8 @@ os.environ.update(
         "VARIABLES_MASTER_KEY": VARIABLES_MASTER_KEY,
         "RUNNER_TASK_ROLE_ARN": RUNNER_TASK_ROLE_ARN,
         "RUN_ROLE_NAME_PREFIX": RUN_ROLE_NAME_PREFIX,
+        "RUN_CREDENTIALS_ROLE_ARN": RUN_CREDENTIALS_ROLE_ARN,
+        "RUN_STATE_ROLE_ARN": RUN_STATE_ROLE_ARN,
     }
 )
 os.environ.pop("APP_SECRET_ID", None)
@@ -70,7 +85,7 @@ from moto import mock_aws  # noqa: E402
 from webbpulse.identity.api_keys import API_KEY_TABLE, mint  # noqa: E402
 
 from app.common.composition import settings as settings_module  # noqa: E402
-from app.common.core.auth import ALL_SCOPES, RUN_TOKEN_TENANT, api_key_store  # noqa: E402
+from app.common.core.auth import ALL_SCOPES, RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store  # noqa: E402
 from app.common.db.tables import ALL_TABLES, local_table_name, table_definition  # noqa: E402
 
 REGION = "us-west-2"
@@ -99,6 +114,12 @@ def create_buckets() -> None:
             Bucket=bucket,
             CreateBucketConfiguration={"LocationConstraint": REGION},
         )
+
+
+@pytest.fixture(autouse=True)
+def _primary_keys_only(primary_keys_only: list[CheckedKey]) -> list[CheckedKey]:
+    """Hold every DynamoDB key in the suite to its table's primary key, as DynamoDB does."""
+    return primary_keys_only
 
 
 @pytest.fixture(autouse=True)
@@ -160,8 +181,88 @@ def client(app):
         yield test_client
 
 
+def runner_token(run_id: str) -> str:
+    """The run token a runner task of `run_id` holds, as the exchange leaves it.
+
+    Minted and stored as the run's `run_token_hash` exactly as
+    `runner_tokens.exchange` does once a task has proved its identity, which the
+    exchange's own tests cover.
+    """
+    from app.common.db import repositories
+    from app.domains.runs.service import RUN_TOKEN_TTL
+
+    minted = mint(
+        user_id=run_id,
+        tenant_id=RUN_TOKEN_TENANT,
+        scopes=(RUNNER_SCOPE,),
+        name=f"run token {run_id}",
+        expires_at=datetime.now(timezone.utc) + RUN_TOKEN_TTL,
+        store=api_key_store(),
+    )
+    repositories.runs(settings_module.get_settings()).update(
+        {"run_id": run_id},
+        update_expression="SET run_token_hash = :hash",
+        expression_values={":hash": minted.record.key_hash},
+    )
+    return minted.plaintext
+
+
+def seed_user(user_id: str, *, is_admin: bool = True, disabled: bool = False) -> None:
+    """Write an enabled, verified `users` row for `user_id`, unless one is there.
+
+    A key's scopes are intersected with its owner's on every request, so a key
+    whose owner has no row holds nothing. An admin by default, so a key's own
+    scopes are what a test asserts on.
+    """
+    from app.common.db.users import User, UserRepository
+
+    users = UserRepository()
+    if users.get(user_id) is None:
+        users.create(
+            User(
+                id=user_id,
+                email=f"{user_id}@example.test",
+                email_verified=True,
+                is_admin=is_admin,
+                disabled=disabled,
+            )
+        )
+
+
+def person_headers(
+    *,
+    user_id: str = "user-human",
+    scopes: tuple[str, ...] | None = None,
+    roles: tuple[str, ...] = (),
+    auth_age: int | None = 0,
+) -> dict[str, str]:
+    """The request context header a route behind the JWT authorizer sees for a person.
+
+    The gateway flattens every claim to a string, so `roles` goes down as the bracketed
+    form and `scope` as the space-joined one, which is what `coerce_claims` parses back.
+    `auth_age` is how many seconds ago the person signed in, stamped as `auth_time`; None
+    leaves the claim out, as an MCP OAuth token does.
+    """
+    from webbpulse.http import REQUEST_CONTEXT_HEADER
+
+    claims: dict[str, str] = {
+        "sub": user_id,
+        "scope": " ".join(ALL_SCOPES if scopes is None else scopes),
+        "roles": json.dumps(list(roles)),
+    }
+    if auth_age is not None:
+        claims["auth_time"] = str(int(time.time()) - auth_age)
+    return {REQUEST_CONTEXT_HEADER: json.dumps({"authorizer": {"jwt": {"claims": claims}}})}
+
+
 def mint_key(*scopes: str, user_id: str = "user-test") -> str:
-    """Mint a `wpk_` key carrying `scopes` and return its plaintext."""
+    """Mint a `wpk_` key carrying `scopes` and return its plaintext.
+
+    Seeds the owner's `users` row too, except for a run token, whose subject is
+    a run id rather than a person.
+    """
+    if RUNNER_SCOPE not in scopes:
+        seed_user(user_id)
     minted = mint(
         user_id=user_id,
         tenant_id=RUN_TOKEN_TENANT,
@@ -262,7 +363,7 @@ def runner_log_group():
 
 @pytest.fixture
 def created_run(auth_client, workspace, uploaded_config_version, state_machine):
-    """A started run, carrying the run token minted when its execution began."""
+    """A started run, carrying the run token its runner task would have exchanged for."""
     response = auth_client.post(
         "/api/v1/runs",
         json={
@@ -273,7 +374,8 @@ def created_run(auth_client, workspace, uploaded_config_version, state_machine):
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    created = response.json()
+    return created | {"run_token": runner_token(created["run_id"])}
 
 
 @pytest.fixture

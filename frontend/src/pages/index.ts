@@ -1,3 +1,4 @@
+export { NewWorkspace } from './NewWorkspace';
 export { NotFound } from './NotFound';
 export { RunDetail } from './RunDetail';
 export { Runs } from './Runs';
@@ -12,3 +13,8 @@ export {
 } from './workspaceContext';
 export { workspaceRoutes } from './workspaceRoutes';
 export { Workspaces, WORKSPACES_KEY } from './Workspaces';
+export { GitHubCreated } from './settings/GitHubCreated';
+export { GitHubSettings } from './settings/GitHubSettings';
+export { GitHubSetup } from './settings/GitHubSetup';
+export { ApiKeys } from './settings/ApiKeys';
+export { ConnectModule, ModuleDetail, Registry } from './registry';

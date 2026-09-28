@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Sequence, cast
+from typing import Mapping, Sequence, cast
 
 from app.logs import LogSink
 from app.models import Changes, Engine
@@ -15,6 +16,14 @@ PLAN_FILE = "plan.tfplan"
 PLAN_JSON_FILE = "plan.json"
 NO_CHANGES_EXIT = 0
 CHANGES_EXIT = 2
+
+APPLY_SUMMARY = re.compile(
+    r"^(?:Apply|Destroy) complete! Resources:"
+    r"(?:\s*(?P<imported>\d+) imported,)?"
+    r"(?:\s*(?P<add>\d+) added,)?"
+    r"(?:\s*(?P<change>\d+) changed,)?"
+    r"\s*(?P<destroy>\d+) destroyed\."
+)
 
 BASE_ENVIRONMENT = {
     "TF_IN_AUTOMATION": "1",
@@ -46,26 +55,35 @@ class EngineRunner:
         directory: Path,
         environment: dict[str, str],
         sink: LogSink,
+        binary: str | None = None,
     ) -> None:
-        self._binary = resolve_binary(engine)
+        self._binary = binary or resolve_binary(engine)
         self._engine = engine
         self._directory = directory
         self._environment = environment
         self._sink = sink
 
-    def run(self, arguments: Sequence[str], *, capture: bool = False) -> tuple[int, str]:
+    def run(
+        self,
+        arguments: Sequence[str],
+        *,
+        capture: bool = False,
+        extra_environment: Mapping[str, str] | None = None,
+    ) -> tuple[int, str]:
         """Run one subcommand, streaming combined output to the sink line by line.
 
         `capture` returns stdout instead of streaming it, for the JSON producing
         subcommands whose output is a document rather than progress.
+        `extra_environment` is added for this subcommand alone.
         """
         command = [self._binary, *arguments]
+        environment = {**self._environment, **(extra_environment or {})}
         self._sink.write(f"$ {self._engine} {' '.join(arguments)}")
         if capture:
             completed = subprocess.run(  # noqa: S603
                 command,
                 cwd=self._directory,
-                env=self._environment,
+                env=environment,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -76,7 +94,7 @@ class EngineRunner:
         process = subprocess.Popen(  # noqa: S603
             command,
             cwd=self._directory,
-            env=self._environment,
+            env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -88,16 +106,21 @@ class EngineRunner:
         process.stdout.close()
         return process.wait(), ""
 
-    def init(self) -> int:
-        """Initialise the working directory against the S3 backend."""
-        exit_code, _ = self.run(["init", "-input=false"])
+    def init(self, extra_environment: Mapping[str, str] | None = None) -> int:
+        """Initialise the working directory against the S3 backend.
+
+        `extra_environment` carries the registry credential, which only `init`
+        needs, since it is the one subcommand that downloads modules.
+        """
+        exit_code, _ = self.run(["init", "-input=false"], extra_environment=extra_environment)
         return exit_code
 
-    def plan(self) -> int:
-        """Produce a plan file, returning the detailed exit code."""
-        exit_code, _ = self.run(
-            ["plan", "-input=false", "-lock-timeout=120s", f"-out={PLAN_FILE}", "-detailed-exitcode"]
-        )
+    def plan(self, *, destroy: bool = False) -> int:
+        """Produce a plan file, a destroy plan when `destroy`, returning the detailed exit code."""
+        arguments = ["plan", "-input=false", "-lock-timeout=120s", f"-out={PLAN_FILE}", "-detailed-exitcode"]
+        if destroy:
+            arguments.append("-destroy")
+        exit_code, _ = self.run(arguments)
         return exit_code
 
     def show_plan_json(self) -> tuple[int, str]:
@@ -109,6 +132,39 @@ class EngineRunner:
         exit_code, _ = self.run(["apply", "-input=false", "-lock-timeout=120s", PLAN_FILE])
         return exit_code
 
+    def output_json(self) -> tuple[int, str]:
+        """Read the root module outputs as JSON, captured rather than logged."""
+        return self.run(["output", "-json"], capture=True)
+
+
+TASK_CREDENTIAL_KEYS: frozenset[str] = frozenset(
+    {
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+        "ECS_CONTAINER_METADATA_URI",
+        "ECS_CONTAINER_METADATA_URI_V4",
+    }
+)
+"""What the ECS agent gives the task to reach its role's credentials and metadata."""
+
+RUNNER_ONLY_KEYS: frozenset[str] = TASK_CREDENTIAL_KEYS | {
+    "TASK_TOKEN",
+    "RUN_TOKEN",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_PROFILE",
+    "AWS_DEFAULT_PROFILE",
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_ROLE_ARN",
+    "AWS_ROLE_SESSION_NAME",
+}
+"""The runner's own variables, none of which the engine may inherit."""
+
 
 def build_environment(
     base: dict[str, str],
@@ -116,29 +172,25 @@ def build_environment(
     bundle_environment: dict[str, str],
     region: str,
     directory: Path,
+    backend_environment: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Assemble the engine's environment without letting the runner's own tokens through."""
-    environment = {
-        key: value
-        for key, value in base.items()
-        if key
-        not in {
-            "TASK_TOKEN",
-            "RUN_TOKEN",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
-            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
-            "AWS_CONTAINER_AUTHORIZATION_TOKEN",
-        }
-    }
+    """Assemble the engine's environment without letting the runner's own tokens through.
+
+    `aws_credentials` is the vended run role session, which the providers use.
+    `backend_environment` points the SDK at the state profile the backend override
+    names, and is applied last so a workspace variable cannot redirect where state
+    credentials come from. No path to the task role's credentials survives, not
+    even one a workspace variable names, though that role reaches nothing but the
+    runner's log stream.
+    """
+    environment = {key: value for key, value in base.items() if key not in RUNNER_ONLY_KEYS}
     environment.update(BASE_ENVIRONMENT)
     environment["AWS_REGION"] = region
     environment["AWS_DEFAULT_REGION"] = region
     environment["TF_DATA_DIR"] = str(directory / ".terraform")
-    environment.update(bundle_environment)
+    environment.update({key: value for key, value in bundle_environment.items() if key not in TASK_CREDENTIAL_KEYS})
     environment.update(aws_credentials)
+    environment.update(backend_environment or {})
     return environment
 
 
@@ -177,3 +229,19 @@ def parse_changes(plan_json: str) -> tuple[Changes, bool]:
             destroy += 1
     counts = Changes(add=add, change=change, destroy=destroy)
     return counts, bool(add or change or destroy)
+
+
+def parse_apply_changes(lines: Sequence[str]) -> Changes | None:
+    """Counts from the engine's closing `Apply complete!` or `Destroy complete!` line.
+
+    The last matching line wins, and None means the engine printed no summary.
+    """
+    for line in reversed(lines):
+        match = APPLY_SUMMARY.match(line.strip())
+        if match is not None:
+            return Changes(
+                add=int(match.group("add") or 0),
+                change=int(match.group("change") or 0),
+                destroy=int(match.group("destroy")),
+            )
+    return None

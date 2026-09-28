@@ -1,6 +1,6 @@
 module "transaction_search" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/transaction-search"
-  version = "~> 2.27"
+  version = "~> 2.32"
 
   name_prefix = local.prefix
 

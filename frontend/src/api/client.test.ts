@@ -55,23 +55,97 @@ describe('TerraformApi workspaces', () => {
     });
   });
 
-  it('checks the run role on its own route with an empty POST', async () => {
+  it('reads the run role check with a GET that sends no body', async () => {
+    const answer = {
+      connected: false,
+      status: 'unverified',
+      account_id: null,
+      error: 'No run has assumed this role yet.',
+      run_id: null,
+      checked_at: null,
+    };
     const { api, transport } = apiOver({
-      'POST /api/v1/workspaces/ws-1/run-role/check': {
-        body: { connected: true, account_id: '123456789012', error: null },
-      },
+      'GET /api/v1/workspaces/ws-1/run-role/check': { body: answer },
     });
-    const result = await api.checkRunRole('ws-1');
-    expect(result).toEqual({
+    expect(await api.readRunRoleCheck('ws-1')).toEqual(answer);
+    expect(transport.requests[0]?.method).toBe('GET');
+    expect(transport.requests[0]?.path).toBe(
+      '/api/v1/workspaces/ws-1/run-role/check'
+    );
+  });
+
+  it('records the run role check on its own route with an empty POST', async () => {
+    const answer = {
       connected: true,
+      status: 'connected',
       account_id: '123456789012',
       error: null,
+      run_id: 'run-1',
+      checked_at: '2026-09-17T00:05:00Z',
+    };
+    const { api, transport } = apiOver({
+      'POST /api/v1/workspaces/ws-1/run-role/check': { body: answer },
     });
+    expect(await api.checkRunRole('ws-1')).toEqual(answer);
     expect(transport.requests[0]?.method).toBe('POST');
     expect(transport.requests[0]?.path).toBe(
       '/api/v1/workspaces/ws-1/run-role/check'
     );
     expect(transport.requests[0]?.body).toBeUndefined();
+  });
+
+  it('syncs the GitHub webhook with an empty POST', async () => {
+    const answer = {
+      url: 'https://api.staging.terraform.webbpulse.com/api/v1/github/webhooks',
+      content_type: 'json',
+      insecure_ssl: '0',
+      events: ['push', 'pull_request'],
+    };
+    const { api, transport } = apiOver({
+      'POST /api/v1/github/app/webhook': { body: answer },
+    });
+    expect(await api.syncGitHubWebhook()).toEqual(answer);
+    expect(transport.requests[0]?.method).toBe('POST');
+    expect(transport.requests[0]?.path).toBe('/api/v1/github/app/webhook');
+    expect(transport.requests[0]?.body).toBeUndefined();
+  });
+
+  it('sends a confirm or discard comment as the body', async () => {
+    const { api, transport } = apiOver({
+      'POST /api/v1/runs/run-1/confirm': { body: aRun('applying') },
+      'POST /api/v1/runs/run-1/discard': { body: aRun('discarded') },
+    });
+    await api.confirmRun('run-1', 'Reviewed.');
+    await api.discardRun('run-1', '  ');
+    expect(transport.requests[0]?.body).toEqual({ comment: 'Reviewed.' });
+    expect(transport.requests[1]?.body).toBeUndefined();
+  });
+
+  it('starts quick setup with the account and policy in the body', async () => {
+    const answer = {
+      account_id: '123456789012',
+      role_arn: 'arn:aws:iam::123456789012:role/control-plane-workspace-01J',
+      role_name: 'control-plane-workspace-01J',
+      stack_name: 'control-plane-workspace-01J',
+      region: 'us-west-2',
+      permissions_policy_arn: null,
+      expires_in: 3600,
+      console_url:
+        'https://us-west-2.console.aws.amazon.com/cloudformation/home',
+    };
+    const { api, transport } = apiOver({
+      'POST /api/v1/workspaces/ws-1/run-role/quick-setup': { body: answer },
+    });
+    expect(
+      await api.startRunRoleQuickSetup('ws-1', {
+        account_id: '123456789012',
+        permissions: 'none',
+      })
+    ).toEqual(answer);
+    expect(transport.requests[0]?.body).toEqual({
+      account_id: '123456789012',
+      permissions: 'none',
+    });
   });
 
   it('patches a workspace on its own path', async () => {
@@ -102,6 +176,15 @@ describe('TerraformApi workspaces', () => {
     });
     await api.deleteWorkspace('ws-1');
     expect(transport.requests[0]?.method).toBe('DELETE');
+    expect(transport.requests[0]?.query.has('force')).toBe(false);
+  });
+
+  it('asks for a force delete through the query', async () => {
+    const { api, transport } = apiOver({
+      'DELETE /api/v1/workspaces/ws-1': { status: 204 },
+    });
+    await api.deleteWorkspace('ws-1', { force: true });
+    expect(transport.requests[0]?.query.get('force')).toBe('true');
   });
 });
 
@@ -192,12 +275,23 @@ describe('TerraformApi runs', () => {
     expect(transport.requests[0]?.query.get('workspace_id')).toBe('ws-1');
   });
 
-  it('always sends the workspace, which the route requires', async () => {
+  it('lists across workspaces with only the paging it was given', async () => {
     const { api, transport } = apiOver({
-      'GET /api/v1/runs': { body: { items: [] } },
+      'GET /api/v1/runs': { body: { items: [], next_cursor: null } },
     });
-    await api.listRuns({ workspace_id: 'ws-2' });
-    expect(transport.requests[0]?.query.get('workspace_id')).toBe('ws-2');
+    await api.listRuns({ limit: 10, cursor: 'run-1' });
+    const query = transport.requests[0]?.query;
+    expect(query?.has('workspace_id')).toBe(false);
+    expect(query?.get('limit')).toBe('10');
+    expect(query?.get('cursor')).toBe('run-1');
+  });
+
+  it('sends no query at all for the first cross-workspace page', async () => {
+    const { api, transport } = apiOver({
+      'GET /api/v1/runs': { body: { items: [], next_cursor: null } },
+    });
+    await api.listRuns();
+    expect([...(transport.requests[0]?.query.keys() ?? [])]).toEqual([]);
   });
 
   it('starts a run with the contract body', async () => {

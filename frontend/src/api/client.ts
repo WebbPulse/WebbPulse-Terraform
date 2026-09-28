@@ -10,15 +10,34 @@ import { loadAppConfig } from '@webbpulse/config';
 import {
   createAuthClient,
   describeAuthError,
+  StepUpCancelledError,
   type AuthClient,
 } from '@webbpulse/auth';
 import { identityOriginFrom as packageIdentityOriginFrom } from '@webbpulse/auth/browser';
 
 import type {
+  ApiKey,
+  ApiKeyCreate,
+  ApiKeyCreated,
+  ApiKeyList,
   ConfigVersion,
   ConfigVersionCreate,
   ConfigVersionList,
   ConfigVersionUpload,
+  GitHubAppStatus,
+  Installation,
+  InstallationCallback,
+  InstallationList,
+  InstallStart,
+  Module,
+  ModuleCreate,
+  ModuleList,
+  ModuleSync,
+  ModuleVersionDetail,
+  ManifestConversionRequest,
+  ManifestStart,
+  ManifestStartRequest,
+  RepositoryList,
   Run,
   RunCreate,
   RunCreated,
@@ -29,12 +48,15 @@ import type {
   RunPhase,
   RunPlan,
   RunRoleCheck,
+  RunRoleQuickSetup,
+  RunRoleQuickSetupCreate,
   Variable,
   VariableList,
   VariableWrite,
   Workspace,
   WorkspaceCreate,
   WorkspaceList,
+  WebhookConfig,
   WorkspaceUpdate,
 } from './types';
 
@@ -65,11 +87,26 @@ export function identityOriginFrom(apiBaseUrl: string): string {
  *
  * `describeAuthError` unwraps the WebbPulse envelope the control plane and the
  * identity routes both answer with, so one renderer covers a failed plan and a
- * refused sign-in alike. The fallback is this product's own wording.
+ * refused sign-in alike. A dismissed password prompt says nothing changed. The
+ * fallback is this product's own wording.
  */
 export function describeError(error: unknown): string {
+  if (error instanceof StepUpCancelledError) {
+    return 'Your password was not confirmed, so nothing changed.';
+  }
   return describeAuthError(error, 'The request failed. Please try again.');
 }
+
+/**
+ * The shape of `withStepUp` from `useStepUp`: wraps a call so a
+ * `STEP_UP_REQUIRED` refusal prompts for a password and replays it once.
+ */
+export type StepUpWrapper = <TArgs extends unknown[], TResult>(
+  fn: (...args: TArgs) => Promise<TResult>
+) => (...args: TArgs) => Promise<TResult>;
+
+/** The gate used while no step-up prompt is mounted: the call as it is. */
+const passThrough: StepUpWrapper = (fn) => fn;
 
 /** Options for {@link TerraformApi}. */
 export interface TerraformApiOptions {
@@ -94,6 +131,9 @@ export class TerraformApi {
   /** The auth client holding the access token and spending the refresh cookie. */
   private readonly auth: AuthClient<unknown>;
 
+  /** The wrapper gated calls go through; a pass through until a prompt mounts. */
+  private stepUpGate: StepUpWrapper = passThrough;
+
   constructor(options: TerraformApiOptions = {}) {
     const baseUrl = options.baseUrl ?? API_BASE_URL;
     const credentials = 'include' as const;
@@ -113,6 +153,25 @@ export class TerraformApi {
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       ...(options.retries === undefined ? {} : { retries: options.retries }),
     });
+  }
+
+  /**
+   * Routes every step-up gated call through `gate`, the `withStepUp` of the one
+   * mounted prompt, so a `STEP_UP_REQUIRED` refusal asks for the password and
+   * replays the call once. Returns a function that detaches the gate again.
+   */
+  setStepUpGate(gate: StepUpWrapper): () => void {
+    this.stepUpGate = gate;
+    return () => {
+      if (this.stepUpGate === gate) {
+        this.stepUpGate = passThrough;
+      }
+    };
+  }
+
+  /** Sends a step-up gated call through the mounted prompt, if there is one. */
+  private sudo<T>(call: () => Promise<T>): Promise<T> {
+    return this.stepUpGate(call)();
   }
 
   /**
@@ -165,28 +224,54 @@ export class TerraformApi {
     body: WorkspaceUpdate,
     options: RequestOptions = {}
   ): Promise<Workspace> {
-    const response = await this.client.patch<Workspace>(
-      `/workspaces/${encodeURIComponent(workspaceId)}`,
-      body,
+    const response = await this.sudo(() =>
+      this.client.patch<Workspace>(
+        `/workspaces/${encodeURIComponent(workspaceId)}`,
+        body,
+        options
+      )
+    );
+    return response.data;
+  }
+
+  /**
+   * Deletes a workspace. A safe delete rejects with `WORKSPACE_MANAGES_RESOURCES`
+   * while state tracks resources, and `force` skips that check. Either rejects
+   * with `WORKSPACE_HAS_ACTIVE_RUN` while a run is unfinished.
+   */
+  async deleteWorkspace(
+    workspaceId: string,
+    { force = false }: { force?: boolean } = {},
+    options: RequestOptions = {}
+  ): Promise<void> {
+    await this.sudo(() =>
+      this.client.delete(
+        `/workspaces/${encodeURIComponent(workspaceId)}`,
+        force
+          ? { ...options, query: { ...options.query, force: 'true' } }
+          : options
+      )
+    );
+  }
+
+  /**
+   * Reads whether the runner has assumed the workspace's run role, writing
+   * nothing. Rejects with `RUN_ROLE_MISSING` when no role is set.
+   */
+  async readRunRoleCheck(
+    workspaceId: string,
+    options: RequestOptions = {}
+  ): Promise<RunRoleCheck> {
+    const response = await this.client.get<RunRoleCheck>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/run-role/check`,
       options
     );
     return response.data;
   }
 
-  /** Deletes a workspace. */
-  async deleteWorkspace(
-    workspaceId: string,
-    options: RequestOptions = {}
-  ): Promise<void> {
-    await this.client.delete(
-      `/workspaces/${encodeURIComponent(workspaceId)}`,
-      options
-    );
-  }
-
   /**
-   * Checks that the workspace's run role can be assumed, and persists what it
-   * found on the workspace. Rejects with `RUN_ROLE_MISSING` when no role is set.
+   * The same answer as `readRunRoleCheck`, recorded on the workspace so the
+   * workspace list shows it. Rejects with `RUN_ROLE_MISSING` when no role is set.
    */
   async checkRunRole(
     workspaceId: string,
@@ -196,6 +281,25 @@ export class TerraformApi {
       `/workspaces/${encodeURIComponent(workspaceId)}/run-role/check`,
       undefined,
       options
+    );
+    return response.data;
+  }
+
+  /**
+   * Saves the role ARN derived from `body.account_id` and returns the AWS
+   * CloudFormation quick create link that creates the role.
+   */
+  async startRunRoleQuickSetup(
+    workspaceId: string,
+    body: RunRoleQuickSetupCreate,
+    options: RequestOptions = {}
+  ): Promise<RunRoleQuickSetup> {
+    const response = await this.sudo(() =>
+      this.client.post<RunRoleQuickSetup>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/run-role/quick-setup`,
+        body,
+        options
+      )
     );
     return response.data;
   }
@@ -219,10 +323,12 @@ export class TerraformApi {
     body: VariableWrite,
     options: RequestOptions = {}
   ): Promise<Variable> {
-    const response = await this.client.put<Variable>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(key)}`,
-      body,
-      options
+    const response = await this.sudo(() =>
+      this.client.put<Variable>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(key)}`,
+        body,
+        options
+      )
     );
     return response.data;
   }
@@ -233,9 +339,11 @@ export class TerraformApi {
     key: string,
     options: RequestOptions = {}
   ): Promise<void> {
-    await this.client.delete(
-      `/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(key)}`,
-      options
+    await this.sudo(() =>
+      this.client.delete(
+        `/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(key)}`,
+        options
+      )
     );
   }
 
@@ -282,19 +390,29 @@ export class TerraformApi {
   }
 
   /**
-   * Lists one workspace's runs.
+   * Lists runs, newest first, in one workspace or across every workspace.
    *
-   * The workspace is required, not a filter: the backend queries the runs table
-   * by its workspace index and answers 404 for a workspace that does not exist,
-   * so there is no environment wide listing to ask for.
+   * Naming a workspace returns all of its runs and answers 404 for a workspace
+   * that does not exist. Omitting it returns one page of every workspace's runs;
+   * `limit` and `cursor` apply only then, with `next_cursor` continuing the list.
    */
   async listRuns(
-    query: RunListQuery,
+    query: RunListQuery = {},
     options: RequestOptions = {}
   ): Promise<RunList> {
+    const scope: Record<string, string | number> = {};
+    if (query.workspace_id !== undefined && query.workspace_id !== null) {
+      scope['workspace_id'] = query.workspace_id;
+    }
+    if (query.limit !== undefined && query.limit !== null) {
+      scope['limit'] = query.limit;
+    }
+    if (query.cursor !== undefined && query.cursor !== null) {
+      scope['cursor'] = query.cursor;
+    }
     const response = await this.client.get<RunList>('/runs', {
       ...options,
-      query: { ...options.query, workspace_id: query.workspace_id },
+      query: { ...options.query, ...scope },
     });
     return response.data;
   }
@@ -317,12 +435,18 @@ export class TerraformApi {
     return response.data;
   }
 
-  /** Confirms a planned run, which starts its apply. */
-  async confirmRun(runId: string, options: RequestOptions = {}): Promise<Run> {
-    const response = await this.client.post<Run>(
-      `/runs/${encodeURIComponent(runId)}/confirm`,
-      undefined,
-      options
+  /** Confirms a planned run, which starts its apply, with an optional comment kept on the run. */
+  async confirmRun(
+    runId: string,
+    comment = '',
+    options: RequestOptions = {}
+  ): Promise<Run> {
+    const response = await this.sudo(() =>
+      this.client.post<Run>(
+        `/runs/${encodeURIComponent(runId)}/confirm`,
+        comment.trim() === '' ? undefined : { comment },
+        options
+      )
     );
     return response.data;
   }
@@ -337,11 +461,15 @@ export class TerraformApi {
     return response.data;
   }
 
-  /** Discards a plan nobody will apply. */
-  async discardRun(runId: string, options: RequestOptions = {}): Promise<Run> {
+  /** Discards a plan nobody will apply, with an optional comment kept on the run. */
+  async discardRun(
+    runId: string,
+    comment = '',
+    options: RequestOptions = {}
+  ): Promise<Run> {
     const response = await this.client.post<Run>(
       `/runs/${encodeURIComponent(runId)}/discard`,
-      undefined,
+      comment.trim() === '' ? undefined : { comment },
       options
     );
     return response.data;
@@ -395,6 +523,244 @@ export class TerraformApi {
     );
     return response.data;
   }
+
+  /** Reads whether this environment has a GitHub App. Admin only. */
+  async getGitHubApp(options: RequestOptions = {}): Promise<GitHubAppStatus> {
+    const response = await this.client.get<GitHubAppStatus>(
+      '/github/app',
+      options
+    );
+    return response.data;
+  }
+
+  /**
+   * Issues a one-time state and the manifest to post to GitHub. Rejects with
+   * `GITHUB_APP_ALREADY_CONFIGURED` when an App exists.
+   */
+  async startGitHubManifest(
+    body: ManifestStartRequest = {},
+    options: RequestOptions = {}
+  ): Promise<ManifestStart> {
+    const response = await this.sudo(() =>
+      this.client.post<ManifestStart>('/github/app/manifest', body, options)
+    );
+    return response.data;
+  }
+
+  /** Exchanges the create callback's code, storing the App's credentials. */
+  async convertGitHubManifest(
+    body: ManifestConversionRequest,
+    options: RequestOptions = {}
+  ): Promise<GitHubAppStatus> {
+    const response = await this.client.post<GitHubAppStatus>(
+      '/github/app/conversions',
+      body,
+      options
+    );
+    return response.data;
+  }
+
+  /**
+   * Points the App's webhook at this API and sets its signing secret. Rejects
+   * with `GITHUB_WEBHOOK_URL_MISSING` or `GITHUB_WEBHOOK_SECRET_MISSING` when
+   * the environment lacks either.
+   */
+  async syncGitHubWebhook(
+    options: RequestOptions = {}
+  ): Promise<WebhookConfig> {
+    const response = await this.sudo(() =>
+      this.client.post<WebhookConfig>('/github/app/webhook', undefined, options)
+    );
+    return response.data;
+  }
+
+  /** Issues a one-time state and the App's install URL. */
+  async startGitHubInstall(
+    options: RequestOptions = {}
+  ): Promise<InstallStart> {
+    const response = await this.sudo(() =>
+      this.client.post<InstallStart>(
+        '/github/install-state',
+        undefined,
+        options
+      )
+    );
+    return response.data;
+  }
+
+  /** Records the installation the setup callback named, once GitHub confirms it. */
+  async recordGitHubInstallation(
+    body: InstallationCallback,
+    options: RequestOptions = {}
+  ): Promise<Installation> {
+    const response = await this.client.post<Installation>(
+      '/github/installations',
+      body,
+      options
+    );
+    return response.data;
+  }
+
+  /** Lists the stored installations. */
+  async listGitHubInstallations(
+    options: RequestOptions = {}
+  ): Promise<InstallationList> {
+    const response = await this.client.get<InstallationList>(
+      '/github/installations',
+      options
+    );
+    return response.data;
+  }
+
+  /** Re-reads one installation from GitHub, dropping it when GitHub no longer has it. */
+  async refreshGitHubInstallation(
+    installationId: string,
+    options: RequestOptions = {}
+  ): Promise<Installation> {
+    const response = await this.client.post<Installation>(
+      `/github/installations/${encodeURIComponent(installationId)}/refresh`,
+      undefined,
+      options
+    );
+    return response.data;
+  }
+
+  /** Forgets one installation here. It stays installed on GitHub. */
+  async removeGitHubInstallation(
+    installationId: string,
+    options: RequestOptions = {}
+  ): Promise<void> {
+    await this.sudo(() =>
+      this.client.delete(
+        `/github/installations/${encodeURIComponent(installationId)}`,
+        options
+      )
+    );
+  }
+
+  /** Lists the caller's own API keys, newest first, revoked and expired ones included. */
+  async listApiKeys(options: RequestOptions = {}): Promise<ApiKeyList> {
+    const response = await this.client.get<ApiKeyList>('/api-keys', options);
+    return response.data;
+  }
+
+  /** Mints an API key. The response is the only time its plaintext is readable. */
+  async createApiKey(
+    body: ApiKeyCreate,
+    options: RequestOptions = {}
+  ): Promise<ApiKeyCreated> {
+    const response = await this.sudo(() =>
+      this.client.post<ApiKeyCreated>('/api-keys', body, options)
+    );
+    return response.data;
+  }
+
+  /** Revokes one API key by its id, returning it as it was. */
+  async revokeApiKey(
+    keyId: string,
+    options: RequestOptions = {}
+  ): Promise<ApiKey> {
+    const response = await this.sudo(() =>
+      this.client.delete<ApiKey>(
+        `/api-keys/${encodeURIComponent(keyId)}`,
+        options
+      )
+    );
+    return response.data;
+  }
+
+  /** Lists the repositories one installation can reach. */
+  async listGitHubRepositories(
+    installationId: string,
+    options: RequestOptions = {}
+  ): Promise<RepositoryList> {
+    const response = await this.client.get<RepositoryList>(
+      `/github/installations/${encodeURIComponent(installationId)}/repositories`,
+      options
+    );
+    return response.data;
+  }
+
+  /** Lists every private registry module with its versions. */
+  async listModules(options: RequestOptions = {}): Promise<ModuleList> {
+    const response = await this.client.get<ModuleList>(
+      '/registry/modules',
+      options
+    );
+    return response.data;
+  }
+
+  /** Connects a module to a repository the GitHub App is installed on. */
+  async createModule(
+    body: ModuleCreate,
+    options: RequestOptions = {}
+  ): Promise<Module> {
+    const response = await this.sudo(() =>
+      this.client.post<Module>('/registry/modules', body, options)
+    );
+    return response.data;
+  }
+
+  /** Reads one module and every version of it. */
+  async getModule(
+    namespace: string,
+    name: string,
+    provider: string,
+    options: RequestOptions = {}
+  ): Promise<Module> {
+    const response = await this.client.get<Module>(
+      modulePath(namespace, name, provider),
+      options
+    );
+    return response.data;
+  }
+
+  /** Reads one version of a module with its documentation. */
+  async getModuleVersion(
+    namespace: string,
+    name: string,
+    provider: string,
+    version: string,
+    options: RequestOptions = {}
+  ): Promise<ModuleVersionDetail> {
+    const response = await this.client.get<ModuleVersionDetail>(
+      `${modulePath(namespace, name, provider)}/versions/${encodeURIComponent(version)}`,
+      options
+    );
+    return response.data;
+  }
+
+  /** Queues an import of every semantic version tag in the module's repository. */
+  async resyncModule(
+    namespace: string,
+    name: string,
+    provider: string,
+    options: RequestOptions = {}
+  ): Promise<ModuleSync> {
+    const response = await this.client.post<ModuleSync>(
+      `${modulePath(namespace, name, provider)}/resync`,
+      undefined,
+      options
+    );
+    return response.data;
+  }
+
+  /** Removes a module with every version. Configurations pinned to it stop resolving. */
+  async deleteModule(
+    namespace: string,
+    name: string,
+    provider: string,
+    options: RequestOptions = {}
+  ): Promise<void> {
+    await this.sudo(() =>
+      this.client.delete(modulePath(namespace, name, provider), options)
+    );
+  }
+}
+
+/** The API path of one module. */
+function modulePath(namespace: string, name: string, provider: string): string {
+  return `/registry/modules/${[namespace, name, provider].map(encodeURIComponent).join('/')}`;
 }
 
 /**
@@ -413,12 +779,23 @@ export async function uploadConfigTarball(
   options: { fetch?: typeof globalThis.fetch; signal?: AbortSignal } = {}
 ): Promise<void> {
   const doFetch = options.fetch ?? globalThis.fetch;
-  const response = await doFetch(upload.upload_url, {
-    method: 'PUT',
-    body: file,
-    headers: upload.headers,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
+  let response: Response;
+  try {
+    response = await doFetch(upload.upload_url, {
+      method: 'PUT',
+      body: file,
+      headers: upload.headers,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch (thrown) {
+    if (options.signal?.aborted === true) {
+      throw thrown;
+    }
+    throw new Error(
+      'The configuration tarball could not be sent to storage. Check the connection and try again.',
+      { cause: thrown }
+    );
+  }
   if (!response.ok) {
     throw new Error(
       `Uploading the configuration tarball failed with ${String(response.status)}.`

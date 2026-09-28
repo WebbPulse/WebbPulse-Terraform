@@ -30,18 +30,52 @@ export type WorkspaceCreate = Schemas['WorkspaceCreate'];
  * What a workspace hands a person so they can create its run role.
  *
  * `principal_arns` names every runner task role, one per phase. A trust policy
- * naming only the plan role passes the connection check and then fails at
- * apply, so the snippets name them all.
+ * naming only the plan role passes a plan only run and then fails at apply, so
+ * the snippets name them all.
  */
 export type RunRoleSetup = Schemas['RunRoleSetup'];
 
 /**
- * The outcome of one AssumeRole against a workspace's run role.
+ * Whether the runner can assume a workspace's run role, from its own record.
  *
- * `error` is a sentence for a person rather than the STS code, and no part of
- * the temporary credentials reaches it.
+ * The API never calls STS. `status` is `connected` or `failed` from the newest
+ * run on the current ARN that reached the runner's AssumeRole, and
+ * `unverified` while no run has, so a plan only run is the check.
  */
 export type RunRoleCheck = Schemas['RunRoleCheck'];
+
+/**
+ * The verdict on a staged role, which runs do not use until it connects.
+ *
+ * A verification run assumes the staged role, and the recording check then
+ * makes it the workspace's run role.
+ */
+export type PendingRunRoleCheck = Schemas['PendingRunRoleCheck'];
+
+/**
+ * The body that starts AWS quick setup: the managed policy, and optionally an account.
+ *
+ * Without an account the stack reports its own account back, so the SPA sends none.
+ */
+export type RunRoleQuickSetupCreate = Schemas['RunRoleQuickSetupCreate'];
+
+/** The managed policy choices quick setup offers. */
+export type RunRolePermissions = NonNullable<
+  RunRoleQuickSetupCreate['permissions']
+>;
+
+/**
+ * What quick setup answers: the AWS CloudFormation link and, when an account was given, the saved role ARN.
+ *
+ * The link carries a presigned template URL, so it lasts `expires_in` seconds.
+ */
+export type RunRoleQuickSetup = Schemas['RunRoleQuickSetup'];
+
+/**
+ * What the last Quick setup link and its stack reported: waiting for the stack,
+ * connected to an account, expired unused, or disconnected by a stack delete.
+ */
+export type AwsConnection = Schemas['AwsConnection'];
 
 /**
  * The body that edits a workspace. Every field is optional.
@@ -122,11 +156,17 @@ export type RunChanges = Schemas['RunChanges'];
 /** A run as the API returns it. */
 export type Run = Schemas['Run'];
 
+/** Who confirmed or discarded a run's plan, when, and their comment. */
+export type RunDecision = Schemas['RunDecision'];
+
+/** The commit a VCS run was started from. */
+export type RunVcs = Schemas['RunVcs'];
+
 /**
  * A newly created run.
  *
- * `run_token` is present only when the run started: a queued run has no
- * execution and so no token until the run ahead of it finishes.
+ * It carries no run token: only the runner task holds one, obtained by
+ * proving its task identity.
  */
 export type RunCreated = Schemas['RunCreated'];
 
@@ -165,6 +205,8 @@ export type PlanResourceChange = Schemas['PlanResourceChange'];
 
 /** One root output's change in a plan. */
 export type PlanOutputChange = Schemas['PlanOutputChange'];
+/** One root output's value after a successful apply, redacted when sensitive. */
+export type AppliedOutput = Schemas['AppliedOutput'];
 
 /**
  * What one resource or output is doing in the plan.
@@ -189,3 +231,87 @@ export type RunListQuery = NonNullable<
 export type RunLogsQuery = NonNullable<
   paths['/api/v1/runs/{run_id}/logs']['get']['parameters']['query']
 >;
+
+/** Whether this environment has a GitHub App, and what the settings page may offer. */
+export type GitHubAppStatus = Schemas['GitHubAppStatus'];
+
+/** Where a new App is created: a personal account, or a named organization. */
+export type ManifestStartRequest = Schemas['ManifestStartRequest'];
+
+/** The form action and manifest the SPA posts to GitHub. */
+export type ManifestStart = Schemas['ManifestStart'];
+
+/** The create callback's code and state, forwarded to the API. */
+export type ManifestConversionRequest = Schemas['ManifestConversionRequest'];
+
+/** Where the App's webhook now delivers, and the events to subscribe on GitHub. */
+export type WebhookConfig = Schemas['WebhookConfig'];
+
+/** The App's install URL, carrying a one-time state. */
+export type InstallStart = Schemas['InstallStart'];
+
+/** The setup callback's query, forwarded to the API. */
+export type InstallationCallback = Schemas['InstallationCallback'];
+
+/** One installation of the App, as GitHub last confirmed it. */
+export type Installation = Schemas['Installation'];
+
+/** Every stored installation. */
+export type InstallationList = Schemas['InstallationList'];
+
+/** A repository an installation can reach. */
+export type Repository = Schemas['Repository'];
+
+/** Every repository an installation can reach. */
+export type RepositoryList = Schemas['RepositoryList'];
+
+/** One of the caller's API keys. Never carries the plaintext. */
+export type ApiKey = Schemas['ApiKey'];
+
+/** The body that mints an API key. */
+export type ApiKeyCreate = Schemas['ApiKeyCreate'];
+
+/** A freshly minted key, carrying its plaintext exactly once. */
+export type ApiKeyCreated = Schemas['ApiKeyCreated'];
+
+/** The caller's API keys, newest first. */
+export type ApiKeyList = Schemas['ApiKeyList'];
+
+/** One private registry module with every version published or attempted. */
+export type Module = Schemas['Module'];
+
+/** Every module in the private registry. */
+export type ModuleList = Schemas['ModuleList'];
+
+/** The body that connects a module to a repository. */
+export type ModuleCreate = Schemas['ModuleCreate'];
+
+/** One version of a module and where its publishing stands. */
+export type ModuleVersion = Schemas['ModuleVersion'];
+
+/** Where a module version's publishing stands. */
+export type ModuleVersionStatus = ModuleVersion['status'];
+
+/** One version with the documentation read from its tarball. */
+export type ModuleVersionDetail = Schemas['ModuleVersionDetail'];
+
+/** The readme, inputs, outputs, providers, resources and submodules of a version. */
+export type ModuleDocs = Schemas['ModuleDocs'];
+
+/** One input variable of a module. */
+export type ModuleInput = Schemas['ModuleInput'];
+
+/** One output of a module. */
+export type ModuleOutput = Schemas['ModuleOutput'];
+
+/** One provider requirement of a module. */
+export type ModuleProvider = Schemas['ModuleProvider'];
+
+/** One resource a module declares. */
+export type ModuleResource = Schemas['ModuleResource'];
+
+/** One submodule under `modules/`. */
+export type Submodule = Schemas['Submodule'];
+
+/** A queued tag import for a module. */
+export type ModuleSync = Schemas['ModuleSync'];

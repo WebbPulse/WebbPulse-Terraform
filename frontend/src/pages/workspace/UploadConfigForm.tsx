@@ -28,7 +28,25 @@ export interface UploadConfigFormProps {
   onUploaded?: () => void;
 }
 
-/** The form that mints a version and PUTs the file to its presigned URL. */
+/** How long the whole upload may take before it is abandoned with an error. */
+export const UPLOAD_DEADLINE_MS = 120_000;
+
+/** The error an upload that outlived {@link UPLOAD_DEADLINE_MS} shows. */
+const UPLOAD_TIMED_OUT = new Error(
+  'The upload timed out. Check the connection and try again.'
+);
+
+/** The error a submit without a chosen file shows. */
+const NO_FILE = new Error('Choose a .tar.gz configuration archive first.');
+
+/**
+ * The form that mints a version and PUTs the file to its presigned URL.
+ *
+ * Every way a submit can end is shown: no file, a refused mint, a failed or
+ * stalled PUT, and success. A ref guards against a second submit landing before
+ * the busy state renders, and the whole attempt runs under a deadline so a hung
+ * request cannot leave the form spinning.
+ */
 export function UploadConfigForm({
   workspaceId,
   queryKey,
@@ -38,32 +56,47 @@ export function UploadConfigForm({
   onUploaded,
 }: UploadConfigFormProps): React.ReactElement {
   const input = useRef<HTMLInputElement>(null);
+  const inFlight = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [done, setDone] = useState(false);
+  const [uploaded, setUploaded] = useState<string | null>(null);
 
   const submit = async (): Promise<void> => {
-    const file = input.current?.files?.[0];
-    if (file === undefined) {
+    if (inFlight.current) {
       return;
     }
+    const file = input.current?.files?.[0];
+    if (file === undefined) {
+      setUploaded(null);
+      setError(NO_FILE);
+      return;
+    }
+    inFlight.current = true;
     setBusy(true);
     setError(null);
-    setDone(false);
+    setUploaded(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, UPLOAD_DEADLINE_MS);
     try {
-      const upload = await api.createConfigVersion(workspaceId, {
-        size_bytes: file.size,
-      });
-      await uploadConfigTarball(upload, file);
-      invalidateQueries([queryKey]);
-      setDone(true);
+      const upload = await api.createConfigVersion(
+        workspaceId,
+        { size_bytes: file.size },
+        { signal: controller.signal }
+      );
+      await uploadConfigTarball(upload, file, { signal: controller.signal });
+      invalidateQueries(queryKey);
+      setUploaded(file.name);
       if (input.current !== null) {
         input.current.value = '';
       }
       onUploaded?.();
     } catch (thrown) {
-      setError(thrown);
+      setError(controller.signal.aborted ? UPLOAD_TIMED_OUT : thrown);
     } finally {
+      clearTimeout(timer);
+      inFlight.current = false;
       setBusy(false);
     }
   };
@@ -71,6 +104,7 @@ export function UploadConfigForm({
   return (
     <form
       aria-label={label}
+      noValidate
       className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault();
@@ -85,6 +119,7 @@ export function UploadConfigForm({
               ref={input}
               type="file"
               required
+              disabled={busy}
               accept=".tar.gz,application/gzip"
               className="mt-1 block w-full text-sm text-text file:mr-3 file:h-7 file:rounded-md file:border file:border-line-strong file:bg-panel file:px-2.5 file:text-xs file:font-medium file:text-text-strong hover:file:bg-raised"
             />
@@ -99,11 +134,11 @@ export function UploadConfigForm({
           Upload
         </Button>
       </div>
-      {done ? (
+      {uploaded === null ? null : (
         <p role="status" className="text-sm text-success">
-          Uploaded.
+          Uploaded {uploaded}.
         </p>
-      ) : null}
+      )}
       <ErrorNotice error={error} />
     </form>
   );

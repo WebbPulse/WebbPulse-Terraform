@@ -12,20 +12,61 @@ from __future__ import annotations
 import os
 import secrets
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Final
 
 import pytest
 from runs_cleanup import end_runs_for_workspace
 
 pytest_plugins = ["webbpulse.e2e"]
 
+MANAGES_RESOURCES_CODE = "WORKSPACE_MANAGES_RESOURCES"
+"""The code a safe delete is refused with while the workspace's state tracks resources."""
+
 RUN_ROLE_ARN_VARIABLE = "E2E_RUN_ROLE_ARN"
 
 JOURNEY_RUN_ROLE_ARN_VARIABLE = "E2E_JOURNEY_RUN_ROLE_ARN"
 
 STALE_SECONDS = 3600
+
+SESSION_ENDING_TESTS: Final = ("test_refresh_issues_a_new_token", "test_logout_ends_the_session")
+"""Shared suite cases that leave the session user's refresh family unusable, in run order.
+
+The refresh case rotates the refresh token without storing the rotation, so the next
+refresh sends a spent token and the family is revoked as a replay; the logout case revokes it.
+"""
+
+RUN_WIDE_CLASSES: Final = ("TestAccessLogHealth", "TestRouteCoverage")
+"""The groups a serial run orders last, which must still see the session-ending requests."""
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Run the session-ending identity cases after every other case on the session user.
+
+    They sort into `test_shared.py`, ahead of product modules such as `test_step_up.py`
+    whose step-up refreshes the same session, and that refresh is then refused. They are
+    moved to just after the last case using `user_session`, still ahead of the run-wide groups.
+    """
+    ending = sorted(
+        (item for item in items if item.name in SESSION_ENDING_TESTS),
+        key=lambda item: SESSION_ENDING_TESTS.index(item.name),
+    )
+    if not ending:
+        return
+    rest = [item for item in items if item.name not in SESSION_ENDING_TESTS]
+    last = max(
+        (
+            index
+            for index, item in enumerate(rest)
+            if "user_session" in getattr(item, "fixturenames", ())
+            and not any(part in RUN_WIDE_CLASSES for part in item.nodeid.split("::"))
+        ),
+        default=len(rest) - 1,
+    )
+    items[:] = rest[: last + 1] + ending + rest[last + 1 :]
+
 
 _DOCUMENT_ENVIRONMENT = {
     "ENVIRONMENT": "staging",
@@ -127,9 +168,10 @@ def pytest_e2e_journeys(env: Any) -> Any:
     a row one journey creates is neither ordered before nor even visible to the other.
 
     The locators are roles and accessible names rather than structure, so restyling the
-    shell or the table does not break them. The create form lives in a dialog behind the
-    "New workspace" button, and creating a workspace navigates straight to its detail
-    page, which is where the run role ARN is now saved through the setup checklist.
+    shell or the table does not break them. The "New workspace" link opens the stepped
+    `/workspaces/new` page, where the CLI-driven workflow tile goes straight to the
+    settings form, and creating a workspace navigates to its detail page, which is where
+    the run role ARN is saved through the setup checklist.
 
     The names are resolved here from the run's own prefix rather than left as `{run_id}`,
     because only `Fill`, `ExpectText` and `ExpectUrl` expand that placeholder: a `Click`
@@ -145,12 +187,14 @@ def pytest_e2e_journeys(env: Any) -> Any:
     opened = f"{prefix}ui-opened"
 
     def create(name: str) -> list[Any]:
-        """The steps that open the dialog and create a workspace called `name`."""
+        """The steps that walk the stepped new workspace page to create `name`."""
         return [
             Goto("/workspaces"),
-            Click("button:has-text('New workspace')"),
+            Click("a:has-text('New workspace')"),
+            ExpectUrl(r"/workspaces/new"),
+            Click("button:has-text('CLI-driven workflow')"),
             ExpectVisible("form[aria-label='Create a workspace']"),
-            Fill('form[aria-label="Create a workspace"] >> internal:label="Name"i', name),
+            Fill('form[aria-label="Create a workspace"] >> internal:label="Workspace name"i', name),
             Record({"kind": "workspace-name", "name": name}),
             Click("form[aria-label='Create a workspace'] button:has-text('Create workspace')"),
             ExpectUrl(r"/workspaces/ws-"),
@@ -179,7 +223,7 @@ def pytest_e2e_journeys(env: Any) -> Any:
                 ExpectUrl(r"/workspaces/ws-"),
                 ExpectText("h1", opened),
                 ExpectVisible("section[aria-labelledby='setup-checklist-title']"),
-                ExpectVisible("form[aria-label='Run role']"),
+                ExpectVisible("form[aria-label='Connect AWS']"),
                 ExpectVisible("nav[aria-label='Workspace sections']"),
             ],
         ),
@@ -216,22 +260,35 @@ def _cleanup_client(env: Any) -> Any:
 
 
 def _delete_workspace(client: Any, workspace_id: str) -> str:
-    """End this workspace's runs, then delete it, describing failures rather than raising.
+    """End this workspace's runs, then safe delete it, describing failures rather than raising.
 
-    The runs go first because deleting the workspace leaves them untouched, and a run
-    still planning or applying holds an execution open. A run that will not end is
-    reported but does not stop the delete, since leaving the workspace behind as well
-    would only add to what is orphaned.
+    The runs go first because an unfinished run refuses the delete. A safe delete that
+    is refused because state still tracks resources falls back to a force delete, so
+    no state object is left behind either way, but it is still reported as a failure:
+    a case that ends managing resources did not clean up after itself.
     """
     problems = [f"{workspace_id}: run {item}" for item in end_runs_for_workspace(client, workspace_id)]
+    path = f"/api/v1/workspaces/{workspace_id}"
     try:
-        response = client.delete(f"/api/v1/workspaces/{workspace_id}")
+        response = client.delete(path)
+        if response.status_code == 409 and _error_code(response) == MANAGES_RESOURCES_CODE:
+            problems.append(f"{workspace_id} still managed resources, so it was force deleted")
+            response = client.delete(path, params={"force": "true"})
     except Exception as error:
         problems.append(f"{workspace_id} ({type(error).__name__})")
         return "; ".join(problems)
     if response.status_code not in (200, 204, 404):
-        problems.append(f"{workspace_id} ({response.status_code})")
+        problems.append(f"{workspace_id} ({response.status_code} {_error_code(response) or ''})".strip())
     return "; ".join(problems)
+
+
+def _error_code(response: Any) -> str:
+    """The `error_code` a refusal carries, or an empty string when it carries none."""
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    return str(body.get("error_code") or "") if isinstance(body, dict) else ""
 
 
 def _workspace_ids(client: Any) -> list[dict[str, Any]]:
@@ -267,9 +324,10 @@ def _is_stale(item: dict[str, Any]) -> bool:
 def pytest_e2e_cleanup(env: Any, phase: str, created: Sequence[Any]) -> Any:
     """End this run's runs and delete its workspaces at the end, and stale ones at the start.
 
-    Deleting a workspace takes its variables and config versions with it, but not its
-    runs, so every non-terminal run is cancelled or discarded and waited out first.
-    Nothing a case started is still executing once this returns.
+    A workspace delete refuses while a run is unfinished, so every non-terminal run is
+    cancelled or discarded and waited out first, and the delete then takes the finished
+    runs, the current state and the variables with it. Nothing a case started is still
+    executing once this returns.
     """
     if env.read_only:
         return ""
@@ -359,12 +417,37 @@ def run_role_arn(e2e_env: Any) -> str:
     return value
 
 
+@pytest.fixture(scope="session")
+def step_up_again(user_session: Any, credentials: Any) -> Callable[[], Any]:
+    """Step the run's login up and hand back its client, for a gated call made long after the case began.
+
+    `stepped_up_session` steps up once, when a case starts, but a plan and an apply can
+    outlast the step-up window, and a module scoped fixture cannot use a function scoped
+    one. So a gated call that comes late steps up again right before it is sent.
+    """
+    from webbpulse.e2e.identity import step_up
+
+    def again() -> Any:
+        """Step up now and return the shared authenticated client."""
+        return step_up(user_session, credentials.password).client
+
+    return again
+
+
 @pytest.fixture
-def workspace(api: Any, e2e_env: Any, run_role_arn: str, created_resources: list[Any]) -> Iterator[dict[str, Any]]:
+def workspace(
+    api: Any,
+    e2e_env: Any,
+    run_role_arn: str,
+    created_resources: list[Any],
+    step_up_again: Callable[[], Any],
+) -> Iterator[dict[str, Any]]:
     """A workspace this run owns, registered for cleanup before it is used.
 
-    Teardown ends every run the case left behind, whether it passed or failed, so no
-    execution outlives the case even though the session sweep would also catch it.
+    Teardown ends every run the case left behind and safe deletes the workspace,
+    whether the case passed or failed, so no execution, state object or run row
+    outlives it. A workspace still managing resources is force deleted and the
+    teardown fails, naming it. The delete is step-up gated, so teardown steps up first.
     """
     body = {
         "name": f"{e2e_env.resource_prefix}{secrets.token_hex(3)}",
@@ -380,6 +463,6 @@ def workspace(api: Any, e2e_env: Any, run_role_arn: str, created_resources: list
     try:
         yield created
     finally:
-        unfinished = end_runs_for_workspace(api, str(created["workspace_id"]))
-        if unfinished:
-            print(f"e2e cleanup could not end run(s): {', '.join(unfinished)}")
+        failure = _delete_workspace(step_up_again(), str(created["workspace_id"]))
+        if failure:
+            pytest.fail(f"e2e teardown did not leave the workspace cleanly deleted: {failure}")

@@ -12,11 +12,14 @@ guarded only by `require_scopes` cannot tell them apart and an agent could mint
 its own successor. `ACTOR_CLAIM` is what does tell them apart, and the mint route
 refuses a key actor outright.
 
-A key never carries more than its minter holds. The control plane has no
-membership store for `claims_or_api_key` to intersect a key against on every
-request, so the stored scope set is the key's authority for as long as it lives.
-The narrowing therefore has to happen once, at mint time, against the claims the
-minter presented.
+A key never carries more than its minter holds. The narrowing happens at mint
+time against the claims the minter presented, and again on every request, where
+`auth.key_owner_scopes` intersects the stored set with what the owner holds now,
+so a demoted or disabled owner's keys lose what the owner lost.
+
+A key always expires. One minted without an expiry gets `DEFAULT_EXPIRY_DAYS`,
+and none may be set further out than `MAX_EXPIRY_DAYS`. Keys minted before the
+rule keep the expiry they were minted with.
 
 A key belongs to the person who minted it. The list route answers one caller's
 own keys and the revoke route refuses another person's, except for an admin, who
@@ -27,7 +30,7 @@ admin is there to withdraw.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final
 
 from webbpulse.dynamodb import now_iso
@@ -41,13 +44,14 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from ...common.composition.settings import Settings
 
-MAX_EXPIRY_YEARS: Final = 2
-"""The furthest ahead a key may be set to expire, in years.
+DEFAULT_EXPIRY_DAYS: Final = 90
+"""How long a key minted without an expiry lasts, in days."""
 
-A ceiling rather than a required expiry: a key belonging to a service has no
-person watching it, and forcing one would trade a quiet expiry for a quiet
-outage. Two years is long enough not to be in anybody's way and short enough that
-a key minted for a machine that was decommissioned does not outlive the estate.
+MAX_EXPIRY_DAYS: Final = 365
+"""The furthest ahead a key may be set to expire, in days.
+
+A key has no person watching it once minted, so a leaked one is useful for as
+long as it lives. A year bounds that without making a service key a monthly chore.
 """
 
 MAX_KEYS_PER_USER: Final = 25
@@ -82,7 +86,7 @@ class ScopesExceeded(Exception):
 
 
 class ExpiryOutOfRange(Exception):
-    """The requested expiry is in the past or beyond `MAX_EXPIRY_YEARS`."""
+    """The requested expiry is in the past or beyond `MAX_EXPIRY_DAYS`."""
 
 
 class TooManyKeys(Exception):
@@ -151,20 +155,23 @@ def narrowed_scopes(requested: "Iterable[str] | None", held: "Iterable[str]") ->
 
 
 def checked_expiry(expires_at: datetime | None, *, now: datetime | None = None) -> int:
-    """`expires_at` as the Unix timestamp the record stores, or `0` for never.
+    """`expires_at` as the Unix timestamp the record stores.
+
+    `None` means the default, `DEFAULT_EXPIRY_DAYS` from now, so no new key is
+    minted without an end.
 
     Raises:
         ExpiryOutOfRange: The moment has already passed, or it is further than
-            `MAX_EXPIRY_YEARS` ahead.
+            `MAX_EXPIRY_DAYS` ahead.
     """
-    if expires_at is None:
-        return 0
-    moment = expires_at if expires_at.tzinfo is not None else expires_at.replace(tzinfo=UTC)
     reference = now or datetime.now(UTC)
+    if expires_at is None:
+        return int((reference + timedelta(days=DEFAULT_EXPIRY_DAYS)).timestamp())
+    moment = expires_at if expires_at.tzinfo is not None else expires_at.replace(tzinfo=UTC)
     if moment <= reference:
         raise ExpiryOutOfRange("The expiry has already passed.")
-    if moment.timestamp() - reference.timestamp() > MAX_EXPIRY_YEARS * 365 * 24 * 3600:
-        raise ExpiryOutOfRange(f"A key may not last longer than {MAX_EXPIRY_YEARS} years.")
+    if moment - reference > timedelta(days=MAX_EXPIRY_DAYS):
+        raise ExpiryOutOfRange(f"A key may not last longer than {MAX_EXPIRY_DAYS} days.")
     return int(moment.timestamp())
 
 
@@ -209,7 +216,7 @@ def mint_key(
         requested_scopes: What the key should carry, or `None` for everything the
             minter holds.
         held_scopes: What the minter holds, which is the ceiling.
-        expires_at: When the key stops working, or `None` for never.
+        expires_at: When the key stops working, or `None` for the default.
         settings: Settings override, for the suite.
 
     Returns:
@@ -301,7 +308,8 @@ def render_key(record: ApiKeyRecord) -> dict[str, Any]:
 
 __all__ = [
     "ALL_SCOPES",
-    "MAX_EXPIRY_YEARS",
+    "DEFAULT_EXPIRY_DAYS",
+    "MAX_EXPIRY_DAYS",
     "MAX_KEYS_PER_USER",
     "ApiKeyRecord",
     "ExpiryOutOfRange",

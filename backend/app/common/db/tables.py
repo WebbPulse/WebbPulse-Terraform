@@ -14,12 +14,37 @@ RUNS: Final = "runs"
 VARIABLES: Final = "variables"
 CONFIG_VERSIONS: Final = "config-versions"
 USERS: Final = "users"
+GITHUB: Final = "github"
+VCS_UPLOADS: Final = "vcs-uploads"
+REGISTRY: Final = "registry"
 
 WORKSPACES_BY_NAME_INDEX: Final = "by_name"
 """The GSI enforcing one workspace per name, and resolving a name to a workspace."""
 
+WORKSPACES_BY_VCS_REPO_INDEX: Final = "by_vcs_repo"
+"""The GSI finding the workspaces bound to a repository by its lowercased `owner/name`."""
+
+WORKSPACES_BY_VCS_REPOSITORY_ID_INDEX: Final = "by_vcs_repository_id"
+"""The GSI finding the workspaces bound to a repository by its GitHub id, which a
+rename leaves unchanged."""
+
+VCS_UPLOADS_TTL_ATTRIBUTE: Final = "expires_at"
+"""The epoch seconds attribute DynamoDB expires an ingest record on."""
+
 RUNS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 """The GSI listing one workspace's runs, newest last by `created_at`."""
+
+RUNS_BY_RECENCY_INDEX: Final = "by_recency"
+"""The GSI listing every workspace's runs together, newest last by `run_id`.
+
+Partitioned on the constant `collection` attribute, since a cross-workspace list has
+no natural key to group on and run volume sits far under one partition's ceiling.
+`run_id` is a ULID, so it orders by creation time on its own.
+"""
+
+RUNS_COLLECTION: Final = "run"
+"""The one value `collection` holds. Stamped on every run row at create and never
+on the semaphore row, so the reserved row stays out of `by_recency`."""
 
 CONFIG_VERSIONS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 """The GSI listing one workspace's config versions, newest last by `created_at`."""
@@ -41,13 +66,25 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
         "AttributeDefinitions": [
             {"AttributeName": "workspace_id", "AttributeType": "S"},
             {"AttributeName": "name", "AttributeType": "S"},
+            {"AttributeName": "vcs_repo_key", "AttributeType": "S"},
+            {"AttributeName": "vcs_repository_id", "AttributeType": "S"},
         ],
         "GlobalSecondaryIndexes": [
             {
                 "IndexName": WORKSPACES_BY_NAME_INDEX,
                 "KeySchema": [{"AttributeName": "name", "KeyType": "HASH"}],
                 "Projection": {"ProjectionType": "ALL"},
-            }
+            },
+            {
+                "IndexName": WORKSPACES_BY_VCS_REPO_INDEX,
+                "KeySchema": [{"AttributeName": "vcs_repo_key", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+            },
+            {
+                "IndexName": WORKSPACES_BY_VCS_REPOSITORY_ID_INDEX,
+                "KeySchema": [{"AttributeName": "vcs_repository_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+            },
         ],
     },
     RUNS: {
@@ -57,6 +94,7 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
             {"AttributeName": "run_id", "AttributeType": "S"},
             {"AttributeName": "workspace_id", "AttributeType": "S"},
             {"AttributeName": "created_at", "AttributeType": "S"},
+            {"AttributeName": "collection", "AttributeType": "S"},
         ],
         "GlobalSecondaryIndexes": [
             {
@@ -66,7 +104,15 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
                     {"AttributeName": "created_at", "KeyType": "RANGE"},
                 ],
                 "Projection": {"ProjectionType": "ALL"},
-            }
+            },
+            {
+                "IndexName": RUNS_BY_RECENCY_INDEX,
+                "KeySchema": [
+                    {"AttributeName": "collection", "KeyType": "HASH"},
+                    {"AttributeName": "run_id", "KeyType": "RANGE"},
+                ],
+                "Projection": {"ProjectionType": "ALL"},
+            },
         ],
     },
     VARIABLES: {
@@ -114,9 +160,40 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
             }
         ],
     },
+    GITHUB: {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+            {"AttributeName": "pk", "KeyType": "HASH"},
+            {"AttributeName": "sk", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "pk", "AttributeType": "S"},
+            {"AttributeName": "sk", "AttributeType": "S"},
+        ],
+    },
+    VCS_UPLOADS: {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [{"AttributeName": "upload_id", "KeyType": "HASH"}],
+        "AttributeDefinitions": [{"AttributeName": "upload_id", "AttributeType": "S"}],
+    },
+    REGISTRY: {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+            {"AttributeName": "pk", "KeyType": "HASH"},
+            {"AttributeName": "sk", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "pk", "AttributeType": "S"},
+            {"AttributeName": "sk", "AttributeType": "S"},
+        ],
+    },
 }
 
-ALL_TABLES: Final = (WORKSPACES, RUNS, VARIABLES, CONFIG_VERSIONS, USERS)
+GITHUB_TTL_ATTRIBUTE: Final = "expires_at"
+"""The GitHub table's TTL attribute. Terraform enables it; a read checks it too,
+because DynamoDB deletes expired rows up to days late."""
+
+ALL_TABLES: Final = (WORKSPACES, RUNS, VARIABLES, CONFIG_VERSIONS, USERS, GITHUB, VCS_UPLOADS, REGISTRY)
 """Every logical table, in creation order. The suite and the local script walk it."""
 
 

@@ -7,7 +7,7 @@ import { invalidateQueries } from '@webbpulse/api-client/react';
 import {
   RUN_ROLE_MISSING_MESSAGE,
   api,
-  isConnected,
+  hasRunRole,
   isRunRoleMissing,
   type ConfigVersion,
   type Workspace,
@@ -16,14 +16,13 @@ import {
   Button,
   EmptyState,
   ErrorNotice,
+  RelativeTime,
   Spinner,
   Table,
   Td,
   Th,
   Tr,
   formatBytes,
-  formatDateTime,
-  formatRelative,
   runPath,
 } from '../../components';
 import { UploadConfigForm } from './UploadConfigForm';
@@ -46,7 +45,7 @@ export function ConfigVersionsTab({
   error,
   keys,
 }: ConfigVersionsTabProps): React.ReactElement {
-  const connected = isConnected(workspace);
+  const connected = hasRunRole(workspace);
   return (
     <div className="space-y-5">
       <ErrorNotice error={error} />
@@ -63,8 +62,8 @@ export function ConfigVersionsTab({
           role="note"
           className="rounded-md border border-warning-line bg-warning-soft px-3 py-2 text-sm text-warning"
         >
-          {RUN_ROLE_MISSING_MESSAGE} Runs stay disabled until the connection
-          check passes under Settings, AWS account.
+          {RUN_ROLE_MISSING_MESSAGE} Save a role ARN under Settings, AWS
+          account. The first run proves the runner can assume it.
         </p>
       )}
       {isLoading ? (
@@ -127,11 +126,8 @@ function ConfigVersionTable({
             <Td className="font-mono text-xs text-text-muted">
               {formatBytes(version.size_bytes)}
             </Td>
-            <Td
-              className="text-xs whitespace-nowrap text-text-faint"
-              title={formatDateTime(version.created_at)}
-            >
-              {formatRelative(version.created_at)}
+            <Td className="text-xs whitespace-nowrap text-text-faint">
+              <RelativeTime iso={version.created_at} />
             </Td>
             <Td className="text-right">
               {version.status === 'uploaded' ? (
@@ -201,7 +197,7 @@ function StartRunButtons({
         config_version_id: configVersionId,
         plan_only: planOnly,
       });
-      invalidateQueries([runsKey]);
+      invalidateQueries(runsKey);
       void navigate(runPath({ run_id: run.run_id, workspace_id: workspaceId }));
     } catch (thrown) {
       setError(

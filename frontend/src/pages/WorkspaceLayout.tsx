@@ -1,14 +1,18 @@
 /** The frame every workspace page shares: its header, its queries and its routes. */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet, useParams } from 'react-router-dom';
-import { usePolledQuery } from '@webbpulse/api-client/react';
+import { invalidateQueries, usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
+  RUN_ROLE_MISSING_MESSAGE,
+  accountStatus,
+  accountStatusLabel,
   api,
-  isConnected,
+  hasRunRole,
   type ConfigVersionList,
+  type RunRoleCheck,
   type RunList,
   type Workspace,
 } from '../api';
@@ -17,11 +21,11 @@ import {
   CopyButton,
   ErrorNotice,
   PageHeader,
+  RelativeTime,
   Spinner,
-  formatDateTime,
-  formatRelative,
   useWorkspaceNav,
 } from '../components';
+import { useRunRoleCheck, useSwitchToVerifiedRole } from './useRunRoleCheck';
 import { NewRunDialog } from './workspace/NewRunDialog';
 import { isSetupComplete, setupSteps } from './workspace/setup';
 import { workspaceKeys, type WorkspaceContext } from './workspaceContext';
@@ -46,6 +50,32 @@ export function WorkspaceLayout(): React.ReactElement {
     ({ signal }) => api.listRuns({ workspace_id: workspaceId }, { signal }),
     { intervalMs: 10_000, queryKey: keys.runs, auth, enabled }
   );
+  const runRoleCheck = useRunRoleCheck(query.data);
+  useSwitchToVerifiedRole(query.data, runRoleCheck);
+  const runSignature =
+    runs.data === null
+      ? null
+      : runs.data.items.map((run) => `${run.run_id}:${run.status}`).join(',');
+  const seenRuns = useRef<{ workspaceId: string; signature: string } | null>(
+    null
+  );
+  const checkKey = keys.runRoleCheck;
+
+  useEffect(() => {
+    if (runSignature === null) {
+      return;
+    }
+    const seen = seenRuns.current;
+    seenRuns.current = { workspaceId, signature: runSignature };
+    if (
+      seen !== null &&
+      seen.workspaceId === workspaceId &&
+      seen.signature !== runSignature
+    ) {
+      invalidateQueries(checkKey);
+    }
+  }, [runSignature, workspaceId, checkKey]);
+
   const name = query.data?.name ?? null;
   const { setName } = rail;
 
@@ -80,6 +110,7 @@ export function WorkspaceLayout(): React.ReactElement {
     workspace,
     versions: versionItems,
     runs: runItems,
+    runRoleCheck,
     steps,
     settled,
     setupComplete: ready,
@@ -95,6 +126,7 @@ export function WorkspaceLayout(): React.ReactElement {
     <div className="space-y-6">
       <WorkspaceHeader
         workspace={workspace}
+        runRoleCheck={runRoleCheck}
         settled={settled}
         ready={ready}
         onNewRun={() => {
@@ -119,16 +151,19 @@ export function WorkspaceLayout(): React.ReactElement {
 /** The header every workspace page opens with. */
 function WorkspaceHeader({
   workspace,
+  runRoleCheck,
   settled,
   ready,
   onNewRun,
 }: {
   workspace: Workspace;
+  runRoleCheck: RunRoleCheck | null;
   settled: boolean;
   ready: boolean;
   onNewRun: () => void;
 }): React.ReactElement {
   const updated = workspace.updated_at ?? workspace.created_at;
+  const account = accountStatus(workspace, runRoleCheck);
   return (
     <div className="space-y-3 border-b border-line pb-4">
       <PageHeader
@@ -160,12 +195,8 @@ function WorkspaceHeader({
         actions={
           <Button
             variant="primary"
-            disabled={!isConnected(workspace)}
-            title={
-              isConnected(workspace)
-                ? undefined
-                : 'Connect an AWS account before starting a run.'
-            }
+            disabled={!hasRunRole(workspace)}
+            title={hasRunRole(workspace) ? undefined : RUN_ROLE_MISSING_MESSAGE}
             onClick={onNewRun}
           >
             + New run
@@ -189,15 +220,17 @@ function WorkspaceHeader({
         </Fact>
         <Divider />
         <Fact label="AWS account">
-          {isConnected(workspace) ? (
-            <span className="font-mono">{workspace.run_role_account_id}</span>
-          ) : (
-            'Not connected'
-          )}
+          <span
+            data-testid="workspace-account"
+            data-connection={account.state}
+            className={account.state === 'connected' ? 'font-mono' : undefined}
+          >
+            {accountStatusLabel(account)}
+          </span>
         </Fact>
         <Divider />
         <Fact label="Updated">
-          <span title={formatDateTime(updated)}>{formatRelative(updated)}</span>
+          <RelativeTime iso={updated} />
         </Fact>
       </dl>
     </div>

@@ -24,22 +24,27 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `versions.tf` | Terraform and provider constraints, the `cloud {}` block |
 | `providers.tf` | The default provider, `us_east_1` for the CloudFront cert, `dns` and `parent_dns` assume-role aliases |
 | `variables.tf`, `locals.tf`, `data.tf` | Inputs, the derived names, the caller identity |
-| `dynamodb.tf` | The four tables: workspaces, runs, variables, config-versions |
-| `s3.tf` | The state bucket and the artifacts bucket, each with its own KMS key |
-| `ecr.tf` | `webbpulse-terraform/{workspaces,runs,runner}` |
-| `lambda_domains.tf` | The `workspaces` and `runs` functions, their roles and inline policies |
-| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer |
+| `dynamodb.tf` | The tables: workspaces, runs, variables, config-versions, users, github, registry, and vcs-uploads, whose ingest records expire through TTL |
+| `s3.tf` | The state bucket and the artifacts bucket, each with its own KMS key. The artifacts bucket sends EventBridge notifications and `ingest/` expires after 3 days. Published modules under `registry/modules/` never expire |
+| `ecr.tf` | `webbpulse-terraform/{workspaces,runs,github,registry,runner}` |
+| `lambda_domains.tf` | The `workspaces`, `runs`, `github` and `registry` functions, their roles and inline policies |
+| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer. The runner routes, the GitHub webhook route and the `/v1/modules/` registry protocol routes carry `authorization_type = "NONE"`, so neither the identity JWT nor the staging gate applies; each verifies its own token in the function |
 | `identity.tf`, `app_secrets.tf` | The identity platform module and the single JSON `app` secret |
 | `vpc.tf`, `ecs.tf`, `runner_logs.tf` | The public-only VPC, the Fargate cluster and the two phase task definitions, the runner log group |
 | `step_functions.tf`, `state_machines/run.asl.json` | The per-run state machine |
 | `sqs.tf` | The run confirmations queue the state machine's task token is sent through |
+| `vcs_ingest.tf` | The EventBridge rule on Object Created under `ingest/` in the artifacts bucket, and the queue it feeds the `runs` function as `config_ingested` messages |
+| `registry.tf` | The module registry's ingest queue: the github function sends each semantic version tag push to it as a `module_tag` message and the `registry` function consumes it |
+| `workspace_cleanup.tf` | The queue a workspace delete sends its run artifacts, config tarballs and state history purge to, consumed by the `runs` function as `workspace_cleanup` messages |
 | `task_failures.tf` | The EventBridge rule on runner tasks that failed to start, and the queue it feeds so a run fails without waiting out its phase heartbeat |
-| `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, the certificates, the staging child zone with its NS delegation, and the alias records |
+| `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, whose `/.well-known/terraform.json` (emitted by the Vite build, `modules.v1` on the API host) is a public path past the staging gate, the certificates, the staging child zone with its NS delegation, and the alias records |
 | `staging_access_gate.tf` | Staging only, the email gate in front of the site and the API |
 | `iam_github_actions.tf` | The deploy and CI OIDC roles |
 | `monitoring.tf`, `management.tf` | The three aggregate alarms in production, budgets |
 | `transaction_search.tf` | The shared `transaction-search` module: the X-Ray trace segment destination, the spans log resource policy and the indexing rule |
 | `example_run_role.tf` | The run role for the first end to end run, gated on `var.example_workspace_id` |
+| `config.tf` | The operator-owned `/<prefix>/config` SSM parameter |
+| `env/*.tfvars` | Non-secret per environment config, including `identity_jwt_mode` (`gate` in staging, `lambda` in production; production refuses `off` and `gate` at plan time) |
 | `outputs.tf` | Everything the workflows and the GitHub environment variables read |
 
 ## Hostnames
@@ -68,9 +73,41 @@ Set `bootstrap_image_tag` by hand as a workspace variable on the HCP workspace,
 not through the factory. It must be `sha-` followed by a full 40 character
 commit sha, which is the tag the image build pushes.
 
+In a fresh account every domain's repository is new, so run 2 also sets
+`domain_image_tags` for `github` and `registry` to the same tag. Run 1 creates
+no authorizer: the identity JWT authorizer needs routes, and there are none
+until the functions exist.
+
 The tag is read only when a function is created. It can expire out of ECR,
 which keeps three tagged images, without affecting a running function, so
 refresh it to a tag that still exists before any apply that recreates one.
+
+### A domain added later
+
+A domain added after an account is bootstrapped, today `github` and `registry`, is declared
+with `own_image_tag = true`. Its ECR repository is new, so it holds no image and
+`bootstrap_image_tag` cannot seed it. The domain stays out of the function map
+until `var.domain_image_tags` names a tag for it.
+
+| Run | `domain_image_tags` | What happens |
+| --- | --- | --- |
+| 1 | `{}` | The domain's ECR repository and table, and the deploy role's push grant on the repository |
+| between | n/a | Merge the backend to `staging`. `deploy-backend` pushes `sha-<head sha>` to the new repository and skips the missing function |
+| 2 | `{ github = "sha-<head sha>" }` | The function, its integration, routes, runtime policy and identity grant |
+
+Set it as an HCL workspace variable. It is read only at create time, like
+`bootstrap_image_tag`.
+
+## GitHub App
+
+Each environment has one operator owned GitHub App, created from the GitHub
+settings page through the App manifest flow. The `github` function writes the
+App's `GITHUB_*` keys into the `app` secret with a read, merge and put, which is
+why that secret sets `json_preserve_unmanaged` and why the `github` role alone
+holds `secretsmanager:PutSecretValue` on it. Terraform declares none of those
+keys, so an apply never removes them. The App slug and id are stored in the
+`github` table; `var.github_app_slug` is only the fallback passed as
+`GITHUB_APP_SLUG`.
 
 ## Transaction Search
 
@@ -94,18 +131,29 @@ Terraform allows `import` only there, and it targets the module's log group. Nei
 workspace refuses to plan. `reduced` skips the custom domains and the gate;
 `full` adds both.
 
+## Configuration
+
+Non-secret per environment config lives in `env/<environment>.tfvars`, which
+WebbPulse-Platform loads on every plan through the workspace's `TF_CLI_ARGS_plan`
+(`-var-file`). A value there overrides a workspace variable of the same name, so
+the image tags stay hand-set workspace variables and never go in the file.
+Secrets live only in the `app` secret and are set with `webbpulse-config secret
+set`. Private non-secret config lives in the SSM parameter `/<prefix>/config`,
+which `config.tf` creates as `{}` and never writes again; set keys with
+`webbpulse-config config set`.
+
 ## Variables set on the workspace
 
-Everything else takes its default.
+Everything else takes its default or comes from `env/<environment>.tfvars`.
 
 | Variable | Value |
 | --- | --- |
 | `environment` | `staging` or `production` |
 | `staging_profile` | `none`, `reduced` or `full` |
 | `bootstrap_image_tag` | `""` on run 1, then `sha-<head sha>`; see the bootstrap sequence |
+| `domain_image_tags` | `{}` until a later domain's first image is pushed, then `{ github = "sha-<head sha>" }`; see A domain added later |
 | `runner_image_tag` | The runner image tag the task definitions point at. Unlike a Lambda image it is not ignored, so a revision follows it |
 | `route53_zone_id`, `route53_write_role_arn` | The parent zone and the role that writes into it, both required when `staging_profile` is `full` |
 | `staging_access_gate`, `staging_access_users` | Staging only: put the site and API behind the email gate, and who may sign in |
-| `identity_jwt_mode` | `off`, `gate` or `native`. Staging uses `gate`, production `native` |
 | `adopt_spans_log_group` | `false` until the first span is written, then `true`; see Transaction Search |
 | `example_workspace_id` | The `ws-` id of the example workspace. Non-empty creates the example run role for the first end to end run; empty, the default, creates nothing. See `examples/first-run/README.md` |

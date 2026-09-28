@@ -5,9 +5,13 @@ locals {
       attributes = [
         { name = "workspace_id", type = "S" },
         { name = "name", type = "S" },
+        { name = "vcs_repo_key", type = "S" },
+        { name = "vcs_repository_id", type = "S" },
       ]
       global_secondary_indexes = [
         { name = "by_name", hash_key = "name", projection_type = "ALL" },
+        { name = "by_vcs_repo", hash_key = "vcs_repo_key", projection_type = "ALL" },
+        { name = "by_vcs_repository_id", hash_key = "vcs_repository_id", projection_type = "ALL" },
       ]
     }
 
@@ -17,10 +21,13 @@ locals {
         { name = "run_id", type = "S" },
         { name = "workspace_id", type = "S" },
         { name = "created_at", type = "S" },
+        { name = "collection", type = "S" },
       ]
       global_secondary_indexes = [
         { name = "by_workspace", hash_key = "workspace_id", range_key = "created_at", projection_type = "ALL" },
+        { name = "by_recency", hash_key = "collection", range_key = "run_id", projection_type = "ALL" },
       ]
+      stream_view_type = "NEW_AND_OLD_IMAGES"
     }
 
     variables = {
@@ -44,6 +51,15 @@ locals {
       ]
     }
 
+    "vcs-uploads" = {
+      hash_key = "upload_id"
+      attributes = [
+        { name = "upload_id", type = "S" },
+      ]
+      ttl_attribute          = "expires_at"
+      point_in_time_recovery = false
+    }
+
     users = {
       hash_key = "id"
       attributes = [
@@ -54,12 +70,32 @@ locals {
         { name = "email_lower-index", hash_key = "email_lower", projection_type = "ALL" },
       ]
     }
+
+    registry = {
+      hash_key      = "pk"
+      range_key     = "sk"
+      ttl_attribute = "expires_at"
+      attributes = [
+        { name = "pk", type = "S" },
+        { name = "sk", type = "S" },
+      ]
+    }
+
+    github = {
+      hash_key      = "pk"
+      range_key     = "sk"
+      ttl_attribute = "expires_at"
+      attributes = [
+        { name = "pk", type = "S" },
+        { name = "sk", type = "S" },
+      ]
+    }
   }
 }
 
 module "dynamodb" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/dynamodb-tables"
-  version = "~> 2.27"
+  version = "~> 2.32"
 
   name_prefix = local.prefix
   tables      = local.dynamodb_tables

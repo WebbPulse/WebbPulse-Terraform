@@ -1,27 +1,35 @@
 """The runs domain's routes, including the three the runner owns.
 
-Eleven routes on two different credentials. Eight are guarded by
-`require_scopes` and reached by a person through the JWT authorizer or an agent
-through a `wpk_` key. Three, the bundle, the artifact upload and the phase
-result, are guarded by a run token bound to the run in the path, because the
-bundle carries decrypted variables and no human scope should open it.
+Routes on three different credentials. Most are guarded by `require_scopes`
+and reached by a person through the JWT authorizer or an agent through a `wpk_`
+key. Three, the bundle, the artifact upload and the phase result, are guarded by
+a run token bound to the run in the path, because the bundle carries decrypted
+variables and no human scope should open it. The runner token route is guarded
+by nothing but the runner task's own signed AWS identity, which is how the
+runner gets that run token without it passing through the execution input.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
+from webbpulse.identity.claims import AuthorizerClaims
 
 from ...common.core.auth import (
     RUNS_APPLY,
     RUNS_READ,
     RUNS_WRITE,
+    RunnerRoute,
+    claims,
     require_run_token,
     scopes,
+    sudo,
+    unauthenticated,
 )
-from ..workspaces import service as workspaces_service
-from . import service
+from ...common.workspaces import reads as workspace_reads
+from . import phase_tasks, runner_tokens, service, vending
+from .actor import actor_from_claims
 from .schemas.run import (
     ArtifactUpload,
     ArtifactUploadCreate,
@@ -32,14 +40,25 @@ from .schemas.run import (
     RunBundle,
     RunCreate,
     RunCreated,
+    RunDecisionRequest,
     RunList,
+    RunnerToken,
+    RunnerTokenRequest,
     RunPlan,
 )
 
 router = APIRouter()
+runner_router = APIRouter(route_class=RunnerRoute)
+"""The four runner routes, whose validation failures answer 401 to a caller without a run token."""
 
-RunId = Path(min_length=4, max_length=64, pattern=r"^run-[0-9A-HJKMNP-TV-Z]{26}$")
-WorkspaceIdQuery = Query(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
+RUN_ID_PATTERN = r"^run-[0-9A-HJKMNP-TV-Z]{26}$"
+RunId = Path(min_length=4, max_length=64, pattern=RUN_ID_PATTERN)
+WorkspaceIdQuery = Query(
+    default=None,
+    min_length=4,
+    max_length=64,
+    pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+)
 
 
 def _not_found(message: str) -> HTTPException:
@@ -56,6 +75,19 @@ def _conflict(message: str, *, error_code: str | None = None) -> HTTPException:
 RUN_ROLE_MISSING_CODE = "RUN_ROLE_MISSING"
 """The code a caller matches on to send a person to the workspace's run role setup."""
 
+PENDING_RUN_ROLE_MISSING_CODE = "PENDING_RUN_ROLE_MISSING"
+"""The code a run role check carries when the workspace has no staged role to verify."""
+
+RUN_ROLE_ASSUME_FAILED_CODE = "RUN_ROLE_ASSUME_FAILED"
+"""The code a bundle carries when the workspace's run role refused the vending role.
+The runner reports it as `AssumeRoleFailed`, which is what the run role check reads."""
+
+RUN_CREDENTIALS_UNAVAILABLE_CODE = "RUN_CREDENTIALS_UNAVAILABLE"
+"""The code a bundle carries when this deployment could not vend credentials at all."""
+
+PHASE_TASK_UNRESOLVED_CODE = "PHASE_TASK_UNRESOLVED"
+"""The code a phase result carries when no runner task of the phase matches the run."""
+
 
 @router.post(
     "/runs",
@@ -63,7 +95,10 @@ RUN_ROLE_MISSING_CODE = "RUN_ROLE_MISSING"
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(scopes(RUNS_WRITE))],
 )
-def create_run(payload: RunCreate) -> dict[str, Any]:
+def create_run(
+    payload: RunCreate,
+    current: AuthorizerClaims = Depends(claims),
+) -> dict[str, Any]:
     """Queue or start a run.
 
     A run queued behind the workspace's active one comes back `pending` with
@@ -72,21 +107,33 @@ def create_run(payload: RunCreate) -> dict[str, Any]:
 
     A workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the
     runner would have nothing to assume.
+
+    `run_role_check` starts a plan only run that assumes the workspace's staged
+    `pending_run_role_arn` rather than its current role. It is a 409 carrying
+    `PENDING_RUN_ROLE_MISSING` when no role is staged.
+
+    The actor is taken from the verified claims here, because this request is the
+    only moment the triggering principal is known.
     """
     try:
-        created = service.create_run(payload.model_dump())
-    except workspaces_service.WorkspaceNotFound as error:
+        created = service.create_run(payload.model_dump(), actor=actor_from_claims(current))
+    except workspace_reads.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
-    except workspaces_service.RunRoleMissing as error:
+    except workspace_reads.RunRoleMissing as error:
         raise _conflict(
             "This workspace has no run role ARN yet, so a run has nothing to assume.",
             error_code=RUN_ROLE_MISSING_CODE,
         ) from error
-    except workspaces_service.ConfigVersionNotFound as error:
+    except service.PendingRunRoleMissing as error:
+        raise _conflict(
+            "This workspace has no staged run role, so there is nothing for a run role check to verify.",
+            error_code=PENDING_RUN_ROLE_MISSING_CODE,
+        ) from error
+    except workspace_reads.ConfigVersionNotFound as error:
         raise _not_found("No such config version.") from error
     except service.ConfigVersionNotReady as error:
         raise _conflict("That config version has no uploaded configuration.") from error
-    return service.render_run(created) | {"run_token": created.get("run_token")}
+    return service.render_run(created)
 
 
 @router.get(
@@ -94,13 +141,37 @@ def create_run(payload: RunCreate) -> dict[str, Any]:
     response_model=RunList,
     dependencies=[Depends(scopes(RUNS_READ))],
 )
-def list_runs(workspace_id: str = WorkspaceIdQuery) -> dict[str, Any]:
-    """One workspace's runs, newest first. The workspace is required."""
-    try:
-        items = service.list_runs(workspace_id)
-    except workspaces_service.WorkspaceNotFound as error:
-        raise _not_found("No such workspace.") from error
-    return {"items": [service.render_run(item) for item in items]}
+def list_runs(
+    workspace_id: Optional[str] = WorkspaceIdQuery,
+    limit: Optional[int] = Query(default=None, ge=1, le=service.MAX_RUN_PAGE_SIZE),
+    cursor: Optional[str] = Query(default=None, pattern=RUN_ID_PATTERN),
+) -> dict[str, Any]:
+    """Runs, newest first, in one workspace or across every workspace.
+
+    Naming `workspace_id` returns that workspace's runs in full and 404s for a
+    workspace that does not exist, unchanged. Omitting it returns a page of every
+    workspace's runs off the recency index; pass `next_cursor` back as `cursor`
+    to continue. `limit` and `cursor` page only the cross-workspace list, so they
+    are refused alongside a workspace rather than ignored.
+
+    Both modes need exactly `runs:read`, the only check the per-workspace list
+    has ever made: there is no per-workspace ACL, so the cross-workspace list
+    returns nothing the caller could not list one workspace at a time.
+    """
+    if workspace_id is not None:
+        if limit is not None or cursor is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="limit and cursor page only the cross-workspace list.",
+            )
+        try:
+            items = service.list_runs(workspace_id)
+        except workspace_reads.WorkspaceNotFound as error:
+            raise _not_found("No such workspace.") from error
+        return {"items": [service.render_run(item) for item in items], "next_cursor": None}
+
+    items, next_cursor = service.list_all_runs(limit=limit or service.DEFAULT_RUN_PAGE_SIZE, cursor=cursor)
+    return {"items": [service.render_run(item) for item in items], "next_cursor": next_cursor}
 
 
 @router.get(
@@ -119,12 +190,20 @@ def get_run(run_id: str = RunId) -> dict[str, Any]:
 @router.post(
     "/runs/{run_id}/confirm",
     response_model=Run,
-    dependencies=[Depends(scopes(RUNS_APPLY))],
+    dependencies=[Depends(sudo(RUNS_APPLY))],
 )
-def confirm_run(run_id: str = RunId) -> dict[str, Any]:
-    """Apply a planned run. Needs `runs:apply`, not `runs:write`."""
+def confirm_run(
+    run_id: str = RunId,
+    payload: Optional[RunDecisionRequest] = Body(default=None),
+    current: AuthorizerClaims = Depends(claims),
+) -> dict[str, Any]:
+    """Apply a planned run. Needs `runs:apply`, not `runs:write`, and a person's recent login.
+
+    The body is optional; its comment is kept on the run with the confirming actor.
+    """
+    comment = payload.comment if payload is not None else ""
     try:
-        return service.render_run(service.confirm_run(run_id))
+        return service.render_run(service.confirm_run(run_id, actor=actor_from_claims(current), comment=comment))
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
     except service.RunNotConfirmable as error:
@@ -151,10 +230,18 @@ def cancel_run(run_id: str = RunId) -> dict[str, Any]:
     response_model=Run,
     dependencies=[Depends(scopes(RUNS_WRITE))],
 )
-def discard_run(run_id: str = RunId) -> dict[str, Any]:
-    """Drop a plan that was never applied, ending its execution cleanly."""
+def discard_run(
+    run_id: str = RunId,
+    payload: Optional[RunDecisionRequest] = Body(default=None),
+    current: AuthorizerClaims = Depends(claims),
+) -> dict[str, Any]:
+    """Drop a plan that was never applied, ending its execution cleanly.
+
+    The body is optional; its comment is kept on the run with the discarding actor.
+    """
+    comment = payload.comment if payload is not None else ""
     try:
-        return service.render_run(service.discard_run(run_id))
+        return service.render_run(service.discard_run(run_id, actor=actor_from_claims(current), comment=comment))
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
     except service.RunNotDiscardable as error:
@@ -197,7 +284,7 @@ def run_plan(run_id: str = RunId) -> dict[str, Any]:
         raise _not_found("That run has no plan yet.") from error
 
 
-@router.get(
+@runner_router.get(
     "/runs/{run_id}/bundle",
     response_model=RunBundle,
     dependencies=[Depends(require_run_token())],
@@ -210,15 +297,22 @@ def run_bundle(run_id: str = RunId) -> dict[str, Any]:
     """
     try:
         return service.run_bundle(run_id)
+    except vending.RunRoleAssumeFailed as error:
+        raise _conflict(str(error), error_code=RUN_ROLE_ASSUME_FAILED_CODE) from error
+    except (vending.VendingUnavailable, vending.StateCredentialsFailed) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": str(error), "error_code": RUN_CREDENTIALS_UNAVAILABLE_CODE},
+        ) from error
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
-    except workspaces_service.WorkspaceNotFound as error:
+    except workspace_reads.WorkspaceNotFound as error:
         raise _not_found("That run's workspace no longer exists.") from error
-    except workspaces_service.ConfigVersionNotFound as error:
+    except workspace_reads.ConfigVersionNotFound as error:
         raise _not_found("That run's config version no longer exists.") from error
 
 
-@router.post(
+@runner_router.post(
     "/runs/{run_id}/artifact-uploads",
     response_model=ArtifactUpload,
     dependencies=[Depends(require_run_token())],
@@ -232,7 +326,8 @@ def artifact_upload(payload: ArtifactUploadCreate, run_id: str = RunId) -> dict[
     sends the returned headers verbatim.
 
     The log's key is per phase and the phase comes from the run's status, so a
-    plan-phase runner cannot ask for the apply transcript's key.
+    plan-phase runner cannot ask for the apply transcript's key. The applied
+    outputs are an apply-phase artifact only, and a 422 anywhere else.
     """
     try:
         return service.artifact_upload(run_id, payload.artifact, payload.size_bytes)
@@ -243,19 +338,49 @@ def artifact_upload(payload: ArtifactUploadCreate, run_id: str = RunId) -> dict[
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=str(error),
         ) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
 
 
-@router.post(
+@runner_router.post(
     "/runs/{run_id}/phase-result",
     response_model=PhaseResultAccepted,
     dependencies=[Depends(require_run_token())],
 )
 def phase_result(payload: PhaseResult, run_id: str = RunId) -> dict[str, Any]:
-    """Record a phase's outcome and advance the run. Runner only."""
+    """Record a phase's outcome, advance the run and resolve its task token. Runner only.
+
+    The runner holds no Step Functions permission, so this is how both a result and
+    a failure reach the waiting state.
+    """
     try:
-        updated = service.record_phase_result(run_id, payload.model_dump())
+        updated = phase_tasks.report(run_id, payload.model_dump())
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
     except service.PhaseMismatch as error:
         raise _conflict("That run is not in the reported phase.") from error
+    except phase_tasks.PhaseTaskUnresolved as error:
+        raise _conflict(
+            "No runner task of that phase can be matched to this run.", error_code=PHASE_TASK_UNRESOLVED_CODE
+        ) from error
     return {"run_id": run_id, "status": updated["status"]}
+
+
+@runner_router.post("/runs/{run_id}/runner-token", response_model=RunnerToken)
+def runner_token(payload: RunnerTokenRequest, run_id: str = RunId) -> dict[str, Any]:
+    """Trade a runner task's signed identity for its run token. Runner only.
+
+    Every refusal is the same 401, a malformed request included, so a caller
+    learns nothing about which check failed or what the route expects; the reason
+    is logged instead.
+    """
+    try:
+        return {"run_token": runner_tokens.exchange(run_id, payload.headers)}
+    except runner_tokens.ExchangeRefused as error:
+        raise unauthenticated() from error
+
+
+router.include_router(runner_router)

@@ -16,6 +16,7 @@ app/
     workspaces/    workspaces, variables, config versions
     runs/          runs, the runner's bundle, artifact uploads and phase results
       consumers/   the queue consumers and the one route they share
+    registry/      the Terraform module registry protocol, modules connected to repositories, tag publishing and tag import
 e2e/               the deployed-stage suite, extending webbpulse.e2e
 tests/
   common/          the auth chain and every route's scope guard
@@ -91,10 +92,13 @@ A person arrives with a JWT the API Gateway authorizer has already verified. An
 agent arrives with a `wpk_` API key. Both render as the same claims object, so a
 route guarded by `require_scopes` cannot tell them apart. The scopes are
 `workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}`,
-`runs:{read,write,apply}`.
+`runs:{read,write,apply}`. A key's stored scopes are intersected on every request
+with what its owner holds now, and a new key expires in 90 days by default and
+365 at most.
 
-The runner is separate. Starting a run mints a `wpk_` key scoped `runner`, bound
-to that run and expiring after four hours, and only that token opens
+The runner is separate. `POST /runs/{id}/runner-token` mints a `wpk_` key scoped
+`runner` for a runner task that proves its identity, bound to that run and
+expiring after four hours, and only that token opens
 `GET /runs/{id}/bundle`, `POST /runs/{id}/artifact-uploads` and
 `POST /runs/{id}/phase-result`. The bundle carries decrypted sensitive
 variables, so no human scope reaches it, and every terminal transition revokes
@@ -159,6 +163,23 @@ Lambda and carries none of the function's environment. It is `local.prefix`:
 `webbpulse-terraform-staging` in staging and `webbpulse-terraform-prod` in
 production.
 
+## HCL variables
+
+A terraform variable can set `hcl`, which makes the runner write its value into a
+native `zz_webbpulse.auto.tfvars` as `key = (<value>)` rather than into the JSON
+tfvars file, so the engine parses it. That is the only way a `list` or `map`
+typed input variable can be given a value. It is refused on an `env` variable,
+whose value is a string to the process with nothing to parse it. The value is
+checked at write time by `app/domains/workspaces/hcl.py` without adding an HCL
+parser dependency. The check is also the injection boundary: its scanner mirrors
+the engine's string, heredoc, comment and interpolation rules, so a value whose
+brackets balance outside them cannot close the wrapping parenthesis and add an
+attribute. The engine stays the authority on meaning, so a function call passes
+the check and fails the run. A sensitive variable can still be HCL: it is sealed
+like any other value, the check runs before sealing and never echoes the value,
+and the runner registers the expression and its string and heredoc literals with
+the redactor.
+
 ## Sensitive variables
 
 A variable marked sensitive is sealed app side with AES-256-GCM under a key
@@ -177,13 +198,18 @@ response carries `run_role_setup` with the runner task roles to trust
 role name, which is `<prefix>-workspace-<ulid>` and has to stay inside the runner's
 AssumeRole grant.
 
-`POST /workspaces/{id}/run-role/check` assumes the role with the workspace id as
-the external id and a fifteen minute session, then calls GetCallerIdentity on the
-temporary credentials. It answers `{connected, account_id, error}` and stamps
-`run_role_checked_at` and `run_role_account_id` on a success, clearing both on a
-failure and on any PATCH that changes the ARN. A workspace with no ARN is a 400
-carrying `RUN_ROLE_MISSING`; creating a run against one is a 409 with the same
-code. The credentials never reach a response or a log.
+`GET /workspaces/{id}/run-role/check` answers whether the runner can assume the
+role, from the runner's own record rather than an STS call: every run stores the
+role ARN it was created with, and the newest run on the current ARN that got past
+the runner's AssumeRole, or failed on it, is the answer. It is `{connected, status,
+account_id, error, run_id, checked_at}` with `status` one of `connected`, `failed`
+or `unverified`, and a role no run has tried yet is `unverified`, so a plan only
+run is the check. The GET writes nothing and needs `workspaces:read`. The POST
+gives the same answer and stamps `run_role_checked_at` and `run_role_account_id`
+on `connected`, clearing both otherwise and on any PATCH that changes the ARN. The
+API holds no `sts:AssumeRole` on run roles, so the trust policy names the runner
+task roles and nothing else. A workspace with no ARN is a 400 carrying
+`RUN_ROLE_MISSING`; creating a run against one is a 409 with the same code.
 
 ## Runs
 
@@ -210,6 +236,39 @@ out of the task's own container environment overrides and sends `SendTaskFailure
 so the execution takes its existing `MarkErrored` and `ReleaseSemaphoreAfterFailure`
 path within seconds.
 
+## VCS ingest
+
+The VCS bridge's ingest half. A workspace binds itself to a repository with
+`vcs_repo`; there are no per repository roles and no repository map. Connecting a
+repository (create or PATCH) resolves it through the GitHub App from the `app`
+secret the workspaces function already reads: the App JWT finds the installation
+and its token lists the repositories, which records `vcs_repository_id`,
+`vcs_installation_id` and the canonical name and defaults `tracked_branch` to the
+default branch. A repository the App cannot see is 422 `VCS_REPO_NOT_INSTALLED`,
+and a GitHub failure is 502/503 `GITHUB_UNAVAILABLE`. A rename keeps the binding
+and a new repository under the old name does not inherit it. `working_directory`
+is normalized to a clean relative path, `tracked_branch` must be a valid git branch
+name, and trigger patterns are trimmed.
+
+The GitHub App webhook consumer
+(`app/domains/runs/consumers/webhooks.py`) writes an ingest record to `vcs-uploads` (three day
+TTL) and the tarball to `ingest/<upload_id>.tar.gz`. S3 Object Created on `ingest/`
+goes through EventBridge to the
+`vcs-ingest` queue as `config_ingested`, and `app/domains/runs/consumers/ingest.py`
+reads the record by the upload id in the key, never the object's metadata. For
+each bound workspace it applies the branch filter (a push needs `tracked_branch`),
+`speculative_plans` (for pull requests), and `trigger_patterns` as recursive globs
+against `.webbpulse/changed-paths.txt` (empty patterns mean
+`<working_directory>/**`, and a missing list or `*` matches everything).
+`file_triggers_enabled: false` is HCP's "Always trigger runs" and skips the path
+filter. It copies the tarball to a config version and creates a run sourced `vcs_push` (normal) or
+`vcs_pr` (plan only) with a `vcs` block and a `vcs` actor. The config version and
+run ids are derived from the upload and the workspace, so a redelivered message or
+a second S3 event for the same object creates nothing new. A newer upload from the
+same source cancels that source's pending runs and discards one awaiting
+confirmation; a late older upload starts nothing. A workspace with no run role is
+skipped.
+
 ## The confirmations queue
 
 A Step Functions DynamoDB integration cannot carry a task token, so the state
@@ -228,3 +287,46 @@ lists it, so the only way to reach it is the adapter's pass-through. A record
 that cannot be stored is returned as a batch item failure, which retries the
 message and eventually parks it rather than losing a token an execution is
 blocked on.
+
+## GitHub App
+
+`app/domains/github` sets up the environment's one GitHub App from the admin
+page at `/settings/github`. Every route needs the `admin` scope, which only an
+admin session or a key minted with it holds.
+
+**Create.** With no App configured the page offers "Create GitHub App".
+`POST /github/app/manifest` stores a single use state for 30 minutes and returns
+the manifest; the SPA posts it to GitHub as a form. GitHub redirects to the
+manifest's `redirect_url`, `<frontend>/settings/github/created`, which forwards
+the code and state to `POST /github/app/conversions`. That spends the state,
+converts the code with `webbpulse.integrations.github.convert_manifest_code`,
+writes the `GITHUB_*` keys into the `app` secret in one version with
+`SecretStore.set_many`, and stores the slug and App id in the `github` table.
+The manifest has no webhook, so no `GITHUB_WEBHOOK_SECRET` is written.
+The App is named `WebbPulse Terraform` in production and
+`WebbPulse Terraform (<environment>)` elsewhere, which GitHub slugs to
+`webbpulse-terraform-<environment>`. GitHub has no API to rename an App, so a
+rename happens in its settings: `GET /github/app` re-reads `GET /app` with the
+App JWT at most once a minute and stores the new name, slug and links, which the
+install and settings URLs follow.
+
+**Finish setup.** GitHub has no API for an App's logo. The created page links to
+the App's settings, offers `/github-app-logo.png` (512x512 PNG of the mark,
+under GitHub's 1 MB limit) for Display information, then Upload a logo, and
+shows `#4d9fff` (`--color-accent`, dark) to paste into Badge background color,
+which GitHub shows only after the upload. The same step stays on the settings
+page under "Logo and badge colour".
+
+**Install.** `POST /github/install-state` returns
+`https://github.com/apps/<slug>/installations/new?state=`. GitHub returns to the
+manifest's `setup_url`, `<frontend>/settings/github/setup`, which posts the
+installation id to `POST /github/installations`. The state is checked, then the
+installation is read with the App JWT, so an id belonging to another App is
+refused. An `update` redirect carries no state and may only refresh an
+installation already stored.
+
+**Credentials.** `app/common/github/loader.py` reads them from the `app` secret
+with a 60 second TTL, caching a missing App too, so credentials written by the
+conversion reach other warm functions within a minute; the writer invalidates
+its own cache at once. The slug comes from the `github` table first and
+`GITHUB_APP_SLUG` second.

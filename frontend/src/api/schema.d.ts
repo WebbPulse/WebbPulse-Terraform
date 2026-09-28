@@ -345,11 +345,11 @@ export interface paths {
         put?: never;
         /**
          * Step Up
-         * @description Re-assert a factor with a code or a passkey, returning a fresher token and no cookie.
+         * @description Re-authenticate inside the session, returning a fresher token and no cookie.
          *
-         *     One route and two bodies: `{"code": ...}` or `{"challenge_id": ..., "credential": ...}`.
-         *     Neither and both are the same 422, so a client is told what it sent rather than that
-         *     its factor was wrong.
+         *     One route and three bodies: `{"password": ...}`, `{"code": ...}` or
+         *     `{"challenge_id": ..., "credential": ...}`. None, or more than one, is the same 422,
+         *     so a client is told what it sent rather than that its factor was wrong.
          */
         post: operations["step_up_api_auth_step_up_post"];
         delete?: never;
@@ -504,6 +504,284 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/github/app": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App
+         * @description This environment's App, or the fact that there is none yet.
+         */
+        get: operations["get_app_api_v1_github_app_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/app/conversions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Convert Manifest
+         * @description Finish creating the App from the code GitHub redirected back with.
+         */
+        post: operations["convert_manifest_api_v1_github_app_conversions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/app/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Manifest
+         * @description Issue a manifest state; the SPA then posts the manifest to `action_url`.
+         */
+        post: operations["start_manifest_api_v1_github_app_manifest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/app/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Configure Webhook
+         * @description Point the App's webhook at this API and set its secret from the `app` secret.
+         */
+        post: operations["configure_webhook_api_v1_github_app_webhook_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/install-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Install
+         * @description Issue an install state and the GitHub URL that carries it.
+         */
+        post: operations["start_install_api_v1_github_install_state_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Installations
+         * @description Every installation stored here.
+         */
+        get: operations["list_installations_api_v1_github_installations_get"];
+        put?: never;
+        /**
+         * Record Installation
+         * @description Store the installation the setup callback named, once GitHub confirms it.
+         */
+        post: operations["record_installation_api_v1_github_installations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations/{installation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Installation
+         * @description Forget one installation here. It stays installed on GitHub until removed there.
+         */
+        delete: operations["remove_installation_api_v1_github_installations__installation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations/{installation_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Installation
+         * @description Re-read one installation from GitHub; one GitHub no longer has is dropped.
+         */
+        post: operations["refresh_installation_api_v1_github_installations__installation_id__refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations/{installation_id}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Repositories
+         * @description Every repository one installation covers, as GitHub lists them now.
+         */
+        get: operations["list_repositories_api_v1_github_installations__installation_id__repositories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/modules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Modules
+         * @description Every module and every version, with pending and failed versions shown.
+         */
+        get: operations["list_modules_api_v1_registry_modules_get"];
+        put?: never;
+        /**
+         * Create Module
+         * @description Connect a module to a repository; each `vX.Y.Z` or `X.Y.Z` tag pushed there publishes it.
+         *
+         *     The repository's existing semantic version tags are imported in the
+         *     background unless `import_tags` is false. Other tags are ignored.
+         */
+        post: operations["create_module_api_v1_registry_modules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Module
+         * @description One module and every version of it.
+         */
+        get: operations["get_module_api_v1_registry_modules__namespace___name___provider__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Module
+         * @description Remove a module with every version and stored tarball. Configurations pinned to it stop resolving.
+         */
+        delete: operations["delete_module_api_v1_registry_modules__namespace___name___provider__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}/resync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resync Module
+         * @description Queue an import of every semantic version tag in the module's repository.
+         *
+         *     Picks up tags pushed before the module was connected, or pushed more than
+         *     three at once, when GitHub sends no push event. Published versions are left alone.
+         */
+        post: operations["resync_module_api_v1_registry_modules__namespace___name___provider__resync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Version
+         * @description One version with its readme, inputs, outputs, provider requirements, resources and submodules.
+         */
+        get: operations["get_version_api_v1_registry_modules__namespace___name___provider__versions__version__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -513,7 +791,17 @@ export interface paths {
         };
         /**
          * List Runs
-         * @description One workspace's runs, newest first. The workspace is required.
+         * @description Runs, newest first, in one workspace or across every workspace.
+         *
+         *     Naming `workspace_id` returns that workspace's runs in full and 404s for a
+         *     workspace that does not exist, unchanged. Omitting it returns a page of every
+         *     workspace's runs off the recency index; pass `next_cursor` back as `cursor`
+         *     to continue. `limit` and `cursor` page only the cross-workspace list, so they
+         *     are refused alongside a workspace rather than ignored.
+         *
+         *     Both modes need exactly `runs:read`, the only check the per-workspace list
+         *     has ever made: there is no per-workspace ACL, so the cross-workspace list
+         *     returns nothing the caller could not list one workspace at a time.
          */
         get: operations["list_runs_api_v1_runs_get"];
         put?: never;
@@ -527,6 +815,13 @@ export interface paths {
          *
          *     A workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the
          *     runner would have nothing to assume.
+         *
+         *     `run_role_check` starts a plan only run that assumes the workspace's staged
+         *     `pending_run_role_arn` rather than its current role. It is a 409 carrying
+         *     `PENDING_RUN_ROLE_MISSING` when no role is staged.
+         *
+         *     The actor is taken from the verified claims here, because this request is the
+         *     only moment the triggering principal is known.
          */
         post: operations["create_run_api_v1_runs_post"];
         delete?: never;
@@ -574,7 +869,8 @@ export interface paths {
          *     sends the returned headers verbatim.
          *
          *     The log's key is per phase and the phase comes from the run's status, so a
-         *     plan-phase runner cannot ask for the apply transcript's key.
+         *     plan-phase runner cannot ask for the apply transcript's key. The applied
+         *     outputs are an apply-phase artifact only, and a 422 anywhere else.
          */
         post: operations["artifact_upload_api_v1_runs__run_id__artifact_uploads_post"];
         delete?: never;
@@ -637,7 +933,9 @@ export interface paths {
         put?: never;
         /**
          * Confirm Run
-         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`.
+         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`, and a person's recent login.
+         *
+         *     The body is optional; its comment is kept on the run with the confirming actor.
          */
         post: operations["confirm_run_api_v1_runs__run_id__confirm_post"];
         delete?: never;
@@ -658,6 +956,8 @@ export interface paths {
         /**
          * Discard Run
          * @description Drop a plan that was never applied, ending its execution cleanly.
+         *
+         *     The body is optional; its comment is kept on the run with the discarding actor.
          */
         post: operations["discard_run_api_v1_runs__run_id__discard_post"];
         delete?: never;
@@ -697,7 +997,10 @@ export interface paths {
         put?: never;
         /**
          * Phase Result
-         * @description Record a phase's outcome and advance the run. Runner only.
+         * @description Record a phase's outcome, advance the run and resolve its task token. Runner only.
+         *
+         *     The runner holds no Step Functions permission, so this is how both a result and
+         *     a failure reach the waiting state.
          */
         post: operations["phase_result_api_v1_runs__run_id__phase_result_post"];
         delete?: never;
@@ -729,6 +1032,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/runner-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Runner Token
+         * @description Trade a runner task's signed identity for its run token. Runner only.
+         *
+         *     Every refusal is the same 401, a malformed request included, so a caller
+         *     learns nothing about which check failed or what the route expects; the reason
+         *     is logged instead.
+         */
+        post: operations["runner_token_api_v1_runs__run_id__runner_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces": {
         parameters: {
             query?: never;
@@ -750,6 +1077,11 @@ export interface paths {
          *     id as the external id, so the role cannot exist until the workspace does. The
          *     response's `run_role_setup` carries everything needed to build it, and
          *     `PATCH /workspaces/{id}` attaches it afterwards.
+         *
+         *     A `vcs_repo` is resolved through the environment's GitHub App: the id, the
+         *     installation and the canonical name are recorded, and `tracked_branch` defaults to
+         *     the repository's default branch. A repository the App is not installed on is a 422
+         *     carrying `VCS_REPO_NOT_INSTALLED`.
          */
         post: operations["create_workspace_api_v1_workspaces_post"];
         delete?: never;
@@ -774,7 +1106,13 @@ export interface paths {
         post?: never;
         /**
          * Delete Workspace
-         * @description Delete one workspace and its variables.
+         * @description Delete one workspace with its finished runs, current state and variables.
+         *
+         *     A safe delete is a 409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current
+         *     state tracks any resource instance: queue a destroy plan and apply it first, or
+         *     pass `force=true` to delete anyway and leave those resources unmanaged. Either
+         *     mode is a 409 carrying `WORKSPACE_HAS_ACTIVE_RUN` while a run on the workspace
+         *     has not finished. Nothing is removed on a refusal.
          */
         delete: operations["delete_workspace_api_v1_workspaces__workspace_id__delete"];
         options?: never;
@@ -783,8 +1121,19 @@ export interface paths {
          * Update Workspace
          * @description Edit one workspace. The name and the id are not editable.
          *
-         *     Changing `run_role_arn` drops the recorded check outcome, so the new role reads
-         *     as unchecked until `run-role/check` says otherwise.
+         *     The body is JSON Merge Patch: an omitted key leaves the stored value exactly
+         *     as it was, and an explicit null on any field but `engine` and `engine_version`
+         *     clears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a
+         *     field is only touched when the request carried its key.
+         *
+         *     Changing or clearing `run_role_arn` drops the recorded check outcome, so the
+         *     role reads as unchecked until `run-role/check` says otherwise.
+         *
+         *     Connecting another `vcs_repo` resolves it through the GitHub App the way the
+         *     create does, and a null disconnects the repository.
+         *
+         *     Changing either run role field is the workspace's AWS connection, so a person has to
+         *     have signed in within the step-up window; resending the stored value is not a change.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -840,18 +1189,144 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Read Run Role Check
+         * @description Report whether the runner has assumed the workspace's run role, writing nothing.
+         *
+         *     The answer comes from the runner's own record: the newest run created with the
+         *     current role ARN that got past, or failed on, the runner's AssumeRole. The API
+         *     never calls STS, so it holds no path into the account the role lives in. A role
+         *     no run has tried yet reads `unverified`, and a plan only run is the check.
+         *
+         *     A caller that only wants to look, such as a Terraform provider reading on every
+         *     plan and refresh, uses this one so no plan mutates a workspace row. Because
+         *     nothing is written, the read scope is enough.
+         *
+         *     Always 200 when a role is configured. A workspace with no role at all is a 400
+         *     carrying `RUN_ROLE_MISSING`.
+         */
+        get: operations["read_run_role_check_api_v1_workspaces__workspace_id__run_role_check_get"];
         put?: never;
         /**
          * Check Run Role
-         * @description Assume the workspace's run role and report whether it answered.
+         * @description Read the runner's record for the run role, as the GET does, and stamp it on the workspace.
          *
-         *     Always 200 when a role is configured, whether or not it answered: a trust
-         *     policy that is not there yet is an expected state of the setup rather than a
-         *     request error. A workspace with no role at all is a 400 carrying
-         *     `RUN_ROLE_MISSING`.
+         *     The stamp is what the workspace list shows between visits: the account and the
+         *     time of the run that proved the role on `connected`, both cleared otherwise, so
+         *     a stale success cannot outlive a role whose trust broke. Use the GET when only
+         *     the answer is wanted.
+         *
+         *     Always 200 when a role is configured. A workspace with no role at all is a 400
+         *     carrying `RUN_ROLE_MISSING`.
          */
         post: operations["check_run_role_api_v1_workspaces__workspace_id__run_role_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/run-role/quick-setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Run Role Quick Setup
+         * @description Return an AWS CloudFormation quick create link for the workspace's run role.
+         *
+         *     Where `reports_back` is true the link carries a one-time connect token, valid
+         *     until `connect_expires_at`, and the stack reports its account and role back when
+         *     it is created: the role is saved or staged and a verification run starts, with
+         *     nothing to type or copy. Each call replaces the previous token. An `account_id`
+         *     is then optional; given, the derived ARN is saved or staged at once as well.
+         *
+         *     The template trusts only the runner task roles with this workspace id as the
+         *     external id. The link embeds a template URL that expires after `expires_in`
+         *     seconds, so ask for a fresh link rather than storing one.
+         *
+         *     A deployment with no runner task roles or no artifacts bucket answers 503, as
+         *     does one with no connect topic when no account id is given.
+         */
+        post: operations["start_run_role_quick_setup_api_v1_workspaces__workspace_id__run_role_quick_setup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/state-versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List State Versions
+         * @description One page of a workspace's state history, newest first.
+         *
+         *     Guarded by the same scope as reading the workspace itself, so state history
+         *     is reachable by exactly the callers that can already see the workspace and by
+         *     no one else. A workspace that has never run answers an empty page.
+         */
+        get: operations["list_state_versions_api_v1_workspaces__workspace_id__state_versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get State Version
+         * @description One state version's metadata. Never its resources or its outputs.
+         */
+        get: operations["get_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Download State Version
+         * @description Mint a short lived URL with workspaces:read and explicit state:download access.
+         *
+         *     A `POST` rather than a `GET` because it is not a read: it mints a bearer
+         *     credential for the most sensitive object the product stores, and that is an
+         *     event worth being a distinct, non cacheable, non prefetchable call.
+         *
+         *     The scope guard runs before this function is entered and the service checks
+         *     the version belongs to this workspace before it signs anything, so no URL
+         *     exists until both have passed. The handover is recorded first, because an
+         *     audit line written after the URL is minted would be missing exactly when it
+         *     matters most.
+         */
+        post: operations["download_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__download_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -893,12 +1368,18 @@ export interface paths {
         /**
          * Put Variable
          * @description Set one variable. A sensitive value is sealed before it is stored.
+         *
+         *     A broken HCL expression and an `env` variable marked HCL are both refused
+         *     here, so neither is stored to fail on every later run.
+         *
+         *     Writing a sensitive value, or overwriting a variable that is sensitive now, needs a
+         *     login within the step-up window.
          */
         put: operations["put_variable_api_v1_workspaces__workspace_id__variables__key__put"];
         post?: never;
         /**
          * Delete Variable
-         * @description Delete one variable.
+         * @description Delete one variable. A sensitive one needs a login within the step-up window.
          */
         delete: operations["delete_variable_api_v1_workspaces__workspace_id__variables__key__delete"];
         options?: never;
@@ -984,6 +1465,23 @@ export interface components {
             items: components["schemas"]["ApiKey"][];
         };
         /**
+         * AppliedOutput
+         * @description One root output's value after a successful apply.
+         *
+         *     A sensitive output carries the redaction string rather than its value.
+         */
+        AppliedOutput: {
+            /** Name */
+            name: string;
+            /**
+             * Sensitive
+             * @default false
+             */
+            sensitive?: boolean;
+            /** Value */
+            value?: unknown;
+        };
+        /**
          * ArtifactUpload
          * @description The presigned PUT one artifact goes to.
          *
@@ -1009,7 +1507,7 @@ export interface components {
              * Artifact
              * @enum {string}
              */
-            artifact: "plan" | "plan_json" | "log";
+            artifact: "plan" | "plan_json" | "log" | "outputs_json";
             /** Size Bytes */
             size_bytes: number;
         };
@@ -1027,6 +1525,44 @@ export interface components {
             plan_get_url: string;
         };
         /**
+         * AwsConnection
+         * @description What the last Quick setup link and its stack reported, for the UI to follow live.
+         */
+        AwsConnection: {
+            /** Account Id */
+            account_id?: string | null;
+            /** Disconnected At */
+            disconnected_at?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /**
+             * Pending
+             * @default false
+             */
+            pending?: boolean;
+            /** Reported At */
+            reported_at?: string | null;
+            /** Requested At */
+            requested_at?: string | null;
+            /** Role Arn */
+            role_arn?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Stack Id */
+            stack_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "waiting" | "connected" | "expired" | "disconnected";
+            /** Verification */
+            verification?: ("pending" | "verified" | "failed") | null;
+            /** Verification Error */
+            verification_error?: string | null;
+            /** Verified At */
+            verified_at?: string | null;
+        };
+        /**
          * BackendConfig
          * @description The S3 backend the runner initialises against.
          *
@@ -1036,6 +1572,7 @@ export interface components {
         BackendConfig: {
             /** Bucket */
             bucket: string;
+            credentials: components["schemas"]["VendedCredentials"];
             /** Key */
             key: string;
             /**
@@ -1146,6 +1683,94 @@ export interface components {
             success?: boolean;
         };
         /**
+         * GitHubAppStatus
+         * @description Whether this environment's App exists, and what the page may offer next.
+         */
+        GitHubAppStatus: {
+            /** App Id */
+            app_id?: string | null;
+            /** Badge Background */
+            badge_background: string;
+            /** Can Create */
+            can_create: boolean;
+            /** Can Install */
+            can_install: boolean;
+            /** Configured */
+            configured: boolean;
+            /** Created At */
+            created_at?: string | null;
+            /** Html Url */
+            html_url?: string | null;
+            /** Logo Path */
+            logo_path: string;
+            /** Name */
+            name?: string | null;
+            /** Owner Login */
+            owner_login?: string | null;
+            /** Settings Url */
+            settings_url?: string | null;
+            /** Slug */
+            slug?: string | null;
+        };
+        /**
+         * InstallStart
+         * @description The GitHub URL that installs the App, carrying a one-time state.
+         */
+        InstallStart: {
+            /** Install Url */
+            install_url: string;
+            /** State */
+            state: string;
+        };
+        /**
+         * Installation
+         * @description One installation of the App, as GitHub last confirmed it.
+         */
+        Installation: {
+            /** Account Avatar Url */
+            account_avatar_url?: string | null;
+            /** Account Login */
+            account_login: string;
+            /** Account Type */
+            account_type: string;
+            /** Html Url */
+            html_url?: string | null;
+            /** Installation Id */
+            installation_id: string;
+            /** Installed At */
+            installed_at: string;
+            /** Repository Count */
+            repository_count?: number | null;
+            /** Repository Selection */
+            repository_selection: string;
+            /** Suspended */
+            suspended: boolean;
+            /** Suspended At */
+            suspended_at?: string | null;
+            /** Updated At */
+            updated_at: string;
+        };
+        /**
+         * InstallationCallback
+         * @description The setup callback's query, forwarded by the SPA.
+         */
+        InstallationCallback: {
+            /** Installation Id */
+            installation_id: number;
+            /** Setup Action */
+            setup_action?: string | null;
+            /** State */
+            state?: string | null;
+        };
+        /**
+         * InstallationList
+         * @description Every stored installation.
+         */
+        InstallationList: {
+            /** Items */
+            items: components["schemas"]["Installation"][];
+        };
+        /**
          * LogEvent
          * @description One line from the runner's log stream.
          */
@@ -1173,6 +1798,250 @@ export interface components {
             run_id: string;
         };
         /**
+         * ManifestConversionRequest
+         * @description The create callback's query, forwarded by the SPA.
+         */
+        ManifestConversionRequest: {
+            /** Code */
+            code: string;
+            /** State */
+            state: string;
+        };
+        /**
+         * ManifestStart
+         * @description What the SPA posts to GitHub: the form action and the manifest.
+         */
+        ManifestStart: {
+            /** Action Url */
+            action_url: string;
+            /** Manifest */
+            manifest: {
+                [key: string]: unknown;
+            };
+            /** State */
+            state: string;
+        };
+        /**
+         * ManifestStartRequest
+         * @description Where the App is created.
+         */
+        ManifestStartRequest: {
+            /** Name */
+            name?: string | null;
+            /** Organization */
+            organization?: string | null;
+        };
+        /**
+         * Module
+         * @description One module and every version published or attempted for it, newest first.
+         */
+        Module: {
+            /** Created At */
+            created_at?: string | null;
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Provider */
+            provider: string;
+            /** Source */
+            source: string;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
+            /** Versions */
+            versions: components["schemas"]["ModuleVersion"][];
+        };
+        /**
+         * ModuleCreate
+         * @description A module to connect to a GitHub repository the App is installed on.
+         *
+         *     Like HCP Terraform's publish from VCS: from then on a push of a `vX.Y.Z` or
+         *     `X.Y.Z` tag to the repository publishes that version. The namespace is the
+         *     repository owner. A name and provider left out come from a
+         *     `terraform-<provider>-<name>` repository name.
+         */
+        ModuleCreate: {
+            /**
+             * Import Tags
+             * @default true
+             */
+            import_tags?: boolean;
+            /** Name */
+            name?: string | null;
+            /** Provider */
+            provider?: string | null;
+            /** Vcs Repo */
+            vcs_repo: string;
+        };
+        /**
+         * ModuleDocs
+         * @description What a published version documents, read from its tarball when it published.
+         */
+        ModuleDocs: {
+            /** Inputs */
+            inputs: components["schemas"]["ModuleInput"][];
+            /** Outputs */
+            outputs: components["schemas"]["ModuleOutput"][];
+            /** Parse Errors */
+            parse_errors: string[];
+            /** Providers */
+            providers: components["schemas"]["ModuleProvider"][];
+            /** Readme */
+            readme?: string | null;
+            /** Resources */
+            resources: components["schemas"]["ModuleResource"][];
+            /** Submodules */
+            submodules: components["schemas"]["Submodule"][];
+        };
+        /**
+         * ModuleInput
+         * @description One input variable, as a module page lists it.
+         */
+        ModuleInput: {
+            /** Default */
+            default?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name: string;
+            /** Required */
+            required: boolean;
+            /**
+             * Sensitive
+             * @default false
+             */
+            sensitive?: boolean;
+            /** Type */
+            type?: string | null;
+        };
+        /**
+         * ModuleList
+         * @description Every module in the registry.
+         */
+        ModuleList: {
+            /** Modules */
+            modules: components["schemas"]["Module"][];
+        };
+        /**
+         * ModuleOutput
+         * @description One output value.
+         */
+        ModuleOutput: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Sensitive
+             * @default false
+             */
+            sensitive?: boolean;
+        };
+        /**
+         * ModuleProvider
+         * @description One provider requirement from `required_providers`.
+         */
+        ModuleProvider: {
+            /** Name */
+            name: string;
+            /** Source */
+            source?: string | null;
+            /** Version */
+            version?: string | null;
+        };
+        /**
+         * ModuleResource
+         * @description One managed resource the module declares.
+         */
+        ModuleResource: {
+            /** Name */
+            name: string;
+            /** Type */
+            type: string;
+        };
+        /**
+         * ModuleSync
+         * @description A queued import of a module's existing tags.
+         */
+        ModuleSync: {
+            /** Delivery */
+            delivery: string;
+            /** Source */
+            source: string;
+        };
+        /**
+         * ModuleVersion
+         * @description One version of a module and where its publishing stands.
+         */
+        ModuleVersion: {
+            /** Actor */
+            actor: string;
+            /** Created At */
+            created_at: string;
+            /** Error */
+            error?: string | null;
+            /** Published At */
+            published_at?: string | null;
+            /** Repository */
+            repository: string;
+            /** Sha */
+            sha: string;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "published" | "failed";
+            /** Tag */
+            tag?: string | null;
+            /** Version */
+            version: string;
+        };
+        /**
+         * ModuleVersionDetail
+         * @description One version of a module with its documentation, for the module page.
+         */
+        ModuleVersionDetail: {
+            /** Created At */
+            created_at?: string | null;
+            docs?: components["schemas"]["ModuleDocs"] | null;
+            /** Name */
+            name: string;
+            /** Namespace */
+            namespace: string;
+            /** Provider */
+            provider: string;
+            /** Source */
+            source: string;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
+            version: components["schemas"]["ModuleVersion"];
+        };
+        /**
+         * PendingRunRoleCheck
+         * @description What the runner's record says about the role waiting to replace the current one.
+         */
+        PendingRunRoleCheck: {
+            /** Account Id */
+            account_id?: string | null;
+            /** Checked At */
+            checked_at?: string | null;
+            /** Connected */
+            connected: boolean;
+            /** Error */
+            error?: string | null;
+            /** Role Arn */
+            role_arn: string;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "connected" | "failed" | "unverified";
+        };
+        /**
          * PhaseResult
          * @description What the runner reports when a phase ends.
          *
@@ -1193,6 +2062,8 @@ export interface components {
              * @default
              */
             error?: string | null;
+            /** Error Name */
+            error_name?: string | null;
             /** Exit Code */
             exit_code: number;
             /**
@@ -1307,6 +2178,44 @@ export interface components {
             type: string;
         };
         /**
+         * RegistryCredentials
+         * @description The run's module registry key, which the runner sets as `TF_TOKEN_<host>` for init only.
+         */
+        RegistryCredentials: {
+            /** Expires At */
+            expires_at: string;
+            /** Hosts */
+            hosts: string[];
+            /** Token */
+            token: string;
+        };
+        /**
+         * Repository
+         * @description One repository an installation covers.
+         */
+        Repository: {
+            /** Default Branch */
+            default_branch?: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Html Url */
+            html_url?: string | null;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Private */
+            private: boolean;
+        };
+        /**
+         * RepositoryList
+         * @description Every repository an installation covers.
+         */
+        RepositoryList: {
+            /** Items */
+            items: components["schemas"]["Repository"][];
+        };
+        /**
          * Run
          * @description A stored run as the API renders it.
          *
@@ -1315,17 +2224,25 @@ export interface components {
          *     it was not allowed to confirm.
          */
         Run: {
+            actor?: components["schemas"]["RunActor"] | null;
+            apply_changes?: components["schemas"]["RunChanges"] | null;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
             /** Created At */
             created_at: string;
+            decision?: components["schemas"]["RunDecision"] | null;
             /** Error */
             error?: string | null;
             /** Execution Arn */
             execution_arn?: string | null;
             /** Finished At */
             finished_at?: string | null;
+            /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
             /**
              * Message
              * @default
@@ -1337,6 +2254,19 @@ export interface components {
             queued_behind?: string | null;
             /** Run Id */
             run_id: string;
+            /** Run Role Arn */
+            run_role_arn?: string | null;
+            /**
+             * Run Role Check
+             * @default false
+             */
+            run_role_check?: boolean;
+            /**
+             * Source
+             * @default api
+             * @enum {string}
+             */
+            source?: "api" | "vcs_push" | "vcs_pr" | "aws_connect";
             /** Started At */
             started_at?: string | null;
             /**
@@ -1346,17 +2276,34 @@ export interface components {
             status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
             /** Updated At */
             updated_at?: string | null;
+            vcs?: components["schemas"]["RunVcs"] | null;
             /** Workspace Id */
             workspace_id: string;
+        };
+        /**
+         * RunActor
+         * @description Who triggered a run, snapshotted from the creating request's claims.
+         */
+        RunActor: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "agent" | "vcs" | "system";
         };
         /**
          * RunBundle
          * @description Everything the runner needs for one phase of one run.
          *
-         *     The shape is the runner's `Bundle`: the nested `backend`, `run_role` and
-         *     `artifacts` objects are what `runner/app/models.py` validates, and the four
-         *     extra top level fields are what the runner ignores for now but the API
-         *     states about the phase it is serving. Uploads are not here: the runner asks
+         *     The shape is the runner's `Bundle`: the nested `backend`, `aws_credentials` and
+         *     `artifacts` objects are what `runner/app/models.py` validates, as is
+         *     `is_destroy`, which selects `plan -destroy`. The other extra top level fields
+         *     are what the runner ignores for now but the API states about the phase it is
+         *     serving. Uploads are not here: the runner asks
          *     for each one's presigned PUT by size once it has the bytes.
          *
          *     The only response in the API that carries decrypted variable values, which is
@@ -1364,6 +2311,7 @@ export interface components {
          */
         RunBundle: {
             artifacts: components["schemas"]["Artifacts"];
+            aws_credentials: components["schemas"]["VendedCredentials"];
             backend: components["schemas"]["BackendConfig"];
             /** Config Url */
             config_url: string;
@@ -1379,15 +2327,29 @@ export interface components {
                 [key: string]: string;
             };
             /**
+             * Hcl Variables
+             * @default {}
+             */
+            hcl_variables?: {
+                [key: string]: string;
+            };
+            /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
+            /**
              * Phase
              * @enum {string}
              */
             phase: "plan" | "apply";
             /** Plan Only */
             plan_only: boolean;
+            registry?: components["schemas"]["RegistryCredentials"] | null;
             /** Run Id */
             run_id: string;
-            run_role: components["schemas"]["RunRole"];
+            /** Run Role Arn */
+            run_role_arn: string;
             /** Terraform Variables */
             terraform_variables: {
                 [key: string]: string;
@@ -1426,6 +2388,11 @@ export interface components {
             /** Config Version Id */
             config_version_id: string;
             /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
+            /**
              * Message
              * @default
              */
@@ -1435,28 +2402,41 @@ export interface components {
              * @default false
              */
             plan_only?: boolean;
+            /**
+             * Run Role Check
+             * @default false
+             */
+            run_role_check?: boolean;
             /** Workspace Id */
             workspace_id: string;
         };
         /**
          * RunCreated
-         * @description A newly created run. Carries the run token only when the run started.
+         * @description A newly created run.
          *
-         *     A queued run has no execution and so no token: the token is minted when the
-         *     state machine starts, which is when the run ahead of it finishes.
+         *     It carries no run token: only the runner task holds one, obtained by
+         *     trading its signed task identity, so no caller ever sees the plaintext.
          */
         RunCreated: {
+            actor?: components["schemas"]["RunActor"] | null;
+            apply_changes?: components["schemas"]["RunChanges"] | null;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
             /** Created At */
             created_at: string;
+            decision?: components["schemas"]["RunDecision"] | null;
             /** Error */
             error?: string | null;
             /** Execution Arn */
             execution_arn?: string | null;
             /** Finished At */
             finished_at?: string | null;
+            /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
             /**
              * Message
              * @default
@@ -1468,8 +2448,19 @@ export interface components {
             queued_behind?: string | null;
             /** Run Id */
             run_id: string;
-            /** Run Token */
-            run_token?: string | null;
+            /** Run Role Arn */
+            run_role_arn?: string | null;
+            /**
+             * Run Role Check
+             * @default false
+             */
+            run_role_check?: boolean;
+            /**
+             * Source
+             * @default api
+             * @enum {string}
+             */
+            source?: "api" | "vcs_push" | "vcs_pr" | "aws_connect";
             /** Started At */
             started_at?: string | null;
             /**
@@ -1479,16 +2470,49 @@ export interface components {
             status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
             /** Updated At */
             updated_at?: string | null;
+            vcs?: components["schemas"]["RunVcs"] | null;
             /** Workspace Id */
             workspace_id: string;
         };
         /**
+         * RunDecision
+         * @description Who confirmed or discarded a run's plan, when, and the comment they left.
+         */
+        RunDecision: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "confirmed" | "discarded";
+            actor?: components["schemas"]["RunActor"] | null;
+            /** At */
+            at: string;
+            /** Comment */
+            comment?: string | null;
+        };
+        /**
+         * RunDecisionRequest
+         * @description The optional body of a confirm or a discard: a comment kept on the run.
+         */
+        RunDecisionRequest: {
+            /**
+             * Comment
+             * @default
+             */
+            comment?: string;
+        };
+        /**
          * RunList
-         * @description One workspace's runs, newest first.
+         * @description A list of runs, newest first.
+         *
+         *     One workspace's runs in full when the request named a workspace, otherwise a
+         *     page of every workspace's runs continued through `next_cursor`.
          */
         RunList: {
             /** Items */
             items: components["schemas"]["Run"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /**
          * RunPlan
@@ -1499,6 +2523,8 @@ export interface components {
          *     projection the run view renders.
          */
         RunPlan: {
+            /** Applied Outputs */
+            applied_outputs?: components["schemas"]["AppliedOutput"][] | null;
             changes: components["schemas"]["RunChanges"];
             /**
              * Has Changes
@@ -1518,46 +2544,88 @@ export interface components {
             terraform_version?: string;
         };
         /**
-         * RunRole
-         * @description The per workspace role the engine runs as, with the phase session policy.
-         *
-         *     The external id is the workspace id, so a role trusted for one workspace
-         *     cannot be assumed by a run against another.
+         * RunPullRequest
+         * @description The pull request a push run's commit was merged from.
          */
-        RunRole: {
-            /**
-             * Duration Seconds
-             * @default 3600
-             */
-            duration_seconds?: number;
-            /** External Id */
-            external_id: string;
-            /** Role Arn */
-            role_arn: string;
-            /** Session Policy */
-            session_policy: {
-                [key: string]: unknown;
-            };
-            /**
-             * Session Policy Arns
-             * @default []
-             */
-            session_policy_arns?: string[];
+        RunPullRequest: {
+            /** Number */
+            number: number;
+            /** Url */
+            url: string;
         };
         /**
          * RunRoleCheck
-         * @description The outcome of one AssumeRole against a workspace's run role.
+         * @description Whether the runner can assume a workspace's run role, from its own record.
          *
-         *     `error` is a sentence for a person rather than the STS code, and no part of
-         *     the temporary credentials reaches it.
+         *     The API never calls STS. The answer is the outcome of the runner's AssumeRole
+         *     in the newest run created with the current role ARN that reached it, so a role
+         *     no run has tried yet is `unverified` rather than refused.
          */
         RunRoleCheck: {
             /** Account Id */
             account_id?: string | null;
+            /** Checked At */
+            checked_at?: string | null;
             /** Connected */
             connected: boolean;
             /** Error */
             error?: string | null;
+            pending?: components["schemas"]["PendingRunRoleCheck"] | null;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "connected" | "failed" | "unverified";
+        };
+        /**
+         * RunRoleQuickSetup
+         * @description The quick create link for a workspace's run role.
+         */
+        RunRoleQuickSetup: {
+            /** Account Id */
+            account_id?: string | null;
+            /** Connect Expires At */
+            connect_expires_at?: string | null;
+            /** Console Url */
+            console_url: string;
+            /** Expires In */
+            expires_in: number;
+            /**
+             * Pending
+             * @default false
+             */
+            pending?: boolean;
+            /** Permissions Policy Arn */
+            permissions_policy_arn?: string | null;
+            /** Region */
+            region: string;
+            /**
+             * Reports Back
+             * @default false
+             */
+            reports_back?: boolean;
+            /** Role Arn */
+            role_arn?: string | null;
+            /** Role Name */
+            role_name: string;
+            /** Stack Name */
+            stack_name: string;
+        };
+        /**
+         * RunRoleQuickSetupCreate
+         * @description Start AWS quick setup for one workspace.
+         */
+        RunRoleQuickSetupCreate: {
+            /** Account Id */
+            account_id?: string | null;
+            /**
+             * Permissions
+             * @default administrator
+             * @enum {string}
+             */
+            permissions?: "administrator" | "power_user" | "read_only" | "none";
         };
         /**
          * RunRoleSetup
@@ -1566,7 +2634,9 @@ export interface components {
          *     The role cannot exist before the workspace does: its trust policy names the
          *     workspace id as the external id, so the id has to be handed out first. Every
          *     workspace response carries these three values so the setup can be followed
-         *     without reading the stack's outputs.
+         *     without reading the stack's outputs. The control plane's credential vending
+         *     role is the only principal the trust policy may name: it assumes the role on
+         *     each phase's behalf, so no runner task holds a path to it.
          */
         RunRoleSetup: {
             /** External Id */
@@ -1580,6 +2650,161 @@ export interface components {
             principal_arns?: string[];
             /** Role Name */
             role_name: string;
+        };
+        /**
+         * RunVcs
+         * @description The commit a VCS run was started from.
+         *
+         *     Everything comes from the signed GitHub App delivery. For a pull request the
+         *     commit is GitHub's merge commit, and `head_sha` and `base_sha` are recorded
+         *     alongside it.
+         */
+        RunVcs: {
+            /** Base Sha */
+            base_sha?: string | null;
+            /** Branch */
+            branch?: string | null;
+            /** Commit Message */
+            commit_message?: string | null;
+            /** Head Sha */
+            head_sha?: string | null;
+            /** Pr Number */
+            pr_number?: number | null;
+            pull_request?: components["schemas"]["RunPullRequest"] | null;
+            /** Ref */
+            ref: string;
+            /** Repo */
+            repo: string;
+            /** Repository Id */
+            repository_id: string;
+            /** Sha */
+            sha: string;
+        };
+        /**
+         * RunnerToken
+         * @description The run token a runner task holds for its phase.
+         */
+        RunnerToken: {
+            /** Run Token */
+            run_token: string;
+        };
+        /**
+         * RunnerTokenRequest
+         * @description A runner task's signed STS `GetCallerIdentity` headers, traded for its run token.
+         */
+        RunnerTokenRequest: {
+            /** Headers */
+            headers: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * StateVersion
+         * @description One version of a workspace's Terraform state, as the API renders it.
+         *
+         *     A state body holds every resource attribute and every output in plaintext,
+         *     routinely including passwords and private keys, so nothing derived from those
+         *     appears here. The fields are the ones that describe the version rather than
+         *     what is inside it, and the body is reachable only through the separate
+         *     download route.
+         */
+        StateVersion: {
+            /** Created At */
+            created_at: string;
+            /** Is Current */
+            is_current: boolean;
+            /** Size Bytes */
+            size_bytes: number;
+            /** State Version Id */
+            state_version_id: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
+         * StateVersionDetail
+         * @description One state version with the three fields that only the state body carries.
+         *
+         *     `serial`, `terraform_version` and `lineage` are read out of the object
+         *     because Terraform writes state through its own backend and the control plane
+         *     never gets to stamp them as S3 metadata. They are the only things lifted out
+         *     of the body; no resource attribute and no output is ever read into a
+         *     response. Each is optional because a body that cannot be parsed still has
+         *     describable metadata.
+         */
+        StateVersionDetail: {
+            /** Created At */
+            created_at: string;
+            /** Is Current */
+            is_current: boolean;
+            /** Lineage */
+            lineage?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Serial */
+            serial?: number | null;
+            /** Size Bytes */
+            size_bytes: number;
+            /** State Version Id */
+            state_version_id: string;
+            /** Terraform Version */
+            terraform_version?: string | null;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
+         * StateVersionDownload
+         * @description A short lived URL for one state version's raw bytes.
+         *
+         *     The URL is a bearer credential for exactly one object version: it names the
+         *     bucket, the key and the version inside its signature, so it cannot be steered
+         *     at another workspace's state. It is minted only after the caller's scope and
+         *     the version's ownership have both been checked, and it expires in
+         *     `expires_in` seconds.
+         */
+        StateVersionDownload: {
+            /** Download Url */
+            download_url: string;
+            /** Expires In */
+            expires_in: number;
+            /** Size Bytes */
+            size_bytes: number;
+            /** State Version Id */
+            state_version_id: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
+         * StateVersionList
+         * @description One page of state versions, newest first. Follow the token even on empty pages.
+         *
+         *     S3 delete markers count toward the page size but are not state versions.
+         *     Malformed cursors or cursors from another workspace return HTTP 400.
+         */
+        StateVersionList: {
+            /** Items */
+            items: components["schemas"]["StateVersion"][];
+            /** Next Page Token */
+            next_page_token?: string | null;
+        };
+        /**
+         * Submodule
+         * @description A module under `modules/`, which a source reaches with `//modules/<name>`.
+         */
+        Submodule: {
+            /** Inputs */
+            inputs: components["schemas"]["ModuleInput"][];
+            /** Name */
+            name: string;
+            /** Outputs */
+            outputs: components["schemas"]["ModuleOutput"][];
+            /** Path */
+            path: string;
+            /** Providers */
+            providers: components["schemas"]["ModuleProvider"][];
+            /** Readme */
+            readme?: string | null;
+            /** Resources */
+            resources: components["schemas"]["ModuleResource"][];
         };
         /**
          * ValidationErrorDetail
@@ -1623,6 +2848,11 @@ export interface components {
              * @default
              */
             description?: string;
+            /**
+             * Hcl
+             * @default false
+             */
+            hcl?: boolean;
             /** Key */
             key: string;
             /** Sensitive */
@@ -1659,6 +2889,11 @@ export interface components {
              */
             description?: string;
             /**
+             * Hcl
+             * @default false
+             */
+            hcl?: boolean;
+            /**
              * Sensitive
              * @default false
              */
@@ -1667,10 +2902,44 @@ export interface components {
             value: string;
         };
         /**
+         * VendedCredentials
+         * @description One hour of AWS keys the control plane assumed for a phase.
+         */
+        VendedCredentials: {
+            /** Access Key Id */
+            access_key_id: string;
+            /**
+             * Expiration
+             * @default
+             */
+            expiration?: string;
+            /** Secret Access Key */
+            secret_access_key: string;
+            /** Session Token */
+            session_token: string;
+        };
+        /**
+         * WebhookConfig
+         * @description Where the App's webhook now delivers, and the events the bridge expects it to carry.
+         *
+         *     The secret is set but never echoed.
+         */
+        WebhookConfig: {
+            /** Content Type */
+            content_type: string;
+            /** Events */
+            events: string[];
+            /** Insecure Ssl */
+            insecure_ssl: string;
+            /** Url */
+            url: string;
+        };
+        /**
          * Workspace
          * @description A stored workspace, with everything the run role setup needs.
          */
         Workspace: {
+            aws_connection?: components["schemas"]["AwsConnection"] | null;
             /** Created At */
             created_at: string;
             /**
@@ -1686,17 +2955,44 @@ export interface components {
             engine?: "terraform" | "tofu";
             /** Engine Version */
             engine_version: string;
+            /**
+             * File Triggers Enabled
+             * @default true
+             */
+            file_triggers_enabled?: boolean;
             /** Name */
             name: string;
+            /** Pending Run Role Arn */
+            pending_run_role_arn?: string | null;
             /** Run Role Account Id */
             run_role_account_id?: string | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /** Run Role Checked At */
             run_role_checked_at?: string | null;
+            /**
+             * Run Role Reconnect Required
+             * @default false
+             */
+            run_role_reconnect_required?: boolean;
             run_role_setup: components["schemas"]["RunRoleSetup"];
+            /**
+             * Speculative Plans
+             * @default true
+             */
+            speculative_plans?: boolean;
+            /** Tracked Branch */
+            tracked_branch?: string | null;
+            /** Trigger Patterns */
+            trigger_patterns?: string[];
             /** Updated At */
             updated_at?: string | null;
+            /** Vcs Installation Id */
+            vcs_installation_id?: string | null;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
+            /** Vcs Repository Id */
+            vcs_repository_id?: string | null;
             /**
              * Working Directory
              * @default
@@ -1723,10 +3019,26 @@ export interface components {
             engine?: "terraform" | "tofu";
             /** Engine Version */
             engine_version: string;
+            /**
+             * File Triggers Enabled
+             * @default true
+             */
+            file_triggers_enabled?: boolean;
             /** Name */
             name: string;
             /** Run Role Arn */
             run_role_arn?: string | null;
+            /**
+             * Speculative Plans
+             * @default true
+             */
+            speculative_plans?: boolean;
+            /** Tracked Branch */
+            tracked_branch?: string | null;
+            /** Trigger Patterns */
+            trigger_patterns?: string[];
+            /** Vcs Repo */
+            vcs_repo?: string | null;
             /**
              * Working Directory
              * @default
@@ -1748,6 +3060,12 @@ export interface components {
          *     A rename would break the state key, which is derived from the workspace id,
          *     and the `by_name` uniqueness claim at the same time, so it is refused by
          *     omission rather than by a check.
+         *
+         *     The model separates "absent" from "explicitly null" by leaving every field
+         *     unset by default and reading the body with `model_dump(exclude_unset=True)`,
+         *     so a key only reaches the service when the request actually carried it. A null
+         *     on one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service
+         *     turns into a DynamoDB REMOVE.
          */
         WorkspaceUpdate: {
             /** Description */
@@ -1756,8 +3074,20 @@ export interface components {
             engine?: ("terraform" | "tofu") | null;
             /** Engine Version */
             engine_version?: string | null;
+            /** File Triggers Enabled */
+            file_triggers_enabled?: boolean | null;
+            /** Pending Run Role Arn */
+            pending_run_role_arn?: string | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
+            /** Speculative Plans */
+            speculative_plans?: boolean | null;
+            /** Tracked Branch */
+            tracked_branch?: string | null;
+            /** Trigger Patterns */
+            trigger_patterns?: string[] | null;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
             /** Working Directory */
             working_directory?: string | null;
         };
@@ -2611,8 +3941,15 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description No bearer token was presented, or the factor was refused */
+            /** @description No bearer token was presented, or the password or factor was refused */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Password sign in is closed on this deployment */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2627,7 +3964,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Too many attempts from this address */
+            /** @description Too many attempts from this address, or the account is locked */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -2636,6 +3973,13 @@ export interface operations {
             };
             /** @description A passkey step-up was sent to a deployment with passkeys off */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Neither a password nor a second factor is available to this user */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2940,10 +4284,551 @@ export interface operations {
             };
         };
     };
+    get_app_api_v1_github_app_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppStatus"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    convert_manifest_api_v1_github_app_conversions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManifestConversionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppStatus"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_manifest_api_v1_github_app_manifest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManifestStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManifestStart"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    configure_webhook_api_v1_github_app_webhook_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookConfig"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_install_api_v1_github_install_state_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallStart"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_installations_api_v1_github_installations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    record_installation_api_v1_github_installations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallationCallback"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Installation"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    remove_installation_api_v1_github_installations__installation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installation_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    refresh_installation_api_v1_github_installations__installation_id__refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installation_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Installation"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_repositories_api_v1_github_installations__installation_id__repositories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installation_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_modules_api_v1_registry_modules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_module_api_v1_registry_modules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModuleCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Module"];
+                };
+            };
+            /** @description A module already sits at the address, or there is no GitHub App. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The App is not installed on the repository, or the address is not valid. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_module_api_v1_registry_modules__namespace___name___provider__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                name: string;
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Module"];
+                };
+            };
+            /** @description No module sits at the address. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_module_api_v1_registry_modules__namespace___name___provider__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                name: string;
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No module sits at the address. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resync_module_api_v1_registry_modules__namespace___name___provider__resync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                name: string;
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleSync"];
+                };
+            };
+            /** @description No module connected to a repository sits at the address. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The sync could not be queued. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_version_api_v1_registry_modules__namespace___name___provider__versions__version__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                name: string;
+                provider: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleVersionDetail"];
+                };
+            };
+            /** @description The module has no such version. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_runs_api_v1_runs_get: {
         parameters: {
-            query: {
-                workspace_id: string;
+            query?: {
+                workspace_id?: string | null;
+                limit?: number | null;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
@@ -3141,7 +5026,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RunDecisionRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3172,7 +5061,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RunDecisionRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3294,6 +5187,41 @@ export interface operations {
             };
         };
     };
+    runner_token_api_v1_runs__run_id__runner_token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerToken"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_workspaces_api_v1_workspaces_get: {
         parameters: {
             query?: never;
@@ -3389,7 +5317,10 @@ export interface operations {
     };
     delete_workspace_api_v1_workspaces__workspace_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Skip the managed resources check and delete even though state still tracks resources. */
+                force?: boolean;
+            };
             header?: never;
             path: {
                 workspace_id: string;
@@ -3549,6 +5480,37 @@ export interface operations {
             };
         };
     };
+    read_run_role_check_api_v1_workspaces__workspace_id__run_role_check_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRoleCheck"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     check_run_role_api_v1_workspaces__workspace_id__run_role_check_post: {
         parameters: {
             query?: never;
@@ -3567,6 +5529,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRoleCheck"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_run_role_quick_setup_api_v1_workspaces__workspace_id__run_role_quick_setup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRoleQuickSetupCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRoleQuickSetup"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_state_versions_api_v1_workspaces__workspace_id__state_versions_get: {
+        parameters: {
+            query?: {
+                page_size?: number;
+                page_token?: string | null;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StateVersionList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                state_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StateVersionDetail"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    download_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                state_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StateVersionDownload"];
                 };
             };
             /** @description Request validation failed. */

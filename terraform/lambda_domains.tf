@@ -4,12 +4,17 @@ locals {
       memory            = 512
       tables            = ["workspaces", "variables", "config-versions", "users"]
       read_tables       = ["runs"]
+      buckets           = true
+      own_image_tag     = false
       sqs_event_sources = {}
+      stream_sources    = {}
     }
     runs = {
-      memory      = 512
-      tables      = ["runs"]
-      read_tables = ["workspaces", "variables", "config-versions"]
+      memory        = 512
+      tables        = ["runs", "vcs-uploads"]
+      read_tables   = ["workspaces", "variables", "config-versions", "users"]
+      buckets       = true
+      own_image_tag = false
       sqs_event_sources = {
         run_confirmations = {
           queue_arn                       = module.run_confirmations.queue_arn
@@ -21,13 +26,83 @@ locals {
           batch_size                      = 1
           maximum_batching_window_seconds = 0
         }
+        vcs_ingest = {
+          queue_arn                       = module.vcs_ingest.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
+        github_webhooks = {
+          queue_arn                       = module.github_webhooks.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
+        workspace_cleanup = {
+          queue_arn                       = module.workspace_cleanup.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
+        aws_connect = {
+          queue_arn                       = module.aws_connect.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
       }
+      stream_sources = {
+        vcs_run_reports = {
+          stream_arn                         = module.dynamodb.stream_arns["runs"]
+          batch_size                         = 10
+          maximum_batching_window_in_seconds = 1
+          maximum_retry_attempts             = 2
+          filter_patterns = [
+            jsonencode({
+              eventName = ["INSERT", "MODIFY"]
+              dynamodb  = { NewImage = { source = { S = [{ prefix = "vcs_" }] } } }
+            }),
+            jsonencode({
+              eventName = ["MODIFY"]
+              dynamodb = {
+                NewImage = {
+                  status      = { S = ["applied", "planned_and_finished", "errored", "cancelled", "discarded"] }
+                  finished_at = { S = [{ exists = false }] }
+                }
+              }
+            }),
+          ]
+        }
+      }
+    }
+    github = {
+      memory            = 256
+      tables            = ["github"]
+      read_tables       = ["users"]
+      buckets           = false
+      own_image_tag     = true
+      sqs_event_sources = {}
+      stream_sources    = {}
+    }
+    registry = {
+      memory        = 512
+      tables        = ["registry"]
+      read_tables   = ["users"]
+      buckets       = false
+      own_image_tag = true
+      sqs_event_sources = {
+        registry_ingest = {
+          queue_arn                       = module.registry_ingest.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
+      }
+      stream_sources = {}
     }
   }
 
   domain_functions_enabled = var.bootstrap_image_tag != ""
 
-  lambda_domains = local.domain_functions_enabled ? local.lambda_domains_declared : {}
+  lambda_domains = local.domain_functions_enabled ? {
+    for name, domain in local.lambda_domains_declared : name => domain
+    if !domain.own_image_tag || lookup(var.domain_image_tags, name, "") != ""
+  } : {}
 
   dynamodb_write_actions = [
     "dynamodb:GetItem",
@@ -84,7 +159,7 @@ module "lambda_domain" {
   for_each = local.lambda_domains
 
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/lambda-function"
-  version = "~> 2.27"
+  version = "~> 2.32"
 
   function_name = "${local.prefix}-${each.key}"
   role_name     = "${local.prefix}-${each.key}-lambda"
@@ -96,10 +171,11 @@ module "lambda_domain" {
 
   timeout = local.lambda_domain_timeout
 
-  sqs_event_sources = each.value.sqs_event_sources
+  sqs_event_sources             = each.value.sqs_event_sources
+  dynamodb_stream_event_sources = each.value.stream_sources
 
   code = {
-    image_uri = "${module.registry.repository_urls[each.key]}:${var.bootstrap_image_tag}"
+    image_uri = "${module.registry.repository_urls[each.key]}:${lookup(var.domain_image_tags, each.key, var.bootstrap_image_tag)}"
   }
 
   environment_variables = merge(
@@ -115,6 +191,12 @@ module "lambda_domain" {
       VARIABLES_TABLE       = module.dynamodb.table_names["variables"]
       CONFIG_VERSIONS_TABLE = module.dynamodb.table_names["config-versions"]
       USERS_TABLE           = module.dynamodb.table_names["users"]
+      GITHUB_TABLE          = module.dynamodb.table_names["github"]
+      VCS_UPLOADS_TABLE     = module.dynamodb.table_names["vcs-uploads"]
+      REGISTRY_TABLE        = module.dynamodb.table_names["registry"]
+
+      GITHUB_APP_SLUG = var.github_app_slug
+      API_BASE_URL    = "https://${local.api_host}"
 
       IDENTITY_TABLE_PREFIX = local.prefix
 
@@ -125,8 +207,17 @@ module "lambda_domain" {
 
       RUN_STATE_MACHINE_ARN = module.run_state_machine.arn
 
+      WORKSPACE_CLEANUP_QUEUE_URL = module.workspace_cleanup.queue_url
+      GITHUB_WEBHOOKS_QUEUE_URL   = module.github_webhooks.queue_url
+      REGISTRY_INGEST_QUEUE_URL   = module.registry_ingest.queue_url
+      AWS_CONNECT_TOPIC_ARN       = aws_sns_topic.aws_connect.arn
+
       RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
+      RUNNER_CLUSTER_ARN   = module.runner.cluster_arn
       RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
+
+      RUN_CREDENTIALS_ROLE_ARN = aws_iam_role.run_credentials.arn
+      RUN_STATE_ROLE_ARN       = aws_iam_role.run_state.arn
 
       APP_SECRETS_ARN = module.app_secrets.arns["app"]
 
@@ -171,12 +262,46 @@ locals {
   lambda_domain_extra_statements = {
     workspaces = [
       {
-        Sid      = "CheckAWorkspaceRunRole"
+        Sid      = "DeleteADeletedWorkspacesFinishedRuns"
         Effect   = "Allow"
-        Action   = ["sts:AssumeRole"]
-        Resource = local.workspace_run_role_arns
+        Action   = ["dynamodb:DeleteItem"]
+        Resource = [module.dynamodb.table_arns["runs"]]
+      },
+      {
+        Sid      = "QueueADeletedWorkspacesObjectCleanup"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [module.workspace_cleanup.queue_arn]
       },
     ]
+    github = [
+      {
+        Sid      = "WriteTheGitHubAppCredentialsFromTheManifestFlow"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:PutSecretValue"]
+        Resource = [module.app_secrets.arns["app"]]
+      },
+      {
+        Sid      = "QueueVerifiedWebhookDeliveries"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [module.github_webhooks.queue_arn]
+      },
+      {
+        Sid      = "QueueSemverTagPushesForTheRegistry"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [module.registry_ingest.queue_arn]
+      },
+    ]
+    registry = concat(local.bucket_statements["Artifacts"], [
+      {
+        Sid      = "QueueTagSyncsAndTheirTagsForTheRegistry"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [module.registry_ingest.queue_arn]
+      },
+    ])
     runs = [
       {
         Sid      = "StartAndStopRunExecutions"
@@ -195,6 +320,30 @@ locals {
         Effect   = "Allow"
         Action   = ["logs:GetLogEvents", "logs:DescribeLogStreams"]
         Resource = ["${aws_cloudwatch_log_group.runner.arn}:*"]
+      },
+      {
+        Sid      = "WriteIngestedConfigVersions"
+        Effect   = "Allow"
+        Action   = ["dynamodb:PutItem"]
+        Resource = [module.dynamodb.table_arns["config-versions"]]
+      },
+      {
+        Sid      = "RecordBoundRepositoryIds"
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem"]
+        Resource = [module.dynamodb.table_arns["workspaces"]]
+      },
+      {
+        Sid      = "VendRunPhaseCredentials"
+        Effect   = "Allow"
+        Action   = ["sts:AssumeRole"]
+        Resource = [aws_iam_role.run_credentials.arn]
+      },
+      {
+        Sid      = "DescribeRunnerTasksForTokenExchange"
+        Effect   = "Allow"
+        Action   = ["ecs:DescribeTasks"]
+        Resource = ["${replace(module.runner.cluster_arn, ":cluster/", ":task/")}/*"]
       },
     ]
   }
@@ -228,16 +377,18 @@ resource "aws_iam_role_policy" "lambda_domain" {
           Action   = local.dynamodb_write_actions
           Resource = local.lambda_domain_write_arns[each.key]
         },
+      ],
+      length(local.lambda_domain_read_arns[each.key]) > 0 ? [
         {
           Sid      = "ReadSharedTables"
           Effect   = "Allow"
           Action   = local.dynamodb_read_actions
           Resource = local.lambda_domain_read_arns[each.key]
         },
-        module.app_secrets.read_policy_statement,
-      ],
-      local.bucket_statements["State"],
-      local.bucket_statements["Artifacts"],
+      ] : [],
+      [module.app_secrets.read_policy_statement],
+      each.value.buckets ? local.bucket_statements["State"] : [],
+      each.value.buckets ? local.bucket_statements["Artifacts"] : [],
       local.lambda_domain_extra_statements[each.key],
     )
   })

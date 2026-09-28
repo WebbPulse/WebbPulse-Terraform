@@ -24,7 +24,16 @@ locals {
       "GET /api/v1/workspaces/{workspace_id}/config-versions/{config_version_id}" = { integration = "workspaces" }
     },
     {
-      "POST /api/v1/workspaces/{workspace_id}/run-role/check" = { integration = "workspaces" }
+      "GET /api/v1/workspaces/{workspace_id}/state-versions"                    = { integration = "workspaces" }
+      "GET /api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}" = { integration = "workspaces" }
+    },
+    {
+      "POST /api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}/download" = { integration = "workspaces" }
+    },
+    {
+      "POST /api/v1/workspaces/{workspace_id}/run-role/check"       = { integration = "workspaces" }
+      "GET /api/v1/workspaces/{workspace_id}/run-role/check"        = { integration = "workspaces" }
+      "POST /api/v1/workspaces/{workspace_id}/run-role/quick-setup" = { integration = "workspaces" }
     },
     {
       "POST /api/v1/api-keys"            = { integration = "workspaces" }
@@ -45,12 +54,46 @@ locals {
     "GET /api/v1/runs/{run_id}/bundle"            = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/artifact-uploads" = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/phase-result"     = { integration = "runs", authorization_type = "NONE" }
+    "POST /api/v1/runs/{run_id}/runner-token"     = { integration = "runs", authorization_type = "NONE" }
   }
+
+  github_routes = contains(keys(local.lambda_domains), "github") ? {
+    "GET /api/v1/github/app"                                          = { integration = "github" }
+    "POST /api/v1/github/app/webhook"                                 = { integration = "github" }
+    "POST /api/v1/github/webhooks"                                    = { integration = "github", authorization_type = "NONE" }
+    "POST /api/v1/github/app/manifest"                                = { integration = "github" }
+    "POST /api/v1/github/app/conversions"                             = { integration = "github" }
+    "POST /api/v1/github/install-state"                               = { integration = "github" }
+    "POST /api/v1/github/installations"                               = { integration = "github" }
+    "GET /api/v1/github/installations"                                = { integration = "github" }
+    "POST /api/v1/github/installations/{installation_id}/refresh"     = { integration = "github" }
+    "DELETE /api/v1/github/installations/{installation_id}"           = { integration = "github" }
+    "GET /api/v1/github/installations/{installation_id}/repositories" = { integration = "github" }
+  } : {}
+
+  registry_routes = contains(keys(local.lambda_domains), "registry") ? {
+    "GET /v1/modules/{namespace}/{name}/{provider}/versions"                        = { integration = "registry", authorization_type = "NONE" }
+    "GET /v1/modules/{namespace}/{name}/{provider}/{version}/download"              = { integration = "registry", authorization_type = "NONE" }
+    "GET /api/v1/registry/modules"                                                  = { integration = "registry" }
+    "POST /api/v1/registry/modules"                                                 = { integration = "registry" }
+    "GET /api/v1/registry/modules/{namespace}/{name}/{provider}"                    = { integration = "registry" }
+    "GET /api/v1/registry/modules/{namespace}/{name}/{provider}/versions/{version}" = { integration = "registry" }
+    "POST /api/v1/registry/modules/{namespace}/{name}/{provider}/resync"            = { integration = "registry" }
+    "DELETE /api/v1/registry/modules/{namespace}/{name}/{provider}"                 = { integration = "registry" }
+  } : {}
 
   product_routes = merge(
     { for key, route in local.workspaces_routes : key => merge(route, { require_identity_jwt = true }) },
     {
       for key, route in local.runs_routes :
+      key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
+    },
+    {
+      for key, route in local.github_routes :
+      key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
+    },
+    {
+      for key, route in local.registry_routes :
       key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
     },
   )
@@ -154,7 +197,7 @@ locals {
 
 module "api" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/http-api"
-  version = "~> 2.27"
+  version = "~> 2.32"
 
   name = "${local.prefix}-api"
 
@@ -195,15 +238,17 @@ module "api" {
     max_age           = 86400
   }
 
-  disable_execute_api_endpoint = local.staging_gate_authorizer_attached
+  disable_execute_api_endpoint = local.custom_domains_enabled
   authorizer_id                = local.staging_gate_authorizer_attached ? one(module.staging_access_gate[*].http_api_authorizer_id) : null
 
-  identity_jwt = local.identity_jwt_native_enforced ? {
-    issuer   = local.identity_issuer
-    audience = local.identity_audience
+  identity_jwt = local.identity_jwt_api_enforced && local.domain_functions_enabled ? {
+    issuer           = local.identity_issuer
+    audience         = local.identity_audience
+    mode             = var.identity_jwt_mode
+    api_key_prefixes = local.identity_jwt_lambda_enforced ? [local.api_key_prefix] : []
   } : null
 
-  identity_jwt_depends_on = local.identity_jwt_native_enforced && local.domain_functions_enabled ? [module.lambda_domain["workspaces"]] : []
+  identity_jwt_depends_on = local.identity_jwt_api_enforced && local.domain_functions_enabled ? [module.lambda_domain["workspaces"]] : []
 
   domain_name     = local.custom_domains_enabled ? local.api_host : null
   certificate_arn = module.api_certificate.certificate_arn

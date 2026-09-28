@@ -2,11 +2,19 @@
 
 The shared suite probes every operation in isolation. These flows prove the sequences
 that matter instead: a workspace created with a run role, a config version uploaded to
-the presigned PUT, a plan that reaches `planned`, a confirm that reaches `applied`, and
-the discard and cancel paths that end a run without applying it.
+the presigned PUT, a plan that reaches `planned`, a confirm that reaches `applied`, a
+destroy run that removes what the apply created, and the discard and cancel paths that
+end a run without applying it.
 
 Every workspace is registered with `created_resources` before it is used, so a flow that
 fails part way still hands the cleanup hook something to delete.
+
+A wait and the assertion that follows it are deliberately separate. `_wait_for` stops on
+the failure statuses as well as the successful ones, because a run that errors would
+otherwise only ever report as a timeout, so every case that then presumes the run
+succeeded narrows the result through `_require_status`. Without that a failed plan is
+reported as whatever later step it broke, which is how a plan failure once surfaced as a
+confusing 409 from the discard several steps downstream.
 """
 
 from __future__ import annotations
@@ -14,6 +22,7 @@ from __future__ import annotations
 import io
 import tarfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +31,27 @@ import pytest
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "first-run"
 
-PLAN_TERMINAL = ("planned", "planned_and_finished", "errored", "cancelled", "discarded")
-APPLY_TERMINAL = ("applied", "errored", "cancelled", "discarded")
+FAILURE_TERMINAL = ("errored", "cancelled", "discarded")
+"""The terminal statuses that mean the run did not do what was asked of it.
+
+Kept separate from the success statuses so that a wait and the assertion after it
+cannot quietly disagree. `_wait_for` has to be given somewhere to stop on failure,
+or a broken run would only ever report as a timeout, but a case that presumes
+success must then say so with `_require_status` rather than carrying on.
+"""
+
+PLAN_SUCCESS = ("planned", "planned_and_finished", "awaiting_confirmation")
+"""The statuses a plan that actually produced a plan settles on.
+
+`awaiting_confirmation` is terminal for the plan phase alone: the run is parked on
+its confirmation task token and goes no further until it is confirmed or discarded.
+"""
+
+APPLY_SUCCESS = ("applied",)
+"""The one status an apply that ran to completion settles on."""
+
+PLAN_TERMINAL = PLAN_SUCCESS + FAILURE_TERMINAL
+APPLY_TERMINAL = APPLY_SUCCESS + FAILURE_TERMINAL
 RUN_TERMINAL = ("applied", "planned_and_finished", "errored", "cancelled", "discarded")
 
 POLL_SECONDS = 5
@@ -75,17 +103,70 @@ def _wait_for(api: Any, run_id: str, terminal: tuple[str, ...], timeout: int) ->
         if last.get("status") in terminal:
             return last
         time.sleep(POLL_SECONDS)
-    pytest.fail(f"run {run_id} was still {last.get('status')!r} after {timeout}s")
+    pytest.fail(f"run {run_id} was still {last.get('status')!r} after {timeout}s: {_describe(last)}")
 
 
-def _create_run(api: Any, workspace_id: str, config_version_id: str, *, plan_only: bool) -> str:
-    """Start a run and return its id."""
+def _describe(run: dict[str, Any]) -> str:
+    """One line naming a run, its status and whatever diagnostic it carries.
+
+    Read straight off the run body rather than fetched again, so the description is
+    of the state the assertion actually saw. `error` is the phase failure text the
+    runner reported and is the field that says why a plan or an apply failed.
+    """
+    parts = [
+        f"run={run.get('run_id')}",
+        f"status={run.get('status')!r}",
+        f"error={run.get('error') or 'none'!r}",
+    ]
+    if run.get("changes"):
+        parts.append(f"changes={run.get('changes')}")
+    if run.get("finished_at"):
+        parts.append(f"finished_at={run.get('finished_at')}")
+    return " ".join(parts)
+
+
+def _require_delete_refused(api: Any, workspace_id: str, error_code: str, *, force: bool) -> None:
+    """Fail unless a workspace delete is a 409 carrying `error_code`, and the workspace survives it."""
+    response = api.delete(f"/api/v1/workspaces/{workspace_id}", params={"force": "true"} if force else None)
+    body = response.json() if response.status_code == 409 else {}
+    assert response.status_code == 409 and body.get("error_code") == error_code, (
+        f"a {'force' if force else 'safe'} delete answered {response.status_code}, expected {error_code}: "
+        f"{response.text[:400]}"
+    )
+    assert api.get(f"/api/v1/workspaces/{workspace_id}").status_code == 200, "a refused delete removed the workspace"
+
+
+def _require_status(run: dict[str, Any], expected: tuple[str, ...], phase: str) -> dict[str, Any]:
+    """Fail unless the run settled on one of `expected`, naming the phase that failed.
+
+    This is what keeps a wait honest. `_wait_for` has to stop on the failure statuses
+    too, or a run that errors would only ever report as a timeout, so every caller that
+    goes on to presume success has to narrow the result here. The message leads with the
+    phase, so CI output distinguishes a plan that failed from the later step that was
+    never going to work once it had.
+    """
+    status = run.get("status")
+    if status in expected:
+        return run
+    pytest.fail(f"the {phase} did not succeed, expected one of {expected}: {_describe(run)}")
+
+
+def _create_run(
+    api: Any,
+    workspace_id: str,
+    config_version_id: str,
+    *,
+    plan_only: bool,
+    is_destroy: bool = False,
+) -> str:
+    """Start a run, a destroy run when `is_destroy`, and return its id."""
     response = api.post(
         "/api/v1/runs",
         json={
             "workspace_id": workspace_id,
             "config_version_id": config_version_id,
             "plan_only": plan_only,
+            "is_destroy": is_destroy,
             "message": "e2e",
         },
     )
@@ -150,27 +231,56 @@ class TestConfigVersions:
 class TestRunLifecycle:
     """The run lifecycle end to end: plan, confirm, apply, and the paths that do not apply."""
 
-    def test_plan_and_apply(self, api: Any, workspace: dict[str, Any]) -> None:
-        """A run plans, confirms and applies, and its logs are readable."""
+    def test_plan_and_apply(self, api: Any, workspace: dict[str, Any], step_up_again: Callable[[], Any]) -> None:
+        """A run plans, confirms and applies, then a destroy run removes what it applied.
+
+        The destroy is part of the case rather than of cleanup, so the workspace is left
+        managing no resources and a failed destroy fails the case instead of leaving a
+        `random_pet` behind unnoticed. Confirming and deleting are step-up gated and the
+        plan and apply can outlast the window, so each of those steps up right before it.
+        """
         workspace_id = workspace["workspace_id"]
         config_version_id = _upload(api, workspace_id)
         run_id = _create_run(api, workspace_id, config_version_id, plan_only=False)
 
-        planned = _wait_for(api, run_id, PLAN_TERMINAL + ("awaiting_confirmation",), PLAN_TIMEOUT_SECONDS)
-        assert planned["status"] in ("planned", "awaiting_confirmation"), planned
+        planned = _wait_for(api, run_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
+        _require_status(planned, ("planned", "awaiting_confirmation"), "plan")
+
+        _require_delete_refused(step_up_again(), workspace_id, "WORKSPACE_HAS_ACTIVE_RUN", force=True)
 
         logs = api.get(f"/api/v1/runs/{run_id}/logs", params={"phase": "plan"})
         assert logs.status_code == 200, logs.text[:400]
         assert isinstance(logs.json()["events"], list)
 
-        confirmed = api.post(f"/api/v1/runs/{run_id}/confirm")
+        confirmed = step_up_again().post(f"/api/v1/runs/{run_id}/confirm")
         assert confirmed.status_code in (200, 202), confirmed.text[:400]
 
         applied = _wait_for(api, run_id, APPLY_TERMINAL, APPLY_TIMEOUT_SECONDS)
-        assert applied["status"] == "applied", applied
+        _require_status(applied, APPLY_SUCCESS, "apply")
 
         apply_logs = api.get(f"/api/v1/runs/{run_id}/logs", params={"phase": "apply"})
         assert apply_logs.status_code == 200, apply_logs.text[:400]
+
+        _require_delete_refused(step_up_again(), workspace_id, "WORKSPACE_MANAGES_RESOURCES", force=False)
+
+        destroy_id = _create_run(api, workspace_id, config_version_id, plan_only=False, is_destroy=True)
+        destroy_planned = _wait_for(api, destroy_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
+        _require_status(destroy_planned, ("planned", "awaiting_confirmation"), "destroy plan")
+        assert destroy_planned["is_destroy"] is True, _describe(destroy_planned)
+        assert (destroy_planned.get("changes") or {}).get("destroy", 0) >= 1, _describe(destroy_planned)
+
+        destroy_confirmed = step_up_again().post(f"/api/v1/runs/{destroy_id}/confirm")
+        assert destroy_confirmed.status_code in (200, 202), destroy_confirmed.text[:400]
+
+        destroyed = _wait_for(api, destroy_id, APPLY_TERMINAL, APPLY_TIMEOUT_SECONDS)
+        _require_status(destroyed, APPLY_SUCCESS, "destroy apply")
+
+        deleted = step_up_again().delete(f"/api/v1/workspaces/{workspace_id}")
+        assert deleted.status_code == 204, (
+            f"the safe delete after the destroy answered {deleted.status_code}: {deleted.text[:400]}"
+        )
+        for gone in (run_id, destroy_id):
+            assert api.get(f"/api/v1/runs/{gone}").status_code == 404, f"run {gone} outlived its workspace"
 
     def test_plan_only_run_finishes_without_applying(self, api: Any, workspace: dict[str, Any]) -> None:
         """A plan-only run reaches a terminal planned status and never applies."""
@@ -179,7 +289,7 @@ class TestRunLifecycle:
         run_id = _create_run(api, workspace_id, config_version_id, plan_only=True)
 
         finished = _wait_for(api, run_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
-        assert finished["status"] in ("planned", "planned_and_finished"), finished
+        _require_status(finished, ("planned", "planned_and_finished"), "plan-only run")
 
     def test_discard_ends_a_planned_run(self, api: Any, workspace: dict[str, Any]) -> None:
         """A run waiting on a confirmation can be discarded instead of applied."""
@@ -187,13 +297,16 @@ class TestRunLifecycle:
         config_version_id = _upload(api, workspace_id)
         run_id = _create_run(api, workspace_id, config_version_id, plan_only=False)
 
-        _wait_for(api, run_id, PLAN_TERMINAL + ("awaiting_confirmation",), PLAN_TIMEOUT_SECONDS)
+        planned = _wait_for(api, run_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
+        _require_status(planned, ("planned", "awaiting_confirmation"), "plan")
 
         discarded = api.post(f"/api/v1/runs/{run_id}/discard")
-        assert discarded.status_code in (200, 202), discarded.text[:400]
+        assert discarded.status_code in (200, 202), (
+            f"the discard answered {discarded.status_code}: {discarded.text[:400]} ({_describe(planned)})"
+        )
 
         final = _wait_for(api, run_id, APPLY_TERMINAL, PLAN_TIMEOUT_SECONDS)
-        assert final["status"] == "discarded", final
+        _require_status(final, ("discarded",), "discard")
 
     def test_cancel_ends_a_running_run(self, api: Any, workspace: dict[str, Any]) -> None:
         """A run can be cancelled while it is still working."""
@@ -206,7 +319,7 @@ class TestRunLifecycle:
             pytest.skip(f"the run was no longer cancellable: {cancelled.status_code}")
 
         final = _wait_for(api, run_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
-        assert final["status"] in ("cancelled", "planned", "planned_and_finished"), final
+        _require_status(final, ("cancelled", "planned", "planned_and_finished"), "cancel")
 
     def test_runs_list_carries_this_workspace(self, api: Any, workspace: dict[str, Any]) -> None:
         """A run started for this workspace appears in the runs list, and is then ended.
@@ -227,5 +340,4 @@ class TestRunLifecycle:
         cancelled = api.post(f"/api/v1/runs/{run_id}/cancel")
         assert cancelled.status_code in (200, 202, 409), cancelled.text[:400]
 
-        final = _wait_for(api, run_id, RUN_TERMINAL, PLAN_TIMEOUT_SECONDS)
-        assert final["status"] in RUN_TERMINAL, final
+        _wait_for(api, run_id, RUN_TERMINAL, PLAN_TIMEOUT_SECONDS)

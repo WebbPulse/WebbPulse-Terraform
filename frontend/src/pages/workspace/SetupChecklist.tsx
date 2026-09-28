@@ -10,9 +10,11 @@ import {
   isRunRoleMissing,
   type ConfigVersion,
   type Run,
+  type RunRoleCheck,
   type Workspace,
 } from '../../api';
 import { Button, ErrorNotice, runPath } from '../../components';
+import type { WorkspaceKeys } from '../workspaceContext';
 import { ConnectAccountPanel } from './ConnectAccountPanel';
 import { UploadConfigForm } from './UploadConfigForm';
 import {
@@ -28,15 +30,16 @@ export interface SetupChecklistProps {
   steps: readonly SetupStep[];
   versions: readonly ConfigVersion[];
   runs: readonly Run[];
-  /** The refetch keys for the workspace, its versions and its runs. */
-  keys: { workspace: string; versions: string; runs: string };
+  /** The live run role check, or null until it has answered. */
+  runRoleCheck: RunRoleCheck | null;
+  keys: WorkspaceKeys;
 }
 
-/** What each step is called and what it asks for. */
+/** What each step is called and what it asks for, on the CLI and API workflows. */
 const STEP_COPY: Record<SetupStepId, { title: string; summary: string }> = {
   connect: {
     title: 'Connect an AWS account',
-    summary: 'Create a role the runner can assume and save its ARN.',
+    summary: 'Create the role runs assume with one AWS CloudFormation stack.',
   },
   upload: {
     title: 'Upload a configuration',
@@ -44,18 +47,62 @@ const STEP_COPY: Record<SetupStepId, { title: string; summary: string }> = {
   },
   plan: {
     title: 'Run a plan',
-    summary: 'A plan only run, to see the runner work end to end.',
+    summary:
+      'A plan only run, which also proves the runner can assume the role.',
   },
 };
 
-/** The checklist. Render it only while some step is not done. */
+/**
+ * The copy for one step of a workspace.
+ *
+ * A workspace connected to a repository gets its configuration from GitHub
+ * Actions, so it waits for a push or a pull request, as HCP Terraform does,
+ * rather than asking for an archive.
+ */
+function stepCopy(
+  id: SetupStepId,
+  workspace: Workspace
+): { title: string; summary: string } {
+  const repository = workspace.vcs_repo ?? null;
+  if (repository === null) {
+    return STEP_COPY[id];
+  }
+  if (id === 'upload') {
+    return {
+      title: 'Waiting for configuration',
+      summary: workspace.tracked_branch
+        ? `Push to ${workspace.tracked_branch} or open a pull request in ${repository}.`
+        : `Push to the tracked branch or open a pull request in ${repository}.`,
+    };
+  }
+  if (id === 'plan') {
+    return {
+      title: 'Run a plan',
+      summary:
+        'The first push starts a run and a pull request a plan only one, which also proves the runner can assume the role.',
+    };
+  }
+  return STEP_COPY[id];
+}
+
+/**
+ * The checklist. Render it only while some step is not done.
+ *
+ * The current step opens on its own, and any step can be opened or closed by
+ * hand whatever its status, the way the hosted product lets a step be read
+ * ahead of the one before it.
+ */
 export function SetupChecklist({
   workspace,
   steps,
   versions,
   runs,
+  runRoleCheck,
   keys,
 }: SetupChecklistProps): React.ReactElement {
+  const [expanded, setExpanded] = useState<
+    Partial<Record<SetupStepId, boolean>>
+  >({});
   const doneCount = steps.filter((step) => step.status === 'done').length;
   return (
     <section
@@ -80,43 +127,81 @@ export function SetupChecklist({
         </span>
       </div>
       <ol className="divide-y divide-line">
-        {steps.map((step, index) => (
-          <li
-            key={step.id}
-            data-testid={`setup-step-${step.id}`}
-            data-status={step.status}
-            className="px-4 py-3"
-          >
-            <div className="flex items-start gap-3">
-              <StepMarker index={index} status={step.status} />
-              <div className="min-w-0 flex-1">
-                <p
-                  className={`text-sm font-medium ${
-                    step.status === 'blocked'
-                      ? 'text-text-faint'
-                      : 'text-text-strong'
-                  }`}
-                >
-                  {STEP_COPY[step.id].title}
-                </p>
-                <p className="text-xs text-text-faint">
-                  {step.status === 'done' ? 'Done' : STEP_COPY[step.id].summary}
-                </p>
-                {step.status === 'current' ? (
-                  <div className="mt-4">
-                    <StepBody
-                      id={step.id}
-                      workspace={workspace}
-                      versions={versions}
-                      runs={runs}
-                      keys={keys}
-                    />
-                  </div>
-                ) : null}
+        {steps.map((step, index) => {
+          const open = expanded[step.id] ?? step.status === 'current';
+          const bodyId = `setup-step-${step.id}-body`;
+          return (
+            <li
+              key={step.id}
+              data-testid={`setup-step-${step.id}`}
+              data-status={step.status}
+              className="px-4 py-3"
+            >
+              <div className="flex items-start gap-3">
+                <StepMarker index={index} status={step.status} />
+                <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    aria-controls={bodyId}
+                    onClick={() => {
+                      setExpanded((current) => ({
+                        ...current,
+                        [step.id]: !open,
+                      }));
+                    }}
+                    className="flex w-full items-start justify-between gap-3 rounded-md text-left focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+                  >
+                    <span className="min-w-0">
+                      <span
+                        className={`block text-sm font-medium ${
+                          step.status === 'blocked'
+                            ? 'text-text-muted'
+                            : 'text-text-strong'
+                        }`}
+                      >
+                        {stepCopy(step.id, workspace).title}
+                      </span>
+                      <span className="block text-xs text-text-faint">
+                        {step.status === 'done'
+                          ? 'Done'
+                          : stepCopy(step.id, workspace).summary}
+                      </span>
+                    </span>
+                    <svg
+                      viewBox="0 0 16 16"
+                      className={`mt-0.5 size-4 shrink-0 text-text-faint transition-transform ${
+                        open ? 'rotate-180' : ''
+                      }`}
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="m4 6 4 4 4-4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  {open ? (
+                    <div id={bodyId} className="mt-4">
+                      <StepBody
+                        id={step.id}
+                        workspace={workspace}
+                        versions={versions}
+                        runs={runs}
+                        runRoleCheck={runRoleCheck}
+                        keys={keys}
+                      />
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
@@ -157,27 +242,35 @@ function StepMarker({
   );
 }
 
-/** The interactive part of the current step. */
+/** The interactive part of an open step. */
 function StepBody({
   id,
   workspace,
   versions,
   runs,
+  runRoleCheck,
   keys,
 }: {
   id: SetupStepId;
   workspace: Workspace;
   versions: readonly ConfigVersion[];
   runs: readonly Run[];
-  keys: SetupChecklistProps['keys'];
+  runRoleCheck: RunRoleCheck | null;
+  keys: WorkspaceKeys;
 }): React.ReactElement {
   switch (id) {
     case 'connect':
       return (
-        <ConnectAccountPanel workspace={workspace} queryKey={keys.workspace} />
+        <ConnectAccountPanel
+          workspace={workspace}
+          runRoleCheck={runRoleCheck}
+          keys={keys}
+        />
       );
     case 'upload':
-      return (
+      return workspace.vcs_repo ? (
+        <AwaitingRepository workspace={workspace} />
+      ) : (
         <UploadConfigForm
           workspaceId={workspace.workspace_id}
           queryKey={keys.versions}
@@ -196,6 +289,48 @@ function StepBody({
         />
       );
   }
+}
+
+/** What a workspace connected to a repository waits for before its first run. */
+function AwaitingRepository({
+  workspace,
+}: {
+  workspace: Workspace;
+}): React.ReactElement {
+  const repository = workspace.vcs_repo ?? '';
+  const branch = workspace.tracked_branch ?? null;
+  return (
+    <div data-testid="setup-awaiting-vcs" className="space-y-2 text-sm">
+      <p className="text-text-muted">
+        Configuration arrives from{' '}
+        <a
+          href={`https://github.com/${repository}`}
+          target="_blank"
+          rel="noreferrer"
+          className="font-mono text-accent underline-offset-2 hover:underline"
+        >
+          {repository}
+        </a>
+        . Push to{' '}
+        {branch === null ? (
+          'the tracked branch'
+        ) : (
+          <code className="font-mono text-text">{branch}</code>
+        )}{' '}
+        to start a run, or open a pull request against it for a plan only run.
+      </p>
+      <p className="text-xs text-text-faint">
+        The repository&apos;s GitHub Actions workflow uploads the configuration,
+        and this step completes when it lands.{' '}
+        <Link
+          to={`/workspaces/${workspace.workspace_id}/settings/version-control`}
+          className="text-accent underline-offset-2 hover:underline"
+        >
+          Version control settings
+        </Link>
+      </p>
+    </div>
+  );
 }
 
 /** The button that starts the first plan only run, or the link to the one running. */
@@ -241,7 +376,7 @@ function FirstPlan({
         config_version_id: version.config_version_id,
         plan_only: true,
       });
-      invalidateQueries([runsKey]);
+      invalidateQueries(runsKey);
       void navigate(
         runPath({ run_id: run.run_id, workspace_id: workspace.workspace_id })
       );
@@ -266,7 +401,9 @@ function FirstPlan({
             </code>
           </>
         )}{' '}
-        without applying anything.
+        without applying anything. The runner assumes the role first, so a trust
+        policy that is not right fails the run at its start, and Settings, AWS
+        account says what to fix.
       </p>
       <Button
         variant="primary"

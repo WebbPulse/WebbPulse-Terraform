@@ -439,3 +439,64 @@ def test_an_absent_run_is_404(auth_client):
 def test_the_plan_needs_a_read_scope(client, created_run):
     """An unauthenticated caller cannot read a run's plan."""
     assert client.get(f"{BASE}/{created_run['run_id']}/plan").status_code == 401
+
+
+def test_summarise_outputs_redacts_sensitive_values():
+    """A sensitive output keeps its name but never its value, whatever the upload held."""
+    outputs = runs_service.summarise_outputs(
+        {
+            "url": {"sensitive": False, "type": "string", "value": "https://example.com"},
+            "token": {"sensitive": True, "type": "string", "value": "leaked-if-shown"},
+            "bad": "not an object",
+        }
+    )
+    assert outputs == [
+        {"name": "token", "value": runs_service.REDACTED, "sensitive": True},
+        {"name": "url", "value": "https://example.com", "sensitive": False},
+    ]
+    assert runs_service.summarise_outputs([]) == []
+
+
+def test_an_unapplied_plan_has_no_applied_outputs(auth_client, created_run):
+    """Before an apply there is nothing to report, so the field is null."""
+    run_id = created_run["run_id"]
+    upload_plan(run_id, {"format_version": "1.2", "resource_changes": []})
+    assert auth_client.get(f"{BASE}/{run_id}/plan").json()["applied_outputs"] is None
+
+
+def test_an_applied_run_returns_its_outputs(auth_client, awaiting_confirmation):
+    """Once applied, the plan carries the outputs the apply left, sensitive ones redacted."""
+    run_id = awaiting_confirmation["run_id"]
+    upload_plan(run_id, {"format_version": "1.2", "resource_changes": []})
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    runs_service.record_phase_result(
+        run_id, {"phase": "apply", "exit_code": 0, "changes": {"add": 2, "change": 1, "destroy": 0}}
+    )
+    boto3.client("s3", region_name=REGION).put_object(
+        Bucket=ARTIFACTS_BUCKET,
+        Key=runs_service.outputs_key(run_id),
+        Body=json.dumps(
+            {
+                "pet_name": {"sensitive": False, "type": "string", "value": "lucky-horse"},
+                "secret": {"sensitive": True, "type": "string", "value": "never-shown"},
+            }
+        ).encode(),
+    )
+
+    body = auth_client.get(f"{BASE}/{run_id}/plan").json()
+    assert body["applied_outputs"] == [
+        {"name": "pet_name", "value": "lucky-horse", "sensitive": False},
+        {"name": "secret", "value": runs_service.REDACTED, "sensitive": True},
+    ]
+    assert "never-shown" not in json.dumps(body)
+
+
+def test_an_applied_run_without_outputs_reports_null(auth_client, awaiting_confirmation):
+    """An apply whose outputs upload failed still serves its plan."""
+    run_id = awaiting_confirmation["run_id"]
+    upload_plan(run_id, {"format_version": "1.2", "resource_changes": []})
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    runs_service.record_phase_result(run_id, {"phase": "apply", "exit_code": 0, "changes": {}})
+    body = auth_client.get(f"{BASE}/{run_id}/plan")
+    assert body.status_code == 200
+    assert body.json()["applied_outputs"] is None

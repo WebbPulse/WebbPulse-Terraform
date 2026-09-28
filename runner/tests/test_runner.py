@@ -9,20 +9,29 @@ from typing import Any, Callable
 import boto3
 import pytest
 
+from app import workspace
 from app.main import Clients, run
-from app.models import RunnerEnvError
+from app.models import Bundle, RunnerEnvError
 from tests.conftest import (
     API_BASE_URL,
     LOG_GROUP,
     PLAN_JSON_NO_CHANGES,
+    PROVIDER_SECRET_ACCESS_KEY,
+    PROVIDER_SESSION_TOKEN,
+    REGISTRY_HOST,
+    REGISTRY_TOKEN,
     RUN_ID,
     RUN_TOKEN,
     SECRET_ENVVAR,
+    SECRET_HCL_TFVAR,
+    SECRET_OUTPUT,
     SECRET_TFVAR,
+    STATE_SECRET_ACCESS_KEY,
+    STATE_SESSION_TOKEN,
     TASK_TOKEN,
-    WORKSPACE_ID,
     ApiRecorder,
     bundle_payload,
+    engine_release,
     make_clients,
     make_env,
     make_transport,
@@ -112,7 +121,7 @@ def test_a_working_directory_the_config_lacks_fails_the_task(
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["ConfigUnpackFailed"]
 
 
 def test_plan_with_no_changes_reports_zero(
@@ -158,8 +167,221 @@ def test_apply_downloads_the_plan_and_succeeds(
     result = recorder.phase_results[0]
     assert result["phase"] == "apply"
     assert result["exit_code"] == 0
+    assert result["changes"] == {"add": 1, "change": 0, "destroy": 0}
     messages = log_stream_messages(f"{RUN_ID}/apply")
     assert any("Apply complete" in message for message in messages)
+
+
+def test_apply_uploads_outputs_without_sensitive_values(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The applied outputs are uploaded with each sensitive value dropped before it leaves."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, plan_get_url="https://artifacts.example.invalid/runs/plan.tfplan?sig=5")
+    clients = make_clients(make_transport(bundle, config_tarball, recorder))
+
+    assert run(make_env("apply"), clients, tmp_path) == 0
+
+    body = recorder.uploads["/runs/outputs.json"]
+    assert SECRET_OUTPUT.encode() not in body
+    outputs = json.loads(body)
+    assert outputs["pet_name"]["value"] == "lucky-horse"
+    assert outputs["secret"] == {"sensitive": True, "type": "string", "value": None}
+    assert all(SECRET_OUTPUT not in message for message in log_stream_messages(f"{RUN_ID}/apply"))
+
+
+def test_a_refused_outputs_upload_does_not_fail_the_apply(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The outputs artifact is best effort, so an API that refuses it still applies."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, plan_get_url="https://artifacts.example.invalid/runs/plan.tfplan?sig=5")
+    transport = make_transport(bundle, config_tarball, recorder, refused_uploads=frozenset({"outputs_json"}))
+
+    assert run(make_env("apply"), make_clients(transport), tmp_path) == 0
+    assert recorder.phase_results[0]["changes"] == {"add": 1, "change": 0, "destroy": 0}
+    assert "/runs/outputs.json" not in recorder.uploads
+    assert any("applied outputs not uploaded" in message for message in log_stream_messages(f"{RUN_ID}/apply"))
+
+
+def test_the_plan_log_carries_no_runner_summary_line(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The engine prints its own plan summary, so the runner adds no second one."""
+    fake_engine()
+    recorder = ApiRecorder()
+    clients = make_clients(make_transport(bundle_payload(run_role_arn), config_tarball, recorder))
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+    messages = log_stream_messages(f"{RUN_ID}/plan")
+    assert not any(message.startswith("Plan: ") for message in messages)
+    assert b"Plan: " not in recorder.uploads["/runs/plan.log"]
+
+
+def test_the_baked_engine_runs_when_it_matches_the_pin(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A pin equal to the baked release downloads nothing."""
+    bin_directory = fake_engine()
+    recorder = ApiRecorder()
+    clients = make_clients(make_transport(bundle_payload(run_role_arn), config_tarball, recorder))
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+    messages = log_stream_messages(f"{RUN_ID}/plan")
+    assert "using terraform 1.16.4" in messages
+    assert not any(message.startswith("installing") for message in messages)
+    assert not (tmp_path / "engines").exists()
+    assert bin_directory.exists()
+
+
+@pytest.mark.parametrize("engine", ["terraform", "tofu"])
+def test_a_pinned_version_is_installed_and_used(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    engine: str,
+) -> None:
+    """A pin the image does not bake is downloaded, verified and run in place of the baked one."""
+    fake_engine()
+    release_directory = fake_engine(version="1.11.0", directory=tmp_path / "release")
+    releases = engine_release(engine, "1.11.0", (release_directory / engine).read_bytes())
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, engine=engine, engine_version="1.11.0")
+    clients = make_clients(make_transport(bundle, config_tarball, recorder, releases=releases))
+
+    assert run(make_env("plan"), clients, tmp_path / "work") == 0
+    messages = log_stream_messages(f"{RUN_ID}/plan")
+    assert f"installing {engine} 1.11.0" in messages
+    assert f"using {engine} 1.11.0" in messages
+    assert (tmp_path / "work" / "engines" / engine / "1.11.0" / engine).exists()
+
+
+def test_a_release_that_fails_its_checksum_is_refused(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An archive whose digest differs from the published SUMS never runs."""
+    fake_engine()
+    releases = engine_release("terraform", "1.11.0", b"tampered", checksum="f" * 64)
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, engine_version="1.11.0")
+    clients = make_clients(make_transport(bundle, config_tarball, recorder, releases=releases))
+
+    assert run(make_env("plan"), clients, tmp_path) == 1
+    assert recorder.failure_names() == ["EngineInstallFailed"]
+    assert "EngineInstallFailed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("pin", ["~> 1.11", "latest", "1.11"])
+def test_a_pin_that_is_not_an_exact_version_is_refused(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    pin: str,
+) -> None:
+    """A constraint has nothing to resolve it here, so it fails rather than guessing."""
+    fake_engine()
+    recorder = ApiRecorder()
+    clients = make_clients(make_transport(bundle_payload(run_role_arn, engine_version=pin), config_tarball, recorder))
+
+    assert run(make_env("plan"), clients, tmp_path) == 1
+    assert "is not an exact release version" in capsys.readouterr().err
+
+
+def plan_arguments(stream: str) -> list[str]:
+    """The argument lines the fake engine printed for each plan or apply in one stream."""
+    return [message for message in log_stream_messages(stream) if " arguments " in message]
+
+
+def test_an_ordinary_plan_is_not_a_destroy(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A bundle without `is_destroy` plans without `-destroy`."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    lines = plan_arguments(f"{RUN_ID}/plan")
+    assert len(lines) == 1
+    assert "-destroy" not in lines[0].split()
+
+
+def test_a_destroy_bundle_plans_with_destroy(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A destroy run's plan passes `-destroy` alongside the saved plan flags."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = {**bundle_payload(run_role_arn), "is_destroy": True}
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    lines = plan_arguments(f"{RUN_ID}/plan")
+    assert len(lines) == 1
+    arguments = lines[0].split()
+    assert "-destroy" in arguments
+    assert "-out=plan.tfplan" in arguments
+    assert "-detailed-exitcode" in arguments
+    assert recorder.phase_results[0]["has_changes"] is True
+
+
+def test_a_destroy_apply_applies_the_saved_plan(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A destroy run's apply applies the saved plan with no extra flags."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = {
+        **bundle_payload(run_role_arn, plan_get_url="https://artifacts.example.invalid/runs/plan.tfplan?sig=5"),
+        "is_destroy": True,
+    }
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("apply"), make_clients(transport), tmp_path) == 0
+
+    assert plan_arguments(f"{RUN_ID}/apply") == ["apply arguments -input=false -lock-timeout=120s plan.tfplan"]
 
 
 def test_apply_without_a_plan_url_fails(
@@ -176,7 +398,7 @@ def test_apply_without_a_plan_url_fails(
     clients = make_clients(transport)
 
     assert run(make_env("apply"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["PlanUnavailable"]
 
 
 def test_engine_failure_is_reported_as_failure(
@@ -188,8 +410,8 @@ def test_engine_failure_is_reported_as_failure(
 ) -> None:
     """A non zero plan exit that is not the detailed changes code fails the phase.
 
-    Exit 1 is a real terraform failure, so it raises `PlanFailed` and posts no
-    phase result, unlike the 2 that `-detailed-exitcode` uses for changes.
+    Exit 1 is a real terraform failure, so it is posted as `PlanFailed`, unlike
+    the 2 that `-detailed-exitcode` uses for changes.
     """
     fake_engine(plan_exit=1)
     recorder = ApiRecorder()
@@ -197,7 +419,8 @@ def test_engine_failure_is_reported_as_failure(
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["PlanFailed"]
+    assert recorder.phase_results[0]["exit_code"] == 1
 
 
 def test_init_failure_stops_before_the_plan(
@@ -214,7 +437,7 @@ def test_init_failure_stops_before_the_plan(
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["InitFailed"]
 
 
 def test_bundle_fetch_failure_fails_the_task(
@@ -231,7 +454,7 @@ def test_bundle_fetch_failure_fails_the_task(
 
     assert run(make_env("plan"), clients, tmp_path) == 1
     assert recorder.bundle_requests == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["BundleFetchFailed"]
     assert log_stream_messages(f"{RUN_ID}/plan") == []
 
 
@@ -270,7 +493,16 @@ def test_sensitive_values_never_reach_any_log(
 
     assert run(make_env("plan"), clients, tmp_path) == 0
 
-    forbidden = [SECRET_TFVAR, SECRET_ENVVAR, RUN_TOKEN, TASK_TOKEN, WORKSPACE_ID]
+    forbidden = [
+        SECRET_TFVAR,
+        SECRET_ENVVAR,
+        RUN_TOKEN,
+        TASK_TOKEN,
+        PROVIDER_SECRET_ACCESS_KEY,
+        PROVIDER_SESSION_TOKEN,
+        STATE_SECRET_ACCESS_KEY,
+        STATE_SESSION_TOKEN,
+    ]
     haystacks: list[str] = list(log_stream_messages(f"{RUN_ID}/plan"))
     captured = capsys.readouterr()
     haystacks.append(captured.out)
@@ -309,15 +541,20 @@ def test_assume_role_failure_fails_the_task(
     fake_engine: Callable[..., Path],
     tmp_path: Path,
 ) -> None:
-    """A run role that cannot be assumed fails the task without running the engine."""
+    """A run role that refused the control plane fails the phase as `AssumeRoleFailed`.
+
+    The API assumes the role when it serves the bundle, so the refusal arrives as
+    the bundle's 409, and the name is what the run role check reads back.
+    """
     fake_engine()
     recorder = ApiRecorder()
-    bundle = bundle_payload("not-an-arn")
-    transport = make_transport(bundle, config_tarball, recorder)
+    envelope = {"message": "assume role failed: AccessDenied", "error_code": "RUN_ROLE_ASSUME_FAILED"}
+    transport = make_transport(None, config_tarball, recorder, bundle_status=409, bundle_body=envelope)
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["AssumeRoleFailed"]
+    assert log_stream_messages(f"{RUN_ID}/plan") == []
 
 
 def test_a_refused_artifact_upload_names_itself(
@@ -340,7 +577,7 @@ def test_a_refused_artifact_upload_names_itself(
     clients = make_clients(transport)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
-    assert recorder.phase_results == []
+    assert recorder.failure_names() == ["ArtifactUploadFailed"]
     assert "ArtifactUploadFailed: plan upload request returned 500" in capsys.readouterr().err
 
 
@@ -360,14 +597,14 @@ def test_an_unknown_failure_keeps_its_message(
     clients = make_clients(make_transport(None, config_tarball, recorder))
 
     def explode(*_: object, **__: object) -> None:
-        raise RuntimeError(f"boom with {RUN_TOKEN} in it")
+        raise RuntimeError(f"boom with {TASK_TOKEN} in it")
 
     monkeypatch.setattr("app.main.execute", explode)
 
     assert run(make_env("plan"), clients, tmp_path) == 1
     captured = capsys.readouterr().err
     assert "RuntimeError: boom with" in captured
-    assert RUN_TOKEN not in captured
+    assert TASK_TOKEN not in captured
 
 
 def test_the_plan_artifacts_are_uploaded_at_their_real_size(
@@ -396,5 +633,148 @@ def test_clients_build_uses_the_region(aws: None) -> None:
     """The real client factory honours the runner's region."""
     clients = Clients.build("us-west-2")
     assert clients.logs.meta.region_name == "us-west-2"
-    assert clients.sts.meta.region_name == "us-west-2"
+    assert clients.identity is not None
     clients.http.close()
+
+
+def test_an_hcl_variable_reaches_the_engine_as_an_expression(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The engine finds the native tfvars file, and the assignment in it is unquoted.
+
+    The whole point of the flag: the engine has to see `["a", "b"]` as a list,
+    which it does only from a file it parses as HCL. The echoed line comes back
+    with the value masked, because the redactor holds every variable value
+    whether or not the control plane marked it sensitive, so the assertion on the
+    unquoted form reads the file the engine read rather than the log.
+    """
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn) | {"hcl_variables": {"subnets": '["a", "b"]'}}
+    transport = make_transport(bundle, config_tarball, recorder)
+    clients = make_clients(transport)
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+    log = recorder.uploads["/runs/plan.log"].decode()
+    assert "tfvars file zz_webbpulse.auto.tfvars" in log
+    assert "tfvars file zz_webbpulse.auto.tfvars.json" in log
+    assert "tfvars line subnets = " in log
+
+    written = Bundle.model_validate(bundle)
+    directory = tmp_path / "written"
+    directory.mkdir()
+    path = workspace.write_hcl_tfvars(directory, written.hcl_variables)
+    assert path is not None
+    assert path.read_text() == 'subnets = (\n["a", "b"]\n)\n'
+
+
+def test_a_sensitive_hcl_variable_never_reaches_any_log(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A sensitive HCL expression is masked everywhere a literal one would be.
+
+    The engine reads it from a file the runner never echoes, and the redactor
+    holds the expression, so the line the fake engine does echo comes back masked
+    rather than carrying the members of the list.
+    """
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn) | {"hcl_variables": {"secrets": SECRET_HCL_TFVAR}}
+    transport = make_transport(bundle, config_tarball, recorder)
+    clients = make_clients(transport)
+
+    assert run(make_env("plan"), clients, tmp_path) == 0
+
+    captured = capsys.readouterr()
+    haystacks = [
+        *log_stream_messages(f"{RUN_ID}/plan"),
+        captured.out,
+        captured.err,
+        recorder.uploads["/runs/plan.log"].decode(),
+    ]
+    for haystack in haystacks:
+        assert SECRET_HCL_TFVAR not in haystack
+        assert "secret-list-member-abcdefghij" not in haystack
+
+
+def _registry_bundle(run_role_arn: str, **kwargs: Any) -> dict[str, Any]:
+    """A bundle carrying a registry credential for one module source host."""
+    return bundle_payload(run_role_arn, **kwargs) | {
+        "registry": {"hosts": [REGISTRY_HOST], "token": REGISTRY_TOKEN, "expires_at": "2026-09-27T13:00:00+00:00"}
+    }
+
+
+TOKEN_VARIABLE = "TF_TOKEN_staging_terraform__e2e_webbpulse_com"
+"""The variable the engine reads `REGISTRY_HOST`'s credential from."""
+
+
+def test_the_registry_credential_reaches_init_alone(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`init` sees `TF_TOKEN_<host>`; the plan does not, and the token never reaches a log."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(_registry_bundle(run_role_arn), config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    log = recorder.uploads["/runs/plan.log"].decode()
+    assert f"init holds {TOKEN_VARIABLE}=" in log
+    assert "plan holds" not in log
+    assert "show holds" not in log
+    captured = capsys.readouterr()
+    for haystack in (log, captured.out, captured.err, *log_stream_messages(f"{RUN_ID}/plan")):
+        assert REGISTRY_TOKEN not in haystack
+
+
+def test_the_registry_credential_reaches_the_apply_init_alone(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The apply phase re-initialises with the credential and applies without it."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = _registry_bundle(run_role_arn, plan_get_url="https://artifacts.example.invalid/runs/plan.tfplan?sig=1")
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("apply"), make_clients(transport), tmp_path) == 0
+
+    log = recorder.uploads["/runs/plan.log"].decode() if "/runs/plan.log" in recorder.uploads else ""
+    messages = "\n".join([log, *log_stream_messages(f"{RUN_ID}/apply")])
+    assert f"init holds {TOKEN_VARIABLE}=" in messages
+    assert "apply holds" not in messages
+    assert "output holds" not in messages
+    assert REGISTRY_TOKEN not in messages
+
+
+def test_a_bundle_without_a_registry_credential_sets_no_token(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """An older control plane's bundle runs as before, with no `TF_TOKEN_` at all."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+    assert "holds TF_TOKEN_" not in recorder.uploads["/runs/plan.log"].decode()

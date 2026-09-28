@@ -102,7 +102,7 @@ function NewRunForm({
         plan_only: runType === 'plan',
         message: message.trim(),
       });
-      invalidateQueries([runsKey]);
+      invalidateQueries(runsKey);
       onCancel();
       void navigate(
         runPath({ run_id: run.run_id, workspace_id: workspace.workspace_id })

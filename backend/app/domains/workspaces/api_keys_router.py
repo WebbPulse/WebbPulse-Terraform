@@ -5,6 +5,10 @@ as the person who minted it, inside their tenant and within their scopes, so
 there is no separate agent account to manage and no second authorization path to
 keep in step with the first.
 
+Minting and revoking also need a login within the step-up window, which an agent
+key passes by having no login to age: a key could not mint anyway, and revoking
+one with a key stays possible.
+
 Guarded by authentication rather than by a scope. A key can carry at most what
 its minter already holds, so requiring a further scope to mint one would gate a
 capability the caller has by other means. What is gated is the credential kind:
@@ -19,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Final
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from webbpulse.identity.scopes import is_api_key_actor
 
-from ...common.core.auth import claims
+from ...common.core.auth import claims, recent_auth
 from . import api_keys_service as service
 from .schemas.api_key import ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyList
 
@@ -78,7 +82,7 @@ def _caller(current: "AuthorizerClaims") -> tuple[str, tuple[str, ...], bool]:
     response_model=ApiKeyCreated,
     status_code=status.HTTP_201_CREATED,
 )
-def create_api_key(payload: ApiKeyCreate, current: "AuthorizerClaims" = Depends(claims)) -> dict[str, Any]:
+def create_api_key(payload: ApiKeyCreate, current: "AuthorizerClaims" = Depends(recent_auth)) -> dict[str, Any]:
     """Mint one key and return its plaintext, once.
 
     The response body is the only place the plaintext ever exists outside the
@@ -130,7 +134,7 @@ def list_api_keys(current: "AuthorizerClaims" = Depends(claims)) -> dict[str, An
 
 
 @router.delete("/api-keys/{key_id}", response_model=ApiKey)
-def revoke_api_key(key_id: str = KeyId, current: "AuthorizerClaims" = Depends(claims)) -> dict[str, Any]:
+def revoke_api_key(key_id: str = KeyId, current: "AuthorizerClaims" = Depends(recent_auth)) -> dict[str, Any]:
     """Revoke one key, taking effect on the caller's next request.
 
     Returns the key as it was rather than 204, so the caller can render what it

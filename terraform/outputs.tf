@@ -152,3 +152,43 @@ output "e2e_run_role_arn" {
   description = "ARN of the run role the e2e suite passes when it creates a workspace. Null outside staging"
   value       = one(aws_iam_role.e2e_run_role[*].arn)
 }
+
+output "vcs_ingest_queue_url" {
+  description = "Queue EventBridge feeds with Object Created events under ingest/ in the artifacts bucket"
+  value       = module.vcs_ingest.queue_url
+}
+
+output "github_webhooks_queue_url" {
+  description = "Queue the GitHub webhook route sends each verified push and pull request delivery to, consumed by the runs function"
+  value       = module.github_webhooks.queue_url
+}
+
+output "registry_ingest_queue_url" {
+  description = "Queue the GitHub webhook route sends each semantic version tag push to, consumed by the registry function"
+  value       = module.registry_ingest.queue_url
+}
+
+output "workspace_cleanup_queue_url" {
+  description = "Queue a workspace delete sends its S3 cleanup to, consumed by the runs function"
+  value       = module.workspace_cleanup.queue_url
+}
+
+output "provider_signing_key_secret_arn" {
+  description = "ARN of the secret holding the private provider release signing key, whose name the provider repository environments carry as SIGNING_KEY_SECRET_ID"
+  value       = aws_secretsmanager_secret.provider_signing_key.arn
+}
+
+output "provider_signing_keygen_role_arn" {
+  description = "ARN of the role the provider repository's key generation workflow assumes, set as SIGNING_KEY_ROLE_ARN on its <env>-signing-key environment"
+  value       = module.provider_signing_keygen_role.role_arn
+}
+
+output "provider_release_role_arn" {
+  description = "ARN of the role the provider repository's release workflow assumes, set as SIGNING_KEY_ROLE_ARN on its <env> environment"
+  value       = module.provider_release_role.role_arn
+}
+
+output "provider_signing_public_key_parameters" {
+  description = "SSM parameter names holding the public half of the provider release signing key, keyed public_key (ASCII armor) and key_id (long key id), for the registry to serve"
+  value       = local.provider_signing_parameters
+}

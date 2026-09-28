@@ -4,9 +4,12 @@ import { useState } from 'react';
 import { Outlet, useMatch, useNavigate } from 'react-router-dom';
 import { useAuth } from '@webbpulse/auth/react';
 
+import { ThemeToggle } from '../theme';
+import { BrandMark, Wordmark } from './Brand';
 import { Button } from './Button';
 import { RailGroupLabel, RailLink } from './RailLink';
 import { WorkspaceNav } from './WorkspaceNav';
+import { useIsAdmin } from './useIsAdmin';
 import { WorkspaceNavContext } from './workspaceNavContext';
 
 /** The sections in the rail, in order. */
@@ -73,6 +76,98 @@ const SECTIONS: readonly {
       </svg>
     ),
   },
+  {
+    to: '/registry',
+    label: 'Registry',
+    icon: (
+      <svg viewBox="0 0 16 16" className="size-4" fill="none">
+        <path
+          d="M8 1.75 13.5 4.75v6.5L8 14.25 2.5 11.25v-6.5L8 1.75Z"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M2.75 4.9 8 7.75l5.25-2.85M8 7.75v6.25"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
+];
+
+/** The signed in person's own settings, open to everyone. */
+const ACCOUNT_SECTIONS: readonly {
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+}[] = [
+  {
+    to: '/settings/api-keys',
+    label: 'API keys',
+    icon: (
+      <svg viewBox="0 0 16 16" className="size-4" fill="none">
+        <circle
+          cx="5.5"
+          cy="10.5"
+          r="2.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        <path
+          d="M7.5 8.5 13 3M11 5l1.5 1.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
+];
+
+/** The admin only sections under global settings. */
+const SETTINGS_SECTIONS: readonly {
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+}[] = [
+  {
+    to: '/settings/github',
+    label: 'GitHub',
+    icon: (
+      <svg viewBox="0 0 16 16" className="size-4" fill="none">
+        <circle
+          cx="4.5"
+          cy="3.5"
+          r="1.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        <circle
+          cx="4.5"
+          cy="12.5"
+          r="1.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        <circle
+          cx="11.5"
+          cy="5.5"
+          r="1.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        <path
+          d="M4.5 5v6M11.5 7c0 2.5-3 2.5-7 4"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
 ];
 
 /** The email on the session, if the user record carries one. */
@@ -94,6 +189,10 @@ export function Layout(): React.ReactElement {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
   const email = emailOf(user);
+  const isAdmin = useIsAdmin();
+  const sections = isAdmin
+    ? [...SECTIONS, ...ACCOUNT_SECTIONS, ...SETTINGS_SECTIONS]
+    : [...SECTIONS, ...ACCOUNT_SECTIONS];
   const workspaceMatch = useMatch('/workspaces/:workspaceId/*');
   const workspaceId = workspaceMatch?.params.workspaceId ?? null;
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
@@ -110,16 +209,14 @@ export function Layout(): React.ReactElement {
       <div className="flex min-h-screen">
         <a
           href="#main"
-          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-1.5 focus:text-sm focus:text-accent-contrast"
         >
           Skip to content
         </a>
         <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-line bg-panel md:flex">
-          <div className="flex h-12 items-center gap-2 border-b border-line px-4">
-            <Mark />
-            <span className="text-sm font-semibold text-text-strong">
-              Terraform
-            </span>
+          <div className="flex h-12 items-center justify-between gap-2 border-b border-line px-4">
+            <Wordmark />
+            <ThemeToggle />
           </div>
           {workspaceId === null ? (
             <nav aria-label="Primary" className="flex-1 space-y-0.5 p-2">
@@ -127,6 +224,18 @@ export function Layout(): React.ReactElement {
               {SECTIONS.map((section) => (
                 <RailLink key={section.to} {...section} />
               ))}
+              <RailGroupLabel className="pt-4">Account</RailGroupLabel>
+              {ACCOUNT_SECTIONS.map((section) => (
+                <RailLink key={section.to} {...section} />
+              ))}
+              {isAdmin ? (
+                <>
+                  <RailGroupLabel className="pt-4">Settings</RailGroupLabel>
+                  {SETTINGS_SECTIONS.map((section) => (
+                    <RailLink key={section.to} {...section} />
+                  ))}
+                </>
+              ) : null}
             </nav>
           ) : (
             <WorkspaceNav workspaceId={workspaceId} name={workspaceName} />
@@ -155,16 +264,12 @@ export function Layout(): React.ReactElement {
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-30 border-b border-line bg-bg/90 backdrop-blur md:hidden">
             <div className="flex h-12 items-center justify-between gap-3 px-4">
-              <div className="flex items-center gap-2">
-                <Mark />
-                <span className="text-sm font-semibold text-text-strong">
-                  Terraform
-                </span>
-              </div>
+              <Wordmark short />
               <nav aria-label="Primary" className="flex items-center gap-1">
-                {SECTIONS.map((section) => (
+                {sections.map((section) => (
                   <RailLink key={section.to} {...section} compact />
                 ))}
+                <ThemeToggle />
                 <Button
                   variant="ghost"
                   size="sm"
@@ -198,18 +303,11 @@ export function Layout(): React.ReactElement {
   );
 }
 
-/** The small square mark beside the product name. */
+/** The product mark on its own, where the wordmark would not fit. */
 export function Mark({
-  className = '',
+  className = 'size-5',
 }: {
   className?: string;
 }): React.ReactElement {
-  return (
-    <span
-      aria-hidden="true"
-      className={`inline-flex size-5 items-center justify-center rounded bg-accent text-[10px] font-bold text-white ${className}`}
-    >
-      T
-    </span>
-  );
+  return <BrandMark className={className} />;
 }

@@ -24,23 +24,36 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Final, Optional
+from datetime import timedelta
+from typing import Any, Final, Mapping, Optional
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, Repository, new_ulid, now_iso
 
 from ...common.composition.settings import Settings, get_settings
-from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store
+from ...common.core.auth import api_key_store
 from ...common.db import repositories
-from ...common.db.tables import RUNS_BY_WORKSPACE_INDEX, SEMAPHORE_RUN_ID
-from ..workspaces import service as workspaces_service
-from . import session_policy
-from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
+from ...common.db.tables import (
+    RUNS_BY_RECENCY_INDEX,
+    RUNS_BY_WORKSPACE_INDEX,
+    RUNS_COLLECTION,
+    SEMAPHORE_RUN_ID,
+)
+from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
+from ...common.workspaces import aws_connect, run_role_check
+from ...common.workspaces import reads as workspace_reads
+from . import registry_credentials, vending
+from .schemas.run import Phase
 
 _log = logging.getLogger(__name__)
 
 RUN_ID_PREFIX: Final = "run-"
+
+DEFAULT_RUN_PAGE_SIZE: Final = 50
+"""How many runs a cross-workspace page holds when the caller names no limit."""
+
+MAX_RUN_PAGE_SIZE: Final = 200
+"""The largest cross-workspace page a caller may ask for."""
 
 EXECUTING_STATUSES: Final = frozenset({"planning", "planned", "awaiting_confirmation", "applying"})
 """A run in one of these has an execution and may hold the state lock. `planned` is
@@ -50,7 +63,7 @@ ACTIVE_STATUSES: Final = frozenset({"pending"}) | EXECUTING_STATUSES
 """A run in one of these occupies its workspace's slot, queued runs included, so a
 new run queues behind the whole queue rather than racing its head."""
 
-TERMINAL_STATUSES: Final = frozenset({"applied", "planned_and_finished", "errored", "cancelled", "discarded"})
+TERMINAL_STATUSES: Final = TERMINAL_RUN_STATUSES
 """A run in one of these is finished, so its token is dead and the next queued run
 on its workspace may start."""
 
@@ -97,6 +110,7 @@ rather than failing the call that was meant to fail the run."""
 
 LOG_CONTENT_TYPE: Final = "text/plain"
 MAX_LOG_BYTES: Final = 50_000_000
+MAX_OUTPUTS_BYTES: Final = 10_000_000
 """A phase transcript is text, so fifty megabytes is far past any real run and
 still small enough that a signed URL cannot be used to park a large object."""
 
@@ -111,6 +125,10 @@ class PlanNotFound(Exception):
 
 class ConfigVersionNotReady(Exception):
     """The config version exists but its tarball was never uploaded."""
+
+
+class PendingRunRoleMissing(Exception):
+    """A run role check was asked for on a workspace with no staged role."""
 
 
 class ArtifactTooLarge(Exception):
@@ -150,6 +168,11 @@ def plan_key(run_id: str) -> str:
 def plan_json_key(run_id: str) -> str:
     """The JSON plan key for one run."""
     return f"runs/{run_id}/plan.json"
+
+
+def outputs_key(run_id: str) -> str:
+    """The applied outputs key for one run, written once its apply succeeds."""
+    return f"runs/{run_id}/outputs.json"
 
 
 def log_key(run_id: str, phase: Phase) -> str:
@@ -308,23 +331,49 @@ def _queued_runs(workspace_id: str, *, settings: Settings) -> list[dict[str, Any
     return items
 
 
-def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> dict[str, Any]:
+def create_run(
+    payload: dict[str, Any],
+    *,
+    actor: Optional[Mapping[str, Any]],
+    run_id: Optional[str] = None,
+    source: str = "api",
+    vcs: Optional[Mapping[str, Any]] = None,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """Create a run, starting it or queueing it behind the workspace's active one.
 
     Validates the workspace and the config version before writing anything, so a
     run never exists against a config version that was never uploaded.
 
-    The config version is read with `persist` false: this function runs under the
-    runs role, whose grant on the workspaces, variables and config-versions tables
-    is read only by design, so the reconciliation against the bucket must not write
-    the `uploaded` flip back. The workspaces domain owns that write and persists it
-    on its own reads.
+    The config version is read through `app.common.workspaces.reads`, which never
+    writes: this function runs under the runs role, whose grant on the workspaces,
+    variables and config-versions tables is read only by design, so the
+    reconciliation against the bucket must not write the `uploaded` flip back. The
+    workspaces domain owns that write and persists it on its own reads.
 
-    Returns the stored run, carrying `run_token` only when an execution started.
+    The run keeps the role ARN it was created with, so the run role check can tell
+    which role a run's AssumeRole outcome belongs to. A `run_role_check` run takes
+    the workspace's staged `pending_run_role_arn` instead, is always plan only, and
+    is the one run that assumes that role before the workspace switches to it.
+
+    Returns the stored run.
+
+    Args:
+        payload: The validated create body.
+        actor: Who triggered this run, derived from the request's claims by the
+            route, or `None` when the claims named no subject, which stores no
+            actor rather than inventing one.
+        run_id: The id to store under, for a caller that needs the create to be
+            idempotent. A fresh ULID otherwise. The put is conditional, so a
+            second create with the same id raises `ConditionFailed`.
+        source: What started the run, `api`, `vcs_push` or `vcs_pr`.
+        vcs: The commit a VCS run came from, stored as the run's `vcs` block.
+        settings: Overrides the resolved settings, for the suite.
 
     Raises:
         WorkspaceNotFound: No such workspace.
         RunRoleMissing: The workspace has no run role, so nothing could be assumed.
+        PendingRunRoleMissing: A run role check on a workspace with no staged role.
         ConfigVersionNotFound: No such config version on that workspace.
         ConfigVersionNotReady: The tarball was never uploaded.
     """
@@ -332,31 +381,44 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
     workspace_id = str(payload["workspace_id"])
     config_version_id = str(payload["config_version_id"])
 
-    workspace = workspaces_service.get_workspace(workspace_id, settings=resolved)
-    if not str(workspace.get("run_role_arn", "") or ""):
-        raise workspaces_service.RunRoleMissing(workspace_id)
-    config_version = workspaces_service.get_config_version(
+    workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
+    role_check = bool(payload.get("run_role_check", False))
+    role_arn = str(workspace.get("pending_run_role_arn" if role_check else "run_role_arn", "") or "")
+    if not role_arn and role_check:
+        raise PendingRunRoleMissing(workspace_id)
+    if not role_arn:
+        raise workspace_reads.RunRoleMissing(workspace_id)
+    config_version = workspace_reads.get_config_version(
         workspace_id,
         config_version_id,
-        persist=False,
         settings=resolved,
     )
     if str(config_version.get("status", "")) != "uploaded":
         raise ConfigVersionNotReady(config_version_id)
 
     blocking = active_run(workspace_id, settings=resolved)
-    run_id = f"{RUN_ID_PREFIX}{new_ulid()}"
+    run_id = run_id or f"{RUN_ID_PREFIX}{new_ulid()}"
     timestamp = now_iso()
     item: dict[str, Any] = {
         "run_id": run_id,
         "workspace_id": workspace_id,
         "config_version_id": config_version_id,
+        "collection": RUNS_COLLECTION,
         "status": "pending",
-        "plan_only": bool(payload.get("plan_only", False)),
+        "plan_only": role_check or bool(payload.get("plan_only", False)),
+        "is_destroy": not role_check and bool(payload.get("is_destroy", False)),
         "message": str(payload.get("message", "")),
+        "run_role_arn": role_arn,
+        "source": source,
         "created_at": timestamp,
         "updated_at": timestamp,
     }
+    if role_check:
+        item["run_role_check"] = True
+    if vcs is not None:
+        item["vcs"] = {key: value for key, value in vcs.items() if value is not None}
+    if actor is not None:
+        item["actor"] = dict(actor)
     if blocking is not None:
         item["queued_behind"] = str(blocking["run_id"])
 
@@ -368,47 +430,26 @@ def create_run(payload: dict[str, Any], *, settings: Settings | None = None) -> 
 
 
 def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """Mint this run's token, start its execution and move it to `planning`.
+    """Start this run's execution and move it to `planning`.
 
-    A run that already carries an `execution_arn` is returned untouched. Starting
-    it again would mint a second token, overwrite the hash of the one the running
-    execution is already carrying, and hit `ExecutionAlreadyExists` on the name,
-    which is the run id. The caller gets no `run_token` back in that case, because
-    the live plaintext only ever existed on the first start.
+    A run that already carries an `execution_arn` is returned untouched, since
+    starting it again would hit `ExecutionAlreadyExists` on the name, which is
+    the run id.
 
-    The token is minted before the execution starts because it travels on the
-    execution input: the state machine reads `$.run_token` into the plan and the
-    apply container overrides, which is the only way the runner gets a
-    `RUN_TOKEN`. The row is stamped before the start call so a crash between the
-    two leaves a run that can be reconciled rather than a token with no run.
-
-    The execution input is the one place the plaintext is written down, and the
-    state machine runs with `include_execution_data` off so it never reaches the
-    execution log. Only the hash is stored on the row.
+    No run token is minted here. A token on the execution input would be
+    written into the execution history, so the runner task instead trades its
+    signed task identity for one at `POST /runs/{id}/runner-token`
+    (`runner_tokens.exchange`), which stores its hash on the row.
 
     The semaphore is pruned immediately before the start, so a slot leaked by any
     cause heals itself the next time someone starts a run rather than sitting in
     `AcquireSemaphore` retrying for an hour. It runs before rather than after
     because this run is about to contend for a slot itself.
-
-    Returns the run with `run_token` set, which is the only time the plaintext
-    reaches a caller.
     """
-    from webbpulse.identity.api_keys import mint
-
     resolved = settings or get_settings()
     run = get_run(run_id, settings=resolved)
     if run.get("execution_arn"):
         return run
-
-    minted = mint(
-        user_id=run_id,
-        tenant_id=RUN_TOKEN_TENANT,
-        scopes=(RUNNER_SCOPE,),
-        name=f"run token {run_id}",
-        expires_at=datetime.now(timezone.utc) + RUN_TOKEN_TTL,
-        store=api_key_store(resolved),
-    )
 
     execution_arn = ""
     if resolved.RUN_STATE_MACHINE_ARN:
@@ -421,25 +462,21 @@ def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any
                     "run_id": run_id,
                     "workspace_id": str(run["workspace_id"]),
                     "plan_only": bool(run.get("plan_only", False)),
-                    "run_token": minted.plaintext,
                 }
             ),
         )
         execution_arn = str(started.get("executionArn", ""))
 
-    updated = _update_run(
+    return _update_run(
         run_id,
         {
             "status": "planning",
             "started_at": now_iso(),
             "execution_arn": execution_arn,
-            "run_token_hash": minted.record.key_hash,
             "queued_behind": None,
         },
         settings=resolved,
     )
-    updated["run_token"] = minted.plaintext
-    return updated
 
 
 def _update_run(
@@ -531,7 +568,7 @@ def list_runs(workspace_id: str, *, settings: Settings | None = None) -> list[di
         WorkspaceNotFound: No such workspace, which is a 404 rather than an empty list.
     """
     resolved = settings or get_settings()
-    workspaces_service.get_workspace(workspace_id, settings=resolved)
+    workspace_reads.get_workspace(workspace_id, settings=resolved)
     return [
         dict(item)
         for item in _runs(resolved).iter_query(
@@ -543,13 +580,63 @@ def list_runs(workspace_id: str, *, settings: Settings | None = None) -> list[di
     ]
 
 
-def confirm_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+def list_all_runs(
+    *,
+    limit: int = DEFAULT_RUN_PAGE_SIZE,
+    cursor: Optional[str] = None,
+    settings: Settings | None = None,
+) -> tuple[list[dict[str, Any]], Optional[str]]:
+    """One page of every workspace's runs, newest first, off `by_recency`.
+
+    The cursor is the `run_id` of the last run on the previous page. The partition
+    is fixed here and never read from the cursor, so a cursor can only position a
+    read inside this list.
+
+    Returns:
+        The page's runs and the cursor continuing it, `None` on the last page.
+    """
+    resolved = settings or get_settings()
+    start_key = None if cursor is None else {"collection": RUNS_COLLECTION, "run_id": cursor}
+    page = _runs(resolved).query(
+        Key("collection").eq(RUNS_COLLECTION),
+        index_name=RUNS_BY_RECENCY_INDEX,
+        limit=limit,
+        start_key=start_key,
+        ascending=False,
+    )
+    items = [dict(item) for item in page.items if _is_run_row(item)]
+    last = page.last_evaluated_key
+    return items, None if last is None else str(last["run_id"])
+
+
+def decision(action: str, actor: Optional[Mapping[str, Any]], comment: str) -> dict[str, Any]:
+    """The record of who confirmed or discarded a run, when, and what they said.
+
+    Stored once on the run as `decision`, which the run page's timeline renders the
+    way HCP Terraform shows a confirmation or discard with its comment.
+    """
+    recorded: dict[str, Any] = {"action": action, "at": now_iso()}
+    if actor is not None:
+        recorded["actor"] = dict(actor)
+    if comment.strip():
+        recorded["comment"] = comment.strip()
+    return recorded
+
+
+def confirm_run(
+    run_id: str,
+    *,
+    actor: Optional[Mapping[str, Any]] = None,
+    comment: str = "",
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """Confirm a planned run, releasing the state machine's confirmation wait.
 
     The status moves first, conditionally, and `SendTaskSuccess` follows. Doing it
     in that order means a duplicate confirm loses the conditional write and never
     reaches Step Functions, which would otherwise reject the second token anyway
-    but only after the caller was told it succeeded.
+    but only after the caller was told it succeeded. The decision, with its actor
+    and optional comment, is written in the same conditional update.
 
     Raises:
         RunNotFound: No such run.
@@ -566,7 +653,7 @@ def confirm_run(run_id: str, *, settings: Settings | None = None) -> dict[str, A
     try:
         updated = _update_run(
             run_id,
-            {"status": "applying", "confirm_task_token": None},
+            {"status": "applying", "confirm_task_token": None, "decision": decision("confirmed", actor, comment)},
             settings=resolved,
             expected_statuses=frozenset(CONFIRMABLE_STATUSES),
         )
@@ -614,7 +701,13 @@ def cancel_run(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     return finish_run(run_id, "cancelled", settings=resolved)
 
 
-def discard_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+def discard_run(
+    run_id: str,
+    *,
+    actor: Optional[Mapping[str, Any]] = None,
+    comment: str = "",
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """Discard a planned run, ending its execution through a task failure.
 
     A discard is not a cancel. The execution is waiting on the confirmation task
@@ -647,7 +740,7 @@ def discard_run(run_id: str, *, settings: Settings | None = None) -> dict[str, A
             cause=f"Discarded through the API for {run_id}.",
         )
 
-    return finish_run(run_id, "discarded", settings=resolved)
+    return finish_run(run_id, "discarded", extra={"decision": decision("discarded", actor, comment)}, settings=resolved)
 
 
 def finish_run(
@@ -656,9 +749,14 @@ def finish_run(
     *,
     error: str = "",
     changes: dict[str, int] | None = None,
+    apply_changes: dict[str, int] | None = None,
+    extra: Mapping[str, Any] | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Move a run to a terminal status, revoke its token and promote its queue.
+
+    `extra` holds further fields written in the same conditional update, such as a
+    discard's decision, so they land only on the ending that stands.
 
     The single exit for every ending, successful or not, so a token cannot outlive
     its run and a workspace cannot deadlock behind a run that errored.
@@ -681,6 +779,10 @@ def finish_run(
         updates["error"] = error
     if changes is not None:
         updates["changes"] = changes
+    if apply_changes is not None:
+        updates["apply_changes"] = apply_changes
+    if extra:
+        updates.update(extra)
 
     run = get_run(run_id, settings=resolved)
     try:
@@ -701,9 +803,103 @@ def finish_run(
                 "attempted": status,
             },
         )
-    _revoke_run_token(run, settings=resolved)
-    _promote_queue(str(run["workspace_id"]), settings=resolved)
+    _after_ending(run, updated, settings=resolved)
     return updated
+
+
+def settle_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any] | None:
+    """Do for an ending the state machine wrote what `finish_run` does for the API's.
+
+    `MarkErrored`, `MarkApplied` and `MarkPlannedAndFinished` write the terminal
+    status straight to the table, and a runner that fails before it can report
+    (AssumeRole refused, init failed) ends its run only that way. Nothing in the API
+    sees those endings, so without this the run's token would live out its full TTL,
+    the run role check and the connection's verification would not move, and a run
+    queued behind it would wait for the next unrelated transition.
+
+    Reached from the runs table's stream, whose filter delivers a terminal status
+    that carries no `finished_at`, which only the state machine's writes lack.
+    Stamping `finished_at` here, only when absent, is what keeps the record from
+    being delivered twice and what gives the run the end time the UI shows. Every
+    step is idempotent, so a redelivery repeats nothing harmful. Returns the run,
+    or `None` when it is gone or not terminal.
+    """
+    resolved = settings or get_settings()
+    try:
+        run = get_run(run_id, settings=resolved)
+    except RunNotFound:
+        return None
+    if str(run.get("status", "")) not in TERMINAL_STATUSES:
+        return None
+    try:
+        stamped = _runs(resolved).update(
+            {"run_id": run_id},
+            update_expression="SET finished_at = if_not_exists(finished_at, :finished), updated_at = :now",
+            expression_values={":finished": now_iso(), ":now": now_iso()},
+            condition=Attr("status").is_in(sorted(TERMINAL_STATUSES)),
+            return_values="ALL_NEW",
+        )
+    except ConditionFailed:
+        return None
+    ended = dict(stamped or run)
+    _log.info(
+        "Settled a run the state machine ended.",
+        extra={"event": "runs.settle", "run_id": run_id, "status": str(ended.get("status", ""))},
+    )
+    _after_ending(run, ended, settings=resolved)
+    return ended
+
+
+def _after_ending(run: dict[str, Any], ended: dict[str, Any], *, settings: Settings) -> None:
+    """Everything a run's ending sets off, whoever wrote it.
+
+    `run` is the row as it was read before the ending, which still carries the
+    token hash, and `ended` the row as it stands after.
+    """
+    _revoke_run_token(run, settings=settings)
+    for row in (run, ended):
+        registry_credentials.revoke(row, settings=settings)
+    _record_run_role(str(run["workspace_id"]), settings=settings)
+    _record_verification(ended, settings=settings)
+    _promote_queue(str(run["workspace_id"]), settings=settings)
+
+
+def _record_verification(run: dict[str, Any], *, settings: Settings) -> None:
+    """Settle the workspace's AWS connection verification from this run, best effort."""
+    try:
+        aws_connect.record_verification(run, settings=settings)
+    except Exception as error:  # noqa: BLE001
+        _log.exception(
+            "Could not record the AWS connection verification after a run finished.",
+            extra={
+                "event": "runs.aws_connect.verification_failed",
+                "run_id": str(run.get("run_id", "")),
+                "error": type(error).__name__,
+            },
+        )
+
+
+def _record_run_role(workspace_id: str, *, settings: Settings) -> None:
+    """Record what the finished run proved about the workspace's run role.
+
+    This is what switches a workspace to a staged role as soon as its verification
+    run assumes it, instead of the next time someone opens the workspace, and what
+    keeps the recorded check current after every run. Best effort, like queue
+    promotion: a failure here must not leave the run stuck non-terminal.
+    """
+    try:
+        run_role_check.check_run_role(workspace_id, settings=settings)
+    except (workspace_reads.WorkspaceNotFound, workspace_reads.RunRoleMissing):
+        return
+    except Exception as error:  # noqa: BLE001
+        _log.exception(
+            "Could not record the run role check after a run finished.",
+            extra={
+                "event": "runs.run_role_check.failed",
+                "workspace_id": workspace_id,
+                "error": type(error).__name__,
+            },
+        )
 
 
 def _revoke_run_token(run: dict[str, Any], *, settings: Settings) -> None:
@@ -756,6 +952,9 @@ def record_phase_result(
     successful plan finishes the run when it was `plan_only` or found no changes,
     and otherwise leaves it `awaiting_confirmation` for a human.
 
+    `changes` stays what the plan found. An apply's counts go to `apply_changes`
+    instead, so the run keeps the plan it confirmed next to what the apply did.
+
     A plan exiting 2 is a successful plan with changes, not a failure, because
     terraform plans under `-detailed-exitcode`. The runner already reports 0 for
     it; this keeps a runner that does not from erroring every plan with changes.
@@ -782,12 +981,12 @@ def record_phase_result(
             run_id,
             "errored",
             error=error or f"The {phase} phase exited {exit_code}.",
-            changes=changes,
+            changes=changes if phase == "plan" else None,
             settings=resolved,
         )
 
     if phase == "apply":
-        return finish_run(run_id, "applied", changes=changes, settings=resolved)
+        return finish_run(run_id, "applied", apply_changes=changes, settings=resolved)
 
     has_changes = any(int(changes.get(field, 0)) for field in ("add", "change", "destroy"))
     if bool(run.get("plan_only", False)) or not has_changes:
@@ -838,14 +1037,15 @@ def fail_phase_task(
     *,
     error: str,
     cause: str,
+    expected_status: str | None = None,
     settings: Settings | None = None,
 ) -> bool:
-    """Fail the phase task token of a run whose Fargate task never started.
+    """Fail the phase task token of a run whose Fargate task stopped without reporting.
 
     The counterpart of `discard_run` for the phase states rather than the
     confirmation wait. `Plan` and `Apply` are `ecs:runTask.waitForTaskToken`, so a
     task that dies before the runner can report leaves the state waiting on a token
-    nobody will ever send, until its six hundred second heartbeat expires. Sending
+    nobody will ever send, until its heartbeat expires. Sending
     the failure here lets the execution take its own `MarkErrored` and
     `ReleaseSemaphoreAfterFailure` path at once, which is why this does not touch
     the run row or the semaphore itself.
@@ -862,6 +1062,9 @@ def fail_phase_task(
             override carried it.
         error: The `SendTaskFailure` error name.
         cause: The `SendTaskFailure` cause, which is the ECS stopped reason.
+        expected_status: The status the run holds while the stopped task's phase is
+            unresolved. A run in any other status has moved past that phase and is
+            left alone.
         settings: Settings override, for the suite.
 
     Returns:
@@ -874,9 +1077,9 @@ def fail_phase_task(
     resolved = settings or get_settings()
     run = get_run(run_id, settings=resolved)
     status = str(run.get("status", ""))
-    if status in TERMINAL_STATUSES:
+    if status in TERMINAL_STATUSES or (expected_status is not None and status != expected_status):
         _log.info(
-            "A phase task failed to start for a run that already finished; leaving it alone.",
+            "A phase task stopped for a run that has moved on; leaving it alone.",
             extra={"event": "runs.phase_task.already_terminal", "run_id": run_id, "status": status},
         )
         return False
@@ -1091,6 +1294,47 @@ def summarise_plan(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def summarise_outputs(raw: Any) -> list[dict[str, Any]]:
+    """Project an `output -json` document into name, value and sensitivity.
+
+    The runner already drops sensitive values before upload, and they are
+    redacted again here so a document written any other way cannot leak one.
+    """
+    if not isinstance(raw, dict):
+        return []
+    outputs: list[dict[str, Any]] = []
+    for name, entry in sorted(raw.items()):
+        if not isinstance(entry, dict):
+            continue
+        sensitive = bool(entry.get("sensitive", False))
+        outputs.append(
+            {
+                "name": str(name),
+                "value": REDACTED if sensitive else entry.get("value"),
+                "sensitive": sensitive,
+            }
+        )
+    return outputs
+
+
+def _applied_outputs(run_id: str, settings: Settings) -> list[dict[str, Any]] | None:
+    """The run's applied outputs, or None when its apply uploaded none."""
+    from botocore.exceptions import ClientError
+
+    try:
+        response = _s3(settings).get_object(Bucket=settings.ARTIFACTS_BUCKET, Key=outputs_key(run_id))
+    except ClientError as error:
+        code = str(error.response.get("Error", {}).get("Code", ""))
+        if code in {"NoSuchKey", "404", "NotFound"}:
+            return None
+        raise
+    try:
+        document = json.loads(response["Body"].read(MAX_OUTPUTS_BYTES))
+    except ValueError:
+        return None
+    return summarise_outputs(document)
+
+
 def run_plan(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     """One run's plan, summarised and redacted for the viewer.
 
@@ -1105,7 +1349,7 @@ def run_plan(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]
     from botocore.exceptions import ClientError
 
     resolved = settings or get_settings()
-    get_run(run_id, settings=resolved)
+    run = get_run(run_id, settings=resolved)
 
     try:
         response = _s3(resolved).get_object(Bucket=resolved.ARTIFACTS_BUCKET, Key=plan_json_key(run_id))
@@ -1119,7 +1363,10 @@ def run_plan(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]
     document = json.loads(body)
     if not isinstance(document, dict):
         raise PlanNotFound(run_id)
-    return summarise_plan(run_id, document)
+    summary = summarise_plan(run_id, document)
+    if run.get("status") == "applied":
+        summary["applied_outputs"] = _applied_outputs(run_id, resolved)
+    return summary
 
 
 def _phase_for_status(status: str) -> Phase:
@@ -1132,9 +1379,10 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
 
     The phase is derived from the run's status rather than taken from the caller,
     so a runner holding a plan-phase token cannot ask for the apply phase's
-    unrestricted session policy.
+    unrestricted session. The phase's credentials are vended here, never by the
+    runner: see `vending`.
 
-    The config version is read with `persist` false for the same reason run
+    The config version is read through the shared reads for the same reason run
     creation reads it that way: this function runs under the runs role, which
     holds only a read grant on the config-versions table.
 
@@ -1143,6 +1391,9 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         WorkspaceNotFound: The workspace was deleted under the run.
         ConfigVersionNotFound: The config version was deleted under the run.
         StateKmsKeyMissing: The deployment set no `STATE_KMS_KEY_ARN`.
+        VendingUnavailable: No vending role is configured or it cannot be assumed.
+        RunRoleAssumeFailed: The workspace's run role is unset or refused the vending role.
+        StateCredentialsFailed: The state role could not be assumed.
     """
     from webbpulse.storage import presigned_get
 
@@ -1154,25 +1405,25 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         )
     run = get_run(run_id, settings=resolved)
     workspace_id = str(run["workspace_id"])
-    workspace = workspaces_service.get_workspace(workspace_id, settings=resolved)
-    config_version = workspaces_service.get_config_version(
+    workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
+    config_version = workspace_reads.get_config_version(
         workspace_id,
         str(run["config_version_id"]),
-        persist=False,
         settings=resolved,
     )
 
     phase = _phase_for_status(str(run.get("status", "")))
-    variables = workspaces_service.resolved_variables(workspace_id, settings=resolved)
+    variables = workspace_reads.resolved_variables(workspace_id, settings=resolved)
     region = resolved.AWS_REGION_NAME
     endpoint = resolved.s3_endpoint_url
     workspace_state_key = state_key(workspace_id)
-    phase_policy = session_policy.for_phase(
-        phase,
-        state_bucket=resolved.STATE_BUCKET,
-        state_key=workspace_state_key,
-        artifacts_bucket=resolved.ARTIFACTS_BUCKET,
+    role_arn = str((run.get("run_role_arn") if run.get("run_role_check") else workspace.get("run_role_arn", "")) or "")
+    provider, state = vending.vend(
+        role_arn=role_arn,
+        workspace_id=workspace_id,
         run_id=run_id,
+        phase=phase,
+        settings=resolved,
     )
 
     return {
@@ -1180,6 +1431,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "workspace_id": workspace_id,
         "phase": phase,
         "plan_only": bool(run.get("plan_only", False)),
+        "is_destroy": bool(run.get("is_destroy", False)),
         "engine": str(workspace.get("engine", "terraform")),
         "engine_version": str(workspace.get("engine_version", "")),
         "working_directory": str(workspace.get("working_directory", "")),
@@ -1195,17 +1447,15 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
             "key": workspace_state_key,
             "region": region,
             "kms_key_id": resolved.STATE_KMS_KEY_ARN,
+            "credentials": state.as_dict(),
         },
-        "run_role": {
-            "role_arn": str(workspace.get("run_role_arn", "")),
-            "external_id": workspace_id,
-            "session_policy": phase_policy.document,
-            "session_policy_arns": list(phase_policy.policy_arns),
-            "duration_seconds": RUN_ROLE_DURATION_SECONDS,
-        },
+        "run_role_arn": role_arn,
+        "aws_credentials": provider.as_dict(),
         "terraform_variables": variables["terraform"],
+        "hcl_variables": variables["hcl"],
         "environment_variables": variables["env"],
         "artifacts": _artifacts(run_id, settings=resolved),
+        "registry": registry_credentials.issue(run, settings=resolved),
     }
 
 
@@ -1250,7 +1500,8 @@ def artifact_upload(
     Raises:
         RunNotFound: No such run.
         ArtifactTooLarge: `size_bytes` is above the artifact's ceiling.
-        ValueError: `artifact` is not one of the three kinds.
+        ValueError: `artifact` is not a kind this run uploads, including
+            `outputs_json` outside the apply phase.
     """
     from webbpulse.storage import presigned_put
 
@@ -1264,6 +1515,8 @@ def artifact_upload(
         key, content_type, ceiling = plan_json_key(run_id), PLAN_JSON_CONTENT_TYPE, MAX_PLAN_BYTES
     elif artifact == "log":
         key, content_type, ceiling = log_key(run_id, phase), LOG_CONTENT_TYPE, MAX_LOG_BYTES
+    elif artifact == "outputs_json" and phase == "apply":
+        key, content_type, ceiling = outputs_key(run_id), PLAN_JSON_CONTENT_TYPE, MAX_OUTPUTS_BYTES
     else:
         raise ValueError(f"{artifact} is not an artifact this run uploads")
 
@@ -1282,13 +1535,58 @@ def artifact_upload(
     return {"url": upload.url, "headers": dict(upload.headers), "expires_in": ARTIFACT_URL_TTL}
 
 
+COMMIT_MESSAGE_MAX_LENGTH: Final = 4096
+"""Longer commit messages are cut here. The run page shows the first line."""
+
+
+def record_commit_message(run_id: str, message: str, *, settings: Settings | None = None) -> None:
+    """Store a VCS run's commit message on its `vcs` block, once reporting read it.
+
+    The upload carries no message, so the report reads it through the App and
+    records it here for the run pages. The status is untouched, so the stream
+    record this write makes is dropped by the reports consumer.
+    """
+    resolved = settings or get_settings()
+    try:
+        _runs(resolved).update(
+            {"run_id": run_id},
+            update_expression="SET #vcs.#message = :message",
+            expression_values={":message": message[:COMMIT_MESSAGE_MAX_LENGTH]},
+            expression_names={"#vcs": "vcs", "#message": "commit_message"},
+            condition=Attr("vcs").exists(),
+        )
+    except ConditionFailed:
+        return
+
+
+def record_pull_request(run_id: str, number: int, url: str, *, settings: Settings | None = None) -> None:
+    """Store the pull request a push run's commit came from on its `vcs` block.
+
+    A push from merging a pull request links back to it on the run pages, the way
+    HCP Terraform does. Reporting finds it through the App; the status is untouched,
+    so the stream record this write makes is dropped by the reports consumer.
+    """
+    resolved = settings or get_settings()
+    try:
+        _runs(resolved).update(
+            {"run_id": run_id},
+            update_expression="SET #vcs.#pull = :pull",
+            expression_values={":pull": {"number": int(number), "url": url}},
+            expression_names={"#vcs": "vcs", "#pull": "pull_request"},
+            condition=Attr("vcs").exists(),
+        )
+    except ConditionFailed:
+        return
+
+
 def render_run(item: dict[str, Any]) -> dict[str, Any]:
     """Strip the stored-only fields a run row carries.
 
-    The task tokens and the token hash never leave the service: a caller holding a
-    confirm task token could confirm a run it has no scope for.
+    The task tokens and the token hashes never leave the service: a caller holding a
+    confirm task token could confirm a run it has no scope for. `collection` is the
+    constant `by_recency` partition key and says nothing to a caller.
     """
-    hidden = {"confirm_task_token", "run_token_hash"}
+    hidden = {"confirm_task_token", "run_token_hash", registry_credentials.HASH_ATTRIBUTE, "collection"}
     return {field: value for field, value in item.items() if field not in hidden}
 
 
@@ -1296,13 +1594,17 @@ __all__ = [
     "ACTIVE_STATUSES",
     "ARTIFACT_URL_TTL",
     "CAUSE_MAX_LENGTH",
+    "COMMIT_MESSAGE_MAX_LENGTH",
     "CONFIRMABLE_STATUSES",
     "CONSUMED_TOKEN_ERRORS",
+    "DEFAULT_RUN_PAGE_SIZE",
     "DISCARDABLE_STATUSES",
     "ERROR_MAX_LENGTH",
+    "MAX_RUN_PAGE_SIZE",
     "NON_TERMINAL_STATUSES",
     "ArtifactTooLarge",
     "ConfigVersionNotReady",
+    "PendingRunRoleMissing",
     "PhaseMismatch",
     "PlanNotFound",
     "RUN_ID_PREFIX",
@@ -1317,20 +1619,27 @@ __all__ = [
     "artifact_upload",
     "cancel_run",
     "confirm_run",
+    "decision",
+    "record_commit_message",
+    "record_pull_request",
     "create_run",
     "discard_run",
     "fail_phase_task",
     "finish_run",
     "get_run",
+    "list_all_runs",
     "list_runs",
     "log_key",
     "log_stream_name",
     "plan_json_key",
+    "outputs_key",
+    "summarise_outputs",
     "plan_key",
     "prune_semaphore",
     "record_phase_result",
     "release_semaphore",
     "render_run",
+    "settle_run",
     "run_bundle",
     "run_logs",
     "run_plan",

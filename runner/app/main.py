@@ -1,32 +1,40 @@
-"""Entrypoint: run one phase of one run, then report to the API and Step Functions."""
+"""Entrypoint: run one phase of one run, then report to the API.
+
+The runner holds no Step Functions permission: the API resolves the phase's task
+token when the result or the failure is posted, and a runner that stops without
+posting is failed by the task stop consumer.
+"""
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, cast
 
 import boto3
 import httpx
 
-from app import callback, credentials, engine, workspace
+from app import engine, identity, install, state_credentials, workspace
 from app.api import ApiError, RunnerApi, build_client
 from app.logs import CloudWatchLogSink, Redactor
 from app.models import Bundle, Changes, PhaseResult, RunnerEnv, RunnerEnvError
 
 if TYPE_CHECKING:
     from mypy_boto3_logs.client import CloudWatchLogsClient
-    from mypy_boto3_stepfunctions.client import SFNClient
-    from mypy_boto3_sts.client import STSClient
 else:
-    CloudWatchLogsClient = SFNClient = STSClient = object
+    CloudWatchLogsClient = object
+
+
+RUN_ROLE_ASSUME_FAILED_CODE = "RUN_ROLE_ASSUME_FAILED"
+"""The bundle's error code when the workspace's run role refused the control plane."""
 
 
 class PhaseFailure(RuntimeError):
-    """A phase could not be completed; carries the short error name for the callback."""
+    """A phase could not be completed; carries the short error name the API fails the task with."""
 
     def __init__(self, error: str, cause: str) -> None:
         super().__init__(cause)
@@ -39,9 +47,8 @@ class Clients:
     """The AWS and HTTP clients the runner needs, injectable for tests."""
 
     logs: CloudWatchLogsClient
-    sts: STSClient
-    sfn: SFNClient
     http: httpx.Client
+    identity: Callable[[str], dict[str, str]] | None = None
 
     @classmethod
     def build(cls, region: str) -> Clients:
@@ -49,54 +56,141 @@ class Clients:
         session = boto3.session.Session(region_name=region)
         return cls(
             logs=session.client("logs"),
-            sts=session.client("sts"),
-            sfn=session.client("stepfunctions"),
             http=build_client(),
+            identity=identity.session_signer(session, region),
         )
 
 
-def _run_plan(runner: engine.EngineRunner, sink: CloudWatchLogSink) -> tuple[int, Changes, bool, str]:
+def _initial_secrets(env: RunnerEnv) -> list[str]:
+    """The secrets the runner holds before it has read anything from the API."""
+    return [env.task_token.get_secret_value()]
+
+
+def obtain_run_token(env: RunnerEnv, clients: Clients, api: RunnerApi) -> str:
+    """Get the run token by trading the task's signed identity for it.
+
+    The exchange is the only source. A token passed on the task overrides would be
+    readable by anyone who can describe the task or read the execution history, so
+    none is accepted, and a failed exchange fails the phase.
+    """
+    if clients.identity is None:
+        raise PhaseFailure("RunTokenUnavailable", "the task has no identity to exchange for a run token")
+    try:
+        token = api.exchange_token(clients.identity(env.run_id))
+    except (ApiError, identity.IdentityError) as error:
+        raise PhaseFailure("RunTokenUnavailable", str(error)) from error
+    print("run token obtained from the task identity", flush=True)
+    return token
+
+
+def _run_plan(
+    runner: engine.EngineRunner,
+    sink: CloudWatchLogSink,
+    *,
+    destroy: bool = False,
+    init_environment: dict[str, str] | None = None,
+) -> tuple[int, Changes, bool, str]:
     """Init, plan and render the plan JSON, returning the exit code and change counts.
+
+    `destroy` plans the removal of every managed resource, which the apply phase then
+    applies from the saved plan like any other.
 
     The plan runs under `-detailed-exitcode`, so it exits 0 with no changes and 2
     with changes. Both are successful plans, so both return 0 and the change
     counts alone say whether there were changes. Any other code is `PlanFailed`.
+    `init_environment` is the registry credential, given to `init` alone.
     """
-    init_code = runner.init()
+    init_code = runner.init(init_environment)
     if init_code != 0:
         raise PhaseFailure("InitFailed", f"init exited {init_code}")
-    plan_code = runner.plan()
+    plan_code = runner.plan(destroy=destroy)
     if plan_code not in (engine.NO_CHANGES_EXIT, engine.CHANGES_EXIT):
         raise PhaseFailure("PlanFailed", f"plan exited {plan_code}")
     show_code, plan_json = runner.show_plan_json()
     if show_code != 0:
         raise PhaseFailure("PlanShowFailed", f"show -json exited {show_code}")
     changes, has_changes = engine.parse_changes(plan_json)
-    sink.write(f"Plan: {changes.add} to add, {changes.change} to change, {changes.destroy} to destroy.")
     return 0, changes, has_changes, plan_json
 
 
-def _run_apply(runner: engine.EngineRunner) -> int:
-    """Init and apply the saved plan."""
-    init_code = runner.init()
+def _run_apply(
+    runner: engine.EngineRunner,
+    sink: CloudWatchLogSink,
+    *,
+    init_environment: dict[str, str] | None = None,
+) -> tuple[int, Changes]:
+    """Init and apply the saved plan, returning the counts the engine says it applied.
+
+    `init_environment` is the registry credential, given to `init` alone.
+    """
+    init_code = runner.init(init_environment)
     if init_code != 0:
         raise PhaseFailure("InitFailed", f"init exited {init_code}")
     apply_code = runner.apply()
     if apply_code != 0:
         raise PhaseFailure("ApplyFailed", f"apply exited {apply_code}")
-    return apply_code
+    return apply_code, engine.parse_apply_changes(sink.lines) or Changes()
 
 
-def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
-    """Fetch the bundle, run the phase, upload the artifacts and post the result."""
-    redactor = Redactor([env.run_token.get_secret_value(), env.task_token.get_secret_value()])
-    api = RunnerApi(env, clients.http)
+def redact_outputs(raw: str) -> str | None:
+    """The `output -json` document with every sensitive value dropped, or None if unreadable.
+
+    Only the name, type and sensitivity of a sensitive output leave the task, so the
+    stored artifact never holds a value the plan itself would have masked.
+    """
+    try:
+        document: object = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(document, dict):
+        return None
+    redacted: dict[str, object] = {}
+    for name, entry in cast(dict[str, object], document).items():
+        if not isinstance(entry, dict):
+            continue
+        output = dict(cast(dict[str, object], entry))
+        if output.get("sensitive") is True:
+            output["value"] = None
+        redacted[name] = output
+    return json.dumps(redacted)
+
+
+def _upload_outputs(runner: engine.EngineRunner, api: RunnerApi, sink: CloudWatchLogSink) -> None:
+    """Best effort upload of the applied outputs; a failure is logged, never raised."""
+    exit_code, raw = runner.output_json()
+    document = redact_outputs(raw) if exit_code == 0 else None
+    if document is None:
+        sink.write("applied outputs unavailable")
+        return
+    try:
+        api.upload_text("outputs_json", document)
+    except ApiError as error:
+        sink.write(f"applied outputs not uploaded: {error}")
+
+
+def execute(
+    env: RunnerEnv,
+    clients: Clients,
+    directory: Path,
+    redactor: Redactor | None = None,
+    api: RunnerApi | None = None,
+) -> PhaseResult:
+    """Fetch the bundle, run the phase, upload the artifacts and post the result.
+
+    `redactor` and `api` are shared with the caller so a failure it reports is
+    scrubbed of the run token this phase obtained and posted with that token.
+    """
+    redactor = redactor or Redactor(_initial_secrets(env))
+    api = api or RunnerApi(env, clients.http)
     sink = CloudWatchLogSink(clients.logs, env.log_group, f"{env.run_id}/{env.phase}", redactor)
 
     with sink:
+        redactor.add(obtain_run_token(env, clients, api))
         try:
             bundle: Bundle = api.fetch_bundle()
         except ApiError as error:
+            if error.error_code == RUN_ROLE_ASSUME_FAILED_CODE:
+                raise PhaseFailure("AssumeRoleFailed", str(error)) from error
             raise PhaseFailure("BundleFetchFailed", str(error)) from error
         redactor.extend(bundle.sensitive_values())
 
@@ -113,24 +207,23 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
         except workspace.ConfigError as error:
             raise PhaseFailure("ConfigUnpackFailed", str(error)) from error
 
-        try:
-            aws_credentials = credentials.assume_run_role(clients.sts, bundle.run_role, env.run_id, env.phase)
-        except credentials.CredentialsError as error:
-            raise PhaseFailure("AssumeRoleFailed", str(error)) from error
-        redactor.extend(aws_credentials.values())
-
+        backend_environment = state_credentials.write_profile(directory / "aws", bundle.backend.credentials)
         environment = engine.build_environment(
             dict(os.environ),
-            aws_credentials,
+            bundle.aws_credentials.environment(),
             bundle.environment_variables,
             bundle.backend.region,
             engine_directory,
+            backend_environment,
         )
 
         try:
-            runner = engine.EngineRunner(bundle.engine, engine_directory, environment, sink)
-        except engine.EngineError as error:
-            raise PhaseFailure("EngineMissing", str(error)) from error
+            binary = install.ensure_engine(
+                bundle.engine, bundle.engine_version, directory / "engines", clients.http, sink
+            )
+        except install.InstallError as error:
+            raise PhaseFailure("EngineInstallFailed", str(error)) from error
+        runner = engine.EngineRunner(bundle.engine, engine_directory, environment, sink, binary)
 
         plan_path = engine_directory / engine.PLAN_FILE
         plan_json_path = engine_directory / engine.PLAN_JSON_FILE
@@ -138,7 +231,9 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
         has_changes = False
 
         if env.phase == "plan":
-            exit_code, changes, has_changes, plan_json = _run_plan(runner, sink)
+            exit_code, changes, has_changes, plan_json = _run_plan(
+                runner, sink, destroy=bundle.is_destroy, init_environment=bundle.init_environment()
+            )
             plan_json_path.write_text(plan_json)
             try:
                 api.upload_file("plan", plan_path)
@@ -152,7 +247,8 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
                 api.download(bundle.artifacts.plan_get_url, plan_path)
             except ApiError as error:
                 raise PhaseFailure("PlanDownloadFailed", str(error)) from error
-            exit_code = _run_apply(runner)
+            exit_code, changes = _run_apply(runner, sink, init_environment=bundle.init_environment())
+            _upload_outputs(runner, api, sink)
 
         sink.flush()
         try:
@@ -174,26 +270,38 @@ def execute(env: RunnerEnv, clients: Clients, directory: Path) -> PhaseResult:
         return result
 
 
-def run(env: RunnerEnv, clients: Clients, directory: Path) -> int:
-    """Execute the phase and send task success or task failure, never raising."""
-    redactor = Redactor([env.run_token.get_secret_value(), env.task_token.get_secret_value()])
+def report_failure(env: RunnerEnv, api: RunnerApi, error: str, cause: str) -> None:
+    """Post a failed phase to the API, which fails the task with `error`.
+
+    Without a run token there is nothing to post with, so the task's own stop is
+    what fails the phase. A post the API refuses is left to that stop as well.
+    """
+    if not api.has_token:
+        print("no run token, so the task stop reports this failure", file=sys.stderr, flush=True)
+        return
     try:
-        result = execute(env, clients, directory)
+        api.post_phase_result(
+            PhaseResult(run_id=env.run_id, phase=env.phase, exit_code=1, error=cause, error_name=error)
+        )
+    except ApiError as failure:
+        print(f"failure report not accepted: {failure}", file=sys.stderr, flush=True)
+
+
+def run(env: RunnerEnv, clients: Clients, directory: Path) -> int:
+    """Execute the phase and report a failure to the API, never raising."""
+    redactor = Redactor(_initial_secrets(env))
+    api = RunnerApi(env, clients.http)
+    try:
+        execute(env, clients, directory, redactor, api)
     except PhaseFailure as failure:
         print(redactor.scrub(f"{failure.error}: {failure.cause}"), file=sys.stderr, flush=True)
-        callback.send_failure(
-            clients.sfn,
-            env.task_token.get_secret_value(),
-            failure.error,
-            redactor.scrub(failure.cause),
-        )
+        report_failure(env, api, failure.error, redactor.scrub(failure.cause))
         return 1
     except Exception as error:
         cause = redactor.scrub(f"{type(error).__name__}: {error}")
         print(f"unexpected failure: {cause}", file=sys.stderr, flush=True)
-        callback.send_failure(clients.sfn, env.task_token.get_secret_value(), "RunnerFailed", cause)
+        report_failure(env, api, "RunnerFailed", cause)
         return 1
-    callback.send_success(clients.sfn, env.task_token.get_secret_value(), result.exit_code, result.changes)
     return 0
 
 

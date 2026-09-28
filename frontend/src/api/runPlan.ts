@@ -12,6 +12,7 @@ import type { RequestOptions } from '@webbpulse/api-client';
 
 import { api } from './client';
 import type {
+  AppliedOutput,
   PlanAction,
   PlanMode,
   PlanOutputChange,
@@ -21,6 +22,7 @@ import type {
 } from './types';
 
 export type {
+  AppliedOutput,
   PlanAction,
   PlanMode,
   PlanOutputChange,

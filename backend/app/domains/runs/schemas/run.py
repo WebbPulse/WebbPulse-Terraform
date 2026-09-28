@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 RunStatus = Literal[
     "pending",
@@ -26,6 +26,78 @@ Phase = Literal["plan", "apply"]
 RUN_ROLE_DURATION_SECONDS = 3600
 """One hour on the assumed run role, matching the plan timeout plus headroom."""
 
+ActorKind = Literal["user", "agent", "vcs", "system"]
+"""How a run was triggered: `user` is a person's JWT, `agent` a `wpk_` API key
+acting for the person who minted it, `vcs` a GitHub App delivery, named by the
+sender of the push or pull request, and `system` the control plane itself, such as the verification
+run a Quick setup stack starts when it reports back."""
+
+RunSource = Literal["api", "vcs_push", "vcs_pr", "aws_connect"]
+"""Where a run came from: the API, a push to a tracked branch, a pull request, or a
+Quick setup stack reporting back."""
+
+
+class RunPullRequest(BaseModel):
+    """The pull request a push run's commit was merged from."""
+
+    number: int
+    url: str
+
+
+class RunVcs(BaseModel):
+    """The commit a VCS run was started from.
+
+    Everything comes from the signed GitHub App delivery. For a pull request the
+    commit is GitHub's merge commit, and `head_sha` and `base_sha` are recorded
+    alongside it.
+    """
+
+    repo: str
+    repository_id: str
+    sha: str
+    """The commit the delivery names. For a pull request, GitHub's merge commit."""
+    ref: str
+    branch: Optional[str] = None
+    """The pushed branch. `None` on a pull request."""
+    pr_number: Optional[int] = None
+    head_sha: Optional[str] = None
+    base_sha: Optional[str] = None
+    commit_message: Optional[str] = None
+    """The reported commit's message, read through the GitHub App when the run is
+    first reported. `None` until then, and when no App is configured."""
+    pull_request: Optional[RunPullRequest] = None
+    """For a push run, the pull request its commit came from, found through the
+    GitHub App when the run is first reported. `None` for a direct push."""
+
+
+class RunActor(BaseModel):
+    """Who triggered a run, snapshotted from the creating request's claims."""
+
+    kind: ActorKind
+    id: str
+    """The principal's `sub`: the user for `user`, the minting user for `agent`."""
+    display_name: Optional[str] = None
+    """What to render, absent when the credential carried no name."""
+
+
+DecisionAction = Literal["confirmed", "discarded"]
+"""What a person decided about a plan awaiting confirmation."""
+
+
+class RunDecisionRequest(BaseModel):
+    """The optional body of a confirm or a discard: a comment kept on the run."""
+
+    comment: str = Field(default="", max_length=2000)
+
+
+class RunDecision(BaseModel):
+    """Who confirmed or discarded a run's plan, when, and the comment they left."""
+
+    action: DecisionAction
+    at: str
+    actor: Optional[RunActor] = None
+    comment: Optional[str] = None
+
 
 class RunCreate(BaseModel):
     """A new run against one workspace and one config version."""
@@ -33,7 +105,21 @@ class RunCreate(BaseModel):
     workspace_id: str = Field(min_length=4, max_length=64)
     config_version_id: str = Field(min_length=4, max_length=64)
     plan_only: bool = False
+    is_destroy: bool = False
+    """Plan the destruction of every resource the workspace manages, as
+    `terraform plan -destroy` does. Applying it removes them from the state."""
     message: str = Field(default="", max_length=1024)
+    run_role_check: bool = False
+    """Verify the workspace's staged `pending_run_role_arn`: the run is plan only and
+    assumes the staged role instead of the current one, and the run role check
+    switches the workspace over once it connects."""
+
+    @model_validator(mode="after")
+    def _a_role_check_only_plans(self) -> "RunCreate":
+        """Refuse a destroy plan as a role check, which is plan only by definition."""
+        if self.run_role_check and self.is_destroy:
+            raise ValueError("a run role check cannot be a destroy run")
+        return self
 
 
 class RunChanges(BaseModel):
@@ -57,7 +143,14 @@ class Run(BaseModel):
     config_version_id: str
     status: RunStatus
     plan_only: bool
+    is_destroy: bool = False
+    """Whether the plan destroys every managed resource. `False` on a run created
+    before destroy runs shipped, which is what those runs were."""
     message: str = ""
+    run_role_check: bool = False
+    """Whether this run verifies a staged role rather than running as the current one."""
+    run_role_arn: Optional[str] = None
+    """The role this run was created with, and for a role check the role it assumes."""
     created_at: str
     updated_at: Optional[str] = None
     started_at: Optional[str] = None
@@ -65,26 +158,44 @@ class Run(BaseModel):
     queued_behind: Optional[str] = None
     """The run this one waits on, when it was queued rather than started."""
     changes: Optional[RunChanges] = None
+    """What the plan found. An apply never overwrites it."""
+    apply_changes: Optional[RunChanges] = None
+    """What the apply reported doing, from the engine's closing summary. `None`
+    until an apply succeeds, and on runs applied before this was recorded."""
     error: Optional[str] = None
     execution_arn: Optional[str] = None
+    actor: Optional[RunActor] = None
+    """Who triggered this run. `None` on a run created before attribution shipped,
+    since that was never recorded and cannot be recovered."""
+    source: RunSource = "api"
+    """What started the run. A run created before VCS ingest reads as `api`."""
+    vcs: Optional[RunVcs] = None
+    """The commit a VCS run came from. `None` on an API run."""
+    decision: Optional[RunDecision] = None
+    """The confirmation or discard of the plan, `None` until someone decides."""
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class RunList(BaseModel):
-    """One workspace's runs, newest first."""
+    """A list of runs, newest first.
+
+    One workspace's runs in full when the request named a workspace, otherwise a
+    page of every workspace's runs continued through `next_cursor`.
+    """
 
     items: list[Run]
+    next_cursor: Optional[str] = None
+    """Pass back as `cursor` to read the next page. `None` on the last page and
+    always on a single workspace's list."""
 
 
 class RunCreated(Run):
-    """A newly created run. Carries the run token only when the run started.
+    """A newly created run.
 
-    A queued run has no execution and so no token: the token is minted when the
-    state machine starts, which is when the run ahead of it finishes.
+    It carries no run token: only the runner task holds one, obtained by
+    trading its signed task identity, so no caller ever sees the plaintext.
     """
-
-    run_token: Optional[str] = None
 
 
 class LogEvent(BaseModel):
@@ -163,6 +274,17 @@ class PlanOutputChange(BaseModel):
     sensitive: bool = False
 
 
+class AppliedOutput(BaseModel):
+    """One root output's value after a successful apply.
+
+    A sensitive output carries the redaction string rather than its value.
+    """
+
+    name: str
+    value: Any = None
+    sensitive: bool = False
+
+
 class RunPlan(BaseModel):
     """A run's plan as structured data, derived from `terraform show -json`.
 
@@ -177,6 +299,9 @@ class RunPlan(BaseModel):
     resource_changes: list[PlanResourceChange] = Field(default_factory=list)
     output_changes: list[PlanOutputChange] = Field(default_factory=list)
     has_changes: bool = False
+    applied_outputs: Optional[list[AppliedOutput]] = None
+    """The outputs as the apply left them, `None` until the run is applied and
+    on an apply that uploaded none."""
 
 
 class BackendConfig(BaseModel):
@@ -190,23 +315,18 @@ class BackendConfig(BaseModel):
     key: str
     region: str
     kms_key_id: str = ""
+    credentials: VendedCredentials
+    """The state role's keys, narrowed to this workspace's state prefix. The only
+    credentials the backend sees."""
 
 
-class RunRole(BaseModel):
-    """The per workspace role the engine runs as, with the phase session policy.
+class VendedCredentials(BaseModel):
+    """One hour of AWS keys the control plane assumed for a phase."""
 
-    The external id is the workspace id, so a role trusted for one workspace
-    cannot be assumed by a run against another.
-    """
-
-    role_arn: str
-    external_id: str
-    session_policy: dict[str, object]
-    session_policy_arns: list[str] = []
-    """Managed policies the session unions with the inline document. A plan
-    carries `ReadOnlyAccess`, because IAM allows no wildcard in an action's
-    service portion; an apply carries none."""
-    duration_seconds: int = RUN_ROLE_DURATION_SECONDS
+    access_key_id: str
+    secret_access_key: str
+    session_token: str
+    expiration: str = ""
 
 
 class Artifacts(BaseModel):
@@ -221,9 +341,20 @@ class Artifacts(BaseModel):
     plan_get_url: str
 
 
-ArtifactKind = Literal["plan", "plan_json", "log"]
-"""The three objects a phase uploads: the binary plan, its JSON rendering and
-the redacted transcript."""
+class RegistryCredentials(BaseModel):
+    """The run's module registry key, which the runner sets as `TF_TOKEN_<host>` for init only."""
+
+    hosts: list[str]
+    """The hosts module sources name, each getting the same token."""
+    token: str
+    """A `wpk_` key scoped `runner:registry`, for this run, for one hour."""
+    expires_at: str
+
+
+ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
+"""The objects a phase uploads: the binary plan, its JSON rendering, the
+redacted transcript and, after an apply, the outputs with sensitive values
+dropped."""
 
 
 class ArtifactUploadCreate(BaseModel):
@@ -250,10 +381,11 @@ class ArtifactUpload(BaseModel):
 class RunBundle(BaseModel):
     """Everything the runner needs for one phase of one run.
 
-    The shape is the runner's `Bundle`: the nested `backend`, `run_role` and
-    `artifacts` objects are what `runner/app/models.py` validates, and the four
-    extra top level fields are what the runner ignores for now but the API
-    states about the phase it is serving. Uploads are not here: the runner asks
+    The shape is the runner's `Bundle`: the nested `backend`, `aws_credentials` and
+    `artifacts` objects are what `runner/app/models.py` validates, as is
+    `is_destroy`, which selects `plan -destroy`. The other extra top level fields
+    are what the runner ignores for now but the API states about the phase it is
+    serving. Uploads are not here: the runner asks
     for each one's presigned PUT by size once it has the bytes.
 
     The only response in the API that carries decrypted variable values, which is
@@ -264,15 +396,27 @@ class RunBundle(BaseModel):
     workspace_id: str
     phase: Phase
     plan_only: bool
+    is_destroy: bool = False
+    """Whether the plan phase runs `plan -destroy`. The apply phase applies the
+    saved plan either way."""
     engine: Literal["terraform", "tofu"]
     engine_version: str
     working_directory: str
     config_url: str
     backend: BackendConfig
-    run_role: RunRole
+    run_role_arn: str
+    aws_credentials: VendedCredentials
+    """The workspace run role's keys for this phase, read only for a plan. The
+    runner hands them to the providers and never assumes a role itself."""
     terraform_variables: dict[str, str]
+    hcl_variables: dict[str, str] = {}
+    """Terraform variables whose values are HCL expressions, which the runner
+    writes to a native tfvars file for the engine to parse."""
     environment_variables: dict[str, str]
     artifacts: Artifacts
+    registry: Optional[RegistryCredentials] = None
+    """The private registry credential for `terraform init`, absent where no registry
+    host is configured."""
 
 
 class PhaseResult(BaseModel):
@@ -285,10 +429,15 @@ class PhaseResult(BaseModel):
     phase: Phase
     exit_code: int
     changes: RunChanges = RunChanges()
-    error: Optional[str] = Field(default="", max_length=4096)
+    error: Optional[str] = Field(default="", max_length=32768)
     """The failure text, empty when the phase succeeded. Absent, null and empty
     all mean the same thing and all normalise to the empty string, so the
     service always reads a str."""
+
+    error_name: Optional[str] = Field(default=None, pattern=r"^[A-Za-z][A-Za-z0-9]{0,63}$")
+    """The runner's short error name when the phase failed before it had a result,
+    such as `AssumeRoleFailed`. Set, it fails the phase's task with that name and
+    `error` as the cause, and records nothing on the run itself."""
 
     @field_validator("error", mode="before")
     @classmethod
@@ -302,3 +451,25 @@ class PhaseResultAccepted(BaseModel):
 
     run_id: str
     status: RunStatus
+
+
+class RunnerTokenRequest(BaseModel):
+    """A runner task's signed STS `GetCallerIdentity` headers, traded for its run token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    headers: dict[str, str] = Field(max_length=16)
+
+    @field_validator("headers")
+    @classmethod
+    def _headers_are_bounded(cls, value: dict[str, str]) -> dict[str, str]:
+        """Refuse oversized names or values before anything is sent to STS."""
+        if any(len(name) > 64 or len(item) > 4096 for name, item in value.items()):
+            raise ValueError("a header name or value is too long")
+        return value
+
+
+class RunnerToken(BaseModel):
+    """The run token a runner task holds for its phase."""
+
+    run_token: str

@@ -1,5 +1,5 @@
 {
-  "Comment": "One execution per run. The execution input carries run_id, workspace_id, plan_only and run_token, and every state keeps that input on the state path so the apply task still sees the token. Acquires the environment wide semaphore, launches the plan task and waits for the runner to report, waits for a confirmation when the run needs one, launches the apply task, then releases the semaphore and marks the run. A discard arrives as a `RunDiscarded` task failure on the confirmation token, after the API has already written the discarded status, so that error is caught ahead of `States.ALL` and takes a release path that drops the semaphore holder without marking the run. Every other confirmation failure, the `States.Timeout` of a confirmation nobody answered included, still marks the run errored.",
+  "Comment": "One execution per run. The execution input carries run_id, workspace_id and plan_only, and every state keeps that input on the state path so the apply task still sees the run id. No run token is passed to a task: the runner trades its signed task identity for one at POST /runs/{id}/runner-token, so no token is written to the execution history. Acquires the environment wide semaphore, launches the plan task and waits for the runner to report, waits for a confirmation when the run needs one, launches the apply task, then releases the semaphore and marks the run. A discard arrives as a `RunDiscarded` task failure on the confirmation token, after the API has already written the discarded status, so that error is caught ahead of `States.ALL` and takes a release path that drops the semaphore holder without marking the run. Every other confirmation failure, the `States.Timeout` of a confirmation nobody answered included, still marks the run errored.",
   "StartAt": "AcquireSemaphore",
   "QueryLanguage": "JSONPath",
   "States": {
@@ -66,7 +66,6 @@
                 { "Name": "WORKSPACE_ID", "Value.$": "$.workspace_id" },
                 { "Name": "PHASE", "Value": "plan" },
                 { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
-                { "Name": "RUN_TOKEN", "Value.$": "$.run_token" },
                 { "Name": "API_BASE_URL", "Value": "${ApiBaseUrl}" }
               ]
             }
@@ -74,7 +73,7 @@
         }
       },
       "TimeoutSeconds": ${PlanTimeoutSeconds},
-      "HeartbeatSeconds": 600,
+      "HeartbeatSeconds": ${TaskHeartbeatSeconds},
       "ResultPath": "$.plan",
       "Next": "PlanOutcome",
       "Catch": [
@@ -158,7 +157,6 @@
                 { "Name": "WORKSPACE_ID", "Value.$": "$.workspace_id" },
                 { "Name": "PHASE", "Value": "apply" },
                 { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
-                { "Name": "RUN_TOKEN", "Value.$": "$.run_token" },
                 { "Name": "API_BASE_URL", "Value": "${ApiBaseUrl}" }
               ]
             }
@@ -166,7 +164,7 @@
         }
       },
       "TimeoutSeconds": ${ApplyTimeoutSeconds},
-      "HeartbeatSeconds": 600,
+      "HeartbeatSeconds": ${TaskHeartbeatSeconds},
       "ResultPath": "$.apply",
       "Next": "MarkApplied",
       "Catch": [

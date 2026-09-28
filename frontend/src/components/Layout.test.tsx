@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
 import {
+  jsonResponse,
   renderWithAuth,
   signedInAuthClient,
+  stubAuthClient,
 } from '../test-helpers/renderWithAuth';
 import { Layout } from './Layout';
 
@@ -32,5 +34,42 @@ describe('Layout', () => {
     expect(
       screen.getByRole('link', { name: 'Skip to content' })
     ).toHaveAttribute('href', '#main');
+  });
+
+  it('keeps the GitHub settings link from a non admin', () => {
+    renderWithAuth(
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/runs" element={<p>Runs page</p>} />
+        </Route>
+      </Routes>,
+      signedInAuthClient(),
+      ['/runs']
+    );
+    expect(screen.queryByRole('link', { name: 'GitHub' })).toBeNull();
+    expect(screen.queryByText('Settings')).toBeNull();
+  });
+
+  it('shows an admin the GitHub settings link', async () => {
+    const client = stubAuthClient({
+      fetch: () =>
+        Promise.resolve(
+          jsonResponse({ access_token: 'test-token', expires_in: 3600 })
+        ),
+      user: { email: 'admin@webbpulse.com', is_admin: true },
+    });
+    renderWithAuth(
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/runs" element={<p>Runs page</p>} />
+        </Route>
+      </Routes>,
+      client,
+      ['/runs']
+    );
+    await client.refresh();
+    const links = await screen.findAllByRole('link', { name: 'GitHub' });
+    expect(links[0]).toHaveAttribute('href', '/settings/github');
+    expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 });

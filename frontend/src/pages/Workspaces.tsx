@@ -1,52 +1,37 @@
-/** The workspaces list, with the dialog that creates one. */
+/** The workspaces list, with the way to create one. */
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import {
-  useMutationWithRefetch,
-  usePolledQuery,
-} from '@webbpulse/api-client/react';
+import { Link } from 'react-router-dom';
+import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
+  accountStatus,
+  accountStatusLabel,
   api,
-  isConnected,
-  type Engine,
   type Workspace,
-  type WorkspaceCreate,
   type WorkspaceList,
 } from '../api';
 import {
-  Button,
-  Dialog,
   EmptyState,
   ErrorNotice,
-  Field,
   INPUT_CLASS,
+  buttonClass,
   PageHeader,
+  RelativeTime,
   Spinner,
   Table,
   Td,
   Th,
   Tr,
-  formatDateTime,
-  formatRelative,
 } from '../components';
-
+import { useRunRoleCheck } from './useRunRoleCheck';
 /** The refetch key the list reads and the create form invalidates. */
 export const WORKSPACES_KEY = 'workspaces';
 
-/** The engines a workspace can be created with. */
-const ENGINES: readonly Engine[] = ['terraform', 'tofu'];
-
-/** The engine version a new workspace starts on. */
-const DEFAULT_ENGINE_VERSION = '1.11.0';
-
-/** The workspaces list and its create dialog. */
+/** The workspaces list. */
 export function Workspaces(): React.ReactElement {
   const auth = useQueryAuth();
-  const navigate = useNavigate();
-  const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState('');
   const query = usePolledQuery<WorkspaceList>(
     ({ signal }) => api.listWorkspaces({ signal }),
@@ -64,14 +49,9 @@ export function Workspaces(): React.ReactElement {
           ) : null
         }
         actions={
-          <Button
-            variant="primary"
-            onClick={() => {
-              setCreating(true);
-            }}
-          >
+          <Link to="/workspaces/new" className={buttonClass('primary')}>
             New workspace
-          </Button>
+          </Link>
         }
       />
       <ErrorNotice error={query.error} />
@@ -85,29 +65,8 @@ export function Workspaces(): React.ReactElement {
           workspaces={query.data?.items ?? []}
           filter={filter}
           onFilter={setFilter}
-          onCreate={() => {
-            setCreating(true);
-          }}
         />
       )}
-      <Dialog
-        open={creating}
-        onClose={() => {
-          setCreating(false);
-        }}
-        title="New workspace"
-        description="Name it now. Connecting an AWS account comes next, on the workspace page."
-      >
-        <CreateWorkspaceForm
-          onCancel={() => {
-            setCreating(false);
-          }}
-          onCreated={(workspace) => {
-            setCreating(false);
-            void navigate(`/workspaces/${workspace.workspace_id}`);
-          }}
-        />
-      </Dialog>
     </div>
   );
 }
@@ -117,22 +76,20 @@ function WorkspaceTable({
   workspaces,
   filter,
   onFilter,
-  onCreate,
 }: {
   workspaces: Workspace[];
   filter: string;
   onFilter: (value: string) => void;
-  onCreate: () => void;
 }): React.ReactElement {
   if (workspaces.length === 0) {
     return (
       <EmptyState
         title="No workspaces yet."
-        hint="A workspace holds one root module, its variables and its runs."
+        hint="Connect a repository, or upload configuration from the CLI or the API."
         action={
-          <Button variant="primary" onClick={onCreate}>
+          <Link to="/workspaces/new" className={buttonClass('primary')}>
             Create the first workspace
-          </Button>
+          </Link>
         }
       />
     );
@@ -200,13 +157,10 @@ function WorkspaceTable({
                 <Td>
                   <ConnectionCell workspace={workspace} />
                 </Td>
-                <Td
-                  className="text-xs whitespace-nowrap text-text-faint"
-                  title={formatDateTime(
-                    workspace.updated_at ?? workspace.created_at
-                  )}
-                >
-                  {formatRelative(workspace.updated_at ?? workspace.created_at)}
+                <Td className="text-xs whitespace-nowrap text-text-faint">
+                  <RelativeTime
+                    iso={workspace.updated_at ?? workspace.created_at}
+                  />
                 </Td>
               </Tr>
             ))}
@@ -217,156 +171,47 @@ function WorkspaceTable({
   );
 }
 
-/** The account id with a green dot, or the words for a missing connection. */
+/**
+ * The account id with a green dot, or the words for a missing connection.
+ *
+ * Each row with a role reads the same check the workspace header does, so the
+ * list never disagrees with the page it links to.
+ */
 function ConnectionCell({
   workspace,
 }: {
   workspace: Workspace;
 }): React.ReactElement {
-  if (isConnected(workspace)) {
+  const check = useRunRoleCheck(workspace);
+  const status = accountStatus(workspace, check);
+  if (status.state === 'connected') {
     return (
-      <span className="inline-flex items-center gap-2 font-mono text-xs text-text">
+      <span
+        data-testid="workspace-row-account"
+        data-connection={status.state}
+        className="inline-flex items-center gap-2 font-mono text-xs text-text"
+      >
         <span
           aria-hidden="true"
           className="inline-block size-2 rounded-full bg-success"
         />
-        {workspace.run_role_account_id}
+        {accountStatusLabel(status)}
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-2 text-xs text-text-faint">
+    <span
+      data-testid="workspace-row-account"
+      data-connection={status.state}
+      className="inline-flex items-center gap-2 text-xs text-text-faint"
+    >
       <span
         aria-hidden="true"
-        className="inline-block size-2 rounded-full bg-surface-400"
+        className={`inline-block size-2 rounded-full ${
+          status.state === 'failed' ? 'bg-danger' : 'bg-surface-400'
+        }`}
       />
-      {(workspace.run_role_arn ?? null) === null
-        ? 'Not connected'
-        : 'Not checked'}
+      {accountStatusLabel(status)}
     </span>
-  );
-}
-
-/** The form that creates a workspace with a name and its engine. */
-function CreateWorkspaceForm({
-  onCancel,
-  onCreated,
-}: {
-  onCancel: () => void;
-  onCreated: (workspace: Workspace) => void;
-}): React.ReactElement {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [engine, setEngine] = useState<Engine>('terraform');
-  const [engineVersion, setEngineVersion] = useState(DEFAULT_ENGINE_VERSION);
-  const { mutate, isMutating, error } = useMutationWithRefetch(
-    (body: WorkspaceCreate) => api.createWorkspace(body),
-    WORKSPACES_KEY
-  );
-
-  const submit = async (): Promise<void> => {
-    const body: WorkspaceCreate = {
-      name: name.trim(),
-      engine,
-      engine_version: engineVersion.trim(),
-    };
-    if (description.trim() !== '') {
-      body.description = description.trim();
-    }
-    try {
-      onCreated(await mutate(body));
-    } catch {
-      return;
-    }
-  };
-
-  return (
-    <form
-      aria-label="Create a workspace"
-      className="space-y-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void submit();
-      }}
-    >
-      <Field
-        label="Name"
-        hint="Letters, digits, dots, underscores and hyphens."
-      >
-        {(control) => (
-          <input
-            {...control}
-            required
-            autoFocus
-            value={name}
-            pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"
-            title="Letters, digits, dots, underscores and hyphens, starting with a letter or digit."
-            onChange={(event) => {
-              setName(event.target.value);
-            }}
-            className={INPUT_CLASS}
-          />
-        )}
-      </Field>
-      <Field label="Description">
-        {(control) => (
-          <input
-            {...control}
-            value={description}
-            onChange={(event) => {
-              setDescription(event.target.value);
-            }}
-            className={INPUT_CLASS}
-          />
-        )}
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Engine">
-          {(control) => (
-            <select
-              {...control}
-              value={engine}
-              onChange={(event) => {
-                setEngine(event.target.value as Engine);
-              }}
-              className={INPUT_CLASS}
-            >
-              {ENGINES.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          )}
-        </Field>
-        <Field label="Engine version">
-          {(control) => (
-            <input
-              {...control}
-              required
-              value={engineVersion}
-              onChange={(event) => {
-                setEngineVersion(event.target.value);
-              }}
-              className={`${INPUT_CLASS} font-mono`}
-            />
-          )}
-        </Field>
-      </div>
-      <ErrorNotice error={error} />
-      <div className="flex justify-end gap-2 pt-1">
-        <Button variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          variant="primary"
-          busy={isMutating}
-          busyLabel="Creating the workspace"
-        >
-          Create workspace
-        </Button>
-      </div>
-    </form>
   );
 }

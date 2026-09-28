@@ -20,6 +20,7 @@ jobs:
       install-command: uv lock --upgrade-package webbpulse && uv sync --locked --group e2e
       pytest-args: "--no-cov -n auto --dist loadgroup"
       codeartifact-domain: webbpulse
+      codeartifact-repository: npm
       frontend-directory: frontend
       frontend-build-env-json: '{"VITE_API_BASE_URL": "http://127.0.0.1:8000/api/v1"}'
       backend-start-command: uv run uvicorn app.common.composition.app:app --host 127.0.0.1 --port 8000

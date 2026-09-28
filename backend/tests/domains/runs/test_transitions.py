@@ -158,6 +158,29 @@ def test_a_successful_apply_applies_the_run(auth_client, awaiting_confirmation):
     assert updated["finished_at"]
 
 
+def test_an_apply_keeps_the_plan_counts_and_records_its_own(auth_client, awaiting_confirmation):
+    """The apply's counts land beside the plan's rather than over them."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    runs_service.record_phase_result(
+        run_id,
+        {"phase": "apply", "exit_code": 0, "changes": {"add": 1, "change": 0, "destroy": 0}, "error": ""},
+    )
+    body = auth_client.get(f"{BASE}/{run_id}").json()
+    assert body["changes"] == {"add": 2, "change": 1, "destroy": 0}
+    assert body["apply_changes"] == {"add": 1, "change": 0, "destroy": 0}
+
+
+def test_a_failed_apply_keeps_the_plan_counts(auth_client, awaiting_confirmation):
+    """An apply failure reports empty counts, which must not erase what the plan found."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    runs_service.record_phase_result(run_id, {"phase": "apply", "exit_code": 1, "changes": {}, "error": "boom"})
+    stored = stored_run(run_id)
+    assert stored["changes"] == {"add": 2, "change": 1, "destroy": 0}
+    assert "apply_changes" not in stored
+
+
 def test_a_failed_apply_errors_the_run(auth_client, awaiting_confirmation):
     """A failed apply errors rather than applying."""
     run_id = awaiting_confirmation["run_id"]
@@ -322,3 +345,89 @@ def test_cancel_revokes_the_run_token(runner_client, created_run):
     run_id = created_run["run_id"]
     runs_service.cancel_run(run_id)
     assert runner_client.get(f"{BASE}/{run_id}/bundle").status_code == 401
+
+
+DESTROY_PLAN = {
+    "phase": "plan",
+    "exit_code": 0,
+    "changes": {"add": 0, "change": 0, "destroy": 1},
+    "error": "",
+}
+
+
+def _destroy_run(auth_client, workspace, uploaded_config_version, *, plan_only: bool) -> dict:
+    """A started destroy run on the fixture workspace."""
+    response = auth_client.post(
+        BASE,
+        json={
+            "workspace_id": workspace["workspace_id"],
+            "config_version_id": uploaded_config_version["config_version_id"],
+            "plan_only": plan_only,
+            "is_destroy": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_a_destroy_plan_awaits_confirmation(auth_client, workspace, uploaded_config_version, state_machine):
+    """A destroy plan that found resources stops for a human like any plan."""
+    run = _destroy_run(auth_client, workspace, uploaded_config_version, plan_only=False)
+    updated = runs_service.record_phase_result(run["run_id"], DESTROY_PLAN)
+    assert updated["status"] == "awaiting_confirmation"
+    assert updated["is_destroy"] is True
+
+
+def test_a_plan_only_destroy_run_never_applies(auth_client, workspace, uploaded_config_version, state_machine):
+    """`plan_only` holds for a destroy run: the plan finishes and nothing is destroyed."""
+    run = _destroy_run(auth_client, workspace, uploaded_config_version, plan_only=True)
+    updated = runs_service.record_phase_result(run["run_id"], DESTROY_PLAN)
+    assert updated["status"] == "planned_and_finished"
+
+
+def test_confirm_records_the_decision_with_its_comment(auth_client, awaiting_confirmation):
+    """The confirming actor and the comment are kept on the run for the timeline."""
+    run_id = awaiting_confirmation["run_id"]
+    response = auth_client.post(f"{BASE}/{run_id}/confirm", json={"comment": "  Ship it  "})
+    assert response.status_code == 200, response.text
+    decision = response.json()["decision"]
+    assert decision["action"] == "confirmed"
+    assert decision["comment"] == "Ship it"
+    assert decision["actor"]["id"] == "user-test"
+    assert decision["at"]
+    assert auth_client.get(f"{BASE}/{run_id}").json()["decision"] == decision
+
+
+def test_confirm_without_a_body_records_no_comment(auth_client, awaiting_confirmation):
+    """An empty body still confirms, and the decision carries no comment."""
+    run_id = awaiting_confirmation["run_id"]
+    response = auth_client.post(f"{BASE}/{run_id}/confirm")
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"]["action"] == "confirmed"
+    assert response.json()["decision"]["comment"] is None
+
+
+def test_discard_records_the_decision_with_its_comment(auth_client, awaiting_confirmation):
+    """The discarding actor and the comment are kept on the discarded run."""
+    run_id = awaiting_confirmation["run_id"]
+    response = auth_client.post(f"{BASE}/{run_id}/discard", json={"comment": "Wrong branch"})
+    assert response.status_code == 200, response.text
+    decision = response.json()["decision"]
+    assert (decision["action"], decision["comment"]) == ("discarded", "Wrong branch")
+    assert stored_run(run_id)["decision"]["actor"]["id"] == "user-test"
+
+
+def test_a_losing_confirm_leaves_the_first_decision(auth_client, awaiting_confirmation):
+    """A second confirm is refused and cannot overwrite the recorded decision."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm", json={"comment": "first"})
+    assert auth_client.post(f"{BASE}/{run_id}/confirm", json={"comment": "second"}).status_code == 409
+    assert stored_run(run_id)["decision"]["comment"] == "first"
+
+
+def test_an_overlong_comment_is_422(auth_client, awaiting_confirmation):
+    """Comments are capped, and the run is left awaiting confirmation."""
+    run_id = awaiting_confirmation["run_id"]
+    response = auth_client.post(f"{BASE}/{run_id}/confirm", json={"comment": "x" * 2001})
+    assert response.status_code == 422
+    assert stored_run(run_id)["status"] == "awaiting_confirmation"

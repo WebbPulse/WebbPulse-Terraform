@@ -113,11 +113,25 @@ plan has run: connect an AWS account, upload a configuration, run a plan. Each
 workspace response carries `run_role_setup`, the role name, the runner
 principals and the external id, and the connect step renders the trust policy
 and a Terraform, CloudFormation and AWS CLI snippet from those values. Saving
-the role ARN is a `PATCH` of `run_role_arn`; `POST
-/workspaces/{id}/run-role/check` assumes the role once and persists the outcome
-as `run_role_checked_at` and `run_role_account_id`. Run starts are disabled
-until a check has passed, and a `409` carrying `RUN_ROLE_MISSING` renders the
-same sentence.
+the role ARN is a `PATCH` of `run_role_arn`, which is all a run needs, so the
+connect step is done and run starts are enabled once an ARN is saved. The API
+never assumes the role itself: the run role panel reads `GET
+/workspaces/{id}/run-role/check`, which answers `connected`, `failed` or
+`unverified` from the runner's own AssumeRole outcome in the newest run, and
+its Check connection button posts the same route to record the answer as
+`run_role_checked_at` and `run_role_account_id` for the workspace list. A
+saved role no run has proven reads as Not verified, and the first plan only
+run is the check. A `409` carrying `RUN_ROLE_MISSING` renders the missing role
+sentence.
+
+AWS quick setup on a workspace that already has a role stages the new one as
+`pending_run_role_arn` instead of replacing it, so an unfinished stack never
+breaks a working workspace. The panel shows the staged role with its own
+verdict from the check's `pending` block, a Start verification run button that
+creates a plan only run with `run_role_check: true`, which assumes the staged
+role, and Discard the new role, a `PATCH` of `pending_run_role_arn: null`. The
+workspace frame posts `run-role/check` once the staged role reads connected,
+and that recording check makes it the workspace's `run_role_arn`.
 
 `RunRoleSetup` and `RunRoleCheck` are aliases into `schema.d.ts` like every
 other contract type, so `runRoleSetup.ts` holds only the trust policy, the

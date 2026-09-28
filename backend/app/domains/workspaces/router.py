@@ -6,27 +6,42 @@ and an agent holding a `wpk_` key reach them through the same check.
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
+from webbpulse.identity.claims import AuthorizerClaims
+from webbpulse.integrations.github import GitHubError, GitHubRateLimited
 
 from ...common.core.auth import (
     CONFIGS_READ,
     CONFIGS_WRITE,
+    STATE_DOWNLOAD,
     VARIABLES_READ,
     VARIABLES_WRITE,
     WORKSPACES_READ,
     WORKSPACES_WRITE,
+    ensure_recent_auth,
     scopes,
+    sudo,
 )
+from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
-from . import service
+from ...common.workspaces import run_role_check
+from . import hcl, quick_setup, service, state_versions
 from .schemas.workspace import (
     ConfigVersion,
     ConfigVersionCreate,
     ConfigVersionList,
     ConfigVersionUpload,
     RunRoleCheck,
+    RunRoleQuickSetup,
+    RunRoleQuickSetupCreate,
+    StateVersionDetail,
+    StateVersionDownload,
+    StateVersionList,
     Variable,
     VariableList,
     VariableWrite,
@@ -39,16 +54,132 @@ from .schemas.workspace import (
 RUN_ROLE_MISSING_CODE = "RUN_ROLE_MISSING"
 """The stable code a caller matches on when a workspace has no run role yet."""
 
+WORKSPACE_MANAGES_RESOURCES_CODE = "WORKSPACE_MANAGES_RESOURCES"
+"""The stable code a safe delete refuses with while the current state tracks resources."""
+
+WORKSPACE_HAS_ACTIVE_RUN_CODE = "WORKSPACE_HAS_ACTIVE_RUN"
+"""The stable code any delete refuses with while a run on the workspace is unfinished."""
+
+VCS_REPO_NOT_INSTALLED_CODE = "VCS_REPO_NOT_INSTALLED"
+"""The stable code a connect refuses with when the GitHub App cannot see the repository."""
+
+GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
+"""The stable code a connect fails with when GitHub could not answer."""
+
+WORKSPACE_DELETE_EVENT = "workspaces.workspace.delete"
+"""The log event a workspace delete is recorded under, naming the workspace and the mode."""
+
+RUN_ROLE_FIELDS = ("run_role_arn", "pending_run_role_arn")
+"""The PATCH fields that change which AWS role a workspace's runs assume, and so need a step-up."""
+
 router = APIRouter()
 
 WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
 ConfigVersionId = Path(min_length=4, max_length=64, pattern=r"^cv-[0-9A-HJKMNP-TV-Z]{26}$")
+StateVersionId = Path(min_length=1, max_length=1024, pattern=r"^[A-Za-z0-9._-]+$")
+"""An S3 version id, which is opaque and not a ULID like the ids this API mints.
+
+The pattern is a character allowlist rather than a shape: it keeps a path
+separator or a percent escape out of a value that is interpolated into an S3
+request, while accepting every id S3 actually issues, including the literal
+`null` a version predating versioning carries.
+"""
 VariableKey = Path(min_length=1, max_length=256, pattern=r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+
+
+_log = logging.getLogger(__name__)
+
+STATE_DOWNLOAD_EVENT = "workspaces.state_version.download"
+"""The log event a state download is recorded under.
+
+The repository has no audit store, so this is a structured log line on the
+function's own group rather than a durable audit record, and it is the weakest
+part of this feature: it inherits the group's 7 day retention and nothing
+enforces that it is written. It is recorded anyway because a state download is
+the event most worth reconstructing later, and it names who asked, which
+workspace and which version. A real audit trail is a separate decision.
+"""
+
+
+def record_state_download(
+    request: Request,
+    claims: AuthorizerClaims,
+    *,
+    workspace_id: str,
+    state_version_id: str,
+) -> None:
+    """Record an authorized download attempt before validation and signing.
+
+    Written ahead of the signing rather than after it so that a failure between
+    the two leaves a line that overstates access rather than one that misses it.
+    The URL itself is never logged: it is a bearer credential, and a log holding
+    it would be a second copy of the thing being protected.
+    """
+    _log.info(
+        "Requested a state version download URL.",
+        extra={
+            "event": STATE_DOWNLOAD_EVENT,
+            "workspace_id": workspace_id,
+            "state_version_id": state_version_id,
+            "subject": str(claims.get("sub", "") or "") or None,
+            "source_ip": request.client.host if request.client else None,
+        },
+    )
 
 
 def _not_found(message: str) -> HTTPException:
     """The 404 every absent row raises, in the shared error envelope's shape."""
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
+
+
+def _run_role_missing() -> HTTPException:
+    """The 400 both run role check routes raise when no ARN is configured."""
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "message": "This workspace has no run role ARN yet.",
+            "error_code": RUN_ROLE_MISSING_CODE,
+        },
+    )
+
+
+def _is_sensitive(workspace_id: str, key: str) -> bool:
+    """Whether the stored variable is sensitive; an absent one is not."""
+    try:
+        return bool(service.get_variable(workspace_id, key).get("sensitive"))
+    except service.VariableNotFound:
+        return False
+
+
+@contextmanager
+def _connect_errors() -> Iterator[None]:
+    """Translate a failed repository resolution into this API's errors.
+
+    GitHub's own message is never forwarded, since the resolution runs on App credentials.
+    """
+    try:
+        yield
+    except service.RepositoryNotInstalled as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": f"The GitHub App is not installed on {error}. Install it on the repository first.",
+                "error_code": VCS_REPO_NOT_INSTALLED_CODE,
+            },
+        ) from error
+    except GitHubRateLimited as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "message": "GitHub is rate limiting this App. Try again shortly.",
+                "error_code": GITHUB_UNAVAILABLE_CODE,
+            },
+        ) from error
+    except GitHubError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"message": "GitHub could not resolve the repository.", "error_code": GITHUB_UNAVAILABLE_CODE},
+        ) from error
 
 
 @router.get(
@@ -74,9 +205,15 @@ def create_workspace(payload: WorkspaceCreate) -> dict[str, Any]:
     id as the external id, so the role cannot exist until the workspace does. The
     response's `run_role_setup` carries everything needed to build it, and
     `PATCH /workspaces/{id}` attaches it afterwards.
+
+    A `vcs_repo` is resolved through the environment's GitHub App: the id, the
+    installation and the canonical name are recorded, and `tracked_branch` defaults to
+    the repository's default branch. A repository the App is not installed on is a 422
+    carrying `VCS_REPO_NOT_INSTALLED`.
     """
     try:
-        return service.render_workspace(service.create_workspace(payload.model_dump()))
+        with _connect_errors():
+            return service.render_workspace(service.create_workspace(payload.model_dump()))
     except service.WorkspaceNameTaken as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -102,17 +239,66 @@ def get_workspace(workspace_id: str = WorkspaceId) -> dict[str, Any]:
     response_model=Workspace,
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
-def update_workspace(payload: WorkspaceUpdate, workspace_id: str = WorkspaceId) -> dict[str, Any]:
+def update_workspace(
+    payload: WorkspaceUpdate,
+    workspace_id: str = WorkspaceId,
+    current: AuthorizerClaims = Depends(auth_claims),
+) -> dict[str, Any]:
     """Edit one workspace. The name and the id are not editable.
 
-    Changing `run_role_arn` drops the recorded check outcome, so the new role reads
-    as unchecked until `run-role/check` says otherwise.
+    The body is JSON Merge Patch: an omitted key leaves the stored value exactly
+    as it was, and an explicit null on any field but `engine` and `engine_version`
+    clears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a
+    field is only touched when the request carried its key.
+
+    Changing or clearing `run_role_arn` drops the recorded check outcome, so the
+    role reads as unchecked until `run-role/check` says otherwise.
+
+    Connecting another `vcs_repo` resolves it through the GitHub App the way the
+    create does, and a null disconnects the repository.
+
+    Changing either run role field is the workspace's AWS connection, so a person has to
+    have signed in within the step-up window; resending the stored value is not a change.
     """
+    changes = payload.model_dump(exclude_unset=True)
     try:
-        updated = service.update_workspace(workspace_id, payload.model_dump(exclude_unset=True))
+        if any(field in changes for field in RUN_ROLE_FIELDS):
+            existing = service.get_workspace(workspace_id)
+            if any(field in changes and changes[field] != existing.get(field) for field in RUN_ROLE_FIELDS):
+                ensure_recent_auth(current)
+        with _connect_errors():
+            updated = service.update_workspace(workspace_id, changes)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     return service.render_workspace(updated)
+
+
+@router.get(
+    "/workspaces/{workspace_id}/run-role/check",
+    response_model=RunRoleCheck,
+    dependencies=[Depends(scopes(WORKSPACES_READ))],
+)
+def read_run_role_check(workspace_id: str = WorkspaceId) -> dict[str, Any]:
+    """Report whether the runner has assumed the workspace's run role, writing nothing.
+
+    The answer comes from the runner's own record: the newest run created with the
+    current role ARN that got past, or failed on, the runner's AssumeRole. The API
+    never calls STS, so it holds no path into the account the role lives in. A role
+    no run has tried yet reads `unverified`, and a plan only run is the check.
+
+    A caller that only wants to look, such as a Terraform provider reading on every
+    plan and refresh, uses this one so no plan mutates a workspace row. Because
+    nothing is written, the read scope is enough.
+
+    Always 200 when a role is configured. A workspace with no role at all is a 400
+    carrying `RUN_ROLE_MISSING`.
+    """
+    try:
+        return run_role_check.probe_run_role(workspace_id)
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except service.RunRoleMissing as error:
+        raise _run_role_missing() from error
 
 
 @router.post(
@@ -121,38 +307,106 @@ def update_workspace(payload: WorkspaceUpdate, workspace_id: str = WorkspaceId) 
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
 def check_run_role(workspace_id: str = WorkspaceId) -> dict[str, Any]:
-    """Assume the workspace's run role and report whether it answered.
+    """Read the runner's record for the run role, as the GET does, and stamp it on the workspace.
 
-    Always 200 when a role is configured, whether or not it answered: a trust
-    policy that is not there yet is an expected state of the setup rather than a
-    request error. A workspace with no role at all is a 400 carrying
-    `RUN_ROLE_MISSING`.
+    The stamp is what the workspace list shows between visits: the account and the
+    time of the run that proved the role on `connected`, both cleared otherwise, so
+    a stale success cannot outlive a role whose trust broke. Use the GET when only
+    the answer is wanted.
+
+    Always 200 when a role is configured. A workspace with no role at all is a 400
+    carrying `RUN_ROLE_MISSING`.
     """
     try:
-        return service.check_run_role(workspace_id)
+        return run_role_check.check_run_role(workspace_id)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     except service.RunRoleMissing as error:
+        raise _run_role_missing() from error
+
+
+@router.post(
+    "/workspaces/{workspace_id}/run-role/quick-setup",
+    response_model=RunRoleQuickSetup,
+    dependencies=[Depends(sudo(WORKSPACES_WRITE))],
+)
+def start_run_role_quick_setup(payload: RunRoleQuickSetupCreate, workspace_id: str = WorkspaceId) -> dict[str, Any]:
+    """Return an AWS CloudFormation quick create link for the workspace's run role.
+
+    Where `reports_back` is true the link carries a one-time connect token, valid
+    until `connect_expires_at`, and the stack reports its account and role back when
+    it is created: the role is saved or staged and a verification run starts, with
+    nothing to type or copy. Each call replaces the previous token. An `account_id`
+    is then optional; given, the derived ARN is saved or staged at once as well.
+
+    The template trusts only the runner task roles with this workspace id as the
+    external id. The link embeds a template URL that expires after `expires_in`
+    seconds, so ask for a fresh link rather than storing one.
+
+    A deployment with no runner task roles or no artifacts bucket answers 503, as
+    does one with no connect topic when no account id is given.
+    """
+    try:
+        return quick_setup.start_quick_setup(workspace_id, payload.account_id, payload.permissions)
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except quick_setup.QuickSetupUnavailable as error:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "message": "This workspace has no run role ARN yet.",
-                "error_code": RUN_ROLE_MISSING_CODE,
-            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AWS quick setup is not available in this environment.",
         ) from error
 
 
 @router.delete(
     "/workspaces/{workspace_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(scopes(WORKSPACES_WRITE))],
+    dependencies=[Depends(sudo(WORKSPACES_WRITE))],
 )
-def delete_workspace(workspace_id: str = WorkspaceId) -> None:
-    """Delete one workspace and its variables."""
+def delete_workspace(
+    workspace_id: str = WorkspaceId,
+    force: bool = Query(
+        False,
+        description="Skip the managed resources check and delete even though state still tracks resources.",
+    ),
+) -> None:
+    """Delete one workspace with its finished runs, current state and variables.
+
+    A safe delete is a 409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current
+    state tracks any resource instance: queue a destroy plan and apply it first, or
+    pass `force=true` to delete anyway and leave those resources unmanaged. Either
+    mode is a 409 carrying `WORKSPACE_HAS_ACTIVE_RUN` while a run on the workspace
+    has not finished. Nothing is removed on a refusal.
+    """
     try:
-        service.delete_workspace(workspace_id)
+        service.delete_workspace(workspace_id, force=force)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
+    except service.RunStillActive as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    f"Run {error.run_id} is still {error.status or 'active'}. "
+                    "Wait for it to finish or cancel it, then delete the workspace."
+                ),
+                "error_code": WORKSPACE_HAS_ACTIVE_RUN_CODE,
+            },
+        ) from error
+    except service.WorkspaceManagesResources as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "This workspace still manages resources. Queue a destroy plan and apply it first, "
+                    "or force delete to leave them unmanaged."
+                ),
+                "error_code": WORKSPACE_MANAGES_RESOURCES_CODE,
+            },
+        ) from error
+    _log.info(
+        "Deleted a workspace.",
+        extra={"event": WORKSPACE_DELETE_EVENT, "workspace_id": workspace_id, "force": force},
+    )
 
 
 @router.get(
@@ -191,12 +445,36 @@ def put_variable(
     payload: VariableWrite,
     workspace_id: str = WorkspaceId,
     key: str = VariableKey,
+    current: AuthorizerClaims = Depends(auth_claims),
 ) -> dict[str, Any]:
-    """Set one variable. A sensitive value is sealed before it is stored."""
+    """Set one variable. A sensitive value is sealed before it is stored.
+
+    A broken HCL expression and an `env` variable marked HCL are both refused
+    here, so neither is stored to fail on every later run.
+
+    Writing a sensitive value, or overwriting a variable that is sensitive now, needs a
+    login within the step-up window.
+    """
+    if payload.sensitive or _is_sensitive(workspace_id, key):
+        ensure_recent_auth(current)
     try:
         stored = service.put_variable(workspace_id, key, payload.model_dump())
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
+    except service.HclNotAllowed as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "An env variable cannot be HCL: an environment variable is a string to "
+                "the process, so there is nothing to parse the expression. Set hcl to "
+                "false, or set category to terraform."
+            ),
+        ) from error
+    except hcl.InvalidHcl as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"The value is not a usable HCL expression. {error}",
+        ) from error
     except MasterKeyUnavailable as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -210,8 +488,14 @@ def put_variable(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(scopes(VARIABLES_WRITE))],
 )
-def delete_variable(workspace_id: str = WorkspaceId, key: str = VariableKey) -> None:
-    """Delete one variable."""
+def delete_variable(
+    workspace_id: str = WorkspaceId,
+    key: str = VariableKey,
+    current: AuthorizerClaims = Depends(auth_claims),
+) -> None:
+    """Delete one variable. A sensitive one needs a login within the step-up window."""
+    if _is_sensitive(workspace_id, key):
+        ensure_recent_auth(current)
     try:
         service.delete_variable(workspace_id, key)
     except service.VariableNotFound as error:
@@ -268,3 +552,103 @@ def get_config_version(
         return service.get_config_version(workspace_id, config_version_id)
     except service.ConfigVersionNotFound as error:
         raise _not_found("No such config version.") from error
+
+
+@router.get(
+    "/workspaces/{workspace_id}/state-versions",
+    response_model=StateVersionList,
+    dependencies=[Depends(scopes(WORKSPACES_READ))],
+)
+def list_state_versions(
+    workspace_id: str = WorkspaceId,
+    page_size: int = Query(default=state_versions.DEFAULT_PAGE_SIZE, ge=1, le=state_versions.MAX_PAGE_SIZE),
+    page_token: Optional[str] = Query(default=None, max_length=2048),
+) -> dict[str, Any]:
+    """One page of a workspace's state history, newest first.
+
+    Guarded by the same scope as reading the workspace itself, so state history
+    is reachable by exactly the callers that can already see the workspace and by
+    no one else. A workspace that has never run answers an empty page.
+    """
+    try:
+        return state_versions.list_state_versions(
+            workspace_id,
+            page_size=page_size,
+            page_token=page_token,
+        )
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except state_versions.StateBucketMissing as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="State history is unavailable: no state bucket is configured.",
+        ) from error
+    except state_versions.InvalidPageToken as error:
+        raise HTTPException(status_code=400, detail="Invalid state history page token.") from error
+
+
+@router.get(
+    "/workspaces/{workspace_id}/state-versions/{state_version_id}",
+    response_model=StateVersionDetail,
+    dependencies=[Depends(scopes(WORKSPACES_READ))],
+)
+def get_state_version(
+    workspace_id: str = WorkspaceId,
+    state_version_id: str = StateVersionId,
+) -> dict[str, Any]:
+    """One state version's metadata. Never its resources or its outputs."""
+    try:
+        return state_versions.get_state_version(workspace_id, state_version_id)
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except state_versions.StateVersionNotFound as error:
+        raise _not_found("No such state version.") from error
+    except state_versions.StateBucketMissing as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="State history is unavailable: no state bucket is configured.",
+        ) from error
+
+
+@router.post(
+    "/workspaces/{workspace_id}/state-versions/{state_version_id}/download",
+    response_model=StateVersionDownload,
+    dependencies=[Depends(scopes(WORKSPACES_READ, STATE_DOWNLOAD))],
+)
+def download_state_version(
+    request: Request,
+    response: Response,
+    workspace_id: str = WorkspaceId,
+    state_version_id: str = StateVersionId,
+    claims: AuthorizerClaims = Depends(auth_claims),
+) -> dict[str, Any]:
+    """Mint a short lived URL with workspaces:read and explicit state:download access.
+
+    A `POST` rather than a `GET` because it is not a read: it mints a bearer
+    credential for the most sensitive object the product stores, and that is an
+    event worth being a distinct, non cacheable, non prefetchable call.
+
+    The scope guard runs before this function is entered and the service checks
+    the version belongs to this workspace before it signs anything, so no URL
+    exists until both have passed. The handover is recorded first, because an
+    audit line written after the URL is minted would be missing exactly when it
+    matters most.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        record_state_download(
+            request,
+            claims,
+            workspace_id=workspace_id,
+            state_version_id=state_version_id,
+        )
+        return state_versions.state_version_download(workspace_id, state_version_id)
+    except service.WorkspaceNotFound as error:
+        raise _not_found("No such workspace.") from error
+    except state_versions.StateVersionNotFound as error:
+        raise _not_found("No such state version.") from error
+    except state_versions.StateBucketMissing as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="State history is unavailable: no state bucket is configured.",
+        ) from error

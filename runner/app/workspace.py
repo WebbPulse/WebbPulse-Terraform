@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import json
+import re
 import tarfile
 from pathlib import Path
 
 from app.models import BackendConfig, Bundle
+from app.state_credentials import STATE_PROFILE
 
 BACKEND_FILENAME = "zz_webbpulse_backend_override.tf"
 TFVARS_FILENAME = "zz_webbpulse.auto.tfvars.json"
+HCL_TFVARS_FILENAME = "zz_webbpulse.auto.tfvars"
+
+
+_VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+"""What an input variable may be named, matched before a name is written into HCL
+unquoted. HCL writes use the same restriction in the API."""
 
 
 class ConfigError(RuntimeError):
@@ -34,17 +42,27 @@ def unpack_config(archive: Path, directory: Path) -> Path:
 
 
 def write_backend_override(directory: Path, backend: BackendConfig) -> Path:
-    """Write the S3 backend override with native locking on."""
+    """Write the S3 backend override with native locking on.
+
+    The backend names the state profile, so state is always read and written
+    with the vended state keys while the providers get the run role from the
+    environment. A run role in another account never reaches the state bucket.
+    Only the profile name is written, so neither the plan file nor `.terraform`
+    records a credential. CLI workspace states go under the workspace's own
+    prefix too, the only one its state keys can list.
+    """
     body = "\n".join(
         [
             "terraform {",
             '  backend "s3" {',
             f'    bucket       = "{backend.bucket}"',
             f'    key          = "{backend.key}"',
+            f'    workspace_key_prefix = "{backend.key.rsplit("/", 1)[0]}/env"',
             f'    region       = "{backend.region}"',
             f'    kms_key_id   = "{backend.kms_key_id}"',
             "    encrypt      = true",
             "    use_lockfile = true",
+            f'    profile      = "{STATE_PROFILE}"',
             "  }",
             "}",
             "",
@@ -56,11 +74,52 @@ def write_backend_override(directory: Path, backend: BackendConfig) -> Path:
 
 
 def write_tfvars(directory: Path, variables: dict[str, object]) -> Path | None:
-    """Write the terraform variables as an auto loaded tfvars file, restricted to the owner."""
+    """Write the literal terraform variables as a JSON tfvars file, owner only.
+
+    JSON is what makes a literal literal. A value in a `.tfvars.json` file is
+    taken as the JSON value it is, so a string stays a string however many quotes,
+    braces or `${` sequences it contains, and nothing in it can be reinterpreted
+    as an expression. HCL valued variables are written by `write_hcl_tfvars`
+    instead, because that is the opposite requirement.
+    """
     if not variables:
         return None
     path = directory / TFVARS_FILENAME
     path.write_text(json.dumps(variables, sort_keys=True))
+    path.chmod(0o600)
+    return path
+
+
+def write_hcl_tfvars(directory: Path, variables: dict[str, str]) -> Path | None:
+    """Write the HCL valued variables as a native tfvars file, owner only.
+
+    A native `.tfvars` file is HCL, so the right hand side of each assignment is
+    an expression the engine parses. The expression is emitted exactly as it was
+    stored, unquoted and unescaped: quoting it would turn `["a", "b"]` into the
+    eight character string `["a", "b"]` and silently give a `list(string)` input
+    variable a value of the wrong type, which is the corruption this file exists
+    to avoid.
+
+    Each expression is grouped on separate lines so leading and trailing comments
+    and multiline expressions remain inside their own assignment.
+
+    Terraform loads `.auto.tfvars` and `.auto.tfvars.json` files together in
+    lexical order, and a key is never in both files, so the two never contend.
+
+    Raises:
+        ConfigError: A key is not a usable variable name. The name is written into
+            an HCL file unquoted, so anything but an identifier could change the
+            file's meaning rather than name a variable.
+    """
+    if not variables:
+        return None
+    lines: list[str] = []
+    for key in sorted(variables):
+        if not _VARIABLE_NAME.fullmatch(key):
+            raise ConfigError(f"variable name is not a valid HCL identifier: {key}")
+        lines.append(f"{key} = (\n{variables[key]}\n)")
+    path = directory / HCL_TFVARS_FILENAME
+    path.write_text("\n".join(lines) + "\n")
     path.chmod(0o600)
     return path
 
@@ -93,12 +152,17 @@ def resolve_working_directory(directory: Path, working_directory: str) -> Path:
 def prepare(directory: Path, bundle: Bundle, archive: Path) -> Path:
     """Unpack the config, resolve the working directory and lay down the files.
 
-    The backend override and the tfvars file go in the working directory rather
+    The backend override and the tfvars files go in the working directory rather
     than the tarball root, because that is the directory the engine is run from
-    and neither file is loaded from anywhere else.
+    and none of them is loaded from anywhere else.
+
+    Literal and HCL valued variables go to two different files on purpose: the
+    JSON one cannot reinterpret a literal, and the native one is the only place
+    an expression is parsed.
     """
     unpack_config(archive, directory)
     target = resolve_working_directory(directory, bundle.working_directory)
     write_backend_override(target, bundle.backend)
     write_tfvars(target, bundle.terraform_variables)
+    write_hcl_tfvars(target, bundle.hcl_variables)
     return target

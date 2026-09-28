@@ -5,17 +5,22 @@ import { ConnectAccountPanel } from '../ConnectAccountPanel';
 
 /** The AWS account page. */
 export function RunRoleSettings(): React.ReactElement {
-  const { workspace, keys } = useWorkspace();
+  const { workspace, runRoleCheck, keys } = useWorkspace();
   return (
     <div className="max-w-3xl space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-text-strong">AWS account</h2>
         <p className="mt-1 max-w-prose text-sm text-text-muted">
-          Every run assumes this role in your account. Create it with one of the
-          snippets, then save its ARN and check the connection.
+          Every run assumes this role in your account. Create it with AWS quick
+          setup, or by hand and save its ARN. The first run proves the runner
+          can assume it, and the outcome shows here.
         </p>
       </div>
-      <ConnectAccountPanel workspace={workspace} queryKey={keys.workspace} />
+      <ConnectAccountPanel
+        workspace={workspace}
+        runRoleCheck={runRoleCheck}
+        keys={keys}
+      />
     </div>
   );
 }

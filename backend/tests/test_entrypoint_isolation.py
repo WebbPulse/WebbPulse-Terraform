@@ -7,11 +7,10 @@ builds every entrypoint in a fresh interpreter and reports what it actually
 imported, which is the only way to see what ships rather than what this suite
 happens to have loaded.
 
-The single deliberate exception is `runs` importing `app.domains.workspaces.service`:
-a run resolves its workspace and the config version it executes against through the
-workspaces service, so that read is a real dependency of the runs image rather than
-a leak. It is allowed for `runs` alone and only for that module, so the rest of the
-workspaces domain still fails this test if it follows.
+No domain reaches into another, so `ALLOWED_FOREIGN` is empty and any cross-domain
+import at all fails this test. A read two domains share is not a reason to import
+the other's package: the workspace, variable and config version reads a run needs
+live in `app.common.workspaces.reads`, which both images reach on their own.
 
 The identity glue is checked here too. It lives under `app.common.` rather than
 `app.domains.`, so the whole-registry check cannot see it: that check reports only
@@ -34,9 +33,8 @@ from app.common.composition.wiring import DOMAINS
 
 BACKEND_ROOT: Final = Path(__file__).resolve().parents[1]
 
-ALLOWED_FOREIGN: Final[dict[str, tuple[str, ...]]] = {
-    "runs": ("app.domains.workspaces.service",),
-}
+ALLOWED_FOREIGN: Final[dict[str, tuple[str, ...]]] = {}
+"""Empty: no domain may import another's package, and none does."""
 
 IDENTITY_GLUE_MODULE: Final = "app.common.identity.package_glue"
 
@@ -45,7 +43,7 @@ APP_ROOT: Final = "app."
 
 
 def test_every_entrypoint_imports_only_its_own_domain() -> None:
-    """No domain image reaches into another, bar the `runs` workspace read."""
+    """No domain image reaches into another at all."""
     assert_entrypoint_isolation(
         DOMAINS,
         allowed_foreign=ALLOWED_FOREIGN,

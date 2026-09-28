@@ -1,6 +1,10 @@
 # first-run
 
-A configuration with no AWS resources, for the first end to end run on staging.
+A configuration with no AWS resources, for the first end to end run on staging,
+started by hand. Pull request and push runs are exercised in
+`WebbPulse/webbpulse-terraform-staging-e2e`, the staging end-to-end test
+repository, which carries a copy of this configuration and the upload workflow
+and which the staging GitHub App is installed on instead of this repository.
 One `random_pet` and one output: enough to prove the runner unpacks the config,
 assumes the run role, takes the state lock and writes state, without needing any
 permission beyond the state bucket.
@@ -13,7 +17,7 @@ Leave the workspace's working directory empty; this config is the tarball root.
 
 1. Sign in at `https://staging.terraform.webbpulse.com/`.
 
-2. Create a workspace. Engine `terraform`, engine version `1.16.3`, which is the
+2. Create a workspace. Engine `terraform`, engine version `1.16.4`, which is the
    version in `runner/versions.env`. Leave the run role empty: it cannot exist
    yet, because its trust policy names this workspace's id as the external id.
    Note the `ws-` id the response returns.
@@ -33,11 +37,13 @@ Leave the workspace's working directory empty; this config is the tarball root.
      -d '{"run_role_arn":"'"$ROLE_ARN"'"}'
    ```
 
-   Then confirm the trust policy took, which answers
-   `{"connected": true, "account_id": "...", "error": null}`:
+   The trust policy is proven by the first run rather than by a separate call:
+   the runner assumes the role at the start of every phase. After step 7,
+   `GET /api/v1/workspaces/$WS/run-role/check` answers `"status": "connected"`
+   once a run got past AssumeRole, or `"failed"` with what to fix:
 
    ```bash
-   curl -X POST "$API/api/v1/workspaces/$WS/run-role/check" \
+   curl "$API/api/v1/workspaces/$WS/run-role/check" \
      -H "Authorization: Bearer $TOKEN"
    ```
 

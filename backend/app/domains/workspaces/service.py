@@ -10,7 +10,7 @@ query is what makes the ordinary case a clean 409.
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Any, Callable, Final
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, new_ulid, now_iso
@@ -22,9 +22,54 @@ from ...common.db.tables import (
     CONFIG_VERSIONS_BY_WORKSPACE_INDEX,
     WORKSPACES_BY_NAME_INDEX,
 )
+from ...common.runs.workspace_runs import (
+    RunStillActive,
+    delete_workspace_runs,
+    require_no_active_run,
+    workspace_run_ids,
+)
+from ...common.workspaces import aws_connect, cleanup, reads
+from ...common.workspaces import vcs as workspace_vcs
+from ...common.workspaces.reads import (
+    CONFIG_VERSION_ID_PREFIX,
+    WORKSPACE_ID_PREFIX,
+    ConfigVersionNotFound,
+    RunRoleMissing,
+    VariableNotFound,
+    WorkspaceNotFound,
+    config_key,
+    config_object_exists,
+    get_variable,
+    get_workspace,
+    list_variables,
+    resolved_variables,
+)
+from . import hcl, state_versions, vcs_connect
+from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
+from .vcs_connect import RepositoryNotInstalled
 
-WORKSPACE_ID_PREFIX: Final = "ws-"
-CONFIG_VERSION_ID_PREFIX: Final = "cv-"
+__all__ = [
+    "CONFIG_VERSION_ID_PREFIX",
+    "WORKSPACE_ID_PREFIX",
+    "ConfigVersionNotFound",
+    "HclNotAllowed",
+    "RepositoryNotInstalled",
+    "RunRoleMissing",
+    "RunStillActive",
+    "VariableNotFound",
+    "WorkspaceNameTaken",
+    "WorkspaceManagesResources",
+    "WorkspaceNotFound",
+    "config_key",
+    "config_object_exists",
+    "get_variable",
+    "get_workspace",
+    "list_variables",
+    "resolved_variables",
+]
+"""The reads this domain shares with the runs function are re-exported from
+`app.common.workspaces.reads`, so this module's public surface and every error
+code raised against it are unchanged."""
 
 CONFIG_CONTENT_TYPE: Final = "application/gzip"
 """The one content type a config tarball may declare, signed into the PUT."""
@@ -32,55 +77,40 @@ CONFIG_CONTENT_TYPE: Final = "application/gzip"
 CONFIG_UPLOAD_EXPIRES_IN: Final = 900
 """Fifteen minutes for the client to start its upload, the package's own default."""
 
-RUN_ROLE_CHECK_DURATION_SECONDS: Final = 900
-"""The shortest session STS will mint. The check only calls GetCallerIdentity, so
-nothing needs the hour a run takes."""
-
-RUN_ROLE_CHECK_SESSION_NAME: Final = "webbpulse-run-role-check"
-"""The session name the check assumes under, so a CloudTrail reader can tell a
-connection check from a run."""
+_PRIVATE_WORKSPACE_FIELDS: Final = frozenset({aws_connect.TOKEN_HASH_ATTRIBUTE, aws_connect.TOKEN_EXPIRES_ATTRIBUTE})
+"""Row attributes no response carries, the connect token's hash above all."""
 
 IAM_ROLE_NAME_MAX_LENGTH: Final = 64
 """The IAM ceiling on a role name. The derived name has to fit inside it."""
-
-RUN_ROLE_ACCESS_DENIED_MESSAGE: Final = "The role does not trust the runner or the external id does not match"
-"""What an AccessDenied means in practice, since STS will not say which half failed."""
-
-
-class WorkspaceNotFound(Exception):
-    """No workspace with this id."""
 
 
 class WorkspaceNameTaken(Exception):
     """Another workspace already holds this name."""
 
 
-class ConfigVersionNotFound(Exception):
-    """No config version with this id, or it belongs to another workspace."""
+class HclNotAllowed(Exception):
+    """An `env` variable was marked HCL, which has no meaning.
 
-
-class VariableNotFound(Exception):
-    """No variable with this key on this workspace."""
-
-
-class RunRoleMissing(Exception):
-    """The workspace carries no run role, so there is nothing to assume."""
+    A process environment variable is a string to the process, so there is nothing
+    that would parse the expression. Refused rather than ignored, because silently
+    dropping the flag would store a value whose rendering does not match what the
+    caller asked for.
+    """
 
 
 def run_role_name(workspace_id: str, *, settings: Settings | None = None) -> str:
-    """The role name for one workspace, inside the runner's AssumeRole grant.
-
-    The `ws-` prefix is dropped so the ULID alone follows the stack prefix, which
-    keeps the name inside the IAM ceiling of sixty four characters.
-    """
-    resolved = settings or get_settings()
-    return f"{resolved.RUN_ROLE_NAME_PREFIX}{workspace_id.removeprefix(WORKSPACE_ID_PREFIX)}"
+    """The role name for one workspace, shared with the runs function's connect check."""
+    return aws_connect.run_role_name(workspace_id, settings=settings)
 
 
 def run_role_setup(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """The three values a person needs to build one workspace's run role."""
+    """The three values a person needs to build one workspace's run role.
+
+    The principal is the control plane's credential vending role, the only one a
+    run role may trust: no runner task can assume a workspace role itself.
+    """
     resolved = settings or get_settings()
-    principals = resolved.runner_task_role_arns
+    principals = resolved.run_role_principal_arns
     return {
         "principal_arn": principals[0] if principals else "",
         "principal_arns": principals,
@@ -93,123 +123,46 @@ def render_workspace(item: dict[str, Any], *, settings: Settings | None = None) 
     """One stored workspace row as the API returns it, with its run role setup."""
     resolved = settings or get_settings()
     workspace_id = str(item["workspace_id"])
-    return dict(item) | {"run_role_setup": run_role_setup(workspace_id, settings=resolved)}
+    rendered = {key: value for key, value in item.items() if key not in _PRIVATE_WORKSPACE_FIELDS}
+    return rendered | {
+        "run_role_setup": run_role_setup(workspace_id, settings=resolved),
+        "run_role_reconnect_required": aws_connect.reconnect_required(item),
+    }
 
 
-def _sts(settings: Settings) -> Any:
-    """An STS client. Imported late so nothing connects at import."""
-    import boto3
-
-    return boto3.client("sts", region_name=settings.AWS_REGION_NAME or None)
-
-
-def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """Assume the workspace's run role and report whether it answered.
-
-    Assumes with the workspace id as the external id, the way the runner does, then
-    calls GetCallerIdentity on the temporary credentials so the answer names the
-    account the role actually lives in rather than the one its ARN claims. The
-    outcome is stamped on the row: the timestamp and the account on a success, both
-    cleared on a failure, so a stale success cannot outlive a broken trust policy.
-
-    Neither the credentials nor the STS message reach the return value or the log.
-
-    Raises:
-        WorkspaceNotFound: No such workspace.
-        RunRoleMissing: The workspace carries no run role ARN.
-    """
-    from botocore.exceptions import BotoCoreError, ClientError
-
-    resolved = settings or get_settings()
-    workspace = get_workspace(workspace_id, settings=resolved)
-    role_arn = str(workspace.get("run_role_arn", "") or "")
-    if not role_arn:
-        raise RunRoleMissing(workspace_id)
-
-    try:
-        assumed = _sts(resolved).assume_role(
-            RoleArn=role_arn,
-            RoleSessionName=RUN_ROLE_CHECK_SESSION_NAME,
-            ExternalId=workspace_id,
-            DurationSeconds=RUN_ROLE_CHECK_DURATION_SECONDS,
-        )
-        credentials = assumed["Credentials"]
-        import boto3
-
-        identity = boto3.client(
-            "sts",
-            region_name=resolved.AWS_REGION_NAME or None,
-            aws_access_key_id=credentials["AccessKeyId"],
-            aws_secret_access_key=credentials["SecretAccessKey"],
-            aws_session_token=credentials["SessionToken"],
-        ).get_caller_identity()
-    except ClientError as error:
-        _record_run_role_check(workspace_id, None, settings=resolved)
-        return {"connected": False, "account_id": None, "error": _run_role_error(error)}
-    except BotoCoreError:
-        _record_run_role_check(workspace_id, None, settings=resolved)
-        return {
-            "connected": False,
-            "account_id": None,
-            "error": "The role could not be reached.",
-        }
-
-    account_id = str(identity.get("Account", "") or "")
-    _record_run_role_check(workspace_id, account_id, settings=resolved)
-    return {"connected": True, "account_id": account_id, "error": None}
-
-
-def _run_role_error(error: Any) -> str:
-    """One sentence for a person, from the STS error code alone.
-
-    The code is read rather than the message, because a message can echo the ARN
-    and the session name back at a caller who supplied neither.
-    """
-    code = str(error.response.get("Error", {}).get("Code", "") or "")
-    if code in {"AccessDenied", "AccessDeniedException"}:
-        return RUN_ROLE_ACCESS_DENIED_MESSAGE
-    if code in {"NoSuchEntity", "ValidationError", "InvalidParameterValue"}:
-        return "No role with that ARN exists."
-    if code == "ExpiredToken":
-        return "The control plane's own credentials expired."
-    return "The role could not be assumed."
-
-
-def _record_run_role_check(
-    workspace_id: str,
-    account_id: str | None,
+def _connection(
+    repository: str,
     *,
-    settings: Settings | None = None,
-) -> None:
-    """Stamp or clear the run role check fields on one workspace row."""
-    resolved = settings or get_settings()
-    repository = repositories.workspaces(resolved)
-    if account_id:
-        repository.update(
-            {"workspace_id": workspace_id},
-            update_expression=("SET run_role_checked_at = :checked, run_role_account_id = :account"),
-            expression_values={":checked": now_iso(), ":account": account_id},
-            condition=Attr("workspace_id").exists(),
-        )
-        return
-    repository.update(
-        {"workspace_id": workspace_id},
-        update_expression="REMOVE run_role_checked_at, run_role_account_id",
-        condition=Attr("workspace_id").exists(),
-    )
+    branch_given: bool,
+    settings: Settings,
+) -> dict[str, Any]:
+    """The attributes connecting a workspace to `repository` writes.
 
-
-def config_key(workspace_id: str, config_version_id: str) -> str:
-    """The artifacts bucket key one config tarball occupies.
-
-    The contract fixes this layout, and the runner's presigned GET is minted from
-    the same function, so the two cannot drift.
+    Resolved through the GitHub App when the environment has one, which records the
+    repository id, the installation and the canonical name, and fills the tracked
+    branch with the default branch when the request named none. Without an App only
+    the name is written and the first upload records the id.
     """
-    return f"configs/{workspace_id}/{config_version_id}.tar.gz"
+    found = vcs_connect.resolve_repository(repository, settings=settings)
+    if found is None:
+        return {"vcs_repo": repository, "vcs_repo_key": workspace_vcs.repo_key(repository)}
+    attributes: dict[str, Any] = {
+        "vcs_repo": found.full_name,
+        "vcs_repo_key": workspace_vcs.repo_key(found.full_name),
+        "vcs_repository_id": found.repository_id,
+        "vcs_installation_id": found.installation_id,
+    }
+    if not branch_given and found.default_branch:
+        attributes["tracked_branch"] = found.default_branch
+    return attributes
 
 
 def create_workspace(payload: dict[str, Any], *, settings: Settings | None = None) -> dict[str, Any]:
-    """Store a new workspace, refusing a name another workspace holds."""
+    """Store a new workspace, refusing a name another workspace holds.
+
+    A `vcs_repo` is resolved through the GitHub App before anything is written, so a
+    repository the App cannot see is refused with `RepositoryNotInstalled`.
+    """
     resolved = settings or get_settings()
     repository = repositories.workspaces(resolved)
     name = str(payload["name"])
@@ -224,8 +177,19 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "run_role_arn": payload.get("run_role_arn") or None,
         "working_directory": payload.get("working_directory", "") or "",
         "description": payload.get("description", "") or "",
+        "trigger_patterns": list(payload.get("trigger_patterns") or []),
+        "speculative_plans": bool(payload.get("speculative_plans", True)),
+        "file_triggers_enabled": bool(payload.get("file_triggers_enabled", True)),
         "created_at": now_iso(),
     }
+    if payload.get("tracked_branch"):
+        item["tracked_branch"] = str(payload["tracked_branch"])
+    if payload.get("vcs_repo"):
+        item |= _connection(
+            str(payload["vcs_repo"]),
+            branch_given=bool(payload.get("tracked_branch")),
+            settings=resolved,
+        )
     try:
         repository.put(item, condition=Attr("workspace_id").not_exists())
     except ConditionFailed as error:
@@ -244,15 +208,6 @@ def find_by_name(name: str, *, settings: Settings | None = None) -> dict[str, An
     return page.items[0] if page.items else None
 
 
-def get_workspace(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
-    """One workspace by id, or `WorkspaceNotFound`."""
-    resolved = settings or get_settings()
-    item = repositories.workspaces(resolved).get({"workspace_id": workspace_id})
-    if item is None:
-        raise WorkspaceNotFound(workspace_id)
-    return item
-
-
 def list_workspaces(*, settings: Settings | None = None) -> list[dict[str, Any]]:
     """Every workspace, oldest first.
 
@@ -264,6 +219,19 @@ def list_workspaces(*, settings: Settings | None = None) -> list[dict[str, Any]]
     return sorted(items, key=lambda item: str(item.get("workspace_id", "")))
 
 
+def _stage_run_role(changes: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    """The edit with a staged role resolved against the role the workspace runs as now."""
+    if "run_role_arn" in changes:
+        return {**changes, "pending_run_role_arn": None}
+    pending = changes.get("pending_run_role_arn")
+    if pending is None:
+        return changes
+    current = str(existing.get("run_role_arn") or "")
+    if current and current != pending:
+        return changes
+    return {**changes, "run_role_arn": pending, "pending_run_role_arn": None}
+
+
 def update_workspace(
     workspace_id: str,
     changes: dict[str, Any],
@@ -272,24 +240,88 @@ def update_workspace(
 ) -> dict[str, Any]:
     """Apply a partial edit to one workspace, or `WorkspaceNotFound`.
 
+    `changes` is JSON Merge Patch: a key the request body did not carry is absent
+    from the mapping and is left untouched, and a key carrying an explicit null
+    clears that field. The router builds it with `model_dump(exclude_unset=True)`,
+    which is what makes the two distinguishable at all, and only the fields in
+    `CLEARABLE_WORKSPACE_FIELDS` may be cleared.
+
+    A null becomes a DynamoDB REMOVE rather than a stored null, so a cleared field
+    reads back as its declared default and no row carries a null attribute.
+
     A change to `run_role_arn` drops the recorded check outcome in the same write:
     the previous success belonged to the previous role, and leaving it behind would
-    show a new, unchecked role as connected.
+    show a new, unchecked role as connected. Clearing the ARN counts as a change,
+    so the outcome goes with it.
+
+    A `pending_run_role_arn` stages a role without switching to it: runs keep the
+    current role until the run role check sees a verification run assume the new
+    one. A workspace with no role, or already on that role, takes it at once
+    instead, since there is nothing to keep working. Setting `run_role_arn`
+    directly switches at once and discards whatever was staged, and a role other
+    than the one a Quick setup stack connected also drops that connection and any
+    waiting connect token, since the person chose another role by hand.
+
+    A change to `vcs_repo` rewrites the lowercased `vcs_repo_key` the binding
+    index reads and resolves the repository through the GitHub App, which records
+    its id, installation and canonical name, and fills `tracked_branch` with the
+    default branch when the request carries no branch. Without an App the recorded
+    id and installation are dropped instead, since they belonged to the previous
+    repository. Clearing `vcs_repo` removes all of them.
     """
     resolved = settings or get_settings()
-    applied = {key: value for key, value in changes.items() if value is not None}
-    if not applied:
+    staged: dict[str, Any] | None = None
+    if "run_role_arn" in changes or "pending_run_role_arn" in changes:
+        staged = get_workspace(workspace_id, settings=resolved)
+        changes = _stage_run_role(changes, staged)
+    assignments = {key: value for key, value in changes.items() if value is not None}
+    clears = [key for key, value in changes.items() if value is None and key in CLEARABLE_WORKSPACE_FIELDS]
+    if not assignments and not clears:
         return get_workspace(workspace_id, settings=resolved)
 
-    existing = get_workspace(workspace_id, settings=resolved)
-    role_changed = "run_role_arn" in applied and applied["run_role_arn"] != existing.get("run_role_arn")
+    existing = staged if staged is not None else get_workspace(workspace_id, settings=resolved)
+    role_changed = "run_role_arn" in changes and changes["run_role_arn"] != existing.get("run_role_arn")
 
-    applied["updated_at"] = now_iso()
-    names = {f"#{key}": key for key in applied}
-    values = {f":{key}": value for key, value in applied.items()}
-    expression = "SET " + ", ".join(f"#{key} = :{key}" for key in applied)
+    assignments["updated_at"] = now_iso()
+    removals = [*clears]
     if role_changed:
-        expression += " REMOVE run_role_checked_at, run_role_account_id"
+        removals.extend(("run_role_checked_at", "run_role_account_id"))
+        connected = existing.get(aws_connect.CONNECTION_ATTRIBUTE) or {}
+        if connected and connected.get("role_arn") != changes["run_role_arn"]:
+            removals.extend(
+                (
+                    aws_connect.CONNECTION_ATTRIBUTE,
+                    aws_connect.TOKEN_HASH_ATTRIBUTE,
+                    aws_connect.TOKEN_EXPIRES_ATTRIBUTE,
+                )
+            )
+    if "vcs_repo" in changes and not _repository_changed(changes["vcs_repo"], existing):
+        assignments.pop("vcs_repo", None)
+    elif "vcs_repo" in changes:
+        connection: dict[str, Any] = {}
+        if changes["vcs_repo"] is not None:
+            same_repository = workspace_vcs.repo_key(str(changes["vcs_repo"])) == workspace_vcs.repo_key(
+                str(existing.get("vcs_repo") or "")
+            )
+            connection = _connection(
+                str(changes["vcs_repo"]),
+                branch_given="tracked_branch" in changes or (same_repository and bool(existing.get("tracked_branch"))),
+                settings=resolved,
+            )
+            assignments |= connection
+        else:
+            removals.append("vcs_repo_key")
+        removals.extend(
+            key
+            for key in ("vcs_repository_id", "vcs_installation_id")
+            if key not in connection and existing.get(key) is not None
+        )
+
+    names = {f"#{key}": key for key in (*assignments, *removals)}
+    values = {f":{key}": value for key, value in assignments.items()}
+    expression = "SET " + ", ".join(f"#{key} = :{key}" for key in assignments)
+    if removals:
+        expression += " REMOVE " + ", ".join(f"#{key}" for key in removals)
     repository = repositories.workspaces(resolved)
     try:
         updated = repository.update(
@@ -307,14 +339,55 @@ def update_workspace(
     return updated
 
 
-def delete_workspace(workspace_id: str, *, settings: Settings | None = None) -> None:
-    """Delete one workspace and every variable on it, or `WorkspaceNotFound`.
+def _repository_changed(requested: Any, existing: dict[str, Any]) -> bool:
+    """Whether a requested `vcs_repo` has to be written.
 
-    The config versions and runs are left alone: they carry the history of what
-    ran, and the artifacts bucket lifecycle expires their objects at 90 days.
+    The same repository in any case is left alone once its id is recorded, so a
+    repeated save of a connected repository costs no GitHub call. A binding with no
+    id yet is resolved again, which upgrades a name only binding once an App exists.
+    """
+    current = existing.get("vcs_repo")
+    if requested is None or current is None:
+        return requested != current
+    same = workspace_vcs.repo_key(str(requested)) == workspace_vcs.repo_key(str(current))
+    return not (same and existing.get("vcs_repository_id") is not None)
+
+
+class WorkspaceManagesResources(Exception):
+    """The workspace's current state still tracks resources, so a safe delete refuses."""
+
+
+def delete_workspace(workspace_id: str, *, force: bool = False, settings: Settings | None = None) -> None:
+    """Delete one workspace with everything it owns.
+
+    Every check runs before anything is removed: `WorkspaceNotFound`, then
+    `RunStillActive` for a run that has not finished, then, unless `force`,
+    `WorkspaceManagesResources` when the current state tracks an instance.
+
+    The object purge (run artifacts, config tarballs, and every state version, delete
+    marker and lock under the workspace's state prefix) is queued first, while the run
+    ids are still readable, and waits for the workspace row to be gone. The rows then
+    go runs, config versions and variables first and the workspace row last, so a
+    failure part way leaves the workspace in place with its state intact and a retry
+    finishes the job. With no cleanup queue configured the purge runs inline at the end.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
+    require_no_active_run(workspace_id, settings=resolved)
+    if not force and state_versions.current_state_manages_resources(workspace_id, settings=resolved):
+        raise WorkspaceManagesResources(workspace_id)
+    run_ids = workspace_run_ids(workspace_id, settings=resolved)
+    queued = cleanup.enqueue(workspace_id, run_ids, settings=resolved)
+    delete_workspace_runs(workspace_id, settings=resolved)
+    config_versions_repository = repositories.config_versions(resolved)
+    config_keys = [
+        {"config_version_id": str(item["config_version_id"])}
+        for item in config_versions_repository.iter_query(
+            Key("workspace_id").eq(workspace_id), index_name=CONFIG_VERSIONS_BY_WORKSPACE_INDEX
+        )
+    ]
+    if config_keys:
+        config_versions_repository.delete_many(config_keys)
     variables_repository = repositories.variables(resolved)
     keys = [
         {"workspace_id": workspace_id, "key": str(item["key"])}
@@ -323,6 +396,8 @@ def delete_workspace(workspace_id: str, *, settings: Settings | None = None) -> 
     if keys:
         variables_repository.delete_many(keys)
     repositories.workspaces(resolved).delete({"workspace_id": workspace_id})
+    if not queued:
+        cleanup.purge(workspace_id, run_ids, settings=resolved)
 
 
 def put_variable(
@@ -337,24 +412,43 @@ def put_variable(
     A sensitive value never reaches the table in the clear, and the plaintext is
     not returned: the caller gets the row as the API renders it, with `value`
     absent.
+
+    An HCL value is validated before it is stored, so a broken expression is
+    refused here rather than failing every subsequent run on the workspace. The
+    validation happens ahead of the sealing so the message can never carry any of
+    a sensitive value back.
+
+    Raises:
+        WorkspaceNotFound: No such workspace.
+        HclNotAllowed: An `env` variable was marked HCL.
+        hcl.InvalidHcl: The expression cannot parse.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
     existing = repositories.variables(resolved).get({"workspace_id": workspace_id, "key": key})
 
     sensitive = bool(payload.get("sensitive", False))
+    category = str(payload.get("category", "terraform"))
+    is_hcl = bool(payload.get("hcl", False))
+    value = str(payload["value"])
+    if is_hcl and category != "terraform":
+        raise HclNotAllowed(key)
+    if is_hcl:
+        hcl.validate_name(key)
+        hcl.validate(value)
+
     item: dict[str, Any] = {
         "workspace_id": workspace_id,
         "key": key,
-        "category": payload.get("category", "terraform"),
+        "category": category,
         "sensitive": sensitive,
+        "hcl": is_hcl,
         "description": payload.get("description", "") or "",
         "created_at": str(existing["created_at"]) if existing else now_iso(),
     }
     if existing:
         item["updated_at"] = now_iso()
 
-    value = str(payload["value"])
     if sensitive:
         item.update(variable_cipher.seal(value, workspace_id=workspace_id, key=key, settings=resolved))
     else:
@@ -364,27 +458,6 @@ def put_variable(
     return item
 
 
-def get_variable(
-    workspace_id: str,
-    key: str,
-    *,
-    settings: Settings | None = None,
-) -> dict[str, Any]:
-    """One stored variable row, or `VariableNotFound`."""
-    resolved = settings or get_settings()
-    item = repositories.variables(resolved).get({"workspace_id": workspace_id, "key": key})
-    if item is None:
-        raise VariableNotFound(key)
-    return item
-
-
-def list_variables(workspace_id: str, *, settings: Settings | None = None) -> list[dict[str, Any]]:
-    """Every stored variable row on one workspace, by key."""
-    resolved = settings or get_settings()
-    get_workspace(workspace_id, settings=resolved)
-    return list(repositories.variables(resolved).iter_query(Key("workspace_id").eq(workspace_id)))
-
-
 def delete_variable(workspace_id: str, key: str, *, settings: Settings | None = None) -> None:
     """Delete one variable, or `VariableNotFound`."""
     resolved = settings or get_settings()
@@ -392,35 +465,14 @@ def delete_variable(workspace_id: str, key: str, *, settings: Settings | None = 
     repositories.variables(resolved).delete({"workspace_id": workspace_id, "key": key})
 
 
-def resolved_variables(
-    workspace_id: str,
-    *,
-    settings: Settings | None = None,
-) -> dict[str, dict[str, str]]:
-    """Every variable on one workspace with its plaintext value, split by category.
-
-    The one place a sealed value is opened, and it feeds the run bundle alone. The
-    return shape is `{"terraform": {...}, "env": {...}}`, which is what the runner
-    needs to build its command line and its process environment.
-    """
-    resolved = settings or get_settings()
-    out: dict[str, dict[str, str]] = {"terraform": {}, "env": {}}
-    for item in list_variables(workspace_id, settings=resolved):
-        key = str(item["key"])
-        category = str(item.get("category", "terraform"))
-        if bool(item.get("sensitive", False)):
-            value = variable_cipher.open_sealed(item, workspace_id=workspace_id, key=key, settings=resolved)
-        else:
-            value = str(item.get("value", ""))
-        out.setdefault(category, {})[key] = value
-    return out
-
-
 def render_variable(item: dict[str, Any]) -> dict[str, Any]:
     """One stored variable row as the API returns it, with no sealed fields.
 
     A sensitive variable's `value` is `None` rather than absent, so a client can
     tell "withheld" from "empty string" without reading the `sensitive` flag.
+
+    `hcl` is read with a default, because every row written before the flag
+    existed carries no such attribute and those values are literal.
     """
     sensitive = bool(item.get("sensitive", False))
     return {
@@ -429,6 +481,7 @@ def render_variable(item: dict[str, Any]) -> dict[str, Any]:
         "value": None if sensitive else str(item.get("value", "")),
         "category": str(item.get("category", "terraform")),
         "sensitive": sensitive,
+        "hcl": bool(item.get("hcl", False)),
         "description": str(item.get("description", "") or ""),
         "created_at": str(item.get("created_at", "")),
         "updated_at": str(item["updated_at"]) if item.get("updated_at") else None,
@@ -478,35 +531,18 @@ def create_config_version(
     return item, upload
 
 
-def _s3(settings: Settings) -> Any:
-    """An S3 client. Imported late so nothing connects at import."""
-    import boto3
+def _uploaded_writer(settings: Settings) -> Callable[[str], None]:
+    """The writer that persists the `uploaded` flip, which only this domain holds.
 
-    return boto3.client(
-        "s3",
-        region_name=settings.AWS_REGION_NAME or None,
-        endpoint_url=settings.s3_endpoint_url,
-    )
-
-
-def config_object_exists(key: str, *, settings: Settings) -> bool:
-    """Whether the config tarball is in the artifacts bucket.
-
-    A HEAD rather than a GET, so deciding that a multi-megabyte tarball arrived
-    costs one metadata call. Any error other than an absent object propagates:
-    a denied HEAD is a broken deployment, and swallowing it would report every
-    uploaded config version as still pending.
+    Handed to the shared read so the read itself stays free of writes: the runs
+    function reaches the same read under a role with no write grant on this table.
     """
-    from botocore.exceptions import ClientError
 
-    try:
-        _s3(settings).head_object(Bucket=settings.ARTIFACTS_BUCKET, Key=key)
-    except ClientError as error:
-        status = int(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
-        if status == 404 or error.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
-            return False
-        raise
-    return True
+    def persist(config_version_id: str) -> None:
+        """Move one config version to `uploaded`."""
+        mark_config_version_uploaded(config_version_id, settings=settings)
+
+    return persist
 
 
 def reconcile_config_version(
@@ -517,30 +553,20 @@ def reconcile_config_version(
 ) -> dict[str, Any]:
     """Move a `pending` row to `uploaded` once its object is in the bucket.
 
-    S3 tells the control plane nothing when a presigned PUT completes, so the row
-    a client uploaded against stays `pending` until something looks. Every read
-    looks, which is what makes the status a caller sees reflect the bucket rather
-    than the moment the URL was minted.
-
-    A row already `uploaded` is returned untouched, so the HEAD is spent only on
-    rows that could still change.
+    The bucket check lives in `app.common.workspaces.reads`, which both functions
+    reach. This wrapper is what adds the write: with `persist` true it hands the
+    shared read this domain's writer, so the flip is stored as well as returned.
 
     With `persist` false the bucket is still consulted and the returned row still
     reads `uploaded`, but nothing is written. That is for the runs function, whose
-    role holds a read only grant on this table by design; the workspaces domain
-    owns the write and persists the flip on its own reads.
+    role holds a read only grant on this table by design.
     """
-    if str(item.get("status", "")) != "pending":
-        return item
-
     resolved = settings or get_settings()
-    key = str(item.get("key", ""))
-    if not key or not config_object_exists(key, settings=resolved):
-        return item
-
-    if persist:
-        mark_config_version_uploaded(str(item["config_version_id"]), settings=resolved)
-    return dict(item) | {"status": "uploaded"}
+    return reads.reconcile_config_version(
+        item,
+        persist=_uploaded_writer(resolved) if persist else None,
+        settings=resolved,
+    )
 
 
 def get_config_version(
@@ -560,10 +586,12 @@ def get_config_version(
     bucket's truth without the write.
     """
     resolved = settings or get_settings()
-    item = repositories.config_versions(resolved).get({"config_version_id": config_version_id})
-    if item is None or str(item.get("workspace_id")) != workspace_id:
-        raise ConfigVersionNotFound(config_version_id)
-    return reconcile_config_version(item, persist=persist, settings=resolved)
+    return reads.get_config_version(
+        workspace_id,
+        config_version_id,
+        persist=_uploaded_writer(resolved) if persist else None,
+        settings=resolved,
+    )
 
 
 def list_config_versions(

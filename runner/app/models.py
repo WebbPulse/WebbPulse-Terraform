@@ -2,13 +2,42 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 Phase = Literal["plan", "apply"]
 Engine = Literal["terraform", "tofu"]
+
+_QUOTED_LITERAL = re.compile(r'"((?:\\[^\r\n]|[^"\\\r\n])*)"')
+_HEREDOC_BODY = re.compile(r"<<-?([^\W\d][\w-]*)\r?\n(.*?)^[ \t]*\1[ \t]*$", re.MULTILINE | re.DOTALL)
+
+
+def hcl_literal_fragments(expression: str) -> list[str]:
+    """The pieces of an HCL expression the engine may print on their own.
+
+    The engine renders a list or map member by member, so the expression as typed
+    rarely appears in its output. Each quoted string is registered both as typed
+    and decoded, and each heredoc line on its own. This is best effort and never
+    refuses a value: what it cannot recognise is still covered by the whole
+    expression, which is registered beside it.
+    """
+    fragments = [expression]
+    for match in _QUOTED_LITERAL.finditer(expression):
+        raw = match.group(1)
+        fragments.append(raw)
+        try:
+            fragments.append(json.loads(f'"{raw}"'))
+        except ValueError:
+            pass
+    for match in _HEREDOC_BODY.finditer(expression):
+        body = match.group(2)
+        fragments.append(body.rstrip("\r\n"))
+        fragments.extend(line.strip() for line in body.splitlines())
+    return [fragment for fragment in fragments if fragment]
 
 
 class RunnerEnvError(RuntimeError):
@@ -24,7 +53,6 @@ class RunnerEnv(BaseModel):
     phase: Phase
     task_token: SecretStr
     api_base_url: str
-    run_token: SecretStr
     log_group: str
     region: str = "us-west-2"
 
@@ -52,14 +80,68 @@ class RunnerEnv(BaseModel):
             phase=phase,
             task_token=SecretStr(required("TASK_TOKEN")),
             api_base_url=required("API_BASE_URL").rstrip("/"),
-            run_token=SecretStr(required("RUN_TOKEN")),
             log_group=required("RUNNER_LOG_GROUP"),
             region=source.get("AWS_REGION", "").strip() or "us-west-2",
         )
 
 
+class VendedCredentials(BaseModel):
+    """One session's keys, vended by the control plane for this phase alone.
+
+    The runner assumes no role. Its task role reaches nothing but its log stream,
+    so whatever the engine runs cannot reach a workspace role through the task's
+    credential endpoint; the keys arrive in the bundle instead.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    access_key_id: str
+    secret_access_key: str
+    session_token: str
+    expiration: str = ""
+
+    def environment(self) -> dict[str, str]:
+        """The keys as the `AWS_*` variables the providers read."""
+        return {
+            "AWS_ACCESS_KEY_ID": self.access_key_id,
+            "AWS_SECRET_ACCESS_KEY": self.secret_access_key,
+            "AWS_SESSION_TOKEN": self.session_token,
+        }
+
+    def secrets(self) -> list[str]:
+        """The parts that must never reach a log line."""
+        return [value for value in (self.secret_access_key, self.session_token) if value]
+
+
+def token_variable(host: str) -> str:
+    """The `TF_TOKEN_<host>` name the engine reads a host's credential from.
+
+    Dots become underscores and hyphens double underscores, the encoding
+    Terraform and OpenTofu both use for hosts in variable names.
+    """
+    return "TF_TOKEN_" + host.replace("-", "__").replace(".", "_")
+
+
+class RegistryCredentials(BaseModel):
+    """The run's short lived, read only module registry credential.
+
+    It reaches the engine only for `init`, the one subcommand that installs
+    modules, so the plan and apply never hold it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    hosts: list[str] = Field(default_factory=lambda: list[str]())
+    token: str
+    expires_at: str = ""
+
+    def environment(self) -> dict[str, str]:
+        """One `TF_TOKEN_<host>` per registry host."""
+        return {token_variable(host): self.token for host in self.hosts if host}
+
+
 class BackendConfig(BaseModel):
-    """S3 backend settings for the workspace's state."""
+    """S3 backend settings for the workspace's state, with keys scoped to its prefix."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -67,24 +149,11 @@ class BackendConfig(BaseModel):
     key: str
     region: str
     kms_key_id: str
+    credentials: VendedCredentials
 
 
-class RunRole(BaseModel):
-    """The per workspace role the engine runs as, plus the phase session policy."""
-
-    model_config = ConfigDict(frozen=True)
-
-    role_arn: str
-    external_id: str
-    session_policy: dict[str, object] | None = None
-    session_policy_arns: list[str] = Field(default_factory=list)
-    """Managed policies the session unions with the inline document, empty for
-    an apply."""
-    duration_seconds: int = 3600
-
-
-ArtifactKind = Literal["plan", "plan_json", "log"]
-"""The three objects a phase uploads, named as the artifact upload route names them."""
+ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
+"""The objects a phase uploads, named as the artifact upload route names them."""
 
 
 class Artifacts(BaseModel):
@@ -128,10 +197,31 @@ class Bundle(BaseModel):
     """Directory within the unpacked configuration to run the engine from. Empty
     means the tarball root, which is the common case."""
     backend: BackendConfig
-    run_role: RunRole
+    run_role_arn: str = ""
+    """The workspace run role the provider keys are a session of, for the transcript."""
+    aws_credentials: VendedCredentials
+    """The workspace run role's keys for this phase, read only for a plan."""
+    is_destroy: bool = False
+    """Plan the destruction of every managed resource with `plan -destroy`. Only the
+    plan phase reads it: the apply applies the saved plan, which already carries the
+    destroy mode. A bundle from a control plane that predates destroy runs has none."""
     environment_variables: dict[str, str] = Field(default_factory=dict)
     terraform_variables: dict[str, object] = Field(default_factory=dict)
+    """Literal values. They go to a JSON tfvars file, where a string is a string
+    whatever it contains, so quotes and braces in a value cannot be reinterpreted."""
+    hcl_variables: dict[str, str] = Field(default_factory=dict)
+    """Values that are HCL expressions rather than literals, which is the only way
+    a list or map typed input variable can be given one. They go to a native HCL
+    tfvars file, where the engine parses each one. A bundle from a control plane
+    that predates the flag carries none."""
     artifacts: Artifacts = Field(default_factory=Artifacts)
+    registry: RegistryCredentials | None = None
+    """The private registry credential for `init`. A bundle from a control plane with
+    no registry host, or one that predates it, carries none."""
+
+    def init_environment(self) -> dict[str, str]:
+        """The variables `init` alone adds to the engine's environment."""
+        return self.registry.environment() if self.registry else {}
 
     def sensitive_values(self) -> list[str]:
         """Every value that must never reach a log line."""
@@ -142,13 +232,17 @@ class Bundle(BaseModel):
         for variable in self.terraform_variables.values():
             if isinstance(variable, str) and variable:
                 values.append(variable)
-        if self.run_role.external_id:
-            values.append(self.run_role.external_id)
+        for expression in self.hcl_variables.values():
+            values.extend(hcl_literal_fragments(expression))
+        values.extend(self.aws_credentials.secrets())
+        values.extend(self.backend.credentials.secrets())
+        if self.registry and self.registry.token:
+            values.append(self.registry.token)
         return values
 
 
 class Changes(BaseModel):
-    """Resource counts parsed from the plan JSON."""
+    """Resource counts, from the plan JSON for a plan and the engine summary for an apply."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -158,7 +252,7 @@ class Changes(BaseModel):
 
 
 class PhaseResult(BaseModel):
-    """What the runner reports to the API and to Step Functions."""
+    """What the runner reports to the API, which resolves the phase's task token."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -170,3 +264,6 @@ class PhaseResult(BaseModel):
     error: str | None = None
     """The failure text, `None` when the phase succeeded. The API treats an
     absent and an empty error the same, so `None` is dropped rather than sent."""
+    error_name: str | None = None
+    """The short error name of a phase that failed before it had a result. The
+    API fails the phase's task with it, so the run's error names it."""

@@ -9,13 +9,11 @@ mint route has to refuse.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from webbpulse.http import REQUEST_CONTEXT_HEADER
 
 from app.common.core.auth import (
     ALL_SCOPES,
@@ -31,43 +29,17 @@ from app.domains.workspaces.api_keys_router import (
     KEY_LIMIT_CODE,
     SCOPES_EXCEEDED_CODE,
 )
+from tests.conftest import person_headers as request_context
+from tests.conftest import seed_user
 
 USER_ID = "user-human"
 OTHER_USER_ID = "user-other"
 
 
-def request_context(
-    *,
-    user_id: str = USER_ID,
-    scopes: tuple[str, ...] = ALL_SCOPES,
-    roles: tuple[str, ...] = (),
-) -> dict[str, str]:
-    """The header a route behind the JWT authorizer sees, carrying verified claims.
-
-    The gateway flattens every claim to a string, so `roles` goes down as the
-    bracketed form and `scope` as the space-joined one, which is what
-    `coerce_claims` expects to parse back.
-    """
-    return {
-        REQUEST_CONTEXT_HEADER: json.dumps(
-            {
-                "authorizer": {
-                    "jwt": {
-                        "claims": {
-                            "sub": user_id,
-                            "scope": " ".join(scopes),
-                            "roles": json.dumps(list(roles)),
-                        }
-                    }
-                }
-            }
-        )
-    }
-
-
 @pytest.fixture
 def human_client(app):
     """A client authenticated as a signed-in person holding every scope."""
+    seed_user(USER_ID)
     with TestClient(app, headers=request_context()) as client:
         yield client
 
@@ -83,6 +55,7 @@ def human(app):
         roles: tuple[str, ...] = (),
     ) -> TestClient:
         """A client presenting the claims a JWT for that person would carry."""
+        seed_user(user_id)
         return TestClient(app, headers=request_context(user_id=user_id, scopes=scopes, roles=roles))
 
     return build
@@ -292,11 +265,28 @@ def test_an_expiry_is_stored_and_a_past_one_refused(human_client):
 
 
 def test_an_expiry_beyond_the_ceiling_is_refused(human_client):
-    """A key may not be minted to outlive `MAX_EXPIRY_YEARS`."""
-    far = (datetime.now(UTC) + timedelta(days=365 * service.MAX_EXPIRY_YEARS + 30)).isoformat()
+    """A key may not be minted to outlive `MAX_EXPIRY_DAYS`."""
+    far = (datetime.now(UTC) + timedelta(days=service.MAX_EXPIRY_DAYS + 1)).isoformat()
     response = human_client.post("/api/v1/api-keys", json={"name": "forever", "expires_at": far})
 
     assert response.status_code == 422
+
+
+def test_a_key_minted_without_an_expiry_gets_the_default(human_client):
+    """No new key is minted without an end: `null` means `DEFAULT_EXPIRY_DAYS` from now."""
+    before = datetime.now(UTC)
+    created = mint_via_api(human_client)
+
+    expected = before + timedelta(days=service.DEFAULT_EXPIRY_DAYS)
+    assert abs(created["expires_at"] - int(expected.timestamp())) < 60
+
+
+def test_an_expiry_a_year_out_is_accepted(human_client):
+    """The ceiling is inclusive of a key set to last just under a year."""
+    near_cap = datetime.now(UTC) + timedelta(days=service.MAX_EXPIRY_DAYS - 1)
+    created = mint_via_api(human_client, expires_at=near_cap.isoformat())
+
+    assert created["expires_at"] == int(near_cap.timestamp())
 
 
 def test_the_key_limit_is_enforced(human_client, monkeypatch):

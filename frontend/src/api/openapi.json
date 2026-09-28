@@ -206,6 +206,28 @@
         "title": "ApiKeyList",
         "type": "object"
       },
+      "AppliedOutput": {
+        "description": "One root output's value after a successful apply.\n\nA sensitive output carries the redaction string rather than its value.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "AppliedOutput",
+        "type": "object"
+      },
       "ArtifactUpload": {
         "description": "The presigned PUT one artifact goes to.\n\n`headers` is not advisory: every one is inside the signature, so a request\nthat omits or changes one is rejected by S3.",
         "properties": {
@@ -240,7 +262,8 @@
             "enum": [
               "plan",
               "plan_json",
-              "log"
+              "log",
+              "outputs_json"
             ],
             "title": "Artifact",
             "type": "string"
@@ -272,12 +295,171 @@
         "title": "Artifacts",
         "type": "object"
       },
+      "AwsConnection": {
+        "description": "What the last Quick setup link and its stack reported, for the UI to follow live.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "disconnected_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disconnected At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "pending": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "reported_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported At"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Arn"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "stack_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stack Id"
+          },
+          "status": {
+            "enum": [
+              "waiting",
+              "connected",
+              "expired",
+              "disconnected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "verified",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification"
+          },
+          "verification_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Error"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "AwsConnection",
+        "type": "object"
+      },
       "BackendConfig": {
         "description": "The S3 backend the runner initialises against.\n\n`kms_key_id` carries the key ARN. The name is the backend block's own\nargument name, so the runner writes it into the override verbatim.",
         "properties": {
           "bucket": {
             "title": "Bucket",
             "type": "string"
+          },
+          "credentials": {
+            "$ref": "#/components/schemas/VendedCredentials"
           },
           "key": {
             "title": "Key",
@@ -296,7 +478,8 @@
         "required": [
           "bucket",
           "key",
-          "region"
+          "region",
+          "credentials"
         ],
         "title": "BackendConfig",
         "type": "object"
@@ -471,6 +654,280 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "GitHubAppStatus": {
+        "description": "Whether this environment's App exists, and what the page may offer next.",
+        "properties": {
+          "app_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Id"
+          },
+          "badge_background": {
+            "title": "Badge Background",
+            "type": "string"
+          },
+          "can_create": {
+            "title": "Can Create",
+            "type": "boolean"
+          },
+          "can_install": {
+            "title": "Can Install",
+            "type": "boolean"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "html_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Html Url"
+          },
+          "logo_path": {
+            "title": "Logo Path",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "owner_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Login"
+          },
+          "settings_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings Url"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          }
+        },
+        "required": [
+          "configured",
+          "can_create",
+          "can_install",
+          "logo_path",
+          "badge_background"
+        ],
+        "title": "GitHubAppStatus",
+        "type": "object"
+      },
+      "InstallStart": {
+        "description": "The GitHub URL that installs the App, carrying a one-time state.",
+        "properties": {
+          "install_url": {
+            "title": "Install Url",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "install_url",
+          "state"
+        ],
+        "title": "InstallStart",
+        "type": "object"
+      },
+      "Installation": {
+        "description": "One installation of the App, as GitHub last confirmed it.",
+        "properties": {
+          "account_avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Avatar Url"
+          },
+          "account_login": {
+            "title": "Account Login",
+            "type": "string"
+          },
+          "account_type": {
+            "title": "Account Type",
+            "type": "string"
+          },
+          "html_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Html Url"
+          },
+          "installation_id": {
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "installed_at": {
+            "title": "Installed At",
+            "type": "string"
+          },
+          "repository_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repository Count"
+          },
+          "repository_selection": {
+            "title": "Repository Selection",
+            "type": "string"
+          },
+          "suspended": {
+            "title": "Suspended",
+            "type": "boolean"
+          },
+          "suspended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suspended At"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "installation_id",
+          "account_login",
+          "account_type",
+          "repository_selection",
+          "suspended",
+          "installed_at",
+          "updated_at"
+        ],
+        "title": "Installation",
+        "type": "object"
+      },
+      "InstallationCallback": {
+        "description": "The setup callback's query, forwarded by the SPA.",
+        "properties": {
+          "installation_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Installation Id",
+            "type": "integer"
+          },
+          "setup_action": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Setup Action"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_-]{16,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          }
+        },
+        "required": [
+          "installation_id"
+        ],
+        "title": "InstallationCallback",
+        "type": "object"
+      },
+      "InstallationList": {
+        "description": "Every stored installation.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Installation"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "InstallationList",
+        "type": "object"
+      },
       "LogEvent": {
         "description": "One line from the runner's log stream.",
         "properties": {
@@ -532,6 +989,666 @@
         "title": "LogPage",
         "type": "object"
       },
+      "ManifestConversionRequest": {
+        "description": "The create callback's query, forwarded by the SPA.",
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Code",
+            "type": "string"
+          },
+          "state": {
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "state"
+        ],
+        "title": "ManifestConversionRequest",
+        "type": "object"
+      },
+      "ManifestStart": {
+        "description": "What the SPA posts to GitHub: the form action and the manifest.",
+        "properties": {
+          "action_url": {
+            "title": "Action Url",
+            "type": "string"
+          },
+          "manifest": {
+            "additionalProperties": true,
+            "title": "Manifest",
+            "type": "object"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_url",
+          "manifest",
+          "state"
+        ],
+        "title": "ManifestStart",
+        "type": "object"
+      },
+      "ManifestStartRequest": {
+        "description": "Where the App is created.",
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 34,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "organization": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organization"
+          }
+        },
+        "title": "ManifestStartRequest",
+        "type": "object"
+      },
+      "Module": {
+        "description": "One module and every version published or attempted for it, newest first.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleVersion"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "namespace",
+          "name",
+          "provider",
+          "source",
+          "versions"
+        ],
+        "title": "Module",
+        "type": "object"
+      },
+      "ModuleCreate": {
+        "description": "A module to connect to a GitHub repository the App is installed on.\n\nLike HCP Terraform's publish from VCS: from then on a push of a `vX.Y.Z` or\n`X.Y.Z` tag to the repository publishes that version. The namespace is the\nrepository owner. A name and provider left out come from a\n`terraform-<provider>-<name>` repository name.",
+        "properties": {
+          "import_tags": {
+            "default": true,
+            "title": "Import Tags",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "vcs_repo": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+            "title": "Vcs Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vcs_repo"
+        ],
+        "title": "ModuleCreate",
+        "type": "object"
+      },
+      "ModuleDocs": {
+        "description": "What a published version documents, read from its tarball when it published.",
+        "properties": {
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleInput"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleOutput"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "parse_errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Parse Errors",
+            "type": "array"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleProvider"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "readme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readme"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleResource"
+            },
+            "title": "Resources",
+            "type": "array"
+          },
+          "submodules": {
+            "items": {
+              "$ref": "#/components/schemas/Submodule"
+            },
+            "title": "Submodules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputs",
+          "outputs",
+          "providers",
+          "resources",
+          "submodules",
+          "parse_errors"
+        ],
+        "title": "ModuleDocs",
+        "type": "object"
+      },
+      "ModuleInput": {
+        "description": "One input variable, as a module page lists it.",
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "name",
+          "required"
+        ],
+        "title": "ModuleInput",
+        "type": "object"
+      },
+      "ModuleList": {
+        "description": "Every module in the registry.",
+        "properties": {
+          "modules": {
+            "items": {
+              "$ref": "#/components/schemas/Module"
+            },
+            "title": "Modules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "modules"
+        ],
+        "title": "ModuleList",
+        "type": "object"
+      },
+      "ModuleOutput": {
+        "description": "One output value.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ModuleOutput",
+        "type": "object"
+      },
+      "ModuleProvider": {
+        "description": "One provider requirement from `required_providers`.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ModuleProvider",
+        "type": "object"
+      },
+      "ModuleResource": {
+        "description": "One managed resource the module declares.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name"
+        ],
+        "title": "ModuleResource",
+        "type": "object"
+      },
+      "ModuleSync": {
+        "description": "A queued import of a module's existing tags.",
+        "properties": {
+          "delivery": {
+            "title": "Delivery",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "delivery"
+        ],
+        "title": "ModuleSync",
+        "type": "object"
+      },
+      "ModuleVersion": {
+        "description": "One version of a module and where its publishing stands.",
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "repository": {
+            "title": "Repository",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "published",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "status",
+          "repository",
+          "sha",
+          "actor",
+          "created_at"
+        ],
+        "title": "ModuleVersion",
+        "type": "object"
+      },
+      "ModuleVersionDetail": {
+        "description": "One version of a module with its documentation, for the module page.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "docs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModuleDocs"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
+          },
+          "version": {
+            "$ref": "#/components/schemas/ModuleVersion"
+          }
+        },
+        "required": [
+          "namespace",
+          "name",
+          "provider",
+          "source",
+          "version"
+        ],
+        "title": "ModuleVersionDetail",
+        "type": "object"
+      },
+      "PendingRunRoleCheck": {
+        "description": "What the runner's record says about the role waiting to replace the current one.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "role_arn": {
+            "title": "Role Arn",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "enum": [
+              "connected",
+              "failed",
+              "unverified"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_arn",
+          "connected",
+          "status"
+        ],
+        "title": "PendingRunRoleCheck",
+        "type": "object"
+      },
       "PhaseResult": {
         "description": "What the runner reports when a phase ends.\n\nExtra top level fields the runner sends, such as `run_id` and `has_changes`,\nare ignored: the id comes from the path and the change flag from `changes`.",
         "properties": {
@@ -546,7 +1663,7 @@
           "error": {
             "anyOf": [
               {
-                "maxLength": 4096,
+                "maxLength": 32768,
                 "type": "string"
               },
               {
@@ -555,6 +1672,18 @@
             ],
             "default": "",
             "title": "Error"
+          },
+          "error_name": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Name"
           },
           "exit_code": {
             "title": "Exit Code",
@@ -776,9 +1905,124 @@
         "title": "PlanResourceChange",
         "type": "object"
       },
+      "RegistryCredentials": {
+        "description": "The run's module registry key, which the runner sets as `TF_TOKEN_<host>` for init only.",
+        "properties": {
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "hosts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hosts",
+          "token",
+          "expires_at"
+        ],
+        "title": "RegistryCredentials",
+        "type": "object"
+      },
+      "Repository": {
+        "description": "One repository an installation covers.",
+        "properties": {
+          "default_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "html_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Html Url"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "private": {
+            "title": "Private",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "full_name",
+          "private"
+        ],
+        "title": "Repository",
+        "type": "object"
+      },
+      "RepositoryList": {
+        "description": "Every repository an installation covers.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Repository"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "RepositoryList",
+        "type": "object"
+      },
       "Run": {
         "description": "A stored run as the API renders it.\n\nThe task tokens and the run token hash are stored on the row and never in\nthis model: a caller who could read a confirm task token could confirm a run\nit was not allowed to confirm.",
         "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunActor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "apply_changes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunChanges"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "changes": {
             "anyOf": [
               {
@@ -796,6 +2040,16 @@
           "created_at": {
             "title": "Created At",
             "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "error": {
             "anyOf": [
@@ -830,6 +2084,11 @@
             ],
             "title": "Finished At"
           },
+          "is_destroy": {
+            "default": false,
+            "title": "Is Destroy",
+            "type": "boolean"
+          },
           "message": {
             "default": "",
             "title": "Message",
@@ -852,6 +2111,33 @@
           },
           "run_id": {
             "title": "Run Id",
+            "type": "string"
+          },
+          "run_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Arn"
+          },
+          "run_role_check": {
+            "default": false,
+            "title": "Run Role Check",
+            "type": "boolean"
+          },
+          "source": {
+            "default": "api",
+            "enum": [
+              "api",
+              "vcs_push",
+              "vcs_pr",
+              "aws_connect"
+            ],
+            "title": "Source",
             "type": "string"
           },
           "started_at": {
@@ -892,6 +2178,16 @@
             ],
             "title": "Updated At"
           },
+          "vcs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunVcs"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "workspace_id": {
             "title": "Workspace Id",
             "type": "string"
@@ -908,11 +2204,50 @@
         "title": "Run",
         "type": "object"
       },
+      "RunActor": {
+        "description": "Who triggered a run, snapshotted from the creating request's claims.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "user",
+              "agent",
+              "vcs",
+              "system"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "RunActor",
+        "type": "object"
+      },
       "RunBundle": {
-        "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `run_role` and\n`artifacts` objects are what `runner/app/models.py` validates, and the four\nextra top level fields are what the runner ignores for now but the API\nstates about the phase it is serving. Uploads are not here: the runner asks\nfor each one's presigned PUT by size once it has the bytes.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
+        "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `aws_credentials` and\n`artifacts` objects are what `runner/app/models.py` validates, as is\n`is_destroy`, which selects `plan -destroy`. The other extra top level fields\nare what the runner ignores for now but the API states about the phase it is\nserving. Uploads are not here: the runner asks\nfor each one's presigned PUT by size once it has the bytes.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
         "properties": {
           "artifacts": {
             "$ref": "#/components/schemas/Artifacts"
+          },
+          "aws_credentials": {
+            "$ref": "#/components/schemas/VendedCredentials"
           },
           "backend": {
             "$ref": "#/components/schemas/BackendConfig"
@@ -940,6 +2275,19 @@
             "title": "Environment Variables",
             "type": "object"
           },
+          "hcl_variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Hcl Variables",
+            "type": "object"
+          },
+          "is_destroy": {
+            "default": false,
+            "title": "Is Destroy",
+            "type": "boolean"
+          },
           "phase": {
             "enum": [
               "plan",
@@ -952,12 +2300,23 @@
             "title": "Plan Only",
             "type": "boolean"
           },
+          "registry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegistryCredentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"
           },
-          "run_role": {
-            "$ref": "#/components/schemas/RunRole"
+          "run_role_arn": {
+            "title": "Run Role Arn",
+            "type": "string"
           },
           "terraform_variables": {
             "additionalProperties": {
@@ -985,7 +2344,8 @@
           "working_directory",
           "config_url",
           "backend",
-          "run_role",
+          "run_role_arn",
+          "aws_credentials",
           "terraform_variables",
           "environment_variables",
           "artifacts"
@@ -1024,6 +2384,11 @@
             "title": "Config Version Id",
             "type": "string"
           },
+          "is_destroy": {
+            "default": false,
+            "title": "Is Destroy",
+            "type": "boolean"
+          },
           "message": {
             "default": "",
             "maxLength": 1024,
@@ -1033,6 +2398,11 @@
           "plan_only": {
             "default": false,
             "title": "Plan Only",
+            "type": "boolean"
+          },
+          "run_role_check": {
+            "default": false,
+            "title": "Run Role Check",
             "type": "boolean"
           },
           "workspace_id": {
@@ -1050,8 +2420,28 @@
         "type": "object"
       },
       "RunCreated": {
-        "description": "A newly created run. Carries the run token only when the run started.\n\nA queued run has no execution and so no token: the token is minted when the\nstate machine starts, which is when the run ahead of it finishes.",
+        "description": "A newly created run.\n\nIt carries no run token: only the runner task holds one, obtained by\ntrading its signed task identity, so no caller ever sees the plaintext.",
         "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunActor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "apply_changes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunChanges"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "changes": {
             "anyOf": [
               {
@@ -1069,6 +2459,16 @@
           "created_at": {
             "title": "Created At",
             "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "error": {
             "anyOf": [
@@ -1103,6 +2503,11 @@
             ],
             "title": "Finished At"
           },
+          "is_destroy": {
+            "default": false,
+            "title": "Is Destroy",
+            "type": "boolean"
+          },
           "message": {
             "default": "",
             "title": "Message",
@@ -1127,7 +2532,7 @@
             "title": "Run Id",
             "type": "string"
           },
-          "run_token": {
+          "run_role_arn": {
             "anyOf": [
               {
                 "type": "string"
@@ -1136,7 +2541,23 @@
                 "type": "null"
               }
             ],
-            "title": "Run Token"
+            "title": "Run Role Arn"
+          },
+          "run_role_check": {
+            "default": false,
+            "title": "Run Role Check",
+            "type": "boolean"
+          },
+          "source": {
+            "default": "api",
+            "enum": [
+              "api",
+              "vcs_push",
+              "vcs_pr",
+              "aws_connect"
+            ],
+            "title": "Source",
+            "type": "string"
           },
           "started_at": {
             "anyOf": [
@@ -1176,6 +2597,16 @@
             ],
             "title": "Updated At"
           },
+          "vcs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunVcs"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "workspace_id": {
             "title": "Workspace Id",
             "type": "string"
@@ -1192,8 +2623,65 @@
         "title": "RunCreated",
         "type": "object"
       },
+      "RunDecision": {
+        "description": "Who confirmed or discarded a run's plan, when, and the comment they left.",
+        "properties": {
+          "action": {
+            "enum": [
+              "confirmed",
+              "discarded"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunActor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          }
+        },
+        "required": [
+          "action",
+          "at"
+        ],
+        "title": "RunDecision",
+        "type": "object"
+      },
+      "RunDecisionRequest": {
+        "description": "The optional body of a confirm or a discard: a comment kept on the run.",
+        "properties": {
+          "comment": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Comment",
+            "type": "string"
+          }
+        },
+        "title": "RunDecisionRequest",
+        "type": "object"
+      },
       "RunList": {
-        "description": "One workspace's runs, newest first.",
+        "description": "A list of runs, newest first.\n\nOne workspace's runs in full when the request named a workspace, otherwise a\npage of every workspace's runs continued through `next_cursor`.",
         "properties": {
           "items": {
             "items": {
@@ -1201,6 +2689,17 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
           }
         },
         "required": [
@@ -1212,6 +2711,20 @@
       "RunPlan": {
         "description": "A run's plan as structured data, derived from `terraform show -json`.\n\nThe raw plan document is never returned: it can reach hundreds of megabytes\nand it carries sensitive values verbatim. This is the summarised, redacted\nprojection the run view renders.",
         "properties": {
+          "applied_outputs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AppliedOutput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Outputs"
+          },
           "changes": {
             "$ref": "#/components/schemas/RunChanges"
           },
@@ -1251,46 +2764,27 @@
         "title": "RunPlan",
         "type": "object"
       },
-      "RunRole": {
-        "description": "The per workspace role the engine runs as, with the phase session policy.\n\nThe external id is the workspace id, so a role trusted for one workspace\ncannot be assumed by a run against another.",
+      "RunPullRequest": {
+        "description": "The pull request a push run's commit was merged from.",
         "properties": {
-          "duration_seconds": {
-            "default": 3600,
-            "title": "Duration Seconds",
+          "number": {
+            "title": "Number",
             "type": "integer"
           },
-          "external_id": {
-            "title": "External Id",
+          "url": {
+            "title": "Url",
             "type": "string"
-          },
-          "role_arn": {
-            "title": "Role Arn",
-            "type": "string"
-          },
-          "session_policy": {
-            "additionalProperties": true,
-            "title": "Session Policy",
-            "type": "object"
-          },
-          "session_policy_arns": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Session Policy Arns",
-            "type": "array"
           }
         },
         "required": [
-          "role_arn",
-          "external_id",
-          "session_policy"
+          "number",
+          "url"
         ],
-        "title": "RunRole",
+        "title": "RunPullRequest",
         "type": "object"
       },
       "RunRoleCheck": {
-        "description": "The outcome of one AssumeRole against a workspace's run role.\n\n`error` is a sentence for a person rather than the STS code, and no part of\nthe temporary credentials reaches it.",
+        "description": "Whether the runner can assume a workspace's run role, from its own record.\n\nThe API never calls STS. The answer is the outcome of the runner's AssumeRole\nin the newest run created with the current role ARN that reached it, so a role\nno run has tried yet is `unverified` rather than refused.",
         "properties": {
           "account_id": {
             "anyOf": [
@@ -1302,6 +2796,18 @@
               }
             ],
             "title": "Account Id"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
           },
           "connected": {
             "title": "Connected",
@@ -1317,16 +2823,166 @@
               }
             ],
             "title": "Error"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingRunRoleCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "enum": [
+              "connected",
+              "failed",
+              "unverified"
+            ],
+            "title": "Status",
+            "type": "string"
           }
         },
         "required": [
-          "connected"
+          "connected",
+          "status"
         ],
         "title": "RunRoleCheck",
         "type": "object"
       },
+      "RunRoleQuickSetup": {
+        "description": "The quick create link for a workspace's run role.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "connect_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connect Expires At"
+          },
+          "console_url": {
+            "title": "Console Url",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "pending": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "permissions_policy_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permissions Policy Arn"
+          },
+          "region": {
+            "title": "Region",
+            "type": "string"
+          },
+          "reports_back": {
+            "default": false,
+            "title": "Reports Back",
+            "type": "boolean"
+          },
+          "role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Arn"
+          },
+          "role_name": {
+            "title": "Role Name",
+            "type": "string"
+          },
+          "stack_name": {
+            "title": "Stack Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_name",
+          "stack_name",
+          "region",
+          "console_url",
+          "expires_in"
+        ],
+        "title": "RunRoleQuickSetup",
+        "type": "object"
+      },
+      "RunRoleQuickSetupCreate": {
+        "description": "Start AWS quick setup for one workspace.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "permissions": {
+            "default": "administrator",
+            "enum": [
+              "administrator",
+              "power_user",
+              "read_only",
+              "none"
+            ],
+            "title": "Permissions",
+            "type": "string"
+          }
+        },
+        "title": "RunRoleQuickSetupCreate",
+        "type": "object"
+      },
       "RunRoleSetup": {
-        "description": "What a person needs to build the run role for one workspace.\n\nThe role cannot exist before the workspace does: its trust policy names the\nworkspace id as the external id, so the id has to be handed out first. Every\nworkspace response carries these three values so the setup can be followed\nwithout reading the stack's outputs.",
+        "description": "What a person needs to build the run role for one workspace.\n\nThe role cannot exist before the workspace does: its trust policy names the\nworkspace id as the external id, so the id has to be handed out first. Every\nworkspace response carries these three values so the setup can be followed\nwithout reading the stack's outputs. The control plane's credential vending\nrole is the only principal the trust policy may name: it assumes the role on\neach phase's behalf, so no runner task holds a path to it.",
         "properties": {
           "external_id": {
             "title": "External Id",
@@ -1355,6 +3011,369 @@
           "role_name"
         ],
         "title": "RunRoleSetup",
+        "type": "object"
+      },
+      "RunVcs": {
+        "description": "The commit a VCS run was started from.\n\nEverything comes from the signed GitHub App delivery. For a pull request the\ncommit is GitHub's merge commit, and `head_sha` and `base_sha` are recorded\nalongside it.",
+        "properties": {
+          "base_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Sha"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "commit_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Message"
+          },
+          "head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "pull_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunPullRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "repository_id",
+          "sha",
+          "ref"
+        ],
+        "title": "RunVcs",
+        "type": "object"
+      },
+      "RunnerToken": {
+        "description": "The run token a runner task holds for its phase.",
+        "properties": {
+          "run_token": {
+            "title": "Run Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_token"
+        ],
+        "title": "RunnerToken",
+        "type": "object"
+      },
+      "RunnerTokenRequest": {
+        "additionalProperties": false,
+        "description": "A runner task's signed STS `GetCallerIdentity` headers, traded for its run token.",
+        "properties": {
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 16,
+            "title": "Headers",
+            "type": "object"
+          }
+        },
+        "required": [
+          "headers"
+        ],
+        "title": "RunnerTokenRequest",
+        "type": "object"
+      },
+      "StateVersion": {
+        "description": "One version of a workspace's Terraform state, as the API renders it.\n\nA state body holds every resource attribute and every output in plaintext,\nroutinely including passwords and private keys, so nothing derived from those\nappears here. The fields are the ones that describe the version rather than\nwhat is inside it, and the body is reachable only through the separate\ndownload route.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "is_current": {
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "state_version_id": {
+            "title": "State Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "state_version_id",
+          "created_at",
+          "size_bytes",
+          "is_current"
+        ],
+        "title": "StateVersion",
+        "type": "object"
+      },
+      "StateVersionDetail": {
+        "description": "One state version with the three fields that only the state body carries.\n\n`serial`, `terraform_version` and `lineage` are read out of the object\nbecause Terraform writes state through its own backend and the control plane\nnever gets to stamp them as S3 metadata. They are the only things lifted out\nof the body; no resource attribute and no output is ever read into a\nresponse. Each is optional because a body that cannot be parsed still has\ndescribable metadata.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "is_current": {
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "lineage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineage"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "serial": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serial"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "state_version_id": {
+            "title": "State Version Id",
+            "type": "string"
+          },
+          "terraform_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terraform Version"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "state_version_id",
+          "created_at",
+          "size_bytes",
+          "is_current"
+        ],
+        "title": "StateVersionDetail",
+        "type": "object"
+      },
+      "StateVersionDownload": {
+        "description": "A short lived URL for one state version's raw bytes.\n\nThe URL is a bearer credential for exactly one object version: it names the\nbucket, the key and the version inside its signature, so it cannot be steered\nat another workspace's state. It is minted only after the caller's scope and\nthe version's ownership have both been checked, and it expires in\n`expires_in` seconds.",
+        "properties": {
+          "download_url": {
+            "title": "Download Url",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "state_version_id": {
+            "title": "State Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "state_version_id",
+          "download_url",
+          "expires_in",
+          "size_bytes"
+        ],
+        "title": "StateVersionDownload",
+        "type": "object"
+      },
+      "StateVersionList": {
+        "description": "One page of state versions, newest first. Follow the token even on empty pages.\n\nS3 delete markers count toward the page size but are not state versions.\nMalformed cursors or cursors from another workspace return HTTP 400.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StateVersion"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_page_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page Token"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "StateVersionList",
+        "type": "object"
+      },
+      "Submodule": {
+        "description": "A module under `modules/`, which a source reaches with `//modules/<name>`.",
+        "properties": {
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleInput"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleOutput"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleProvider"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "readme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readme"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleResource"
+            },
+            "title": "Resources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "inputs",
+          "outputs",
+          "providers",
+          "resources"
+        ],
+        "title": "Submodule",
         "type": "object"
       },
       "ValidationErrorDetail": {
@@ -1403,6 +3422,11 @@
             "default": "",
             "title": "Description",
             "type": "string"
+          },
+          "hcl": {
+            "default": false,
+            "title": "Hcl",
+            "type": "boolean"
           },
           "key": {
             "title": "Key",
@@ -1483,6 +3507,11 @@
             "title": "Description",
             "type": "string"
           },
+          "hcl": {
+            "default": false,
+            "title": "Hcl",
+            "type": "boolean"
+          },
           "sensitive": {
             "default": false,
             "title": "Sensitive",
@@ -1500,9 +3529,80 @@
         "title": "VariableWrite",
         "type": "object"
       },
+      "VendedCredentials": {
+        "description": "One hour of AWS keys the control plane assumed for a phase.",
+        "properties": {
+          "access_key_id": {
+            "title": "Access Key Id",
+            "type": "string"
+          },
+          "expiration": {
+            "default": "",
+            "title": "Expiration",
+            "type": "string"
+          },
+          "secret_access_key": {
+            "title": "Secret Access Key",
+            "type": "string"
+          },
+          "session_token": {
+            "title": "Session Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_key_id",
+          "secret_access_key",
+          "session_token"
+        ],
+        "title": "VendedCredentials",
+        "type": "object"
+      },
+      "WebhookConfig": {
+        "description": "Where the App's webhook now delivers, and the events the bridge expects it to carry.\n\nThe secret is set but never echoed.",
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "insecure_ssl": {
+            "title": "Insecure Ssl",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "content_type",
+          "insecure_ssl",
+          "events"
+        ],
+        "title": "WebhookConfig",
+        "type": "object"
+      },
       "Workspace": {
         "description": "A stored workspace, with everything the run role setup needs.",
         "properties": {
+          "aws_connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AwsConnection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
@@ -1527,9 +3627,25 @@
             "title": "Engine Version",
             "type": "string"
           },
+          "file_triggers_enabled": {
+            "default": true,
+            "title": "File Triggers Enabled",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "pending_run_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Run Role Arn"
           },
           "run_role_account_id": {
             "anyOf": [
@@ -1567,8 +3683,39 @@
             ],
             "title": "Run Role Checked At"
           },
+          "run_role_reconnect_required": {
+            "default": false,
+            "title": "Run Role Reconnect Required",
+            "type": "boolean"
+          },
           "run_role_setup": {
             "$ref": "#/components/schemas/RunRoleSetup"
+          },
+          "speculative_plans": {
+            "default": true,
+            "title": "Speculative Plans",
+            "type": "boolean"
+          },
+          "tracked_branch": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracked Branch"
+          },
+          "trigger_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Trigger Patterns",
+            "type": "array"
           },
           "updated_at": {
             "anyOf": [
@@ -1580,6 +3727,41 @@
               }
             ],
             "title": "Updated At"
+          },
+          "vcs_installation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Installation Id"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
+          },
+          "vcs_repository_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repository Id"
           },
           "working_directory": {
             "default": "",
@@ -1624,6 +3806,11 @@
             "title": "Engine Version",
             "type": "string"
           },
+          "file_triggers_enabled": {
+            "default": true,
+            "title": "File Triggers Enabled",
+            "type": "boolean"
+          },
           "name": {
             "maxLength": 90,
             "minLength": 1,
@@ -1643,6 +3830,45 @@
               }
             ],
             "title": "Run Role Arn"
+          },
+          "speculative_plans": {
+            "default": true,
+            "title": "Speculative Plans",
+            "type": "boolean"
+          },
+          "tracked_branch": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracked Branch"
+          },
+          "trigger_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Trigger Patterns",
+            "type": "array"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
           },
           "working_directory": {
             "default": "",
@@ -1675,7 +3901,7 @@
         "type": "object"
       },
       "WorkspaceUpdate": {
-        "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so it is refused by\nomission rather than by a check.",
+        "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so it is refused by\nomission rather than by a check.\n\nThe model separates \"absent\" from \"explicitly null\" by leaving every field\nunset by default and reading the body with `model_dump(exclude_unset=True)`,\nso a key only reaches the service when the request actually carried it. A null\non one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service\nturns into a DynamoDB REMOVE.",
         "properties": {
           "description": {
             "anyOf": [
@@ -1716,6 +3942,30 @@
             ],
             "title": "Engine Version"
           },
+          "file_triggers_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Triggers Enabled"
+          },
+          "pending_run_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Run Role Arn"
+          },
           "run_role_arn": {
             "anyOf": [
               {
@@ -1728,6 +3978,58 @@
               }
             ],
             "title": "Run Role Arn"
+          },
+          "speculative_plans": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speculative Plans"
+          },
+          "tracked_branch": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracked Branch"
+          },
+          "trigger_patterns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Patterns"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
           },
           "working_directory": {
             "anyOf": [
@@ -2508,7 +4810,7 @@
     },
     "/api/auth/step-up": {
       "post": {
-        "description": "Re-assert a factor with a code or a passkey, returning a fresher token and no cookie.\n\nOne route and two bodies: `{\"code\": ...}` or `{\"challenge_id\": ..., \"credential\": ...}`.\nNeither and both are the same 422, so a client is told what it sent rather than that\nits factor was wrong.",
+        "description": "Re-authenticate inside the session, returning a fresher token and no cookie.\n\nOne route and three bodies: `{\"password\": ...}`, `{\"code\": ...}` or\n`{\"challenge_id\": ..., \"credential\": ...}`. None, or more than one, is the same 422,\nso a client is told what it sent rather than that its factor was wrong.",
         "operationId": "step_up_api_auth_step_up_post",
         "requestBody": {
           "content": {
@@ -2532,7 +4834,10 @@
             "description": "Successful Response"
           },
           "401": {
-            "description": "No bearer token was presented, or the factor was refused"
+            "description": "No bearer token was presented, or the password or factor was refused"
+          },
+          "403": {
+            "description": "Password sign in is closed on this deployment"
           },
           "422": {
             "content": {
@@ -2545,10 +4850,13 @@
             "description": "Request validation failed."
           },
           "429": {
-            "description": "Too many attempts from this address"
+            "description": "Too many attempts from this address, or the account is locked"
           },
           "501": {
             "description": "A passkey step-up was sent to a deployment with passkeys off"
+          },
+          "503": {
+            "description": "Neither a password nor a second factor is available to this user"
           }
         },
         "summary": "Step Up",
@@ -2860,21 +5168,809 @@
         ]
       }
     },
+    "/api/v1/github/app": {
+      "get": {
+        "description": "This environment's App, or the fact that there is none yet.",
+        "operationId": "get_app_api_v1_github_app_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAppStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get App",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/app/conversions": {
+      "post": {
+        "description": "Finish creating the App from the code GitHub redirected back with.",
+        "operationId": "convert_manifest_api_v1_github_app_conversions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestConversionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAppStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Convert Manifest",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/app/manifest": {
+      "post": {
+        "description": "Issue a manifest state; the SPA then posts the manifest to `action_url`.",
+        "operationId": "start_manifest_api_v1_github_app_manifest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestStart"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Start Manifest",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/app/webhook": {
+      "post": {
+        "description": "Point the App's webhook at this API and set its secret from the `app` secret.",
+        "operationId": "configure_webhook_api_v1_github_app_webhook_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Configure Webhook",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/install-state": {
+      "post": {
+        "description": "Issue an install state and the GitHub URL that carries it.",
+        "operationId": "start_install_api_v1_github_install_state_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallStart"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Start Install",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/installations": {
+      "get": {
+        "description": "Every installation stored here.",
+        "operationId": "list_installations_api_v1_github_installations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Installations",
+        "tags": [
+          "github"
+        ]
+      },
+      "post": {
+        "description": "Store the installation the setup callback named, once GitHub confirms it.",
+        "operationId": "record_installation_api_v1_github_installations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallationCallback"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Installation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Record Installation",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/installations/{installation_id}": {
+      "delete": {
+        "description": "Forget one installation here. It stays installed on GitHub until removed there.",
+        "operationId": "remove_installation_api_v1_github_installations__installation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740992,
+              "title": "Installation Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Remove Installation",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/installations/{installation_id}/refresh": {
+      "post": {
+        "description": "Re-read one installation from GitHub; one GitHub no longer has is dropped.",
+        "operationId": "refresh_installation_api_v1_github_installations__installation_id__refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740992,
+              "title": "Installation Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Installation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Refresh Installation",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/installations/{installation_id}/repositories": {
+      "get": {
+        "description": "Every repository one installation covers, as GitHub lists them now.",
+        "operationId": "list_repositories_api_v1_github_installations__installation_id__repositories_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740992,
+              "title": "Installation Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Repositories",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/registry/modules": {
+      "get": {
+        "description": "Every module and every version, with pending and failed versions shown.",
+        "operationId": "list_modules_api_v1_registry_modules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Modules",
+        "tags": [
+          "registry"
+        ]
+      },
+      "post": {
+        "description": "Connect a module to a repository; each `vX.Y.Z` or `X.Y.Z` tag pushed there publishes it.\n\nThe repository's existing semantic version tags are imported in the\nbackground unless `import_tags` is false. Other tags are ignored.",
+        "operationId": "create_module_api_v1_registry_modules_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModuleCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Module"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "A module already sits at the address, or there is no GitHub App."
+          },
+          "422": {
+            "description": "The App is not installed on the repository, or the address is not valid."
+          }
+        },
+        "summary": "Create Module",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}": {
+      "delete": {
+        "description": "Remove a module with every version and stored tarball. Configurations pinned to it stop resolving.",
+        "operationId": "delete_module_api_v1_registry_modules__namespace___name___provider__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No module sits at the address."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Delete Module",
+        "tags": [
+          "registry"
+        ]
+      },
+      "get": {
+        "description": "One module and every version of it.",
+        "operationId": "get_module_api_v1_registry_modules__namespace___name___provider__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Module"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No module sits at the address."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Module",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}/resync": {
+      "post": {
+        "description": "Queue an import of every semantic version tag in the module's repository.\n\nPicks up tags pushed before the module was connected, or pushed more than\nthree at once, when GitHub sends no push event. Published versions are left alone.",
+        "operationId": "resync_module_api_v1_registry_modules__namespace___name___provider__resync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleSync"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No module connected to a repository sits at the address."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "503": {
+            "description": "The sync could not be queued."
+          }
+        },
+        "summary": "Resync Module",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/modules/{namespace}/{name}/{provider}/versions/{version}": {
+      "get": {
+        "description": "One version with its readme, inputs, outputs, provider requirements, resources and submodules.",
+        "operationId": "get_version_api_v1_registry_modules__namespace___name___provider__versions__version__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 5,
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleVersionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "The module has no such version."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Version",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
     "/api/v1/runs": {
       "get": {
-        "description": "One workspace's runs, newest first. The workspace is required.",
+        "description": "Runs, newest first, in one workspace or across every workspace.\n\nNaming `workspace_id` returns that workspace's runs in full and 404s for a\nworkspace that does not exist, unchanged. Omitting it returns a page of every\nworkspace's runs off the recency index; pass `next_cursor` back as `cursor`\nto continue. `limit` and `cursor` page only the cross-workspace list, so they\nare refused alongside a workspace rather than ignored.\n\nBoth modes need exactly `runs:read`, the only check the per-workspace list\nhas ever made: there is no per-workspace ACL, so the cross-workspace list\nreturns nothing the caller could not list one workspace at a time.",
         "operationId": "list_runs_api_v1_runs_get",
         "parameters": [
           {
             "in": "query",
             "name": "workspace_id",
-            "required": true,
+            "required": false,
             "schema": {
-              "maxLength": 64,
-              "minLength": 4,
-              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
-              "title": "Workspace Id",
-              "type": "string"
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 4,
+                  "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 200,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -2906,7 +6002,7 @@
         ]
       },
       "post": {
-        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.",
+        "description": "Queue or start a run.\n\nA run queued behind the workspace's active one comes back `pending` with\n`queued_behind` set and no token, which is the caller's signal that nothing is\nexecuting yet.\n\nA workspace with no run role is a 409 carrying `RUN_ROLE_MISSING`, since the\nrunner would have nothing to assume.\n\n`run_role_check` starts a plan only run that assumes the workspace's staged\n`pending_run_role_arn` rather than its current role. It is a 409 carrying\n`PENDING_RUN_ROLE_MISSING` when no role is staged.\n\nThe actor is taken from the verified claims here, because this request is the\nonly moment the triggering principal is known.",
         "operationId": "create_run_api_v1_runs_post",
         "requestBody": {
           "content": {
@@ -2994,7 +6090,7 @@
     },
     "/api/v1/runs/{run_id}/artifact-uploads": {
       "post": {
-        "description": "Mint the presigned PUT for one of this run's artifacts. Runner only.\n\nThe size is the caller's, not a ceiling: `Content-Length` is inside the\nsignature, so S3 refuses a body of any other length. A runner therefore asks\nonce per artifact, after it knows how many bytes it is about to send, and\nsends the returned headers verbatim.\n\nThe log's key is per phase and the phase comes from the run's status, so a\nplan-phase runner cannot ask for the apply transcript's key.",
+        "description": "Mint the presigned PUT for one of this run's artifacts. Runner only.\n\nThe size is the caller's, not a ceiling: `Content-Length` is inside the\nsignature, so S3 refuses a body of any other length. A runner therefore asks\nonce per artifact, after it knows how many bytes it is about to send, and\nsends the returned headers verbatim.\n\nThe log's key is per phase and the phase comes from the run's status, so a\nplan-phase runner cannot ask for the apply transcript's key. The applied\noutputs are an apply-phase artifact only, and a 422 anywhere else.",
         "operationId": "artifact_upload_api_v1_runs__run_id__artifact_uploads_post",
         "parameters": [
           {
@@ -3136,7 +6232,7 @@
     },
     "/api/v1/runs/{run_id}/confirm": {
       "post": {
-        "description": "Apply a planned run. Needs `runs:apply`, not `runs:write`.",
+        "description": "Apply a planned run. Needs `runs:apply`, not `runs:write`, and a person's recent login.\n\nThe body is optional; its comment is kept on the run with the confirming actor.",
         "operationId": "confirm_run_api_v1_runs__run_id__confirm_post",
         "parameters": [
           {
@@ -3152,6 +6248,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RunDecisionRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -3182,7 +6295,7 @@
     },
     "/api/v1/runs/{run_id}/discard": {
       "post": {
-        "description": "Drop a plan that was never applied, ending its execution cleanly.",
+        "description": "Drop a plan that was never applied, ending its execution cleanly.\n\nThe body is optional; its comment is kept on the run with the discarding actor.",
         "operationId": "discard_run_api_v1_runs__run_id__discard_post",
         "parameters": [
           {
@@ -3198,6 +6311,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RunDecisionRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -3302,7 +6432,7 @@
     },
     "/api/v1/runs/{run_id}/phase-result": {
       "post": {
-        "description": "Record a phase's outcome and advance the run. Runner only.",
+        "description": "Record a phase's outcome, advance the run and resolve its task token. Runner only.\n\nThe runner holds no Step Functions permission, so this is how both a result and\na failure reach the waiting state.",
         "operationId": "phase_result_api_v1_runs__run_id__phase_result_post",
         "parameters": [
           {
@@ -3399,6 +6529,62 @@
         ]
       }
     },
+    "/api/v1/runs/{run_id}/runner-token": {
+      "post": {
+        "description": "Trade a runner task's signed identity for its run token. Runner only.\n\nEvery refusal is the same 401, a malformed request included, so a caller\nlearns nothing about which check failed or what the route expects; the reason\nis logged instead.",
+        "operationId": "runner_token_api_v1_runs__run_id__runner_token_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^run-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerToken"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Runner Token",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
     "/api/v1/workspaces": {
       "get": {
         "description": "Every workspace in this environment, each with its run role setup.",
@@ -3431,7 +6617,7 @@
         ]
       },
       "post": {
-        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.",
+        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.\n\nA `vcs_repo` is resolved through the environment's GitHub App: the id, the\ninstallation and the canonical name are recorded, and `tracked_branch` defaults to\nthe repository's default branch. A repository the App is not installed on is a 422\ncarrying `VCS_REPO_NOT_INSTALLED`.",
         "operationId": "create_workspace_api_v1_workspaces_post",
         "requestBody": {
           "content": {
@@ -3473,7 +6659,7 @@
     },
     "/api/v1/workspaces/{workspace_id}": {
       "delete": {
-        "description": "Delete one workspace and its variables.",
+        "description": "Delete one workspace with its finished runs, current state and variables.\n\nA safe delete is a 409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current\nstate tracks any resource instance: queue a destroy plan and apply it first, or\npass `force=true` to delete anyway and leave those resources unmanaged. Either\nmode is a 409 carrying `WORKSPACE_HAS_ACTIVE_RUN` while a run on the workspace\nhas not finished. Nothing is removed on a refusal.",
         "operationId": "delete_workspace_api_v1_workspaces__workspace_id__delete",
         "parameters": [
           {
@@ -3486,6 +6672,18 @@
               "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
               "title": "Workspace Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Skip the managed resources check and delete even though state still tracks resources.",
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Skip the managed resources check and delete even though state still tracks resources.",
+              "title": "Force",
+              "type": "boolean"
             }
           }
         ],
@@ -3554,7 +6752,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.\n\nChanging `run_role_arn` drops the recorded check outcome, so the new role reads\nas unchecked until `run-role/check` says otherwise.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging either run role field is the workspace's AWS connection, so a person has to\nhave signed in within the step-up window; resending the stored value is not a change.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {
@@ -3767,8 +6965,52 @@
       }
     },
     "/api/v1/workspaces/{workspace_id}/run-role/check": {
+      "get": {
+        "description": "Report whether the runner has assumed the workspace's run role, writing nothing.\n\nThe answer comes from the runner's own record: the newest run created with the\ncurrent role ARN that got past, or failed on, the runner's AssumeRole. The API\nnever calls STS, so it holds no path into the account the role lives in. A role\nno run has tried yet reads `unverified`, and a plan only run is the check.\n\nA caller that only wants to look, such as a Terraform provider reading on every\nplan and refresh, uses this one so no plan mutates a workspace row. Because\nnothing is written, the read scope is enough.\n\nAlways 200 when a role is configured. A workspace with no role at all is a 400\ncarrying `RUN_ROLE_MISSING`.",
+        "operationId": "read_run_role_check_api_v1_workspaces__workspace_id__run_role_check_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRoleCheck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Read Run Role Check",
+        "tags": [
+          "workspaces"
+        ]
+      },
       "post": {
-        "description": "Assume the workspace's run role and report whether it answered.\n\nAlways 200 when a role is configured, whether or not it answered: a trust\npolicy that is not there yet is an expected state of the setup rather than a\nrequest error. A workspace with no role at all is a 400 carrying\n`RUN_ROLE_MISSING`.",
+        "description": "Read the runner's record for the run role, as the GET does, and stamp it on the workspace.\n\nThe stamp is what the workspace list shows between visits: the account and the\ntime of the run that proved the role on `connected`, both cleared otherwise, so\na stale success cannot outlive a role whose trust broke. Use the GET when only\nthe answer is wanted.\n\nAlways 200 when a role is configured. A workspace with no role at all is a 400\ncarrying `RUN_ROLE_MISSING`.",
         "operationId": "check_run_role_api_v1_workspaces__workspace_id__run_role_check_post",
         "parameters": [
           {
@@ -3807,6 +7049,253 @@
           }
         },
         "summary": "Check Run Role",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/run-role/quick-setup": {
+      "post": {
+        "description": "Return an AWS CloudFormation quick create link for the workspace's run role.\n\nWhere `reports_back` is true the link carries a one-time connect token, valid\nuntil `connect_expires_at`, and the stack reports its account and role back when\nit is created: the role is saved or staged and a verification run starts, with\nnothing to type or copy. Each call replaces the previous token. An `account_id`\nis then optional; given, the derived ARN is saved or staged at once as well.\n\nThe template trusts only the runner task roles with this workspace id as the\nexternal id. The link embeds a template URL that expires after `expires_in`\nseconds, so ask for a fresh link rather than storing one.\n\nA deployment with no runner task roles or no artifacts bucket answers 503, as\ndoes one with no connect topic when no account id is given.",
+        "operationId": "start_run_role_quick_setup_api_v1_workspaces__workspace_id__run_role_quick_setup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRoleQuickSetupCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRoleQuickSetup"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Start Run Role Quick Setup",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/state-versions": {
+      "get": {
+        "description": "One page of a workspace's state history, newest first.\n\nGuarded by the same scope as reading the workspace itself, so state history\nis reachable by exactly the callers that can already see the workspace and by\nno one else. A workspace that has never run answers an empty page.",
+        "operationId": "list_state_versions_api_v1_workspaces__workspace_id__state_versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateVersionList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List State Versions",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}": {
+      "get": {
+        "description": "One state version's metadata. Never its resources or its outputs.",
+        "operationId": "get_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "state_version_id",
+            "required": true,
+            "schema": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "title": "State Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateVersionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get State Version",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}/download": {
+      "post": {
+        "description": "Mint a short lived URL with workspaces:read and explicit state:download access.\n\nA `POST` rather than a `GET` because it is not a read: it mints a bearer\ncredential for the most sensitive object the product stores, and that is an\nevent worth being a distinct, non cacheable, non prefetchable call.\n\nThe scope guard runs before this function is entered and the service checks\nthe version belongs to this workspace before it signs anything, so no URL\nexists until both have passed. The handover is recorded first, because an\naudit line written after the URL is minted would be missing exactly when it\nmatters most.",
+        "operationId": "download_state_version_api_v1_workspaces__workspace_id__state_versions__state_version_id__download_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "state_version_id",
+            "required": true,
+            "schema": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "title": "State Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateVersionDownload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Download State Version",
         "tags": [
           "workspaces"
         ]
@@ -3860,7 +7349,7 @@
     },
     "/api/v1/workspaces/{workspace_id}/variables/{key}": {
       "delete": {
-        "description": "Delete one variable.",
+        "description": "Delete one variable. A sensitive one needs a login within the step-up window.",
         "operationId": "delete_variable_api_v1_workspaces__workspace_id__variables__key__delete",
         "parameters": [
           {
@@ -3965,7 +7454,7 @@
         ]
       },
       "put": {
-        "description": "Set one variable. A sensitive value is sealed before it is stored.",
+        "description": "Set one variable. A sensitive value is sealed before it is stored.\n\nA broken HCL expression and an `env` variable marked HCL are both refused\nhere, so neither is stored to fail on every later run.\n\nWriting a sensitive value, or overwriting a variable that is sensitive now, needs a\nlogin within the step-up window.",
         "operationId": "put_variable_api_v1_workspaces__workspace_id__variables__key__put",
         "parameters": [
           {

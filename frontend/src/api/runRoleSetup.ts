@@ -8,7 +8,13 @@
 
 import { ApiError, getWebbPulseError } from '@webbpulse/api-client';
 
-import type { RunRoleSetup, Workspace } from './types';
+import type {
+  AwsConnection,
+  RunRoleCheck,
+  RunRolePermissions,
+  RunRoleSetup,
+  Workspace,
+} from './types';
 
 /** The error code a run start or a check answers when no role is set. */
 export const RUN_ROLE_MISSING_CODE = 'RUN_ROLE_MISSING';
@@ -26,16 +32,118 @@ export function isRunRoleMissing(error: unknown): boolean {
 }
 
 /**
- * Whether the workspace has a role that the last check could assume.
+ * Whether the workspace has a run role ARN saved, which is all a run needs.
+ *
+ * The API refuses a run only for a missing ARN. Whether the runner can assume
+ * the role is proven by the run itself, so this is what gates run starts.
+ */
+export function hasRunRole(workspace: Workspace): boolean {
+  return (workspace.run_role_arn ?? null) !== null;
+}
+
+/**
+ * Whether the last recorded check found a run that assumed the role.
  *
  * Both fields are optional on the wire, so an absent one counts as unset
  * exactly as an explicit null does.
  */
 export function isConnected(workspace: Workspace): boolean {
   return (
-    (workspace.run_role_arn ?? null) !== null &&
-    (workspace.run_role_account_id ?? null) !== null
+    hasRunRole(workspace) && (workspace.run_role_account_id ?? null) !== null
   );
+}
+
+/** The words for a workspace whose account is not shown as connected. */
+export function connectionLabel(workspace: Workspace): string {
+  return hasRunRole(workspace) ? 'Not verified' : 'Not connected';
+}
+
+/** Where a workspace's AWS account stands, as every surface shows it. */
+export interface AccountStatus {
+  state: 'connected' | 'failed' | 'unverified' | 'missing';
+  accountId: string | null;
+  checkedAt: string | null;
+  error: string | null;
+}
+
+/**
+ * The one answer to whether the workspace's account is connected.
+ *
+ * The live check reads the runner's own record of the latest runs, so it wins
+ * whenever it has arrived. Until then the fields a manual check stamped on the
+ * workspace stand in for it.
+ */
+export function accountStatus(
+  workspace: Workspace,
+  check: RunRoleCheck | null
+): AccountStatus {
+  if (!hasRunRole(workspace)) {
+    return { state: 'missing', accountId: null, checkedAt: null, error: null };
+  }
+  if (check !== null) {
+    return {
+      state: check.status,
+      accountId: check.account_id ?? null,
+      checkedAt: check.checked_at ?? null,
+      error: check.error ?? null,
+    };
+  }
+  if (isConnected(workspace)) {
+    return {
+      state: 'connected',
+      accountId: workspace.run_role_account_id ?? null,
+      checkedAt: workspace.run_role_checked_at ?? null,
+      error: null,
+    };
+  }
+  return { state: 'unverified', accountId: null, checkedAt: null, error: null };
+}
+
+/** Where the run proving a Quick setup connection stands. */
+export interface ConnectionVerification {
+  state: 'pending' | 'verified' | 'failed';
+  error: string | null;
+  runId: string | null;
+}
+
+/**
+ * The verification a stack's report recorded for `arn`, or null when there is none.
+ *
+ * A stack reporting back only says the role exists. Whether a run could use it
+ * is the verification, which the runs function settles when that run ends. A
+ * connection recorded before verification existed, one naming another role, or
+ * a role saved by hand has none, and the check-based display stands in.
+ */
+export function connectionVerification(
+  connection: AwsConnection | null,
+  arn: string
+): ConnectionVerification | null {
+  if (connection?.status !== 'connected' || connection.role_arn !== arn) {
+    return null;
+  }
+  const state = connection.verification ?? null;
+  if (state === null) {
+    return null;
+  }
+  return {
+    state,
+    error: connection.verification_error ?? null,
+    runId: connection.run_id ?? null,
+  };
+}
+
+/** The short words for an account status, or its account id once connected. */
+export function accountStatusLabel(status: AccountStatus): string {
+  switch (status.state) {
+    case 'connected':
+      return status.accountId ?? 'Connected';
+    case 'failed':
+      return 'Connection failed';
+    case 'unverified':
+      return 'Not verified';
+    case 'missing':
+      return 'Not connected';
+  }
 }
 
 /** The marker in a suggested role name that ends the assumable prefix. */
@@ -64,8 +172,8 @@ export function roleNameFromArn(arn: string): string | null {
 /**
  * Why a role ARN would not work for this workspace, or null when it would.
  *
- * A shape check and a prefix check, both local: the connection check is what
- * proves the role exists and trusts the runner.
+ * A shape check and a prefix check, both local: the first run is what proves
+ * the role exists and trusts the runner.
  */
 export function runRoleArnProblem(
   arn: string,
@@ -227,4 +335,55 @@ export function snippetFor(format: SnippetFormat, setup: RunRoleSetup): string {
     case 'trust':
       return trustPolicyJson(setup);
   }
+}
+
+/** One managed policy choice quick setup offers, with what it means for runs. */
+export interface PermissionsChoice {
+  id: RunRolePermissions;
+  label: string;
+  hint: string;
+}
+
+/** The choices in the order the select shows them, the default first. */
+export const PERMISSIONS_CHOICES: readonly PermissionsChoice[] = [
+  {
+    id: 'administrator',
+    label: 'AdministratorAccess',
+    hint: 'Full access, so any configuration can plan and apply. Plans still run with a read only session.',
+  },
+  {
+    id: 'power_user',
+    label: 'PowerUserAccess',
+    hint: 'Everything but IAM and Organizations, so configurations that manage roles or policies cannot apply.',
+  },
+  {
+    id: 'read_only',
+    label: 'ReadOnlyAccess',
+    hint: 'Plans work and applies fail. Useful for drift checks.',
+  },
+  {
+    id: 'none',
+    label: 'None',
+    hint: 'The role trusts the runner and has no permissions. Attach a narrower policy in IAM after the stack is created.',
+  },
+];
+
+/** An account id with the dashes and spaces the AWS console prints removed. */
+export function normalizeAccountId(value: string): string {
+  return value.replace(/[\s-]/g, '');
+}
+
+/** Why an account id would be refused, or null when it is twelve digits. */
+export function accountIdProblem(value: string): string | null {
+  return /^\d{12}$/.test(normalizeAccountId(value))
+    ? null
+    : 'Enter the 12 digit AWS account ID.';
+}
+
+/** The account id in a role ARN, or null when it is not a role ARN. */
+export function accountIdFromArn(
+  arn: string | null | undefined
+): string | null {
+  const match = /^arn:aws:iam::(\d{12}):role\//.exec((arn ?? '').trim());
+  return match?.[1] ?? null;
 }

@@ -12,9 +12,10 @@ domain, runs Terraform or OpenTofu, and reports back through the task token.
 | `versions.env` | the pinned engine versions and their per architecture SHA256 sums |
 | `app/models.py` | the runner environment and the bundle the runs domain serves |
 | `app/api.py` | bundle fetch, presigned artifact transfers, phase result post |
-| `app/workspace.py` | config tarball unpack, the S3 backend override, the tfvars file |
+| `app/workspace.py` | config tarball unpack, the S3 backend override, the two tfvars files |
 | `app/credentials.py` | assuming the per workspace run role with the phase session policy |
-| `app/engine.py` | the engine subprocess, its environment and plan JSON parsing |
+| `app/engine.py` | the engine subprocess, its environment, plan JSON and apply summary parsing |
+| `app/install.py` | installing the workspace's pinned engine version when the image bakes another |
 | `app/logs.py` | redaction and the CloudWatch Logs sink |
 | `app/callback.py` | `SendTaskSuccess` and `SendTaskFailure` |
 | `app/main.py` | the `python -m app.main` entrypoint |
@@ -46,33 +47,58 @@ checks, so an unannotated parameter or a wrong return type still fails.
 
 The task definition supplies `RUNNER_LOG_GROUP` and the state machine's
 container overrides supply `RUN_ID`, `WORKSPACE_ID`, `PHASE` (`plan` or
-`apply`), `TASK_TOKEN`, `RUN_TOKEN` and `API_BASE_URL`. `RUN_TOKEN` comes from
-`$.run_token` on the execution input, which the runs domain sets when it mints
-the token. The runner then:
+`apply`), `TASK_TOKEN` and `API_BASE_URL`. The run token is never passed in:
+the runner signs an STS `GetCallerIdentity` with its task role, binding the run
+id in the signed `x-webbpulse-run-id` header, and trades it at
+`POST {API_BASE_URL}/api/v1/runs/{RUN_ID}/runner-token`. A refused exchange fails
+the phase, and a `RUN_TOKEN` in the environment is ignored. The runner then:
 
 1. `GET {API_BASE_URL}/api/v1/runs/{RUN_ID}/bundle` with the run token as
    bearer, validating the response as `Bundle`: `run_id`, `workspace_id`,
    `engine`, `engine_version`, `config_url`, the nested `backend`, `run_role`
-   and `artifacts`, `working_directory` and the two variable maps. The backend
-   also sends `phase` and `plan_only`, which the model ignores: the phase comes
-   from `PHASE`.
+   and `artifacts`, `working_directory`, `is_destroy` and the three variable
+   maps. The backend also sends `phase` and `plan_only`, which the model
+   ignores: the phase comes from `PHASE`.
 2. Downloads and unpacks the config tarball, refusing members that escape the
    unpack directory, then resolves `working_directory` under it. An absolute
    value, one climbing out with `..`, or one the configuration does not carry
    fails the task before the engine runs. Empty means the tarball root.
 3. Writes the S3 backend override with `use_lockfile = true` and the terraform
-   variables as an auto loaded `*.auto.tfvars.json`, both into the working
-   directory, since neither is loaded from a parent.
+   variables into the working directory, since neither is loaded from a parent.
+   The variables go to two auto loaded files. Literal values go to
+   `zz_webbpulse.auto.tfvars.json`, where JSON decoding makes every value what it
+   says it is, so a value carrying quotes, braces or `${` cannot be reinterpreted.
+   Values the workspace marked HCL go to `zz_webbpulse.auto.tfvars`, the native
+   form, written as `key = (\n<value>\n)` so the engine parses each one and the
+   value stays inside its own parenthesis, which the backend's write time check
+   guarantees it cannot close. That is the only way a `list` or `map` typed input variable can be given a
+   value: quoting `["a", "b"]` into the JSON file would hand a `list(string)`
+   variable an eight character string instead. A key is in one file or the other,
+   never both, so the two auto loaded files never contend.
 4. Assumes the bundle's run role with the workspace id as the external id and the
-   phase session policy, and exports only those credentials to the engine.
+   phase session policy, and exports only those credentials to the engine, for
+   the providers. The state backend never uses them: the override names the
+   `webbpulse-state` profile, which Terraform and OpenTofu both prefer over
+   environment keys, and `app/state_credentials.py` writes that profile into an
+   owner only `AWS_CONFIG_FILE` as a `credential_process` fetching the runner
+   task role from the ECS container endpoint. A run role in another account
+   therefore still reads and writes the control plane's state bucket, and the
+   SDK refreshes the task credentials during a long apply. Only the profile name
+   reaches the plan file and `.terraform`.
 5. Runs the engine from the working directory: `init`, then
    `plan -out plan.tfplan -detailed-exitcode` plus `show -json`
-   for the plan phase, or downloads `plan.tfplan` and runs `apply plan.tfplan`
-   for the apply phase.
+   for the plan phase, with `-destroy` added when the bundle's `is_destroy` is
+   set, or downloads `plan.tfplan` and runs `apply plan.tfplan` for the apply
+   phase, which applies a destroy plan the same way. The engine prints its own
+   `Plan:` summary, so the runner adds none. An apply reads its counts from the
+   engine's closing `Apply complete!` or `Destroy complete!` line and then runs
+   `output -json`, captured rather than logged.
 6. Streams the engine's combined output line by line to the `<run_id>/<phase>`
    stream in `RUNNER_LOG_GROUP` and to stdout.
 7. Uploads `plan.tfplan` and `plan.json` on a plan phase and the redacted log on
-   both. Each one is uploaded by first posting its exact byte count to
+   both. An apply also uploads `outputs_json`, the applied outputs with every
+   sensitive value set to null before it leaves the task. That upload is best
+   effort: a failure is logged and the apply still succeeds. Each one is uploaded by first posting its exact byte count to
    `POST /runs/{RUN_ID}/artifact-uploads` as `{artifact, size_bytes}`, then
    PUTting the bytes to the returned `url` with the returned `headers` sent
    verbatim. The URL signs `Content-Type` and `Content-Length`, so a body of any
@@ -80,13 +106,23 @@ the token. The runner then:
    posts `POST /runs/{RUN_ID}/phase-result` and sends task success with
    `{exit_code, changes: {add, change, destroy}}` or task failure.
 
-The engine comes from the bundle's `engine` field, `terraform` or `tofu`.
+The engine comes from the bundle's `engine` field, `terraform` or `tofu`, and its
+version from `engine_version`. An empty pin, or one equal to the release the image
+bakes (read from `version -json`), runs the baked binary. Any other pin must be an
+exact release such as `1.11.0`: the runner downloads that release's linux zip and
+`SHA256SUMS` from `releases.hashicorp.com` or the OpenTofu GitHub releases, checks
+the archive against the listed sum, unpacks it into the run's temporary directory
+and runs it from there. A constraint, a missing release or a checksum mismatch
+fails the phase as `EngineInstallFailed`. The SUMS file's GPG signature is not
+checked, so the download trusts TLS and the publisher's SUMS file.
 
 ## Logging
 
 Every line passes through `app.logs.Redactor` before it reaches CloudWatch Logs,
 stdout or the uploaded log artifact. The run token, the task token, the assumed
-role credentials, the external id and every environment and terraform variable
-value are registered as sensitive. The engine's environment is built without the
+role credentials, the external id and every environment, terraform and HCL variable
+value are registered as sensitive, and an HCL value's string and heredoc
+literals are registered on their own too, since the engine can print a member
+without the rest of the expression. The engine's environment is built without the
 runner's own tokens and without the task role's container credentials, so a
 provider that dumps its environment cannot leak them.

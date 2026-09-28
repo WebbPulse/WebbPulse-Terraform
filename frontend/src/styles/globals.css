@@ -33,6 +33,7 @@
   --color-accent-hover: var(--color-brand-600);
   --color-accent-soft: var(--color-brand-50);
   --color-accent-line: var(--color-brand-100);
+  --color-accent-contrast: #ffffff;
 
   --color-success: #00781e;
   --color-success-soft: #e7f9ec;
@@ -47,6 +48,22 @@
   --color-running-soft: #f7f0ff;
   --color-running-line: #e2cbfb;
 
+  --color-add: #00781e;
+  --color-add-soft: #e7f9ec;
+  --color-add-line: #a9e3b7;
+  --color-change: #9e4b00;
+  --color-change-soft: #fff7e5;
+  --color-change-line: #f6d6a1;
+  --color-destroy: #c00005;
+  --color-destroy-soft: #fff0f0;
+  --color-destroy-line: #f9c4c4;
+  --color-replace: #6c2bd9;
+  --color-replace-soft: #f5f0ff;
+  --color-replace-line: #ddcbfa;
+  --color-read: #0c56e9;
+  --color-read-soft: #f2f8ff;
+  --color-read-line: #cce3fe;
+
   --color-code: #0c0c0e;
   --color-code-line: #2a2b31;
   --color-code-text: #dedfe3;
@@ -60,10 +77,80 @@
     'Courier New', monospace;
 }
 
+@layer theme {
+  :root[data-theme='dark'] {
+    --color-surface-0: #161920;
+    --color-surface-50: #0f1116;
+    --color-surface-100: #1d212a;
+    --color-surface-200: #262b36;
+    --color-surface-300: #333946;
+    --color-surface-400: #454c5c;
+    --color-surface-500: #6b7385;
+    --color-surface-600: #98a0b0;
+    --color-surface-700: #c3c9d4;
+    --color-surface-800: #e2e6ed;
+    --color-surface-900: #f4f6fa;
+
+    --color-bg: #0f1116;
+    --color-panel: #161920;
+    --color-raised: #1d212a;
+    --color-line: #262b36;
+    --color-line-strong: #333946;
+    --color-text: #c3c9d4;
+    --color-text-strong: #f4f6fa;
+    --color-text-muted: #98a0b0;
+    --color-text-faint: #7b8394;
+    --color-accent: #4d9fff;
+    --color-accent-hover: #74b4ff;
+    --color-accent-soft: #14263d;
+    --color-accent-line: #1e3c5f;
+    --color-accent-contrast: #08101c;
+
+    --color-success: #46c76a;
+    --color-success-soft: #10241a;
+    --color-success-line: #1d4430;
+    --color-warning: #e0a23c;
+    --color-warning-soft: #261d10;
+    --color-warning-line: #47351a;
+    --color-danger: #ff6b63;
+    --color-danger-soft: #2a1618;
+    --color-danger-line: #4d2426;
+    --color-running: #b184f5;
+    --color-running-soft: #1f1830;
+    --color-running-line: #372a53;
+
+    --color-add: #3fb950;
+    --color-add-soft: #10241a;
+    --color-add-line: #1d4430;
+    --color-change: #d29922;
+    --color-change-soft: #261d10;
+    --color-change-line: #47351a;
+    --color-destroy: #f85149;
+    --color-destroy-soft: #2a1618;
+    --color-destroy-line: #4d2426;
+    --color-replace: #a371f7;
+    --color-replace-soft: #1f1830;
+    --color-replace-line: #372a53;
+    --color-read: #58a6ff;
+    --color-read-soft: #14263d;
+    --color-read-line: #1e3c5f;
+
+    --color-code: #0a0c11;
+    --color-code-line: #262b36;
+    --color-code-text: #d3d9e3;
+    --color-code-muted: #7b8394;
+  }
+}
+
 @layer base {
   html {
     color-scheme: light;
     scrollbar-color: var(--color-surface-400) transparent;
+  }
+
+  html[data-theme='dark'] {
+    color-scheme: dark;
+    scrollbar-color: var(--color-surface-300) transparent;
   }
 
   body {
@@ -72,7 +159,7 @@
   }
 
   ::selection {
-    background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 30%, transparent);
   }
 
   :focus-visible {

@@ -4,15 +4,29 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, type AnyAuthClient } from '@webbpulse/auth/react';
 
 import { api } from './api';
-import { Layout, RequireAuth, RequireGuest } from './components';
 import {
+  Layout,
+  RequireAuth,
+  RequireGuest,
+  StepUpBoundary,
+} from './components';
+import {
+  ApiKeys,
+  ConnectModule,
+  GitHubCreated,
+  GitHubSettings,
+  GitHubSetup,
+  ModuleDetail,
+  NewWorkspace,
   NotFound,
+  Registry,
   RunDetail,
   Runs,
   SignIn,
   Workspaces,
   workspaceRoutes,
 } from './pages';
+import { ThemeProvider } from './theme';
 import './styles/globals.css';
 
 /** The routes, so a test can mount them inside its own router. */
@@ -36,9 +50,20 @@ export function AppRoutes(): React.ReactElement {
       >
         <Route path="/" element={<Navigate to="/workspaces" replace />} />
         <Route path="/workspaces" element={<Workspaces />} />
+        <Route path="/workspaces/new" element={<NewWorkspace />} />
         {workspaceRoutes()}
         <Route path="/runs" element={<Runs />} />
         <Route path="/runs/:runId" element={<RunDetail />} />
+        <Route path="/registry" element={<Registry />} />
+        <Route path="/registry/new" element={<ConnectModule />} />
+        <Route
+          path="/registry/:namespace/:name/:provider"
+          element={<ModuleDetail />}
+        />
+        <Route path="/settings/api-keys" element={<ApiKeys />} />
+        <Route path="/settings/github" element={<GitHubSettings />} />
+        <Route path="/settings/github/created" element={<GitHubCreated />} />
+        <Route path="/settings/github/setup" element={<GitHubSetup />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>
@@ -50,15 +75,24 @@ export function AppRoutes(): React.ReactElement {
  *
  * `AuthProvider` is given the API's own auth client, so the session the guards
  * read is the one the API client refreshes through rather than a second copy
- * with its own token.
+ * with its own token. `StepUpBoundary` inside it owns the one password prompt
+ * every step-up gated call goes through. The router commits each navigation synchronously rather
+ * inside a transition, so the page on screen always follows the address bar even
+ * while polled pages keep rendering. `ThemeProvider` sits outside it, because the theme is a
+ * property of the browser rather than of the session and should survive a sign
+ * out.
  */
 export function App(): React.ReactElement {
   return (
-    <BrowserRouter>
-      <AuthProvider client={api.getAuthClient() as unknown as AnyAuthClient}>
-        <AppRoutes />
-      </AuthProvider>
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter useTransitions={false}>
+        <AuthProvider client={api.getAuthClient() as unknown as AnyAuthClient}>
+          <StepUpBoundary>
+            <AppRoutes />
+          </StepUpBoundary>
+        </AuthProvider>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }
 

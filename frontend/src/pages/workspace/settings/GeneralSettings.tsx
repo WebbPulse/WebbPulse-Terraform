@@ -12,9 +12,8 @@ import {
   INPUT_CLASS,
 } from '../../../components';
 import { useWorkspace } from '../../workspaceContext';
-
-/** The engines a workspace can run. */
-const ENGINES: readonly Engine[] = ['terraform', 'tofu'];
+import { EngineFields } from '../EngineFields';
+import { engineVersionProblem } from '../engineVersions';
 
 /** The engine to edit, defaulted the way the backend defaults an absent one. */
 function engineOf(workspace: Workspace): Engine {
@@ -43,8 +42,10 @@ function SettingsForm({
   queryKey: string;
 }): React.ReactElement {
   const [description, setDescription] = useState(workspace.description ?? '');
-  const [engine, setEngine] = useState<Engine>(engineOf(workspace));
-  const [engineVersion, setEngineVersion] = useState(workspace.engine_version);
+  const [engine, setEngine] = useState(() => ({
+    engine: engineOf(workspace),
+    version: workspace.engine_version,
+  }));
   const [workingDirectory, setWorkingDirectory] = useState(
     workspace.working_directory ?? ''
   );
@@ -52,8 +53,10 @@ function SettingsForm({
 
   useEffect(() => {
     setDescription(workspace.description ?? '');
-    setEngine(engineOf(workspace));
-    setEngineVersion(workspace.engine_version);
+    setEngine({
+      engine: engineOf(workspace),
+      version: workspace.engine_version,
+    });
     setWorkingDirectory(workspace.working_directory ?? '');
   }, [workspace]);
 
@@ -61,8 +64,8 @@ function SettingsForm({
     () =>
       api.updateWorkspace(workspace.workspace_id, {
         description,
-        engine,
-        engine_version: engineVersion,
+        engine: engine.engine,
+        engine_version: engine.version.trim().replace(/^v/, ''),
         working_directory: workingDirectory,
       }),
     queryKey
@@ -115,42 +118,18 @@ function SettingsForm({
           />
         )}
       </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Engine">
-          {(control) => (
-            <select
-              {...control}
-              value={engine}
-              onChange={(event) => {
-                setEngine(event.target.value as Engine);
-              }}
-              className={INPUT_CLASS}
-            >
-              {ENGINES.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          )}
-        </Field>
-        <Field label="Engine version">
-          {(control) => (
-            <input
-              {...control}
-              required
-              value={engineVersion}
-              onChange={(event) => {
-                setEngineVersion(event.target.value);
-              }}
-              className={`${INPUT_CLASS} font-mono`}
-            />
-          )}
-        </Field>
-      </div>
+      <EngineFields
+        key={`${workspace.workspace_id}:${workspace.engine_version}`}
+        value={engine}
+        onChange={setEngine}
+      />
       <Field
         label="Working directory"
-        hint="Relative to the root of the uploaded archive."
+        hint={
+          workspace.vcs_repo
+            ? 'Relative to the root of the repository.'
+            : 'Relative to the root of the uploaded archive.'
+        }
       >
         {(control) => (
           <input
@@ -171,6 +150,7 @@ function SettingsForm({
           variant="primary"
           busy={isMutating}
           busyLabel="Saving the workspace"
+          disabled={engineVersionProblem(engine.version) !== null}
         >
           Save settings
         </Button>

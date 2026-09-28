@@ -23,12 +23,16 @@ the prefix `webbpulse-terraform-<slug>`. Both accounts are `us-west-2`.
 | Slug | `staging` | `prod` |
 | Frontend host | `staging.terraform.webbpulse.com` | `terraform.webbpulse.com` |
 | API host | `api.staging.terraform.webbpulse.com` | `api.terraform.webbpulse.com` |
-| `identity_jwt_mode` | `gate` | `native` |
+| `identity_jwt_mode` | `gate` | `lambda` |
 | Access gate | optional, `var.staging_access_gate` | never |
 
 Custom domains and the gate require `var.staging_profile` of `full` together with
 `var.route53_zone_id`. With `reduced` the hostnames fall back to the CloudFront
-and HTTP API endpoints, and the CORS origin follows.
+and HTTP API endpoints, and the CORS origin follows. With custom domains on, the
+default `execute-api` endpoint is disabled, so the API answers only on its host.
+
+Production must run `identity_jwt_mode` as `lambda` or `native`: the plan fails on
+`gate` or `off` there, since neither enforces anything without the staging gate.
 
 ## Repository layout
 
@@ -50,7 +54,7 @@ Two buckets, each with its own KMS key, both created by the platform
 | Bucket | Holds | Lifecycle |
 | --- | --- | --- |
 | `webbpulse-terraform-<slug>-state` | Workspace state at `workspaces/<workspace_id>/terraform.tfstate` | Noncurrent versions expire after 365 days, 10 kept |
-| `webbpulse-terraform-<slug>-artifacts` | Config tarballs under `configs/`, plan artifacts and phase logs under `runs/` | Both prefixes expire after `var.artifact_retention_days`, default 90 |
+| `webbpulse-terraform-<slug>-artifacts` | Config tarballs under `configs/`, plan artifacts and phase logs under `runs/`, VCS ingest tarballs under `ingest/` | `configs/` and `runs/` expire after `var.artifact_retention_days`, default 90; `ingest/` after three days |
 
 The artifacts bucket allows CORS `PUT` from the frontend origin so a
 configuration version uploads straight to S3 over a presigned URL. The runner
@@ -61,16 +65,17 @@ State locking is Terraform's native S3 lockfile, which is why the engine floor i
 
 ## DynamoDB
 
-Five tables, prefixed `webbpulse-terraform-<slug>-`, with point in time recovery
+Six tables, prefixed `webbpulse-terraform-<slug>-`, with point in time recovery
 on and deletion protection in production.
 
 | Table | Key | Index |
 | --- | --- | --- |
-| `workspaces` | `workspace_id` | `by_name` on `name` |
+| `workspaces` | `workspace_id` | `by_name` on `name`, `by_vcs_repo` on `vcs_repo_key`, `by_vcs_repository_id` on `vcs_repository_id` |
 | `runs` | `run_id` | `by_workspace` on `workspace_id`, range `created_at` |
 | `variables` | `workspace_id`, range `key` | none |
 | `config-versions` | `config_version_id` | `by_workspace` on `workspace_id`, range `created_at` |
 | `users` | `id` | `email_lower-index` on `email_lower` |
+| `vcs-uploads` | `upload_id` | none, TTL on `expires_at` |
 
 The `runs` table also holds the concurrency semaphore as a single item with
 `run_id` of `run-semaphore`, whose `holders` string set the state machine adds to
@@ -78,8 +83,8 @@ and removes from. `var.run_concurrency_cap`, default 2, is the size it is
 condition checked against.
 
 The `workspaces` domain owns `workspaces`, `variables`, `config-versions` and
-`users`, and reads `runs`; the `runs` domain owns `runs` and reads the other
-three. The identity module creates ten tables of its own beside these, for
+`users`, and reads `runs`; the `runs` domain owns `runs` and `vcs-uploads` and
+reads the other four. VCS ingest is described in `backend/README.md`. The identity module creates ten tables of its own beside these, for
 credentials, refresh tokens, second factors and the rest, and `users` is the only
 account row this control plane keeps.
 
@@ -88,13 +93,15 @@ account row this control plane keeps.
 Every route is mounted under `/api/v1` and reached through the HTTP API. Every
 product route is marked `require_identity_jwt`. A person arrives with a JWT the
 gateway authorizer verified. An agent arrives with a `wpk_` API key, which the
-gate authorizer passes through by prefix (`identity_jwt.api_key_prefixes`) and
-`claims_or_api_key` verifies in process. Both render as the same claims, so a
+gateway authorizer (the staging gate, or the `lambda` mode REQUEST authorizer in
+production) passes through by prefix (`identity_jwt.api_key_prefixes`) and
+`claims_or_api_key` verifies in process, reloading the owner on every request so a
+disabled or demoted owner's keys lose their scopes at once. Both render as the same claims, so a
 scope guard cannot tell them apart. The two runner routes carry no gateway
 authorizer and are gated in the application on a run token bound to the run in
 the path. API Gateway's native JWT authorizer refuses any non-JWT bearer, so
-`native` mode cannot admit agent keys on product routes; production needs the
-gate's Lambda authorizer or an equivalent before agents can use it.
+`native` mode cannot admit agent keys on product routes, which is why production
+uses `lambda`.
 
 | Route | Scope |
 | --- | --- |
@@ -124,7 +131,17 @@ gate's Lambda authorizer or an equivalent before agents can use it.
 | `POST /runs/{run_id}/phase-result` | run token |
 
 `runs:apply` exists so confirming an apply can be granted separately from
-creating or cancelling a run. The identity routes under `/api/auth` come from the
+creating or cancelling a run.
+
+`DELETE /workspaces/{workspace_id}` follows HCP Terraform's safe delete. It is a
+409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current state tracks any
+resource instance, so apply a destroy run first, or pass `?force=true` to delete
+anyway and leave those resources unmanaged. Either mode is a 409 carrying
+`WORKSPACE_HAS_ACTIVE_RUN` while a run on the workspace has not finished. A
+delete removes the workspace's finished runs, its current state object (the
+versioned bucket keeps the history behind a delete marker), its variables and
+then the workspace row, so a failure part way leaves the workspace in place for a
+retry. Config versions are left to the artifacts bucket lifecycle. The identity routes under `/api/auth` come from the
 shared identity module and are served by the `workspaces` function.
 
 ### Agent API keys
@@ -143,6 +160,13 @@ What is gated is the credential kind: minting requires a signed-in person and
 refuses an API key actor with `API_KEY_ACTOR_FORBIDDEN`, because a key able to
 mint its successor would outlive being revoked. Listing and revoking stay open to
 a key so a service can rotate the credential it is holding.
+
+Every new key expires: 90 days out when the request names no `expires_at`, and
+no later than 365 days out when it does (422 otherwise). Keys minted before this
+rule keep the expiry they had. On every request a key's stored scopes are
+intersected with what its owner holds now (`auth.key_owner_scopes`, read from the
+`users` table), so a demoted admin's keys fall to the read scopes and a disabled,
+unverified or deleted owner's keys hold nothing.
 
 The confirmations queue consumer is mounted outside `/api/v1`, on the Lambda Web
 Adapter's pass-through path, so the HTTP API never routes it.
@@ -193,7 +217,9 @@ off, so it never reaches the execution log. The states in order:
 1. `AcquireSemaphore` adds the run to the `holders` set, condition checked
    against the cap, retrying every 15 seconds up to 240 times.
 2. `Plan` runs the plan task definition with `runTask.waitForTaskToken`, timing
-   out at `var.plan_timeout_seconds`, default 1800, with a 600 second heartbeat.
+   out at `var.plan_timeout_seconds`, default 1800, with a heartbeat of
+   `var.task_heartbeat_seconds`, default 1800. The runner sends no heartbeats, so
+   the heartbeat is the budget for the task to start and finish.
 3. `PlanOutcome` chooses: a plan only run, or one whose add, change and destroy
    counts are all zero, goes straight to `MarkPlannedAndFinished`; anything else
    goes to `AwaitConfirmation`.
@@ -224,8 +250,9 @@ A linux/arm64 image on Fargate, one task per phase, launched into the public
 subnets of the runner VPC. The task definition supplies `TF_IN_AUTOMATION`,
 `ENVIRONMENT`, `AWS_REGION_NAME`, `PHASE` and `RUNNER_LOG_GROUP`; the state
 machine's container overrides add `RUN_ID`, `WORKSPACE_ID`, `PHASE`,
-`TASK_TOKEN`, `RUN_TOKEN` and `API_BASE_URL`. `RunnerEnv` requires `RUN_ID`,
-`PHASE`, `TASK_TOKEN`, `API_BASE_URL`, `RUN_TOKEN` and `RUNNER_LOG_GROUP`.
+`TASK_TOKEN` and `API_BASE_URL`. `RunnerEnv` requires `RUN_ID`, `PHASE`,
+`TASK_TOKEN`, `API_BASE_URL` and `RUNNER_LOG_GROUP`. The run token comes only from
+the runner token exchange; a failed exchange fails the phase.
 
 The runner fetches `GET /api/v1/runs/{run_id}/bundle` with the run token as
 bearer. The bundle is the only response in the API carrying decrypted variable
@@ -237,6 +264,7 @@ shape is `Bundle` in `runner/app/models.py`, which the backend serves exactly:
 | `run_id`, `workspace_id` | The run and its workspace |
 | `phase` | Derived from the run's status, never taken from the caller |
 | `plan_only` | Whether the run stops after the plan |
+| `is_destroy` | Whether the plan phase runs `plan -destroy`; the apply applies the saved plan either way |
 | `engine`, `engine_version` | `terraform` or `tofu`, and the pinned version |
 | `working_directory` | Directory within the configuration to run the engine from, empty for the root |
 | `config_url` | Presigned GET for the config tarball |
@@ -246,9 +274,9 @@ shape is `Bundle` in `runner/app/models.py`, which the backend serves exactly:
 | `artifacts` | `plan_put_url`, `plan_json_put_url`, `plan_get_url`, `log_put_url` |
 
 The session policy is read only for a plan and unrestricted for an apply. The
-runner models the nested objects, `engine_version` and `working_directory`, and
-ignores `phase` and `plan_only`, which state what the API served rather than
-instructing it: the runner takes its phase from `PHASE`.
+runner models the nested objects, `engine_version`, `working_directory` and
+`is_destroy`, and ignores `phase` and `plan_only`, which state what the API
+served rather than instructing it: the runner takes its phase from `PHASE`.
 
 Presigned URLs live for one hour and all four objects sit under `runs/<run_id>/`
 in the artifacts bucket, which is the prefix the bucket's lifecycle rule expires.
@@ -273,7 +301,7 @@ first, and the engine's environment is built without the runner's own tokens.
 Ids are a prefix plus a ULID, matching `^<prefix>-[0-9A-HJKMNP-TV-Z]{26}$`:
 `ws-` for a workspace, `cv-` for a configuration version, `run-` for a run.
 
-A run token is a `wpk_` key the runs domain mints when the run starts, carrying
+A run token is a `wpk_` key the runs domain mints when a runner task proves its identity, carrying
 the `runner` scope, an expiry four hours out, and the run id as its subject. The
 plaintext exists once, at mint time. It is not interchangeable with an agent key:
 the guard checks the key verifies, carries the `runner` scope, and is bound to
@@ -291,6 +319,11 @@ workspace id as the external id, and allowed nothing but that workspace's state
 object, its lock, the state bucket listing and the state KMS key. The steps, from
 creating the workspace to confirming the apply, are in
 `examples/first-run/README.md`.
+
+VCS driven runs are proven in `WebbPulse/webbpulse-terraform-staging-e2e`, the
+staging end-to-end test repository holding the same configuration and the upload
+workflow. The staging GitHub App is installed there and not on this repository, and the staging
+`first-run` workspace is bound to it.
 
 ## Pins
 

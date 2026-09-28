@@ -12,7 +12,7 @@ export interface Crumb {
 /** Props for {@link PageHeader}. */
 export interface PageHeaderProps {
   title: ReactNode;
-  /** The trail above the title, the current page left off. */
+  /** The trail above the title, the current page left off, with separators only between crumbs. */
   crumbs?: readonly Crumb[];
   /** One line under the title. */
   description?: ReactNode;
@@ -39,8 +39,13 @@ export function PageHeader({
         {crumbs.length === 0 ? null : (
           <nav aria-label="Breadcrumb" className="mb-1 text-xs text-text-faint">
             <ol className="flex items-center gap-1.5">
-              {crumbs.map((crumb) => (
+              {crumbs.map((crumb, index) => (
                 <li key={crumb.label} className="flex items-center gap-1.5">
+                  {index === 0 ? null : (
+                    <span aria-hidden="true" className="text-line-strong">
+                      /
+                    </span>
+                  )}
                   {crumb.to === undefined ? (
                     <span>{crumb.label}</span>
                   ) : (
@@ -51,9 +56,6 @@ export function PageHeader({
                       {crumb.label}
                     </Link>
                   )}
-                  <span aria-hidden="true" className="text-line-strong">
-                    /
-                  </span>
                 </li>
               ))}
             </ol>

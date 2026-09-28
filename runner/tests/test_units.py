@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -13,17 +15,30 @@ import pytest
 
 from app import workspace
 from app.api import ApiError, RunnerApi
-from app.credentials import CredentialsError, assume_run_role
-from app.engine import build_environment, parse_changes
+from app.engine import build_environment, parse_apply_changes, parse_changes
+from app.install import release_urls
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
-from app.models import BackendConfig, Bundle, Changes, PhaseResult, RunRole
+from app.main import redact_outputs
+from app.models import (
+    BackendConfig,
+    Bundle,
+    Changes,
+    PhaseResult,
+    VendedCredentials,
+    hcl_literal_fragments,
+    token_variable,
+)
 from tests.conftest import (
     LOG_GROUP,
     PLAN_JSON_NO_CHANGES,
     PLAN_JSON_WITH_CHANGES,
+    PROVIDER_SECRET_ACCESS_KEY,
+    PROVIDER_SESSION_TOKEN,
     RUN_ID,
     SECRET_ENVVAR,
     SECRET_TFVAR,
+    STATE_SECRET_ACCESS_KEY,
+    STATE_SESSION_TOKEN,
     WORKSPACE_ID,
     ApiRecorder,
     bundle_payload,
@@ -53,6 +68,7 @@ def test_backend_override_sets_native_locking() -> None:
         key=f"workspaces/{WORKSPACE_ID}/terraform.tfstate",
         region="us-west-2",
         kms_key_id="arn:aws:kms:us-west-2:870550636948:key/abc",
+        credentials=VendedCredentials(access_key_id="a", secret_access_key="b", session_token="c"),
     )
     body = workspace.write_backend_override(directory, backend).read_text()
     assert 'bucket       = "webbpulse-terraform-staging-state"' in body
@@ -60,6 +76,7 @@ def test_backend_override_sets_native_locking() -> None:
     assert 'region       = "us-west-2"' in body
     assert 'kms_key_id   = "arn:aws:kms:us-west-2:870550636948:key/abc"' in body
     assert "use_lockfile = true" in body
+    assert f'workspace_key_prefix = "workspaces/{WORKSPACE_ID}/env"' in body
 
 
 def test_tfvars_are_written_owner_only(tmp_path: Path) -> None:
@@ -210,13 +227,14 @@ def test_build_environment_drops_the_runner_tokens(tmp_path: Path) -> None:
     assert environment["AWS_REGION"] == "us-west-2"
 
 
-def test_bundle_sensitive_values_cover_variables_and_external_id(run_role_arn: str) -> None:
-    """Every variable value and the external id are registered as sensitive."""
+def test_bundle_sensitive_values_cover_variables_and_vended_keys(run_role_arn: str) -> None:
+    """Every variable value and both vended sessions' secrets are registered as sensitive."""
     bundle = Bundle.model_validate(bundle_payload(run_role_arn))
     values = bundle.sensitive_values()
     assert SECRET_TFVAR in values
     assert SECRET_ENVVAR in values
-    assert WORKSPACE_ID in values
+    for secret in (PROVIDER_SECRET_ACCESS_KEY, PROVIDER_SESSION_TOKEN, STATE_SECRET_ACCESS_KEY, STATE_SESSION_TOKEN):
+        assert secret in values
 
 
 def test_bundle_ignores_the_api_only_top_level_fields(run_role_arn: str) -> None:
@@ -229,8 +247,9 @@ def test_bundle_ignores_the_api_only_top_level_fields(run_role_arn: str) -> None
     payload = bundle_payload(run_role_arn)
     payload |= {"phase": "plan", "plan_only": False, "working_directory": "infra"}
     bundle = Bundle.model_validate(payload)
-    assert bundle.engine_version == "1.16.3"
-    assert bundle.run_role.duration_seconds == 3600
+    assert bundle.engine_version == "1.16.4"
+    assert bundle.run_role_arn == run_role_arn
+    assert bundle.is_destroy is False
 
 
 def test_log_sink_creates_the_stream_and_redacts(aws: None, capsys: pytest.CaptureFixture[str]) -> None:
@@ -258,84 +277,6 @@ def test_log_sink_swallows_delivery_failures(aws: None) -> None:
     sink.write("a line")
     sink.flush()
     assert sink.lines == ["a line"]
-
-
-def test_assume_role_passes_the_external_id_and_policy(aws: None, run_role_arn: str) -> None:
-    """The run role is assumed with the workspace id as the external id."""
-    role = RunRole(
-        role_arn=run_role_arn,
-        external_id=WORKSPACE_ID,
-        session_policy={
-            "Version": "2012-10-17",
-            "Statement": [{"Effect": "Allow", "Action": "s3:Get*", "Resource": "*"}],
-        },
-    )
-    exported = assume_run_role(boto3.client("sts", region_name="us-west-2"), role, "run-01JTEST", "plan")
-    assert set(exported) == {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
-
-
-def test_assume_role_failure_is_wrapped(aws: None) -> None:
-    """A rejected assume role surfaces as a CredentialsError naming the cause.
-
-    The botocore message is carried through because it names the malformed
-    field or the denied action and holds no credential material.
-    """
-    role = RunRole(role_arn="not-an-arn", external_id=WORKSPACE_ID)
-    with pytest.raises(CredentialsError):
-        assume_run_role(boto3.client("sts", region_name="us-west-2"), role, "run-01JTEST", "plan")
-
-
-class _RecordingSTS:
-    """An STS stand in that records the assume role request and returns credentials."""
-
-    def __init__(self) -> None:
-        """Start with no recorded request."""
-        self.request: dict[str, object] = {}
-
-    def assume_role(self, **kwargs: object) -> dict[str, dict[str, str]]:
-        """Record the request and hand back a fixed credential triple."""
-        self.request = kwargs
-        return {
-            "Credentials": {
-                "AccessKeyId": "AKIAEXAMPLE",
-                "SecretAccessKey": "secret",
-                "SessionToken": "token",
-            }
-        }
-
-
-def test_assume_role_passes_the_managed_policy_arns() -> None:
-    """A plan role's managed policies reach STS as PolicyArns.
-
-    The plan phase expresses "read everything" with the managed ReadOnlyAccess
-    policy, so losing this argument would silently strip a plan's reads.
-    """
-    client = _RecordingSTS()
-    role = RunRole(
-        role_arn="arn:aws:iam::870550636948:role/run",
-        external_id=WORKSPACE_ID,
-        session_policy={"Version": "2012-10-17", "Statement": []},
-        session_policy_arns=["arn:aws:iam::aws:policy/ReadOnlyAccess"],
-    )
-    assume_run_role(client, role, "run-01JTEST", "plan")  # type: ignore[arg-type]
-    assert client.request["PolicyArns"] == [{"arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}]
-
-
-def test_assume_role_omits_policy_arns_when_there_are_none() -> None:
-    """An apply role sends no PolicyArns key at all.
-
-    STS rejects an empty PolicyArns list, so the key has to be absent rather
-    than present and empty.
-    """
-    client = _RecordingSTS()
-    role = RunRole(
-        role_arn="arn:aws:iam::870550636948:role/run",
-        external_id=WORKSPACE_ID,
-        session_policy={"Version": "2012-10-17", "Statement": []},
-    )
-    assume_run_role(client, role, "run-01JTEST", "apply")  # type: ignore[arg-type]
-    assert "PolicyArns" not in client.request
-    assert "Policy" in client.request
 
 
 def test_upload_requests_the_url_for_the_exact_size(aws: None, config_tarball: bytes) -> None:
@@ -434,3 +375,224 @@ def test_a_refused_put_is_an_api_error(aws: None, config_tarball: bytes) -> None
 
     with pytest.raises(ApiError, match="403"):
         api.upload_text("log", "a transcript")
+
+
+def test_hcl_tfvars_are_written_unquoted(tmp_path: Path) -> None:
+    """An HCL expression reaches the native tfvars file exactly as it was stored.
+
+    Quoting it would turn a list into an eight character string and hand a
+    `list(string)` input variable the wrong type without anything failing.
+    """
+    path = workspace.write_hcl_tfvars(tmp_path, {"subnets": '["a", "b"]', "count": "2"})
+    assert path is not None
+    assert path.name == workspace.HCL_TFVARS_FILENAME
+    body = path.read_text()
+    assert 'subnets = (\n["a", "b"]\n)' in body
+    assert "count = (\n2\n)" in body
+    assert '"["a", "b"]"' not in body
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_hcl_tfvars_keep_a_multi_line_expression_on_one_assignment(tmp_path: Path) -> None:
+    """A map or heredoc spans lines without running into the next assignment."""
+    expression = '{\n  env  = "staging"\n  size = 2\n}'
+    path = workspace.write_hcl_tfvars(tmp_path, {"a": expression, "settings": expression})
+    assert path is not None
+    body = path.read_text()
+    assert f"settings = (\n{expression}\n)" in body
+    assert body.endswith("\n")
+
+
+def test_no_hcl_tfvars_file_without_hcl_variables(tmp_path: Path) -> None:
+    """A workspace with only literal variables gets no native tfvars file at all."""
+    assert workspace.write_hcl_tfvars(tmp_path, {}) is None
+
+
+def test_hcl_tfvars_refuse_a_name_that_is_not_an_identifier(tmp_path: Path) -> None:
+    """A name is written unquoted, so anything but an identifier is refused."""
+    with pytest.raises(workspace.ConfigError, match="valid HCL identifier"):
+        workspace.write_hcl_tfvars(tmp_path, {'a" = "b\nevil': '"x"'})
+
+
+def test_a_literal_with_hcl_punctuation_stays_literal(tmp_path: Path) -> None:
+    """A literal goes to the JSON file, where its punctuation cannot be reread.
+
+    JSON is what makes this safe: the value is the JSON string it is, so quotes,
+    braces and `${` in it are characters rather than syntax.
+    """
+    value = '${var.nope} "quoted" {braces} ["a"]'
+    path = workspace.write_tfvars(tmp_path, {"literal": value})
+    assert path is not None
+    assert json.loads(path.read_text()) == {"literal": value}
+
+
+def test_prepare_writes_both_variable_files(tmp_path: Path, run_role_arn: str, config_tarball: bytes) -> None:
+    """Literal and HCL variables land in their own files in the working directory."""
+    archive = tmp_path / "config.tar.gz"
+    archive.write_bytes(config_tarball)
+    payload = bundle_payload(run_role_arn) | {"hcl_variables": {"subnets": '["a", "b"]'}}
+    bundle = Bundle.model_validate(payload)
+    root = tmp_path / "config"
+    root.mkdir()
+
+    target = workspace.prepare(root, bundle, archive)
+
+    assert (target / workspace.TFVARS_FILENAME).exists()
+    assert 'subnets = (\n["a", "b"]\n)' in (target / workspace.HCL_TFVARS_FILENAME).read_text()
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        '# leading comment\n["a", "b"]',
+        '["a", "b"] // trailing comment',
+        'true ?\n["a"] :\n["b"]',
+        "<<-END-TEXT\n  body\n  END-TEXT",
+        '"$${unfinished"',
+        '"%%{unfinished"',
+    ],
+)
+def test_hcl_file_parses_with_terraform(tmp_path: Path, expression: str) -> None:
+    """The real parser accepts grouped values beside a second assignment."""
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        pytest.skip("Terraform is not installed")
+    path = workspace.write_hcl_tfvars(tmp_path, {"example": expression, "neighbor": "true"})
+    assert path is not None
+    result = subprocess.run(
+        [terraform, "fmt", "-write=false", "-list=false", str(path)],
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0
+
+
+def test_prepare_writes_no_hcl_file_for_a_bundle_without_the_field(
+    tmp_path: Path, run_role_arn: str, config_tarball: bytes
+) -> None:
+    """A bundle from a control plane that predates the flag is unchanged."""
+    archive = tmp_path / "config.tar.gz"
+    archive.write_bytes(config_tarball)
+    bundle = Bundle.model_validate(bundle_payload(run_role_arn))
+    root = tmp_path / "config"
+    root.mkdir()
+
+    target = workspace.prepare(root, bundle, archive)
+
+    assert bundle.hcl_variables == {}
+    assert not (target / workspace.HCL_TFVARS_FILENAME).exists()
+
+
+def test_bundle_sensitive_values_cover_hcl_variables(run_role_arn: str) -> None:
+    """A sensitive HCL expression is registered for redaction like any other value.
+
+    The expression itself is the secret when the variable is sensitive, so it is
+    the expression that has to be masked before any line is emitted.
+    """
+    payload = bundle_payload(run_role_arn) | {"hcl_variables": {"secrets": f'["{SECRET_TFVAR}"]'}}
+    bundle = Bundle.model_validate(payload)
+    assert f'["{SECRET_TFVAR}"]' in bundle.sensitive_values()
+
+    redactor = Redactor(bundle.sensitive_values())
+    assert SECRET_TFVAR not in redactor.scrub(f'subnets = ["{SECRET_TFVAR}"]')
+
+
+def test_a_sensitive_hcl_member_is_masked_when_printed_alone(run_role_arn: str) -> None:
+    """The engine prints a list member or map value on its own line, so each is masked."""
+    payload = bundle_payload(run_role_arn) | {
+        "hcl_variables": {"secrets": f'{{ token = "{SECRET_TFVAR}", other = "second-secret" }}'}
+    }
+    redactor = Redactor(Bundle.model_validate(payload).sensitive_values())
+    assert SECRET_TFVAR not in redactor.scrub(f'      + token = "{SECRET_TFVAR}"')
+    assert "second-secret" not in redactor.scrub("second-secret")
+
+
+def test_escaped_quoted_literals_are_masked_as_the_engine_prints_them() -> None:
+    """A string with escapes is registered both raw and decoded."""
+    fragments = hcl_literal_fragments('["tab\\there", "quote\\"d"]')
+    assert "tab\\there" in fragments
+    assert "tab\there" in fragments
+    assert 'quote"d' in fragments
+
+
+def test_heredoc_bodies_and_lines_are_masked() -> None:
+    """A heredoc body is registered whole and line by line, trimmed of indentation."""
+    fragments = hcl_literal_fragments("<<-EOT\n  first-line\n  second-line\n  EOT")
+    assert "first-line" in fragments
+    assert "second-line" in fragments
+    assert "  first-line\n  second-line" in fragments
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["1", "true", '"${var.x}"', '"\\u12"', "<<EOT\nno end", '"unterminated', '"\\', "<<-\n"],
+)
+def test_fragment_extraction_never_refuses_a_value(expression: str) -> None:
+    """Extraction is best effort: a short, dynamic or odd expression still yields itself."""
+    assert expression in hcl_literal_fragments(expression)
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        (["Apply complete! Resources: 1 added, 2 changed, 3 destroyed."], Changes(add=1, change=2, destroy=3)),
+        (["Apply complete! Resources: 4 imported, 1 added, 0 changed, 0 destroyed."], Changes(add=1)),
+        (["Destroy complete! Resources: 5 destroyed."], Changes(destroy=5)),
+        (["Apply complete! Resources: 1 added, 0 changed, 0 destroyed.", "noise"], Changes(add=1)),
+        (["no summary here"], None),
+    ],
+)
+def test_apply_counts_come_from_the_engine_summary(lines: list[str], expected: Changes | None) -> None:
+    """The closing summary line is the apply's own record of what it changed."""
+    assert parse_apply_changes(lines) == expected
+
+
+def test_redact_outputs_drops_sensitive_values() -> None:
+    """A sensitive output keeps its name and type but loses its value."""
+    raw = json.dumps(
+        {
+            "name": {"sensitive": False, "type": "string", "value": "plain"},
+            "token": {"sensitive": True, "type": "string", "value": "hidden"},
+        }
+    )
+    redacted = json.loads(redact_outputs(raw) or "{}")
+    assert redacted["name"]["value"] == "plain"
+    assert redacted["token"] == {"sensitive": True, "type": "string", "value": None}
+    assert redact_outputs("not json") is None
+    assert redact_outputs("[]") is None
+
+
+def test_release_urls_follow_each_projects_layout() -> None:
+    """Terraform and OpenTofu publish their archives and sums under different paths."""
+    assert release_urls("terraform", "1.11.0", "arm64") == (
+        "https://releases.hashicorp.com/terraform/1.11.0/terraform_1.11.0_linux_arm64.zip",
+        "https://releases.hashicorp.com/terraform/1.11.0/terraform_1.11.0_SHA256SUMS",
+        "terraform_1.11.0_linux_arm64.zip",
+    )
+    assert release_urls("tofu", "1.9.0", "amd64") == (
+        "https://github.com/opentofu/opentofu/releases/download/v1.9.0/tofu_1.9.0_linux_amd64.zip",
+        "https://github.com/opentofu/opentofu/releases/download/v1.9.0/tofu_1.9.0_SHA256SUMS",
+        "tofu_1.9.0_linux_amd64.zip",
+    )
+
+
+@pytest.mark.parametrize(
+    ("host", "variable"),
+    [
+        ("terraform.webbpulse.com", "TF_TOKEN_terraform_webbpulse_com"),
+        ("staging.terraform-e2e.webbpulse.com", "TF_TOKEN_staging_terraform__e2e_webbpulse_com"),
+    ],
+)
+def test_token_variables_follow_the_engines_host_encoding(host: str, variable: str) -> None:
+    """Dots become underscores and hyphens double underscores."""
+    assert token_variable(host) == variable
+
+
+def test_the_registry_token_is_a_sensitive_value(run_role_arn: str) -> None:
+    """The redactor holds the registry token like any other secret in the bundle."""
+    bundle = Bundle.model_validate(
+        bundle_payload(run_role_arn) | {"registry": {"hosts": ["terraform.webbpulse.com"], "token": "wpk_abcdefghijkl"}}
+    )
+    assert "wpk_abcdefghijkl" in bundle.sensitive_values()
+    assert bundle.init_environment() == {"TF_TOKEN_terraform_webbpulse_com": "wpk_abcdefghijkl"}

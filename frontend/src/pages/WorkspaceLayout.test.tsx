@@ -1,7 +1,22 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { invalidateQueries } from '@webbpulse/api-client/react';
 import { ApiError } from '@webbpulse/api-client';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
 import { Layout } from '../components/Layout';
@@ -14,6 +29,11 @@ import {
   aWorkspace,
 } from '../test-helpers/fixtures';
 import { runRolePrefix } from '../api/runRoleSetup';
+import type {
+  AwsConnection,
+  RunRoleCheck,
+  RunRoleQuickSetup,
+} from '../api/types';
 import {
   renderWithAuth,
   signedInAuthClient,
@@ -27,6 +47,8 @@ import {
 vi.mock('../api/client', () => apiClientModuleMock());
 
 const { workspaceRoutes } = await import('./workspaceRoutes');
+const { CONNECT_POLL_INTERVAL_MS } =
+  await import('./workspace/ConnectAccountPanel');
 
 /** The role name prefix the fixture's runner may assume. */
 function assumablePrefix(): string {
@@ -34,6 +56,30 @@ function assumablePrefix(): string {
 }
 
 /** Mounts the workspace pages inside the shell at the given path. */
+/** What the check answers while no run has tried the role. */
+const UNVERIFIED = {
+  connected: false,
+  status: 'unverified' as const,
+  account_id: null,
+  error: 'No run has assumed this role yet.',
+  run_id: null,
+  checked_at: null,
+};
+
+/** What the check answers once a run has assumed the role. */
+const CONNECTED = {
+  connected: true,
+  status: 'connected' as const,
+  account_id: '123456789012',
+  error: null,
+  run_id: 'run-01J000000000000000000000',
+  checked_at: '2026-09-17T00:05:00Z',
+};
+
+/** The settings page that holds the run role form once an ARN is saved. */
+const RUN_ROLE_SETTINGS =
+  '/workspaces/ws-01J000000000000000000000/settings/run-role';
+
 function renderDetail(path = '/workspaces/ws-01J000000000000000000000'): void {
   renderWithAuth(
     <Routes>
@@ -57,6 +103,7 @@ describe('WorkspaceLayout', () => {
   beforeEach(() => {
     resetApiMock();
     apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+    apiMock.readRunRoleCheck.mockResolvedValue(UNVERIFIED);
     apiMock.listVariables.mockResolvedValue({
       items: [
         aVariable(),
@@ -110,9 +157,10 @@ describe('WorkspaceLayout', () => {
     renderDetail('/workspaces/ws-01J000000000000000000000/settings/general');
 
     await screen.findByRole('form', { name: 'Workspace settings' });
-    const version = screen.getByLabelText('Engine version');
-    await userEvent.clear(version);
-    await userEvent.type(version, '1.12.0');
+    await userEvent.selectOptions(
+      screen.getByLabelText('Engine version'),
+      '1.15.9'
+    );
     await userEvent.click(
       screen.getByRole('button', { name: 'Save settings' })
     );
@@ -122,9 +170,30 @@ describe('WorkspaceLayout', () => {
       {
         description: 'The platform workspace.',
         engine: 'terraform',
-        engine_version: '1.12.0',
+        engine_version: '1.15.9',
         working_directory: 'terraform',
       }
+    );
+  });
+
+  it('keeps a stored version off the list as a typed one', async () => {
+    apiMock.updateWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail('/workspaces/ws-01J000000000000000000000/settings/general');
+
+    await screen.findByRole('form', { name: 'Workspace settings' });
+    expect(screen.getByLabelText('Engine version')).toHaveValue('__other__');
+    const typed = screen.getByLabelText('Specific version');
+    expect(typed).toHaveValue('1.11.0');
+    await userEvent.clear(typed);
+    await userEvent.type(typed, '1.16.4');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save settings' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      expect.objectContaining({ engine_version: '1.16.4' })
     );
   });
 
@@ -167,6 +236,37 @@ describe('WorkspaceLayout', () => {
     ).toBeInTheDocument();
   });
 
+  it.each(['terraform', 'env'] as const)(
+    'preserves HCL only when saving a terraform variable as %s',
+    async (category) => {
+      const variable = aVariable({ hcl: true, value: '["west", "east"]' });
+      apiMock.listVariables.mockResolvedValue({ items: [variable] });
+      apiMock.putVariable.mockResolvedValue(variable);
+      renderDetail('/workspaces/ws-01J000000000000000000000/variables');
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Edit' })
+      );
+      await userEvent.selectOptions(
+        screen.getByLabelText('Category'),
+        category
+      );
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Save variable' })
+      );
+
+      expect(apiMock.putVariable).toHaveBeenCalledWith(
+        variable.workspace_id,
+        variable.key,
+        expect.objectContaining({
+          value: variable.value,
+          category,
+          hcl: category === 'terraform',
+        })
+      );
+    }
+  );
+
   it('declares the file size and PUTs with every signed header', async () => {
     const put = vi.fn<typeof globalThis.fetch>(() =>
       Promise.resolve(new Response(null, { status: 200 }))
@@ -198,16 +298,23 @@ describe('WorkspaceLayout', () => {
       screen.getByLabelText('Configuration tarball'),
       file
     );
+    const listReads = apiMock.listConfigVersions.mock.calls.length;
     fireEvent.submit(
       screen.getByRole('form', { name: 'Upload a configuration version' })
     );
 
-    await screen.findByText('Uploaded.');
+    await screen.findByText('Uploaded config.tar.gz.');
 
     expect(apiMock.createConfigVersion).toHaveBeenCalledWith(
       'ws-01J000000000000000000000',
-      { size_bytes: file.size }
+      { size_bytes: file.size },
+      expect.objectContaining({ signal: expect.any(AbortSignal) as unknown })
     );
+    await waitFor(() => {
+      expect(apiMock.listConfigVersions.mock.calls.length).toBeGreaterThan(
+        listReads
+      );
+    });
     expect(put.mock.calls[0]?.[1]?.headers).toEqual(headers);
     vi.unstubAllGlobals();
   });
@@ -255,6 +362,7 @@ describe('WorkspaceLayout setup checklist', () => {
   beforeEach(() => {
     resetApiMock();
     apiMock.getWorkspace.mockResolvedValue(aFreshWorkspace());
+    apiMock.readRunRoleCheck.mockResolvedValue(UNVERIFIED);
     apiMock.listVariables.mockResolvedValue({ items: [] });
     apiMock.listConfigVersions.mockResolvedValue({ items: [] });
     apiMock.listRuns.mockResolvedValue({ items: [] });
@@ -364,53 +472,108 @@ describe('WorkspaceLayout setup checklist', () => {
     expect(apiMock.updateWorkspace).not.toHaveBeenCalled();
   });
 
-  it('reports a passing connection check with the account id', async () => {
+  it('reads the runner record on the settings page without writing', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const status = await screen.findByTestId('run-role-status');
+    expect(apiMock.readRunRoleCheck).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      expect.objectContaining({ signal: expect.any(AbortSignal) as unknown })
+    );
+    expect(apiMock.checkRunRole).not.toHaveBeenCalled();
+    expect(status).toHaveAttribute('data-connection', 'unverified');
+    expect(status).toHaveTextContent('No run has assumed this role yet.');
+  });
+
+  it('reports a run that assumed the role with the account id', async () => {
     apiMock.getWorkspace.mockResolvedValue(
       aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn })
     );
     apiMock.checkRunRole.mockResolvedValue({
       connected: true,
+      status: 'connected',
       account_id: '123456789012',
       error: null,
+      run_id: 'run-1',
+      checked_at: '2026-09-17T00:05:00Z',
     });
 
-    renderDetail();
+    renderDetail(RUN_ROLE_SETTINGS);
 
-    const checklist = await screen.findByTestId('setup-checklist');
-    await userEvent.click(
-      within(checklist).getByRole('button', { name: 'Check connection' })
-    );
+    const checkButton = await screen.findByRole('button', {
+      name: 'Check connection',
+    });
+    const readsBefore = apiMock.getWorkspace.mock.calls.length;
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+    await userEvent.click(checkButton);
 
     expect(apiMock.checkRunRole).toHaveBeenCalledWith(
       'ws-01J000000000000000000000'
     );
-    const status = await within(checklist).findByTestId('run-role-status');
-    expect(status).toHaveAttribute('data-connection', 'connected');
-    expect(status).toHaveTextContent('Connected to account 123456789012');
+    await waitFor(() => {
+      expect(screen.getByTestId('run-role-status')).toHaveAttribute(
+        'data-connection',
+        'connected'
+      );
+    });
+    await waitFor(() => {
+      expect(apiMock.getWorkspace.mock.calls.length).toBeGreaterThan(
+        readsBefore
+      );
+    });
+    expect(screen.getByTestId('run-role-status')).toHaveTextContent(
+      'The runner assumed this role in account 123456789012'
+    );
   });
 
-  it('reports a failing connection check with its reason', async () => {
+  it('reports a run the role refused with what to fix', async () => {
     apiMock.getWorkspace.mockResolvedValue(
       aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn })
     );
-    apiMock.checkRunRole.mockResolvedValue({
+    apiMock.readRunRoleCheck.mockResolvedValue({
       connected: false,
+      status: 'failed',
       account_id: null,
-      error: 'The role refused the runner. Check the trust policy.',
+      error: 'Its trust policy has to name every runner task role.',
+      run_id: 'run-1',
+      checked_at: null,
+    });
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('run-role-status')).toHaveAttribute(
+        'data-connection',
+        'failed'
+      );
+    });
+    expect(screen.getByTestId('run-role-status')).toHaveTextContent(
+      'The runner could not assume the role. Its trust policy has to name every runner task role.'
+    );
+  });
+
+  it('lets a saved but unverified role start a run, which is the check', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ run_role_arn: aWorkspace().run_role_arn })
+    );
+    apiMock.listConfigVersions.mockResolvedValue({
+      items: [aConfigVersion()],
     });
 
     renderDetail();
 
     const checklist = await screen.findByTestId('setup-checklist');
-    await userEvent.click(
-      within(checklist).getByRole('button', { name: 'Check connection' })
-    );
-
-    const status = await within(checklist).findByTestId('run-role-status');
-    expect(status).toHaveAttribute('data-connection', 'failed');
-    expect(status).toHaveTextContent(
-      'The role refused the runner. Check the trust policy.'
-    );
+    expect(
+      within(checklist).getByRole('button', { name: 'Run a plan' })
+    ).toBeEnabled();
+    for (const button of screen.getAllByRole('button', { name: '+ New run' })) {
+      expect(button).toBeEnabled();
+    }
+    expect(screen.getAllByText('Not verified').length).toBeGreaterThan(0);
   });
 
   it('disables the check until an ARN is saved', async () => {
@@ -521,5 +684,854 @@ describe('WorkspaceLayout setup checklist', () => {
     expect(
       within(checklist).getByRole('form', { name: 'Upload a configuration' })
     ).toBeInTheDocument();
+  });
+
+  it('opens any checklist step, not only the current one', async () => {
+    apiMock.getWorkspace.mockResolvedValue(aFreshWorkspace());
+    apiMock.listConfigVersions.mockResolvedValue({ items: [] });
+    apiMock.listRuns.mockResolvedValue({ items: [] });
+
+    renderDetail();
+
+    const checklist = await screen.findByTestId('setup-checklist');
+    const upload = within(checklist).getByTestId('setup-step-upload');
+    expect(upload).toHaveAttribute('data-status', 'blocked');
+    const toggle = within(upload).getByRole('button', {
+      name: /^Upload a configuration/,
+    });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(
+      within(upload).getByRole('form', { name: 'Upload a configuration' })
+    ).toBeInTheDocument();
+
+    await userEvent.click(toggle);
+
+    expect(
+      within(upload).queryByRole('form', { name: 'Upload a configuration' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('counts the account step done once a run planned through the saved role', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ run_role_account_id: null, run_role_checked_at: null })
+    );
+    apiMock.listConfigVersions.mockResolvedValue({
+      items: [aConfigVersion()],
+    });
+    apiMock.listRuns.mockResolvedValue({ items: [aRun('applied')] });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-status')).toHaveTextContent('Ready');
+    });
+    expect(screen.queryByTestId('setup-checklist')).not.toBeInTheDocument();
+  });
+});
+
+describe('WorkspaceLayout account status', () => {
+  const unstamped = (): ReturnType<typeof aWorkspace> =>
+    aWorkspace({ run_role_account_id: null, run_role_checked_at: null });
+
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.getWorkspace.mockResolvedValue(unstamped());
+    apiMock.listConfigVersions.mockResolvedValue({
+      items: [aConfigVersion()],
+    });
+    apiMock.listRuns.mockResolvedValue({ items: [aRun('planned')] });
+  });
+
+  it('shows the account the check found in the header and overview, even before a check is stamped', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-account')).toHaveTextContent(
+        '123456789012'
+      );
+    });
+    expect(screen.getByTestId('workspace-account')).toHaveAttribute(
+      'data-connection',
+      'connected'
+    );
+    expect(screen.getByTestId('overview-account')).toHaveTextContent(
+      '123456789012'
+    );
+    expect(apiMock.checkRunRole).not.toHaveBeenCalled();
+  });
+
+  it('shows the connected repository and branch in the overview', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ vcs_repo: 'WebbPulse/infra', tracked_branch: 'staging' })
+    );
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-repository')).toHaveTextContent(
+        'WebbPulse/infra on staging'
+      );
+    });
+  });
+
+  it('says when no repository is connected', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-repository')).toHaveTextContent(
+        'Not connected'
+      );
+    });
+  });
+
+  it('agrees with the connection panel on the settings page', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('run-role-status')).toHaveAttribute(
+        'data-connection',
+        'connected'
+      );
+    });
+    expect(screen.getByTestId('workspace-account')).toHaveAttribute(
+      'data-connection',
+      'connected'
+    );
+    expect(screen.getByTestId('workspace-account')).toHaveTextContent(
+      '123456789012'
+    );
+    expect(apiMock.readRunRoleCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('says a refused role failed rather than leaving it unverified', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue({
+      ...UNVERIFIED,
+      status: 'failed' as const,
+      error: 'Its trust policy has to name every runner task role.',
+    });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-account')).toHaveTextContent(
+        'Connection failed'
+      );
+    });
+    expect(screen.getByTestId('overview-account')).toHaveTextContent(
+      'Connection failed'
+    );
+  });
+
+  it('reads the check again when a run finishes', async () => {
+    apiMock.listRuns.mockResolvedValue({ items: [aRun('planning')] });
+    apiMock.readRunRoleCheck.mockResolvedValue(UNVERIFIED);
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-account')).toHaveTextContent(
+        'Not verified'
+      );
+    });
+    const readsBefore = apiMock.readRunRoleCheck.mock.calls.length;
+
+    apiMock.listRuns.mockResolvedValue({ items: [aRun('planned')] });
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+    act(() => {
+      invalidateQueries('runs:ws-01J000000000000000000000');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-account')).toHaveTextContent(
+        '123456789012'
+      );
+    });
+    expect(apiMock.readRunRoleCheck.mock.calls.length).toBeGreaterThan(
+      readsBefore
+    );
+  });
+
+  it('does not read the check again while the runs have not changed', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(UNVERIFIED);
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-account')).toHaveTextContent(
+        'Not verified'
+      );
+    });
+    const readsBefore = apiMock.readRunRoleCheck.mock.calls.length;
+    const runReads = apiMock.listRuns.mock.calls.length;
+
+    act(() => {
+      invalidateQueries('runs:ws-01J000000000000000000000');
+    });
+
+    await waitFor(() => {
+      expect(apiMock.listRuns.mock.calls.length).toBeGreaterThan(runReads);
+    });
+    expect(apiMock.readRunRoleCheck.mock.calls.length).toBe(readsBefore);
+  });
+
+  it('refreshes the header when the panel checks the connection', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(UNVERIFIED);
+    apiMock.checkRunRole.mockResolvedValue(CONNECTED);
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const checkButton = await screen.findByRole('button', {
+      name: 'Check connection',
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-account')).toHaveTextContent(
+        'Not verified'
+      );
+    });
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+    await userEvent.click(checkButton);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-account')).toHaveTextContent(
+        '123456789012'
+      );
+    });
+    expect(screen.getByTestId('run-role-status')).toHaveAttribute(
+      'data-connection',
+      'connected'
+    );
+  });
+
+  it('falls back to the stamped account while the check has not answered', async () => {
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+    apiMock.readRunRoleCheck.mockReturnValue(new Promise(() => undefined));
+
+    renderDetail();
+
+    expect(await screen.findByTestId('workspace-account')).toHaveTextContent(
+      '123456789012'
+    );
+  });
+});
+
+/** What Connect AWS answers for the fixture workspace. */
+function aQuickSetup(permissions: string | null = null): RunRoleQuickSetup {
+  const roleName = aWorkspace().run_role_setup.role_name;
+  return {
+    account_id: null,
+    role_arn: null,
+    role_name: roleName,
+    stack_name: roleName,
+    region: 'us-west-2',
+    permissions_policy_arn: permissions,
+    expires_in: 3600,
+    reports_back: true,
+    connect_expires_at: '2999-01-01T01:00:00Z',
+    console_url:
+      'https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate',
+  };
+}
+
+/** A connection record, overridable field by field. */
+function aConnection(overrides: Partial<AwsConnection> = {}): AwsConnection {
+  return {
+    status: 'waiting',
+    requested_at: '2026-09-26T00:00:00Z',
+    expires_at: '2999-01-01T01:00:00Z',
+    reported_at: null,
+    account_id: null,
+    role_arn: null,
+    stack_id: null,
+    run_id: null,
+    pending: false,
+    disconnected_at: null,
+    ...overrides,
+  };
+}
+
+/** What a stack's report records for the fixture role. */
+function aReport(overrides: Partial<AwsConnection> = {}): AwsConnection {
+  return aConnection({
+    status: 'connected',
+    reported_at: '2026-09-26T00:02:00Z',
+    account_id: '123456789012',
+    role_arn: aWorkspace().run_role_arn ?? null,
+    stack_id:
+      'arn:aws:cloudformation:us-west-2:123456789012:stack/control-plane/1',
+    run_id: 'run-01J000000000000000000009',
+    ...overrides,
+  });
+}
+
+/** A stand in for the tab `window.open` returns. */
+function aTab(): { opener: unknown; location: { href: string }; close: Mock } {
+  return { opener: {}, location: { href: '' }, close: vi.fn() };
+}
+
+describe('Connect AWS', () => {
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.getWorkspace.mockResolvedValue(aFreshWorkspace());
+    apiMock.readRunRoleCheck.mockResolvedValue(UNVERIFIED);
+    apiMock.listVariables.mockResolvedValue({ items: [] });
+    apiMock.listConfigVersions.mockResolvedValue({ items: [] });
+    apiMock.listRuns.mockResolvedValue({ items: [] });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('opens AWS CloudFormation with no account to type and waits for the stack', async () => {
+    const tab = aTab();
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as never);
+    apiMock.startRunRoleQuickSetup.mockResolvedValue(
+      aQuickSetup('arn:aws:iam::aws:policy/ReadOnlyAccess')
+    );
+
+    renderDetail();
+
+    const setup = await screen.findByRole('form', { name: 'Connect AWS' });
+    expect(within(setup).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(within(setup).getByLabelText('Permissions policy')).toHaveValue(
+      'administrator'
+    );
+    await userEvent.selectOptions(
+      within(setup).getByLabelText('Permissions policy'),
+      'read_only'
+    );
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ aws_connection: aConnection() })
+    );
+    await userEvent.click(
+      within(setup).getByRole('button', { name: 'Connect AWS' })
+    );
+
+    expect(open).toHaveBeenCalledWith('', '_blank');
+    expect(apiMock.startRunRoleQuickSetup).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      { permissions: 'read_only' }
+    );
+    const waiting = await screen.findByTestId('aws-connect-waiting');
+    expect(waiting).toHaveTextContent('Waiting for the stack in AWS');
+    expect(waiting).toHaveTextContent('Create stack');
+    expect(tab.opener).toBeNull();
+    expect(tab.location.href).toBe(aQuickSetup().console_url);
+    expect(
+      screen.getByRole('button', { name: 'Connect AWS again' })
+    ).toBeInTheDocument();
+  });
+
+  it('rereads the workspace while the stack has not reported back', async () => {
+    const setInterval = vi.spyOn(window, 'setInterval');
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ aws_connection: aConnection() })
+    );
+
+    renderDetail();
+
+    await screen.findByTestId('aws-connect-waiting');
+    const poll = setInterval.mock.calls.find(
+      ([, delay]) => delay === CONNECT_POLL_INTERVAL_MS
+    );
+    expect(poll).toBeDefined();
+    const readsBefore = apiMock.getWorkspace.mock.calls.length;
+    act(() => {
+      (poll?.[0] as () => void)();
+    });
+    await waitFor(() => {
+      expect(apiMock.getWorkspace.mock.calls.length).toBeGreaterThan(
+        readsBefore
+      );
+    });
+  });
+
+  it('offers the link when the browser blocks the new tab', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    apiMock.startRunRoleQuickSetup.mockResolvedValue(aQuickSetup());
+
+    renderDetail();
+
+    const setup = await screen.findByRole('form', { name: 'Connect AWS' });
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({ aws_connection: aConnection() })
+    );
+    await userEvent.click(
+      within(setup).getByRole('button', { name: 'Connect AWS' })
+    );
+
+    const waiting = await screen.findByTestId('aws-connect-waiting');
+    expect(
+      await within(waiting).findByRole('link', {
+        name: 'Open AWS CloudFormation',
+      })
+    ).toHaveAttribute('href', aQuickSetup().console_url);
+  });
+
+  it('says when the last link ran out unused', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({
+        aws_connection: aConnection({ expires_at: '2020-01-01T00:00:00Z' }),
+      })
+    );
+
+    renderDetail();
+
+    expect(await screen.findByTestId('aws-connect-expired')).toHaveTextContent(
+      'The last link expired'
+    );
+    expect(screen.queryByTestId('aws-connect-waiting')).not.toBeInTheDocument();
+  });
+
+  it('closes the blank tab and says why when the request fails', async () => {
+    const tab = aTab();
+    vi.spyOn(window, 'open').mockReturnValue(tab as never);
+    apiMock.startRunRoleQuickSetup.mockRejectedValue(
+      new ApiError({
+        status: 503,
+        statusText: 'Service Unavailable',
+        url: 'https://api.test/api/v1/workspaces/ws-01J000000000000000000000/run-role/quick-setup',
+        method: 'POST',
+        body: {
+          success: false,
+          status: 503,
+          message: 'AWS quick setup is not available in this environment.',
+          request_id: 'r-1',
+        },
+      })
+    );
+
+    renderDetail();
+
+    const setup = await screen.findByRole('form', { name: 'Connect AWS' });
+    await userEvent.click(
+      within(setup).getByRole('button', { name: 'Connect AWS' })
+    );
+
+    await waitFor(() => {
+      expect(tab.close).toHaveBeenCalled();
+    });
+    expect(await within(setup).findByRole('alert')).toBeInTheDocument();
+    expect(screen.queryByTestId('aws-connect-waiting')).not.toBeInTheDocument();
+  });
+
+  it('says the stack was deleted when the role went with it', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({
+        aws_connection: aReport({
+          status: 'disconnected',
+          disconnected_at: '2026-09-26T01:00:00Z',
+        }),
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    expect(
+      await screen.findByTestId('aws-connect-disconnected')
+    ).toHaveTextContent('123456789012');
+  });
+
+  it('asks for a reconnect when the stack predates credential vending', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        aws_connection: aReport(),
+        run_role_reconnect_required: true,
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const notice = await screen.findByTestId('aws-reconnect-required');
+    expect(notice).toHaveTextContent('Reconnect required');
+    expect(notice).toHaveTextContent('123456789012');
+  });
+
+  it('shows no reconnect notice for a current stack', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ aws_connection: aReport() })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    await screen.findByTestId('connected-account');
+    expect(
+      screen.queryByTestId('aws-reconnect-required')
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the reported account as connected and links the verification run', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        run_role_checked_at: null,
+        run_role_account_id: null,
+        aws_connection: aReport(),
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(connected).toHaveTextContent(
+      'Connected to AWS account 123456789012'
+    );
+    expect(
+      within(connected).queryByTestId('verified-badge')
+    ).not.toBeInTheDocument();
+    expect(
+      within(connected).getByTestId('verification-run-link')
+    ).toHaveAttribute(
+      'href',
+      '/workspaces/ws-01J000000000000000000000/runs/run-01J000000000000000000009'
+    );
+  });
+
+  it('marks the account verified once a run has assumed the role', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ aws_connection: aReport() })
+    );
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(
+      await within(connected).findByTestId('verified-badge')
+    ).toHaveTextContent('Verified');
+    expect(
+      within(connected).queryByTestId('verification-run-link')
+    ).not.toBeInTheDocument();
+    expect(
+      within(connected).getByRole('button', { name: 'Check connection' })
+    ).toBeEnabled();
+  });
+
+  it('shows a connection as verifying while its verification run is going', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        run_role_checked_at: null,
+        run_role_account_id: null,
+        aws_connection: aReport({ verification: 'pending' }),
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(within(connected).getByTestId('verifying-badge')).toHaveTextContent(
+      'Verifying'
+    );
+    expect(
+      within(connected).queryByTestId('verified-badge')
+    ).not.toBeInTheDocument();
+    expect(
+      within(connected).getByTestId('verification-status')
+    ).toHaveAttribute('data-connection', 'pending');
+    expect(
+      within(connected).getByTestId('verification-run-link')
+    ).toBeInTheDocument();
+  });
+
+  it('marks a connection verified once its verification run succeeded', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        aws_connection: aReport({
+          verification: 'verified',
+          verified_at: '2026-09-26T00:05:00Z',
+        }),
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(
+      await within(connected).findByTestId('verified-badge')
+    ).toHaveTextContent('Verified');
+    expect(
+      within(connected).queryByTestId('verification-status')
+    ).not.toBeInTheDocument();
+    expect(
+      within(connected).queryByTestId('verification-run-link')
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows a failed verification with its error and a link to the run, even when the role was assumed', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        aws_connection: aReport({
+          verification: 'failed',
+          verification_error: 'The run failed with InitFailed.',
+          verified_at: '2026-09-26T00:05:00Z',
+        }),
+      })
+    );
+    apiMock.readRunRoleCheck.mockResolvedValue(CONNECTED);
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(
+      await within(connected).findByTestId('verification-failed-badge')
+    ).toHaveTextContent('Verification failed');
+    expect(
+      within(connected).queryByTestId('verified-badge')
+    ).not.toBeInTheDocument();
+    const status = within(connected).getByTestId('verification-status');
+    expect(status).toHaveAttribute('data-connection', 'failed');
+    expect(status).toHaveTextContent('The run failed with InitFailed.');
+    expect(
+      within(connected).getByTestId('verification-run-link')
+    ).toHaveAttribute(
+      'href',
+      '/workspaces/ws-01J000000000000000000000/runs/run-01J000000000000000000009'
+    );
+  });
+
+  it('opens the setup paths from Change role and keeps the current role on the way out', async () => {
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Change role' })
+    );
+    expect(
+      await screen.findByRole('form', { name: 'Connect AWS' })
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Keep the current role' })
+    );
+    expect(screen.getByTestId('connected-account')).toBeInTheDocument();
+  });
+
+  it('leads the settings page with the saved role as a connected account', async () => {
+    const arn = aWorkspace().run_role_arn ?? '';
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(connected).toHaveTextContent('AWS account 123456789012');
+    expect(connected).toHaveTextContent(arn);
+    expect(
+      within(connected).getByRole('button', { name: 'Check connection' })
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole('form', { name: 'Connect AWS' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('asks a repository workspace for a push instead of an upload', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aFreshWorkspace({
+        run_role_arn: aWorkspace().run_role_arn,
+        vcs_repo: 'WebbPulse/infra',
+        tracked_branch: 'staging',
+      })
+    );
+
+    renderDetail();
+
+    const checklist = await screen.findByTestId('setup-checklist');
+    const upload = within(checklist).getByTestId('setup-step-upload');
+    expect(upload).toHaveTextContent('Waiting for configuration');
+    expect(upload).toHaveTextContent(
+      'Push to staging or open a pull request in WebbPulse/infra.'
+    );
+    expect(
+      within(checklist).getByTestId('setup-awaiting-vcs')
+    ).toBeInTheDocument();
+    expect(within(checklist).queryByText(/tar\.gz/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the manual path behind a disclosure', async () => {
+    renderDetail();
+
+    const checklist = await screen.findByTestId('setup-checklist');
+    const manual = within(checklist)
+      .getByText('Set up the role manually')
+      .closest('details');
+    expect(manual).not.toBeNull();
+    expect(manual).not.toHaveAttribute('open');
+    expect(
+      within(manual as HTMLElement).getByRole('form', { name: 'Run role' })
+    ).toBeInTheDocument();
+  });
+});
+
+/** A role quick setup staged in another account while the fixture's role works. */
+const STAGED_ARN =
+  'arn:aws:iam::210987654321:role/control-plane-workspace-ws-01J000000000000000000000';
+
+/** The check once a role is staged beside the working one. */
+function withPending(
+  status: 'connected' | 'failed' | 'unverified'
+): RunRoleCheck {
+  return {
+    ...CONNECTED,
+    pending: {
+      role_arn: STAGED_ARN,
+      connected: status === 'connected',
+      status,
+      account_id: status === 'connected' ? '210987654321' : null,
+      error:
+        status === 'failed' ? 'The runner could not assume the role.' : null,
+      run_id: status === 'unverified' ? null : 'run-01J000000000000000000001',
+      checked_at: status === 'unverified' ? null : '2026-09-26T00:05:00Z',
+    },
+  };
+}
+
+describe('A staged run role', () => {
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ pending_run_role_arn: STAGED_ARN })
+    );
+    apiMock.readRunRoleCheck.mockResolvedValue(withPending('unverified'));
+    apiMock.listVariables.mockResolvedValue({ items: [] });
+    apiMock.listConfigVersions.mockResolvedValue({
+      items: [aConfigVersion()],
+    });
+    apiMock.listRuns.mockResolvedValue({ items: [aRun('applied')] });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('says the stack reported back and the verification run started', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        pending_run_role_arn: STAGED_ARN,
+        aws_connection: aReport({
+          account_id: '210987654321',
+          role_arn: STAGED_ARN,
+          pending: true,
+          run_id: 'run-01J000000000000000000003',
+        }),
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const pending = await screen.findByTestId('pending-account');
+    expect(pending).toHaveTextContent('The stack reported back');
+    expect(
+      within(pending).getByTestId('verification-run-link')
+    ).toHaveAttribute(
+      'href',
+      '/workspaces/ws-01J000000000000000000000/runs/run-01J000000000000000000003'
+    );
+    expect(
+      within(pending).getByRole('button', {
+        name: 'Start another verification run',
+      })
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the working role in charge and shows the staged one apart', async () => {
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const pending = await screen.findByTestId('pending-account');
+    expect(pending).toHaveTextContent('Switching to AWS account 210987654321');
+    expect(pending).toHaveTextContent(STAGED_ARN);
+    await waitFor(() => {
+      expect(within(pending).getByTestId('run-role-status')).toHaveAttribute(
+        'data-connection',
+        'unverified'
+      );
+    });
+    expect(screen.getByTestId('connected-account')).toHaveTextContent(
+      'AWS account 123456789012'
+    );
+    expect(apiMock.checkRunRole).not.toHaveBeenCalled();
+  });
+
+  it('starts a plan only verification run against the staged role', async () => {
+    apiMock.createRun.mockResolvedValue(
+      aRun('planning', { run_id: 'run-01J000000000000000000002' })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const pending = await screen.findByTestId('pending-account');
+    const start = within(pending).getByRole('button', {
+      name: 'Start verification run',
+    });
+    await waitFor(() => {
+      expect(start).toBeEnabled();
+    });
+    await userEvent.click(start);
+
+    expect(apiMock.createRun).toHaveBeenCalledWith({
+      workspace_id: 'ws-01J000000000000000000000',
+      config_version_id: aConfigVersion().config_version_id,
+      run_role_check: true,
+      message: 'Verify the run role in AWS account 210987654321',
+    });
+  });
+
+  it('discards the staged role with a merge patch null', async () => {
+    apiMock.updateWorkspace.mockResolvedValue(aWorkspace());
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const pending = await screen.findByTestId('pending-account');
+    await userEvent.click(
+      within(pending).getByRole('button', { name: 'Discard the new role' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      { pending_run_role_arn: null }
+    );
+  });
+
+  it('says a staged role the runner refused failed, and switches nothing', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(withPending('failed'));
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const pending = await screen.findByTestId('pending-account');
+    await waitFor(() => {
+      expect(within(pending).getByTestId('run-role-status')).toHaveAttribute(
+        'data-connection',
+        'failed'
+      );
+    });
+    expect(apiMock.checkRunRole).not.toHaveBeenCalled();
+  });
+
+  it('switches to a verified role through the recording check once', async () => {
+    apiMock.readRunRoleCheck.mockResolvedValue(withPending('connected'));
+    apiMock.checkRunRole.mockResolvedValue(CONNECTED);
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(apiMock.checkRunRole).toHaveBeenCalledWith(
+        'ws-01J000000000000000000000'
+      );
+    });
+    act(() => {
+      invalidateQueries('run-role-check:ws-01J000000000000000000000');
+    });
+    await waitFor(() => {
+      expect(apiMock.readRunRoleCheck.mock.calls.length).toBeGreaterThan(1);
+    });
+    expect(apiMock.checkRunRole).toHaveBeenCalledTimes(1);
   });
 });

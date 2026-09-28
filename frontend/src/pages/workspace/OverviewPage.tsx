@@ -2,16 +2,23 @@
 
 import { Link } from 'react-router-dom';
 
-import { isActive, isConnected, type Run, type Workspace } from '../../api';
+import {
+  accountStatus,
+  accountStatusLabel,
+  hasRunRole,
+  isActive,
+  type Run,
+  type RunRoleCheck,
+  type Workspace,
+} from '../../api';
 import {
   Button,
   EmptyState,
+  RelativeTime,
   StateBadge,
   changeSummary,
   elapsedBetween,
-  formatDateTime,
   formatDuration,
-  formatRelative,
   runPath,
   runTitle,
   useNow,
@@ -26,6 +33,7 @@ export function OverviewPage(): React.ReactElement {
     workspace,
     versions,
     runs,
+    runRoleCheck,
     steps,
     settled,
     setupComplete,
@@ -43,6 +51,7 @@ export function OverviewPage(): React.ReactElement {
           steps={steps}
           versions={versions}
           runs={runs}
+          runRoleCheck={runRoleCheck}
           keys={keys}
         />
       ) : null}
@@ -67,7 +76,7 @@ export function OverviewPage(): React.ReactElement {
               title="No runs yet."
               hint="Start one with New run, or from a configuration version."
               action={
-                isConnected(workspace) ? (
+                hasRunRole(workspace) ? (
                   <Button variant="primary" onClick={openNewRun}>
                     + New run
                   </Button>
@@ -80,6 +89,7 @@ export function OverviewPage(): React.ReactElement {
         </section>
         <WorkspaceFacts
           workspace={workspace}
+          runRoleCheck={runRoleCheck}
           latestVersion={
             latestUploadedVersion(versions)?.config_version_id ?? null
           }
@@ -106,9 +116,7 @@ function LatestRunCard({ run }: { run: Run }): React.ReactElement {
           </Link>
           <p className="mt-0.5 text-xs text-text-faint">
             {run.plan_only ? 'Plan only run' : 'Plan and apply run'} created{' '}
-            <span title={formatDateTime(run.created_at)}>
-              {formatRelative(run.created_at)}
-            </span>
+            <RelativeTime iso={run.created_at} />
           </p>
         </div>
         <StateBadge state={run.status} />
@@ -155,12 +163,15 @@ function Metric({
 /** The workspace's settings at a glance, each linking to where it is changed. */
 function WorkspaceFacts({
   workspace,
+  runRoleCheck,
   latestVersion,
 }: {
   workspace: Workspace;
+  runRoleCheck: RunRoleCheck | null;
   latestVersion: string | null;
 }): React.ReactElement {
   const base = `/workspaces/${workspace.workspace_id}`;
+  const account = accountStatus(workspace, runRoleCheck);
   const rows: { label: string; value: React.ReactNode; to: string }[] = [
     {
       label: 'Engine',
@@ -175,11 +186,34 @@ function WorkspaceFacts({
       to: `${base}/settings/general`,
     },
     {
-      label: 'AWS account',
-      value: isConnected(workspace) ? (
-        <span className="font-mono">{workspace.run_role_account_id}</span>
+      label: 'Repository',
+      value: workspace.vcs_repo ? (
+        <span data-testid="overview-repository" className="font-mono">
+          {workspace.vcs_repo}
+          {workspace.tracked_branch ? (
+            <span className="text-text-muted">
+              {' '}
+              on {workspace.tracked_branch}
+            </span>
+          ) : null}
+        </span>
       ) : (
-        'Not connected'
+        <span data-testid="overview-repository" className="text-text-muted">
+          Not connected
+        </span>
+      ),
+      to: `${base}/settings/version-control`,
+    },
+    {
+      label: 'AWS account',
+      value: (
+        <span
+          data-testid="overview-account"
+          data-connection={account.state}
+          className={account.state === 'connected' ? 'font-mono' : undefined}
+        >
+          {accountStatusLabel(account)}
+        </span>
       ),
       to: `${base}/settings/run-role`,
     },
@@ -195,11 +229,7 @@ function WorkspaceFacts({
     },
     {
       label: 'Created',
-      value: (
-        <span title={formatDateTime(workspace.created_at)}>
-          {formatRelative(workspace.created_at)}
-        </span>
-      ),
+      value: <RelativeTime iso={workspace.created_at} />,
       to: `${base}/settings/general`,
     },
   ];
