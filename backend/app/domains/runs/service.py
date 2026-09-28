@@ -1385,6 +1385,11 @@ def _vending_role_arn(run: Mapping[str, Any], workspace: Mapping[str, Any]) -> s
     return str((run.get("run_role_arn") if run.get("run_role_check") else workspace.get("run_role_arn", "")) or "")
 
 
+def _plan_assume_role_arns(workspace: Mapping[str, Any]) -> list[str]:
+    """The reader roles the workspace lets a plan assume, read at each vend so an edit takes effect on refresh."""
+    return [str(arn) for arn in workspace.get("plan_assume_role_arns") or [] if str(arn).strip()]
+
+
 def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Settings | None = None) -> dict[str, Any]:
     """A fresh pair of provider and state keys for a run still in `phase`.
 
@@ -1410,6 +1415,7 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         run_id=run_id,
         phase=phase,
         settings=resolved,
+        plan_assume_role_arns=_plan_assume_role_arns(workspace),
     )
     identity = _workload_identity(
         workspace_reads.resolved_variables(workspace_id, settings=resolved)["env"],
@@ -1501,6 +1507,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         run_id=run_id,
         phase=phase,
         settings=resolved,
+        plan_assume_role_arns=_plan_assume_role_arns(workspace),
     )
     identity = _workload_identity(
         variables["env"], workspace_id, str(workspace.get("name", "")), run_id, phase, settings=resolved

@@ -153,6 +153,11 @@ output "e2e_run_role_arn" {
   value       = one(aws_iam_role.e2e_run_role[*].arn)
 }
 
+output "e2e_plan_reader_role_arns" {
+  description = "ARNs of the permissionless e2e plan reader roles, keyed listed and unlisted. Empty outside staging"
+  value       = { for key, role in aws_iam_role.e2e_plan_reader : key => role.arn }
+}
+
 output "vcs_ingest_queue_url" {
   description = "Queue EventBridge feeds with Object Created events under ingest/ in the artifacts bucket"
   value       = module.vcs_ingest.queue_url

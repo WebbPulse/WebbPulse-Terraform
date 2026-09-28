@@ -3308,6 +3308,8 @@ export interface components {
             name: string;
             /** Pending Run Role Arn */
             pending_run_role_arn?: string | null;
+            /** Plan Assume Role Arns */
+            plan_assume_role_arns?: string[];
             /** Run Role Account Id */
             run_role_account_id?: string | null;
             /** Run Role Arn */
@@ -3370,6 +3372,8 @@ export interface components {
             file_triggers_enabled?: boolean;
             /** Name */
             name: string;
+            /** Plan Assume Role Arns */
+            plan_assume_role_arns?: string[];
             /** Run Role Arn */
             run_role_arn?: string | null;
             /**
@@ -3422,6 +3426,8 @@ export interface components {
             file_triggers_enabled?: boolean | null;
             /** Pending Run Role Arn */
             pending_run_role_arn?: string | null;
+            /** Plan Assume Role Arns */
+            plan_assume_role_arns?: string[] | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /** Speculative Plans */

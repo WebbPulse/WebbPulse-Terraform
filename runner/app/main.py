@@ -261,6 +261,7 @@ def _run_phase(
         bundle.backend.region,
         engine_directory,
         {**credentials.environment(), **identity_files.environment()},
+        run_phase=env.phase,
     )
     refresher = CredentialRefresher(
         api.refresh_credentials,

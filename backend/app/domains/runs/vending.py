@@ -32,7 +32,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -129,10 +129,16 @@ def session_name(run_id: str, phase: Phase) -> str:
 
 
 def run_role_request(
-    role_arn: str, workspace_id: str, run_id: str, phase: Phase, *, duration_seconds: int
+    role_arn: str,
+    workspace_id: str,
+    run_id: str,
+    phase: Phase,
+    *,
+    duration_seconds: int,
+    plan_assume_role_arns: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The `AssumeRole` request for a workspace's run role in one phase."""
-    policy = session_policy.for_phase(phase)
+    policy = session_policy.for_phase(phase, plan_assume_role_arns)
     request: dict[str, Any] = {
         "RoleArn": role_arn,
         "RoleSessionName": session_name(run_id, phase),
@@ -140,7 +146,7 @@ def run_role_request(
         "DurationSeconds": duration_seconds,
     }
     if policy.document is not None:
-        request["Policy"] = json.dumps(policy.document)
+        request["Policy"] = session_policy.encode(policy.document)
     if policy.policy_arns:
         request["PolicyArns"] = [{"arn": arn} for arn in policy.policy_arns]
     return request
@@ -165,8 +171,12 @@ def vend(
     run_id: str,
     phase: Phase,
     settings: Settings,
+    plan_assume_role_arns: Sequence[str] = (),
 ) -> tuple[VendedCredentials, VendedCredentials]:
     """The provider and state credentials for one phase of one run.
+
+    `plan_assume_role_arns` are the reader roles a plan session may assume; an
+    apply ignores them.
 
     Raises:
         VendingUnavailable: No vending or state role is configured.
@@ -197,6 +207,7 @@ def vend(
                     run_id,
                     phase,
                     duration_seconds=settings.run_credentials_duration_seconds,
+                    plan_assume_role_arns=plan_assume_role_arns,
                 )
             )
         )
