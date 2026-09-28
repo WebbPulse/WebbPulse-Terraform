@@ -13,6 +13,11 @@ which lists the repository's releases and queues one `provider_release` per
 version not yet published, scoped to that provider, so each release is fetched in
 its own invocation.
 
+A release workflow can publish without the App instead: its OIDC role uploads the
+same files and an `upload.json` under `registry/provider-uploads/`, and EventBridge
+queues a `provider_upload` message for that object, which runs the same checks
+against the folder and deletes it once settled.
+
 A release that fails a check, whether a missing file, a bad signature or a
 mismatched hash, marks the version `failed` and is acknowledged; a later resync
 or a new release retries it. A fault reaching GitHub, S3, SSM or DynamoDB raises
@@ -27,7 +32,7 @@ import logging
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Final, Mapping
+from typing import Any, Callable, Collection, Final, Mapping
 
 import httpx
 from boto3.dynamodb.conditions import Attr
@@ -162,31 +167,19 @@ def _settle(row_key: Mapping[str, str], delivery: str, values: Mapping[str, Any]
     return True
 
 
-def _asset(assets: Mapping[str, Mapping[str, Any]], name: str) -> Mapping[str, Any]:
-    """The release asset of that name.
+Fetch = Callable[[str, Path, int], str]
+"""Fetches one named release file into a path, capped at a size, returning its hex SHA-256."""
+
+
+def _fetch_small(fetch: Fetch, names: Collection[str], name: str, target: Path) -> bytes:
+    """One small release file's bytes.
 
     Raises:
         InvalidRelease: The release does not carry it.
     """
-    found = assets.get(name)
-    if found is None:
+    if name not in names:
         raise InvalidRelease(f"the release has no {name}")
-    return found
-
-
-def _fetch_small(
-    app: GitHubAppClient, http: httpx.Client, asset: Mapping[str, Any], target: Path, message: Mapping[str, Any]
-) -> bytes:
-    """One small asset's bytes, fetched into `target`."""
-    download_asset(
-        app,
-        http,
-        installation_id=str(message["installation_id"]),
-        repository=str(message["repo"]),
-        asset_id=str(asset["id"]),
-        target=target,
-        max_bytes=MAX_SMALL_ASSET_BYTES,
-    )
+    fetch(name, target, MAX_SMALL_ASSET_BYTES)
     return target.read_bytes()
 
 
@@ -210,23 +203,20 @@ def _protocols(manifest: bytes | None) -> list[str]:
 
 def _ingest(
     provider: Mapping[str, Any],
-    message: Mapping[str, Any],
-    release: Mapping[str, Any],
-    app: GitHubAppClient,
-    http: httpx.Client,
+    version: str,
+    names: Collection[str],
+    fetch: Fetch,
     *,
     settings: Settings,
 ) -> dict[str, Any]:
-    """Verify and store one release's files, returning the fields a published row carries.
+    """Verify and store one release's files, whatever carried them, returning the fields a published row carries.
 
     Raises:
         InvalidRelease: The release is not a verifiable provider build.
         ReleaseUnavailable: GitHub did not hand over an asset.
     """
     namespace, type_ = str(provider["namespace"]), str(provider["type"])
-    version = str(message["version"])
-    assets = {str(item.get("name")): item for item in release.get("assets") or [] if isinstance(item, Mapping)}
-    sums_names = [name for name in assets if name.endswith(f"_{version}_SHA256SUMS")]
+    sums_names = [name for name in names if name.endswith(f"_{version}_SHA256SUMS")]
     if len(sums_names) != 1:
         raise InvalidRelease(f"the release has no single *_{version}_SHA256SUMS file")
     sums_name = sums_names[0]
@@ -238,8 +228,8 @@ def _ingest(
     bucket = settings.ARTIFACTS_BUCKET
     with tempfile.TemporaryDirectory() as scratch:
         folder = Path(scratch)
-        sums = _fetch_small(app, http, _asset(assets, sums_name), folder / "sums", message)
-        signature = _fetch_small(app, http, _asset(assets, signature_name), folder / "sig", message)
+        sums = _fetch_small(fetch, names, sums_name, folder / "sums")
+        signature = _fetch_small(fetch, names, signature_name, folder / "sig")
         try:
             key_id = verify_detached(sums, signature, armored)
         except SignatureInvalid as error:
@@ -251,8 +241,8 @@ def _ingest(
         except UnicodeDecodeError as error:
             raise InvalidRelease("the SHA256SUMS file is not text") from error
         manifest: bytes | None = None
-        if manifest_name in assets:
-            manifest = _fetch_small(app, http, assets[manifest_name], folder / "manifest", message)
+        if manifest_name in names:
+            manifest = _fetch_small(fetch, names, manifest_name, folder / "manifest")
             expected = listed.get(manifest_name)
             if expected is not None and hashlib.sha256(manifest).hexdigest() != expected:
                 raise InvalidRelease("the manifest does not match its SHA256SUMS entry")
@@ -264,16 +254,10 @@ def _ingest(
             match = _PLATFORM.match(filename[len(stem) :])
             if match is None:
                 continue
+            if filename not in names:
+                raise InvalidRelease(f"the release has no {filename}")
             target = folder / "build.zip"
-            digest = download_asset(
-                app,
-                http,
-                installation_id=str(message["installation_id"]),
-                repository=str(message["repo"]),
-                asset_id=str(_asset(assets, filename)["id"]),
-                target=target,
-                max_bytes=MAX_ZIP_BYTES,
-            )
+            digest = fetch(filename, target, MAX_ZIP_BYTES)
             if digest != listed[filename]:
                 raise InvalidRelease(f"{filename} does not match its SHA256SUMS entry")
             key = providers.artifact_key(namespace, type_, version, filename)
@@ -304,15 +288,15 @@ def _ingest(
     }
 
 
-def publish(
-    provider: Mapping[str, Any],
-    message: Mapping[str, Any],
-    app: GitHubAppClient,
-    http: httpx.Client,
-    *,
-    settings: Settings,
-) -> str:
-    """Publish the released version of one provider, returning `published`, `failed` or `skipped`."""
+Source = Callable[[], tuple[Collection[str], Fetch]]
+"""Opens a release's files, returning their names and a fetch for each, raising `ReleaseNotFound` for no release."""
+
+
+def _publish(provider: Mapping[str, Any], message: Mapping[str, Any], source: Source, *, settings: Settings) -> str:
+    """Claim, verify and settle one version of one provider, whatever carried its files.
+
+    Returns `published`, `failed` or `skipped`.
+    """
     namespace, type_ = str(provider["namespace"]), str(provider["type"])
     version, delivery = str(message["version"]), str(message["delivery"])
     extra = {"provider_address": f"{namespace}/{type_}", "version": version, "delivery": delivery}
@@ -324,14 +308,8 @@ def publish(
         return SKIPPED
     row_key = {"pk": providers.provider_pk(namespace, type_), "sk": service.version_sk(version)}
     try:
-        release = get_release(
-            app,
-            http,
-            installation_id=str(message["installation_id"]),
-            repository=str(message["repo"]),
-            tag=str(message["tag"]),
-        )
-        values = _ingest(provider, message, release, app, http, settings=settings)
+        names, fetch = source()
+        values = _ingest(provider, version, names, fetch, settings=settings)
     except (InvalidRelease, ReleaseNotFound) as error:
         reason = str(error) if isinstance(error, InvalidRelease) else f"no published release at {message['tag']}"
         _settle(
@@ -349,8 +327,43 @@ def publish(
     )
     if not settled:
         return SKIPPED
-    _log.info("Published a provider version from a release.", extra={"event": "registry.release.published", **extra})
+    _log.info("Published a provider version.", extra={"event": "registry.release.published", **extra})
     return service.PUBLISHED
+
+
+def publish(
+    provider: Mapping[str, Any],
+    message: Mapping[str, Any],
+    app: GitHubAppClient,
+    http: httpx.Client,
+    *,
+    settings: Settings,
+) -> str:
+    """Publish the released version of one provider from its GitHub release assets."""
+    installation_id, repository = str(message["installation_id"]), str(message["repo"])
+
+    def source() -> tuple[Collection[str], Fetch]:
+        """The release's asset names and a fetch through the installation token."""
+        release = get_release(
+            app, http, installation_id=installation_id, repository=repository, tag=str(message["tag"])
+        )
+        assets = {str(item.get("name")): item for item in release.get("assets") or [] if isinstance(item, Mapping)}
+
+        def fetch(name: str, target: Path, max_bytes: int) -> str:
+            """Download one asset by its id."""
+            return download_asset(
+                app,
+                http,
+                installation_id=installation_id,
+                repository=repository,
+                asset_id=str(assets[name]["id"]),
+                target=target,
+                max_bytes=max_bytes,
+            )
+
+        return set(assets), fetch
+
+    return _publish(provider, message, source, settings=settings)
 
 
 def _app_credentials(settings: Settings, extra: Mapping[str, Any]) -> Any:
@@ -391,6 +404,195 @@ def handle_release(record: Mapping[str, Any], *, settings: Settings | None = Non
                 provider, message, app, http, settings=resolved
             )
     return outcomes
+
+
+UPLOAD: Final = "provider_upload"
+"""The `kind` of an S3 Object Created on a release workflow's `upload.json`, routed by EventBridge."""
+UPLOADS_PREFIX: Final = "registry/provider-uploads/"
+MAX_UPLOAD_OBJECTS: Final = 64
+"""The most files one upload folder may hold, far above a release's platforms."""
+
+_UPLOAD_KEY = re.compile(
+    r"^registry/provider-uploads/(?P<namespace>[0-9a-z][0-9a-z_-]{0,63})/(?P<type>[0-9a-z][0-9a-z-]{0,62})/"
+    r"(?P<version>[0-9A-Za-z.+-]{1,128})/(?P<upload>[0-9A-Za-z_-]{1,64})/upload\.json$"
+)
+
+
+def parse_upload_message(record: Mapping[str, Any]) -> dict[str, Any]:
+    """The bucket and key of the uploaded `upload.json` one SQS record carries.
+
+    Raises:
+        MalformedDelivery: The body is not a `provider_upload` message naming a bucket and key.
+    """
+    raw = record.get("body")
+    try:
+        body = json.loads(raw) if isinstance(raw, str) else None
+    except ValueError as error:
+        raise MalformedDelivery("The body is not JSON.") from error
+    if not isinstance(body, dict) or body.get("kind") != UPLOAD:
+        raise MalformedDelivery(f"The body is not a {UPLOAD} message.")
+    missing = [name for name in ("bucket", "key") if not body.get(name)]
+    if missing:
+        raise MalformedDelivery(f"The message lacks {', '.join(missing)}.")
+    return body
+
+
+def _s3_fetch(s3: Any, bucket: str, folder: str) -> Fetch:
+    """A fetch of one file of an upload folder, streamed to disk and hashed, refusing one over its cap."""
+
+    def fetch(name: str, target: Path, max_bytes: int) -> str:
+        """Stream one uploaded file into `target`, returning its hex SHA-256.
+
+        Raises:
+            InvalidRelease: The file is larger than `max_bytes`.
+        """
+        response = s3.get_object(Bucket=bucket, Key=folder + name)
+        if int(response.get("ContentLength") or 0) > max_bytes:
+            response["Body"].close()
+            raise InvalidRelease(f"{name} is larger than {max_bytes} bytes")
+        digest = hashlib.sha256()
+        written = 0
+        with target.open("wb") as handle:
+            for chunk in response["Body"].iter_chunks(chunk_size=1 << 20):
+                written += len(chunk)
+                if written > max_bytes:
+                    raise InvalidRelease(f"{name} is larger than {max_bytes} bytes")
+                digest.update(chunk)
+                handle.write(chunk)
+        return digest.hexdigest()
+
+    return fetch
+
+
+def _upload_names(s3: Any, bucket: str, folder: str) -> list[str]:
+    """The file names directly inside an upload folder.
+
+    Raises:
+        InvalidRelease: The folder holds more files than any release would.
+    """
+    listed = s3.list_objects_v2(Bucket=bucket, Prefix=folder, MaxKeys=MAX_UPLOAD_OBJECTS + 1)
+    names = [str(item["Key"])[len(folder) :] for item in listed.get("Contents") or []]
+    if len(names) > MAX_UPLOAD_OBJECTS or listed.get("IsTruncated"):
+        raise InvalidRelease(f"the upload holds more than {MAX_UPLOAD_OBJECTS} files")
+    return [name for name in names if name and "/" not in name]
+
+
+def _discard_upload(s3: Any, bucket: str, folder: str) -> None:
+    """Delete everything under an upload folder once it has been settled either way."""
+    listed = s3.list_objects_v2(Bucket=bucket, Prefix=folder, MaxKeys=1000)
+    keys = [{"Key": str(item["Key"])} for item in listed.get("Contents") or []]
+    if keys:
+        s3.delete_objects(Bucket=bucket, Delete={"Objects": keys, "Quiet": True})
+
+
+def _upload_request(s3: Any, bucket: str, key: str, match: re.Match[str]) -> dict[str, str]:
+    """The release an upload describes, checked against the folder it sits in.
+
+    Raises:
+        InvalidRelease: `upload.json` is not the expected shape or disagrees with its key.
+    """
+    head = s3.head_object(Bucket=bucket, Key=key)
+    if int(head.get("ContentLength") or 0) > MAX_SMALL_ASSET_BYTES:
+        raise InvalidRelease("upload.json is too large")
+    try:
+        body = json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
+    except ValueError as error:
+        raise InvalidRelease("upload.json is not JSON") from error
+    if not isinstance(body, dict):
+        raise InvalidRelease("upload.json is not an object")
+    fields = {name: body.get(name) for name in ("repository", "tag", "actor", "run_url")}
+    if not all(isinstance(fields[name], str) and fields[name] for name in ("repository", "tag")):
+        raise InvalidRelease("upload.json does not name a repository and a tag")
+    repository, tag = str(fields["repository"]), str(fields["tag"])
+    try:
+        namespace, type_ = providers.provider_for(repository)
+    except providers.InvalidProviderName as error:
+        raise InvalidRelease(str(error)) from error
+    if (namespace.lower(), type_) != (match.group("namespace"), match.group("type")):
+        raise InvalidRelease(f"{repository} does not publish {match.group('namespace')}/{match.group('type')}")
+    if semver_version(tag) != match.group("version"):
+        raise InvalidRelease(f"{tag} does not publish version {match.group('version')}")
+    return {
+        "namespace": namespace,
+        "type": type_,
+        "repository": repository,
+        "tag": tag,
+        "version": match.group("version"),
+        "actor": str(fields["actor"] or "release-workflow"),
+        "run_url": str(fields["run_url"] or ""),
+    }
+
+
+def _ensure_provider(request: Mapping[str, str], *, settings: Settings) -> dict[str, Any]:
+    """The provider row at the upload's address, created without a GitHub binding when none exists yet."""
+    namespace, type_ = request["namespace"], request["type"]
+    table = repositories.registry(settings)
+    row = {
+        **providers.provider_row_key(namespace, type_),
+        "namespace": namespace,
+        "type": type_,
+        "vcs_repo": request["repository"],
+        "created_by": f"upload:{request['actor']}",
+        "created_at": now_iso(),
+    }
+    try:
+        table.put(row, condition=Attr("pk").not_exists())
+    except ConditionFailed:
+        found = table.get(providers.provider_row_key(namespace, type_))
+        return dict(found) if found else row
+    _log.info(
+        "Created a provider from a release workflow upload.",
+        extra={"event": "registry.provider_upload.created", "provider_address": f"{namespace}/{type_}"},
+    )
+    return row
+
+
+def handle_upload(record: Mapping[str, Any], *, settings: Settings | None = None) -> str:
+    """Publish the version a release workflow uploaded to the artifacts bucket, returning the outcome.
+
+    The workflow's OIDC role is the only principal besides this function that may
+    write under the uploads prefix, and the signature is still checked against this
+    environment's key, so an upload publishes exactly what a GitHub release would.
+    The folder is deleted once the version is settled or refused; a fault reaching S3,
+    SSM or DynamoDB raises first, so SQS retries with the files still there.
+
+    Raises:
+        MalformedDelivery: The body is not a `provider_upload` message.
+    """
+    resolved = settings or get_settings()
+    message = parse_upload_message(record)
+    bucket, key = str(message["bucket"]), str(message["key"])
+    extra = {"bucket": bucket, "key": key}
+    match = _UPLOAD_KEY.match(key)
+    if bucket != resolved.ARTIFACTS_BUCKET or match is None:
+        _log.warning(
+            "Ignored an upload outside the uploads prefix.", extra={"event": "registry.upload.ignored", **extra}
+        )
+        return SKIPPED
+    s3 = _s3(resolved)
+    folder = key[: -len("upload.json")]
+    try:
+        request = _upload_request(s3, bucket, key, match)
+    except InvalidRelease as error:
+        _log.warning(
+            "Rejected a provider upload.", extra={"event": "registry.upload.rejected", "reason": str(error), **extra}
+        )
+        _discard_upload(s3, bucket, folder)
+        return service.FAILED
+    provider = _ensure_provider(request, settings=resolved)
+    claim = {**request, "repo": request["repository"], "delivery": f"upload-{match.group('upload')}"}
+
+    def source() -> tuple[Collection[str], Fetch]:
+        """The uploaded file names and a fetch from the folder."""
+        return _upload_names(s3, bucket, folder), _s3_fetch(s3, bucket, folder)
+
+    outcome = _publish(provider, claim, source, settings=resolved)
+    _discard_upload(s3, bucket, folder)
+    _log.info(
+        "Settled a provider upload.",
+        extra={"event": "registry.upload.settled", "outcome": outcome, "run_url": request["run_url"], **extra},
+    )
+    return outcome
 
 
 def parse_sync_message(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -509,10 +711,13 @@ __all__ = [
     "RELEASE",
     "SKIPPED",
     "SYNC",
+    "UPLOAD",
     "handle_release",
     "handle_sync",
+    "handle_upload",
     "parse_sums",
     "parse_sync_message",
+    "parse_upload_message",
     "publish",
     "signing_key",
 ]
