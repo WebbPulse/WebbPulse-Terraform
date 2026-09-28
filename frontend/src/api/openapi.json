@@ -3397,6 +3397,25 @@
         "title": "RunVcs",
         "type": "object"
       },
+      "RunnerHeartbeat": {
+        "additionalProperties": false,
+        "description": "A runner's liveness report for the phase it is running.",
+        "properties": {
+          "phase": {
+            "enum": [
+              "plan",
+              "apply"
+            ],
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "title": "RunnerHeartbeat",
+        "type": "object"
+      },
       "RunnerToken": {
         "description": "The run token a runner task holds for its phase.",
         "properties": {
@@ -6928,6 +6947,52 @@
           }
         },
         "summary": "Discard Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/heartbeat": {
+      "post": {
+        "description": "Keep the phase's waiting state alive with a Step Functions heartbeat. Runner only.\n\nThe runner holds no Step Functions permission, so this is how its liveness\nreaches the state's `HeartbeatSeconds`. Every 409 means the phase is over for\nthis runner, which stops its engine on one.",
+        "operationId": "runner_heartbeat_api_v1_runs__run_id__heartbeat_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerHeartbeat"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Runner Heartbeat",
         "tags": [
           "runs"
         ]

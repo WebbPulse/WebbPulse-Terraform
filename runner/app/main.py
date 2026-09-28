@@ -1,14 +1,15 @@
 """Entrypoint: run one phase of one run, then report to the API.
 
 The runner holds no Step Functions permission: the API resolves the phase's task
-token when the result or the failure is posted, and a runner that stops without
-posting is failed by the task stop consumer.
+token when a heartbeat, the result or the failure is posted, and a runner that
+stops without posting is failed by the task stop consumer.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ import httpx
 
 from app import engine, identity, install, state_credentials, workspace
 from app.api import ApiError, RunnerApi, build_client
+from app.heartbeat import Heartbeat
 from app.logs import CloudWatchLogSink, Redactor
 from app.models import Bundle, Changes, PhaseResult, RunnerEnv, RunnerEnvError
 
@@ -174,100 +176,131 @@ def execute(
     directory: Path,
     redactor: Redactor | None = None,
     api: RunnerApi | None = None,
+    interrupt: engine.Interrupt | None = None,
 ) -> PhaseResult:
     """Fetch the bundle, run the phase, upload the artifacts and post the result.
 
     `redactor` and `api` are shared with the caller so a failure it reports is
     scrubbed of the run token this phase obtained and posted with that token.
+    Once the token is held the phase beats its heartbeat, and a refused beat or
+    `interrupt` stops the engine, failing the phase as `PhaseInterrupted`.
     """
     redactor = redactor or Redactor(_initial_secrets(env))
     api = api or RunnerApi(env, clients.http)
+    interrupt = interrupt or engine.Interrupt()
     sink = CloudWatchLogSink(clients.logs, env.log_group, f"{env.run_id}/{env.phase}", redactor)
 
     with sink:
         redactor.add(obtain_run_token(env, clients, api))
-        try:
-            bundle: Bundle = api.fetch_bundle()
-        except ApiError as error:
-            if error.error_code == RUN_ROLE_ASSUME_FAILED_CODE:
-                raise PhaseFailure("AssumeRoleFailed", str(error)) from error
-            raise PhaseFailure("BundleFetchFailed", str(error)) from error
-        redactor.extend(bundle.sensitive_values())
+        refused = _refusal_handler(interrupt)
+        with Heartbeat(api.heartbeat, env.heartbeat_interval_seconds, refused):
+            try:
+                return _run_phase(env, clients, directory, redactor, api, sink, interrupt)
+            except PhaseFailure as failure:
+                if interrupt.requested:
+                    raise PhaseFailure("PhaseInterrupted", interrupt.reason) from failure
+                raise
 
-        sink.write(f"run {bundle.run_id} workspace {bundle.workspace_id} phase {env.phase} engine {bundle.engine}")
 
-        config_directory = directory / "config"
-        archive = directory / "config.tar.gz"
-        try:
-            api.download(bundle.config_url, archive)
-        except ApiError as error:
-            raise PhaseFailure("ConfigDownloadFailed", str(error)) from error
-        try:
-            engine_directory = workspace.prepare(config_directory, bundle, archive)
-        except workspace.ConfigError as error:
-            raise PhaseFailure("ConfigUnpackFailed", str(error)) from error
+def _refusal_handler(interrupt: engine.Interrupt) -> Callable[[str], None]:
+    """What a refused heartbeat does: stop the engine, naming the refusal."""
 
-        backend_environment = state_credentials.write_profile(directory / "aws", bundle.backend.credentials)
-        environment = engine.build_environment(
-            dict(os.environ),
-            bundle.aws_credentials.environment(),
-            bundle.environment_variables,
-            bundle.backend.region,
-            engine_directory,
-            backend_environment,
+    def refused(detail: str) -> None:
+        interrupt.trigger(f"the control plane no longer runs this phase: {detail}")
+
+    return refused
+
+
+def _run_phase(
+    env: RunnerEnv,
+    clients: Clients,
+    directory: Path,
+    redactor: Redactor,
+    api: RunnerApi,
+    sink: CloudWatchLogSink,
+    interrupt: engine.Interrupt,
+) -> PhaseResult:
+    """The phase itself, from the bundle fetch to the posted result."""
+    try:
+        bundle: Bundle = api.fetch_bundle()
+    except ApiError as error:
+        if error.error_code == RUN_ROLE_ASSUME_FAILED_CODE:
+            raise PhaseFailure("AssumeRoleFailed", str(error)) from error
+        raise PhaseFailure("BundleFetchFailed", str(error)) from error
+    redactor.extend(bundle.sensitive_values())
+
+    sink.write(f"run {bundle.run_id} workspace {bundle.workspace_id} phase {env.phase} engine {bundle.engine}")
+
+    config_directory = directory / "config"
+    archive = directory / "config.tar.gz"
+    try:
+        api.download(bundle.config_url, archive)
+    except ApiError as error:
+        raise PhaseFailure("ConfigDownloadFailed", str(error)) from error
+    try:
+        engine_directory = workspace.prepare(config_directory, bundle, archive)
+    except workspace.ConfigError as error:
+        raise PhaseFailure("ConfigUnpackFailed", str(error)) from error
+
+    backend_environment = state_credentials.write_profile(directory / "aws", bundle.backend.credentials)
+    environment = engine.build_environment(
+        dict(os.environ),
+        bundle.aws_credentials.environment(),
+        bundle.environment_variables,
+        bundle.backend.region,
+        engine_directory,
+        backend_environment,
+    )
+
+    try:
+        binary = install.ensure_engine(bundle.engine, bundle.engine_version, directory / "engines", clients.http, sink)
+    except install.InstallError as error:
+        raise PhaseFailure("EngineInstallFailed", str(error)) from error
+    runner = engine.EngineRunner(bundle.engine, engine_directory, environment, sink, binary, interrupt)
+
+    plan_path = engine_directory / engine.PLAN_FILE
+    plan_json_path = engine_directory / engine.PLAN_JSON_FILE
+    changes = Changes()
+    has_changes = False
+
+    if env.phase == "plan":
+        exit_code, changes, has_changes, plan_json = _run_plan(
+            runner, sink, destroy=bundle.is_destroy, init_environment=bundle.init_environment()
         )
-
+        plan_json_path.write_text(plan_json)
         try:
-            binary = install.ensure_engine(
-                bundle.engine, bundle.engine_version, directory / "engines", clients.http, sink
-            )
-        except install.InstallError as error:
-            raise PhaseFailure("EngineInstallFailed", str(error)) from error
-        runner = engine.EngineRunner(bundle.engine, engine_directory, environment, sink, binary)
-
-        plan_path = engine_directory / engine.PLAN_FILE
-        plan_json_path = engine_directory / engine.PLAN_JSON_FILE
-        changes = Changes()
-        has_changes = False
-
-        if env.phase == "plan":
-            exit_code, changes, has_changes, plan_json = _run_plan(
-                runner, sink, destroy=bundle.is_destroy, init_environment=bundle.init_environment()
-            )
-            plan_json_path.write_text(plan_json)
-            try:
-                api.upload_file("plan", plan_path)
-                api.upload_file("plan_json", plan_json_path)
-            except ApiError as error:
-                raise PhaseFailure("ArtifactUploadFailed", str(error)) from error
-        else:
-            if not bundle.artifacts.plan_get_url:
-                raise PhaseFailure("PlanUnavailable", "the apply phase bundle carries no plan get url")
-            try:
-                api.download(bundle.artifacts.plan_get_url, plan_path)
-            except ApiError as error:
-                raise PhaseFailure("PlanDownloadFailed", str(error)) from error
-            exit_code, changes = _run_apply(runner, sink, init_environment=bundle.init_environment())
-            _upload_outputs(runner, api, sink)
-
-        sink.flush()
-        try:
-            api.upload_text("log", sink.text())
+            api.upload_file("plan", plan_path)
+            api.upload_file("plan_json", plan_json_path)
         except ApiError as error:
             raise PhaseFailure("ArtifactUploadFailed", str(error)) from error
-
-        result = PhaseResult(
-            run_id=env.run_id,
-            phase=env.phase,
-            exit_code=exit_code,
-            changes=changes,
-            has_changes=has_changes,
-        )
+    else:
+        if not bundle.artifacts.plan_get_url:
+            raise PhaseFailure("PlanUnavailable", "the apply phase bundle carries no plan get url")
         try:
-            api.post_phase_result(result)
+            api.download(bundle.artifacts.plan_get_url, plan_path)
         except ApiError as error:
-            raise PhaseFailure("PhaseResultPostFailed", str(error)) from error
-        return result
+            raise PhaseFailure("PlanDownloadFailed", str(error)) from error
+        exit_code, changes = _run_apply(runner, sink, init_environment=bundle.init_environment())
+        _upload_outputs(runner, api, sink)
+
+    sink.flush()
+    try:
+        api.upload_text("log", sink.text())
+    except ApiError as error:
+        raise PhaseFailure("ArtifactUploadFailed", str(error)) from error
+
+    result = PhaseResult(
+        run_id=env.run_id,
+        phase=env.phase,
+        exit_code=exit_code,
+        changes=changes,
+        has_changes=has_changes,
+    )
+    try:
+        api.post_phase_result(result)
+    except ApiError as error:
+        raise PhaseFailure("PhaseResultPostFailed", str(error)) from error
+    return result
 
 
 def report_failure(env: RunnerEnv, api: RunnerApi, error: str, cause: str) -> None:
@@ -287,12 +320,12 @@ def report_failure(env: RunnerEnv, api: RunnerApi, error: str, cause: str) -> No
         print(f"failure report not accepted: {failure}", file=sys.stderr, flush=True)
 
 
-def run(env: RunnerEnv, clients: Clients, directory: Path) -> int:
+def run(env: RunnerEnv, clients: Clients, directory: Path, interrupt: engine.Interrupt | None = None) -> int:
     """Execute the phase and report a failure to the API, never raising."""
     redactor = Redactor(_initial_secrets(env))
     api = RunnerApi(env, clients.http)
     try:
-        execute(env, clients, directory, redactor, api)
+        execute(env, clients, directory, redactor, api, interrupt)
     except PhaseFailure as failure:
         print(redactor.scrub(f"{failure.error}: {failure.cause}"), file=sys.stderr, flush=True)
         report_failure(env, api, failure.error, redactor.scrub(failure.cause))
@@ -313,8 +346,10 @@ def main() -> int:
         print(str(error), file=sys.stderr, flush=True)
         return 2
     clients = Clients.build(env.region)
+    interrupt = engine.Interrupt()
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: interrupt.trigger("the task was asked to stop"))
     with tempfile.TemporaryDirectory(prefix="webbpulse-run-") as temporary:
-        return run(env, clients, Path(temporary))
+        return run(env, clients, Path(temporary), interrupt)
 
 
 if __name__ == "__main__":

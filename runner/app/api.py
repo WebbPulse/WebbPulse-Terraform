@@ -24,6 +24,14 @@ class ApiError(RuntimeError):
         self.error_code = error_code
 
 
+class HeartbeatRefused(ApiError):
+    """The control plane says the phase is no longer this task's to run."""
+
+
+REFUSED_HEARTBEAT_STATUSES = frozenset({401, 403, 404, 409})
+"""Heartbeat answers that mean the run ended or moved on, as opposed to a passing outage."""
+
+
 def _error_code(response: httpx.Response) -> str:
     """The `error_code` of a rejection, empty when the body has none.
 
@@ -107,6 +115,23 @@ class RunnerApi:
             raise ApiError(f"phase result post failed: {type(error).__name__}") from error
         if response.status_code >= 400:
             raise ApiError(f"phase result post returned {response.status_code}")
+
+    def heartbeat(self) -> None:
+        """Tell the control plane this phase is still running.
+
+        A refusal the run itself caused raises `HeartbeatRefused`; an outage or a
+        server error raises a plain `ApiError`, which the next beat may outlive.
+        """
+        url = f"{self._env.api_base_url}/api/v1/runs/{self._env.run_id}/heartbeat"
+        try:
+            response = self._client.post(url, headers=self._headers, json={"phase": self._env.phase})
+        except httpx.HTTPError as error:
+            raise ApiError(f"heartbeat failed: {type(error).__name__}") from error
+        if response.status_code in REFUSED_HEARTBEAT_STATUSES:
+            code = _error_code(response)
+            raise HeartbeatRefused(f"heartbeat refused with {response.status_code} {code}".rstrip(), code)
+        if response.status_code >= 400:
+            raise ApiError(f"heartbeat returned {response.status_code}")
 
     def download(self, url: str, destination: Path) -> Path:
         """Stream a presigned GET to disk."""

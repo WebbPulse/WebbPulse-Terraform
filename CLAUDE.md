@@ -463,6 +463,14 @@ consumer fails a phase whose runner stopped without reporting. The task role hol
 only its log stream, so the container credential endpoint gives the engine
 nothing; the engine's environment is also built without the runner's own tokens
 or any `AWS_CONTAINER_*` variable. Every line passes through `app.logs.Redactor` first.
+Once it holds the token the runner beats `POST /runs/{id}/heartbeat` every minute
+(`HEARTBEAT_INTERVAL_SECONDS`), which the runs Lambda turns into
+SendTaskHeartbeat; a refused beat or SIGTERM sends the engine SIGINT and fails the
+phase as `PhaseInterrupted`. The plan and apply states carry `HeartbeatSeconds`
+(`task_heartbeat_seconds`, 20 minutes) and `TimeoutSeconds` (`plan_timeout_seconds`
+2 hours, `apply_timeout_seconds` 4 hours, capped at the run token's lifetime); a
+silent or over budget runner is stopped by the state machine and the run errors
+with a message saying which.
 
 ---
 
