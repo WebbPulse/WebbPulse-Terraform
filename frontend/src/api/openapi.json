@@ -92,6 +92,11 @@
             "title": "Name",
             "type": "string"
           },
+          "no_expiry": {
+            "default": false,
+            "title": "No Expiry",
+            "type": "boolean"
+          },
           "scopes": {
             "anyOf": [
               {

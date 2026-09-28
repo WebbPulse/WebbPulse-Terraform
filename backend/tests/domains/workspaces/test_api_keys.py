@@ -273,12 +273,39 @@ def test_an_expiry_beyond_the_ceiling_is_refused(human_client):
 
 
 def test_a_key_minted_without_an_expiry_gets_the_default(human_client):
-    """No new key is minted without an end: `null` means `DEFAULT_EXPIRY_DAYS` from now."""
+    """Omitting the expiry still means `DEFAULT_EXPIRY_DAYS` from now, never no expiry."""
     before = datetime.now(UTC)
     created = mint_via_api(human_client)
 
     expected = before + timedelta(days=service.DEFAULT_EXPIRY_DAYS)
     assert abs(created["expires_at"] - int(expected.timestamp())) < 60
+
+
+def test_a_key_minted_with_no_expiry_never_expires(app, human_client):
+    """`no_expiry` stores no end, lists as `null` and still authenticates."""
+    created = mint_via_api(human_client, no_expiry=True, scopes=[WORKSPACES_READ])
+    assert created["expires_at"] is None
+
+    listed = human_client.get("/api/v1/api-keys").json()["items"]
+    assert [item["expires_at"] for item in listed] == [None]
+
+    with TestClient(app, headers={"Authorization": f"Bearer {created['key']}"}) as agent:
+        assert agent.get("/api/v1/workspaces").status_code == 200
+
+
+def test_no_expiry_alongside_a_date_is_refused(human_client):
+    """Asking for both an expiry and none is a 422 rather than a silent pick."""
+    future = (datetime.now(UTC) + timedelta(days=30)).isoformat()
+    response = human_client.post("/api/v1/api-keys", json={"name": "both", "expires_at": future, "no_expiry": True})
+
+    assert response.status_code == 422
+
+
+def test_checked_expiry_with_no_expiry_stores_zero():
+    """A no-expiry key is stored as the zero the package treats as never expiring."""
+    assert service.checked_expiry(None, no_expiry=True) == 0
+    record = service.ApiKeyRecord(key_hash="h", user_id="u", tenant_id="t", prefix="wpk_", expires_at=0)
+    assert record.is_usable(now=datetime.now(UTC) + timedelta(days=service.MAX_EXPIRY_DAYS * 10))
 
 
 def test_an_expiry_a_year_out_is_accepted(human_client):

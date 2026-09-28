@@ -162,9 +162,10 @@ refuses an API key actor with `API_KEY_ACTOR_FORBIDDEN`, because a key able to
 mint its successor would outlive being revoked. Listing and revoking stay open to
 a key so a service can rotate the credential it is holding.
 
-Every new key expires: 90 days out when the request names no `expires_at`, and
-no later than 365 days out when it does (422 otherwise). Keys minted before this
-rule keep the expiry they had. On every request a key's stored scopes are
+A new key expires 90 days out when the request names no `expires_at`, and no
+later than 365 days out when it does (422 otherwise). `no_expiry: true` mints a
+key that stays valid until it is revoked, rendered with `expires_at: null`;
+sending it with `expires_at` is a 422. On every request a key's stored scopes are
 intersected with what its owner holds now (`auth.key_owner_scopes`, read from the
 `users` table), so a demoted admin's keys fall to the read scopes and a disabled,
 unverified or deleted owner's keys hold nothing.

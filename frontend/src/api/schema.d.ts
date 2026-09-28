@@ -1570,6 +1570,11 @@ export interface components {
             expires_at?: string | null;
             /** Name */
             name: string;
+            /**
+             * No Expiry
+             * @default false
+             */
+            no_expiry?: boolean;
             /** Scopes */
             scopes?: string[] | null;
         };

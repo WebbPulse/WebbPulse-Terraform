@@ -164,7 +164,8 @@ The scopes are `workspaces:{read,write}`, `variables:{read,write}`,
 `configs:{read,write}`, `runs:{read,write,apply}`, `state:download` and
 `registry:{read,write}`. A key's stored scopes are intersected per request with
 its owner's current ones (`key_owner_scopes`, so every domain function reads the
-`users` table), and a new key expires in 90 days by default, 365 at most.
+`users` table), and a new key expires in 90 days by default, 365 at most for a
+dated expiry, or never with `no_expiry: true` (`expires_at: null`).
 
 State history and metadata require `workspaces:read`. Raw state downloads also
 require `state:download`, granted to admin sessions and explicitly delegated agent
