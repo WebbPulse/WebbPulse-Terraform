@@ -504,8 +504,9 @@ with a message saying which.
   explicit exception and should say why.
 - User-facing copy says "software engineer", never "developer". No em dashes and
   no tagline language.
-- Route guards: a spinner while `isLoading`, a redirect on `!isAuthenticated`,
-  and guest guards also wait on `!isBusy`.
+- Route guards: a spinner while `isLoading` only, a redirect on `!isAuthenticated`,
+  and a guest guard redirects only once `!isBusy`. Never unmount a form on `isBusy`:
+  it drops the MFA ticket the password leg returns.
 - Use `tyler@webbpulse.com` for management addresses.
 - Nothing is clicked in the console. Infrastructure changes go through Terraform.
 
