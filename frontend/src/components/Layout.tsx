@@ -78,6 +78,35 @@ const SECTIONS: readonly {
   },
 ];
 
+/** The signed in person's own settings, open to everyone. */
+const ACCOUNT_SECTIONS: readonly {
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+}[] = [
+  {
+    to: '/settings/api-keys',
+    label: 'API keys',
+    icon: (
+      <svg viewBox="0 0 16 16" className="size-4" fill="none">
+        <circle
+          cx="5.5"
+          cy="10.5"
+          r="2.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        />
+        <path
+          d="M7.5 8.5 13 3M11 5l1.5 1.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
+];
+
 /** The admin only sections under global settings. */
 const SETTINGS_SECTIONS: readonly {
   to: string;
@@ -141,7 +170,9 @@ export function Layout(): React.ReactElement {
   const navigate = useNavigate();
   const email = emailOf(user);
   const isAdmin = useIsAdmin();
-  const sections = isAdmin ? [...SECTIONS, ...SETTINGS_SECTIONS] : SECTIONS;
+  const sections = isAdmin
+    ? [...SECTIONS, ...ACCOUNT_SECTIONS, ...SETTINGS_SECTIONS]
+    : [...SECTIONS, ...ACCOUNT_SECTIONS];
   const workspaceMatch = useMatch('/workspaces/:workspaceId/*');
   const workspaceId = workspaceMatch?.params.workspaceId ?? null;
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
@@ -171,6 +202,10 @@ export function Layout(): React.ReactElement {
             <nav aria-label="Primary" className="flex-1 space-y-0.5 p-2">
               <RailGroupLabel>Manage</RailGroupLabel>
               {SECTIONS.map((section) => (
+                <RailLink key={section.to} {...section} />
+              ))}
+              <RailGroupLabel className="pt-4">Account</RailGroupLabel>
+              {ACCOUNT_SECTIONS.map((section) => (
                 <RailLink key={section.to} {...section} />
               ))}
               {isAdmin ? (

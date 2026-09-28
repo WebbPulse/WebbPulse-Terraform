@@ -58,6 +58,9 @@ export function createApiMock(): ApiMock {
     'refreshGitHubInstallation',
     'removeGitHubInstallation',
     'listGitHubRepositories',
+    'listApiKeys',
+    'createApiKey',
+    'revokeApiKey',
   ];
   const mock = {} as Record<string, Mock>;
   for (const name of names) {
