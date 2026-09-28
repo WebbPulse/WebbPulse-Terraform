@@ -227,6 +227,9 @@ module "lambda_domain" {
       RUN_STATE_ROLE_ARN               = aws_iam_role.run_state.arn
       RUN_CREDENTIALS_DURATION_SECONDS = tostring(var.run_credentials_duration_seconds)
 
+      OIDC_ISSUER_URL      = local.oidc_issuer_enabled ? local.oidc_issuer_url : ""
+      OIDC_SIGNING_KEY_ARN = local.oidc_active_key
+
       APP_SECRETS_ARN = module.app_secrets.arns["app"]
 
       WEBBPULSE_OTEL_SAMPLE_RATIO        = var.environment == "production" ? "0.1" : "1.0"
@@ -316,7 +319,7 @@ locals {
         Resource = [for parameter in aws_ssm_parameter.provider_signing : parameter.arn]
       },
     ])
-    runs = [
+    runs = concat([
       {
         Sid      = "StartAndStopRunExecutions"
         Effect   = "Allow"
@@ -359,7 +362,14 @@ locals {
         Action   = ["ecs:DescribeTasks"]
         Resource = ["${replace(module.runner.cluster_arn, ":cluster/", ":task/")}/*"]
       },
-    ]
+      ], local.oidc_issuer_enabled ? [
+      {
+        Sid      = "SignWorkloadIdentityTokens"
+        Effect   = "Allow"
+        Action   = ["kms:Sign"]
+        Resource = [local.oidc_active_key]
+      },
+    ] : [])
   }
 }
 

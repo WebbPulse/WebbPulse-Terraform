@@ -181,3 +181,24 @@ variable "adopt_spans_log_group" {
   default     = false
 }
 
+variable "oidc_issuer_enabled" {
+  description = "Serve the control plane's OIDC issuer on oidc.<host> and let the runs function sign workload identity tokens for Google and Azure. Needs the custom domains; in production the Platform Route 53 writer must also list oidc.terraform.webbpulse.com before it can be true"
+  type        = bool
+  default     = true
+}
+
+variable "oidc_signing_key_generations" {
+  description = "Labels of the RSA signing keys the issuer publishes, oldest first. The last one signs. Rotate by appending a label and applying, which publishes the new key and switches signing to it, then drop the old label once every token it signed has expired (an hour)"
+  type        = list(string)
+  default     = ["1"]
+
+  validation {
+    condition     = length(var.oidc_signing_key_generations) > 0 && length(distinct(var.oidc_signing_key_generations)) == length(var.oidc_signing_key_generations)
+    error_message = "oidc_signing_key_generations must list at least one label, each once."
+  }
+
+  validation {
+    condition     = alltrue([for label in var.oidc_signing_key_generations : can(regex("^[a-z0-9-]{1,16}$", label))])
+    error_message = "Each oidc_signing_key_generations label must be 1 to 16 lowercase letters, digits or hyphens."
+  }
+}
