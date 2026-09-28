@@ -89,8 +89,12 @@ def unconnected_workspace(api: Any, e2e_env: Any, created_resources: list[Any]) 
     yield created
 
 
+@pytest.mark.usefixtures("stepped_up_session")
 def test_a_stack_connects_and_disconnects_the_workspace(api: Any, unconnected_workspace: dict[str, Any]) -> None:
-    """The stack's report connects the workspace, and deleting the stack disconnects it."""
+    """The stack's report connects the workspace, and deleting the stack disconnects it.
+
+    Quick setup is step-up gated, so the case starts from a stepped up session.
+    """
     workspace_id = str(unconnected_workspace["workspace_id"])
     response = api.post(
         f"/api/v1/workspaces/{workspace_id}/run-role/quick-setup",

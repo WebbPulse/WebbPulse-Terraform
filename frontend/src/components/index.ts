@@ -80,6 +80,13 @@ export {
   type SegmentedControlProps,
 } from './SegmentedControl';
 export { Spinner, type SpinnerProps } from './Spinner';
+export {
+  ConfirmPasswordDialog,
+  StepUpBoundary,
+  confirmationWindow,
+  type ConfirmPasswordDialogProps,
+  type StepUpBoundaryProps,
+} from './StepUpBoundary';
 export { StateBadge, type StateBadgeProps } from './StateBadge';
 export { Table, Td, Th, Tr, type TableProps, type TrProps } from './Table';
 export { Tabs, type TabItem, type TabsProps } from './Tabs';

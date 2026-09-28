@@ -9,13 +9,11 @@ mint route has to refuse.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from webbpulse.http import REQUEST_CONTEXT_HEADER
 
 from app.common.core.auth import (
     ALL_SCOPES,
@@ -31,39 +29,11 @@ from app.domains.workspaces.api_keys_router import (
     KEY_LIMIT_CODE,
     SCOPES_EXCEEDED_CODE,
 )
+from tests.conftest import person_headers as request_context
 from tests.conftest import seed_user
 
 USER_ID = "user-human"
 OTHER_USER_ID = "user-other"
-
-
-def request_context(
-    *,
-    user_id: str = USER_ID,
-    scopes: tuple[str, ...] = ALL_SCOPES,
-    roles: tuple[str, ...] = (),
-) -> dict[str, str]:
-    """The header a route behind the JWT authorizer sees, carrying verified claims.
-
-    The gateway flattens every claim to a string, so `roles` goes down as the
-    bracketed form and `scope` as the space-joined one, which is what
-    `coerce_claims` expects to parse back.
-    """
-    return {
-        REQUEST_CONTEXT_HEADER: json.dumps(
-            {
-                "authorizer": {
-                    "jwt": {
-                        "claims": {
-                            "sub": user_id,
-                            "scope": " ".join(scopes),
-                            "roles": json.dumps(list(roles)),
-                        }
-                    }
-                }
-            }
-        )
-    }
 
 
 @pytest.fixture

@@ -23,7 +23,9 @@ from ...common.core.auth import (
     VARIABLES_WRITE,
     WORKSPACES_READ,
     WORKSPACES_WRITE,
+    ensure_recent_auth,
     scopes,
+    sudo,
 )
 from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
@@ -66,6 +68,9 @@ GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
 
 WORKSPACE_DELETE_EVENT = "workspaces.workspace.delete"
 """The log event a workspace delete is recorded under, naming the workspace and the mode."""
+
+RUN_ROLE_FIELDS = ("run_role_arn", "pending_run_role_arn")
+"""The PATCH fields that change which AWS role a workspace's runs assume, and so need a step-up."""
 
 router = APIRouter()
 
@@ -136,6 +141,14 @@ def _run_role_missing() -> HTTPException:
             "error_code": RUN_ROLE_MISSING_CODE,
         },
     )
+
+
+def _is_sensitive(workspace_id: str, key: str) -> bool:
+    """Whether the stored variable is sensitive; an absent one is not."""
+    try:
+        return bool(service.get_variable(workspace_id, key).get("sensitive"))
+    except service.VariableNotFound:
+        return False
 
 
 @contextmanager
@@ -226,7 +239,11 @@ def get_workspace(workspace_id: str = WorkspaceId) -> dict[str, Any]:
     response_model=Workspace,
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
-def update_workspace(payload: WorkspaceUpdate, workspace_id: str = WorkspaceId) -> dict[str, Any]:
+def update_workspace(
+    payload: WorkspaceUpdate,
+    workspace_id: str = WorkspaceId,
+    current: AuthorizerClaims = Depends(auth_claims),
+) -> dict[str, Any]:
     """Edit one workspace. The name and the id are not editable.
 
     The body is JSON Merge Patch: an omitted key leaves the stored value exactly
@@ -239,10 +256,18 @@ def update_workspace(payload: WorkspaceUpdate, workspace_id: str = WorkspaceId) 
 
     Connecting another `vcs_repo` resolves it through the GitHub App the way the
     create does, and a null disconnects the repository.
+
+    Changing either run role field is the workspace's AWS connection, so a person has to
+    have signed in within the step-up window; resending the stored value is not a change.
     """
+    changes = payload.model_dump(exclude_unset=True)
     try:
+        if any(field in changes for field in RUN_ROLE_FIELDS):
+            existing = service.get_workspace(workspace_id)
+            if any(field in changes and changes[field] != existing.get(field) for field in RUN_ROLE_FIELDS):
+                ensure_recent_auth(current)
         with _connect_errors():
-            updated = service.update_workspace(workspace_id, payload.model_dump(exclude_unset=True))
+            updated = service.update_workspace(workspace_id, changes)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     return service.render_workspace(updated)
@@ -303,7 +328,7 @@ def check_run_role(workspace_id: str = WorkspaceId) -> dict[str, Any]:
 @router.post(
     "/workspaces/{workspace_id}/run-role/quick-setup",
     response_model=RunRoleQuickSetup,
-    dependencies=[Depends(scopes(WORKSPACES_WRITE))],
+    dependencies=[Depends(sudo(WORKSPACES_WRITE))],
 )
 def start_run_role_quick_setup(payload: RunRoleQuickSetupCreate, workspace_id: str = WorkspaceId) -> dict[str, Any]:
     """Return an AWS CloudFormation quick create link for the workspace's run role.
@@ -335,7 +360,7 @@ def start_run_role_quick_setup(payload: RunRoleQuickSetupCreate, workspace_id: s
 @router.delete(
     "/workspaces/{workspace_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(scopes(WORKSPACES_WRITE))],
+    dependencies=[Depends(sudo(WORKSPACES_WRITE))],
 )
 def delete_workspace(
     workspace_id: str = WorkspaceId,
@@ -420,12 +445,18 @@ def put_variable(
     payload: VariableWrite,
     workspace_id: str = WorkspaceId,
     key: str = VariableKey,
+    current: AuthorizerClaims = Depends(auth_claims),
 ) -> dict[str, Any]:
     """Set one variable. A sensitive value is sealed before it is stored.
 
     A broken HCL expression and an `env` variable marked HCL are both refused
     here, so neither is stored to fail on every later run.
+
+    Writing a sensitive value, or overwriting a variable that is sensitive now, needs a
+    login within the step-up window.
     """
+    if payload.sensitive or _is_sensitive(workspace_id, key):
+        ensure_recent_auth(current)
     try:
         stored = service.put_variable(workspace_id, key, payload.model_dump())
     except service.WorkspaceNotFound as error:
@@ -457,8 +488,14 @@ def put_variable(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(scopes(VARIABLES_WRITE))],
 )
-def delete_variable(workspace_id: str = WorkspaceId, key: str = VariableKey) -> None:
-    """Delete one variable."""
+def delete_variable(
+    workspace_id: str = WorkspaceId,
+    key: str = VariableKey,
+    current: AuthorizerClaims = Depends(auth_claims),
+) -> None:
+    """Delete one variable. A sensitive one needs a login within the step-up window."""
+    if _is_sensitive(workspace_id, key):
+        ensure_recent_auth(current)
     try:
         service.delete_variable(workspace_id, key)
     except service.VariableNotFound as error:

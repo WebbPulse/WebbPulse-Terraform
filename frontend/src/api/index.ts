@@ -10,5 +10,6 @@ export {
   describeError,
   identityOriginFrom,
   uploadConfigTarball,
+  type StepUpWrapper,
   type TerraformApiOptions,
 } from './client';

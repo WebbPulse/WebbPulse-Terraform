@@ -83,13 +83,16 @@ def _settled(versions: dict[str, dict[str, Any]]) -> bool:
 
 
 @pytest.fixture
-def connect(api: Any) -> Iterator[Callable[..., dict[str, Any]]]:
-    """Connect modules to the fixture repository, deleting each one on teardown."""
+def connect(api: Any, step_up_again: Callable[[], Any]) -> Iterator[Callable[..., dict[str, Any]]]:
+    """Connect modules to the fixture repository, deleting each one on teardown.
+
+    Connecting and deleting a module are step-up gated, so each steps up right before it.
+    """
     connected: list[str] = []
 
     def _connect(name: str, *, import_tags: bool) -> dict[str, Any]:
         """Connect `name` and return the created module."""
-        response = api.post(
+        response = step_up_again().post(
             MODULES,
             json={"vcs_repo": REPOSITORY, "name": name, "provider": PROVIDER, "import_tags": import_tags},
         )
@@ -107,7 +110,7 @@ def connect(api: Any) -> Iterator[Callable[..., dict[str, Any]]]:
             if response.status_code != 200 or all(row["status"] != "pending" for row in response.json()["versions"]):
                 break
             time.sleep(POLL_SECONDS)
-        response = api.delete(_path(name))
+        response = step_up_again().delete(_path(name))
         if response.status_code not in (204, 404):
             failures.append(f"{name} ({response.status_code})")
     if failures:

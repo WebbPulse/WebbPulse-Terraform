@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import secrets
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
@@ -379,14 +379,37 @@ def run_role_arn(e2e_env: Any) -> str:
     return value
 
 
+@pytest.fixture(scope="session")
+def step_up_again(user_session: Any, credentials: Any) -> Callable[[], Any]:
+    """Step the run's login up and hand back its client, for a gated call made long after the case began.
+
+    `stepped_up_session` steps up once, when a case starts, but a plan and an apply can
+    outlast the step-up window, and a module scoped fixture cannot use a function scoped
+    one. So a gated call that comes late steps up again right before it is sent.
+    """
+    from webbpulse.e2e.identity import step_up
+
+    def again() -> Any:
+        """Step up now and return the shared authenticated client."""
+        return step_up(user_session, credentials.password).client
+
+    return again
+
+
 @pytest.fixture
-def workspace(api: Any, e2e_env: Any, run_role_arn: str, created_resources: list[Any]) -> Iterator[dict[str, Any]]:
+def workspace(
+    api: Any,
+    e2e_env: Any,
+    run_role_arn: str,
+    created_resources: list[Any],
+    step_up_again: Callable[[], Any],
+) -> Iterator[dict[str, Any]]:
     """A workspace this run owns, registered for cleanup before it is used.
 
     Teardown ends every run the case left behind and safe deletes the workspace,
     whether the case passed or failed, so no execution, state object or run row
     outlives it. A workspace still managing resources is force deleted and the
-    teardown fails, naming it.
+    teardown fails, naming it. The delete is step-up gated, so teardown steps up first.
     """
     body = {
         "name": f"{e2e_env.resource_prefix}{secrets.token_hex(3)}",
@@ -402,6 +425,6 @@ def workspace(api: Any, e2e_env: Any, run_role_arn: str, created_resources: list
     try:
         yield created
     finally:
-        failure = _delete_workspace(api, str(created["workspace_id"]))
+        failure = _delete_workspace(step_up_again(), str(created["workspace_id"]))
         if failure:
             pytest.fail(f"e2e teardown did not leave the workspace cleanly deleted: {failure}")

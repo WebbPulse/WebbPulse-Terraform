@@ -4,7 +4,12 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, type AnyAuthClient } from '@webbpulse/auth/react';
 
 import { api } from './api';
-import { Layout, RequireAuth, RequireGuest } from './components';
+import {
+  Layout,
+  RequireAuth,
+  RequireGuest,
+  StepUpBoundary,
+} from './components';
 import {
   ApiKeys,
   ConnectModule,
@@ -70,7 +75,8 @@ export function AppRoutes(): React.ReactElement {
  *
  * `AuthProvider` is given the API's own auth client, so the session the guards
  * read is the one the API client refreshes through rather than a second copy
- * with its own token. The router commits each navigation synchronously rather
+ * with its own token. `StepUpBoundary` inside it owns the one password prompt
+ * every step-up gated call goes through. The router commits each navigation synchronously rather
  * inside a transition, so the page on screen always follows the address bar even
  * while polled pages keep rendering. `ThemeProvider` sits outside it, because the theme is a
  * property of the browser rather than of the session and should survive a sign
@@ -81,7 +87,9 @@ export function App(): React.ReactElement {
     <ThemeProvider>
       <BrowserRouter useTransitions={false}>
         <AuthProvider client={api.getAuthClient() as unknown as AnyAuthClient}>
-          <AppRoutes />
+          <StepUpBoundary>
+            <AppRoutes />
+          </StepUpBoundary>
         </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>

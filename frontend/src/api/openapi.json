@@ -4810,7 +4810,7 @@
     },
     "/api/auth/step-up": {
       "post": {
-        "description": "Re-assert a factor with a code or a passkey, returning a fresher token and no cookie.\n\nOne route and two bodies: `{\"code\": ...}` or `{\"challenge_id\": ..., \"credential\": ...}`.\nNeither and both are the same 422, so a client is told what it sent rather than that\nits factor was wrong.",
+        "description": "Re-authenticate inside the session, returning a fresher token and no cookie.\n\nOne route and three bodies: `{\"password\": ...}`, `{\"code\": ...}` or\n`{\"challenge_id\": ..., \"credential\": ...}`. None, or more than one, is the same 422,\nso a client is told what it sent rather than that its factor was wrong.",
         "operationId": "step_up_api_auth_step_up_post",
         "requestBody": {
           "content": {
@@ -4834,7 +4834,10 @@
             "description": "Successful Response"
           },
           "401": {
-            "description": "No bearer token was presented, or the factor was refused"
+            "description": "No bearer token was presented, or the password or factor was refused"
+          },
+          "403": {
+            "description": "Password sign in is closed on this deployment"
           },
           "422": {
             "content": {
@@ -4847,10 +4850,13 @@
             "description": "Request validation failed."
           },
           "429": {
-            "description": "Too many attempts from this address"
+            "description": "Too many attempts from this address, or the account is locked"
           },
           "501": {
             "description": "A passkey step-up was sent to a deployment with passkeys off"
+          },
+          "503": {
+            "description": "Neither a password nor a second factor is available to this user"
           }
         },
         "summary": "Step Up",
@@ -6226,7 +6232,7 @@
     },
     "/api/v1/runs/{run_id}/confirm": {
       "post": {
-        "description": "Apply a planned run. Needs `runs:apply`, not `runs:write`.\n\nThe body is optional; its comment is kept on the run with the confirming actor.",
+        "description": "Apply a planned run. Needs `runs:apply`, not `runs:write`, and a person's recent login.\n\nThe body is optional; its comment is kept on the run with the confirming actor.",
         "operationId": "confirm_run_api_v1_runs__run_id__confirm_post",
         "parameters": [
           {
@@ -6746,7 +6752,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging either run role field is the workspace's AWS connection, so a person has to\nhave signed in within the step-up window; resending the stored value is not a change.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {
@@ -7343,7 +7349,7 @@
     },
     "/api/v1/workspaces/{workspace_id}/variables/{key}": {
       "delete": {
-        "description": "Delete one variable.",
+        "description": "Delete one variable. A sensitive one needs a login within the step-up window.",
         "operationId": "delete_variable_api_v1_workspaces__workspace_id__variables__key__delete",
         "parameters": [
           {
@@ -7448,7 +7454,7 @@
         ]
       },
       "put": {
-        "description": "Set one variable. A sensitive value is sealed before it is stored.\n\nA broken HCL expression and an `env` variable marked HCL are both refused\nhere, so neither is stored to fail on every later run.",
+        "description": "Set one variable. A sensitive value is sealed before it is stored.\n\nA broken HCL expression and an `env` variable marked HCL are both refused\nhere, so neither is stored to fail on every later run.\n\nWriting a sensitive value, or overwriting a variable that is sensitive now, needs a\nlogin within the step-up window.",
         "operationId": "put_variable_api_v1_workspaces__workspace_id__variables__key__put",
         "parameters": [
           {

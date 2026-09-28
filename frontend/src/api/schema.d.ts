@@ -345,11 +345,11 @@ export interface paths {
         put?: never;
         /**
          * Step Up
-         * @description Re-assert a factor with a code or a passkey, returning a fresher token and no cookie.
+         * @description Re-authenticate inside the session, returning a fresher token and no cookie.
          *
-         *     One route and two bodies: `{"code": ...}` or `{"challenge_id": ..., "credential": ...}`.
-         *     Neither and both are the same 422, so a client is told what it sent rather than that
-         *     its factor was wrong.
+         *     One route and three bodies: `{"password": ...}`, `{"code": ...}` or
+         *     `{"challenge_id": ..., "credential": ...}`. None, or more than one, is the same 422,
+         *     so a client is told what it sent rather than that its factor was wrong.
          */
         post: operations["step_up_api_auth_step_up_post"];
         delete?: never;
@@ -933,7 +933,7 @@ export interface paths {
         put?: never;
         /**
          * Confirm Run
-         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`.
+         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`, and a person's recent login.
          *
          *     The body is optional; its comment is kept on the run with the confirming actor.
          */
@@ -1131,6 +1131,9 @@ export interface paths {
          *
          *     Connecting another `vcs_repo` resolves it through the GitHub App the way the
          *     create does, and a null disconnects the repository.
+         *
+         *     Changing either run role field is the workspace's AWS connection, so a person has to
+         *     have signed in within the step-up window; resending the stored value is not a change.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -1368,12 +1371,15 @@ export interface paths {
          *
          *     A broken HCL expression and an `env` variable marked HCL are both refused
          *     here, so neither is stored to fail on every later run.
+         *
+         *     Writing a sensitive value, or overwriting a variable that is sensitive now, needs a
+         *     login within the step-up window.
          */
         put: operations["put_variable_api_v1_workspaces__workspace_id__variables__key__put"];
         post?: never;
         /**
          * Delete Variable
-         * @description Delete one variable.
+         * @description Delete one variable. A sensitive one needs a login within the step-up window.
          */
         delete: operations["delete_variable_api_v1_workspaces__workspace_id__variables__key__delete"];
         options?: never;
@@ -3935,8 +3941,15 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description No bearer token was presented, or the factor was refused */
+            /** @description No bearer token was presented, or the password or factor was refused */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Password sign in is closed on this deployment */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3951,7 +3964,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Too many attempts from this address */
+            /** @description Too many attempts from this address, or the account is locked */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -3960,6 +3973,13 @@ export interface operations {
             };
             /** @description A passkey step-up was sent to a deployment with passkeys off */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Neither a password nor a second factor is available to this user */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
