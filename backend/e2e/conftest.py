@@ -30,6 +30,31 @@ JOURNEY_RUN_ROLE_ARN_VARIABLE = "E2E_JOURNEY_RUN_ROLE_ARN"
 
 STALE_SECONDS = 3600
 
+SESSION_LOGOUT_TEST = "test_logout_ends_the_session"
+"""The shared suite case that revokes the session user's refresh family."""
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Run the session logout after every other case that shares the session user.
+
+    The shared suite's logout case sorts into `test_shared.py`, ahead of product modules
+    such as `test_step_up.py` whose step-up refreshes the same session, and a refresh after
+    the logout is refused. It is moved to just after the last case in its xdist group, so it
+    still runs before the run-wide groups a serial run orders last.
+    """
+    logouts = [item for item in items if item.name == SESSION_LOGOUT_TEST]
+    if not logouts:
+        return
+    group = logouts[0].get_closest_marker("xdist_group")
+    rest = [item for item in items if item.name != SESSION_LOGOUT_TEST]
+    last = max(
+        (index for index, item in enumerate(rest) if item.get_closest_marker("xdist_group") == group),
+        default=len(rest) - 1,
+    )
+    items[:] = rest[: last + 1] + logouts + rest[last + 1 :]
+
+
 _DOCUMENT_ENVIRONMENT = {
     "ENVIRONMENT": "staging",
     "IDENTITY_ENVIRONMENT": "local",
