@@ -2,6 +2,7 @@
   "name": "webbpulse-terraform-frontend",
   "private": true,
   "version": "0.0.0",
+  "license": "UNLICENSED",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
