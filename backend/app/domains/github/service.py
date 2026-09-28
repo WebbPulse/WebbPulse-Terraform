@@ -77,8 +77,11 @@ PERMISSIONS: Final = {
 }
 """What the App asks for: read a repository's code, report runs back on commits and PRs."""
 
-WEBHOOK_EVENTS: Final = ("push", "pull_request")
-"""The events the VCS bridge acts on; a tag push arrives as a `push`."""
+WEBHOOK_EVENTS: Final = ("push", "pull_request", "release")
+"""The events the VCS bridge and the registry act on.
+
+A tag push arrives as a `push`, a provider release as a `release`.
+"""
 
 
 class AppAlreadyConfigured(Exception):

@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import signal
 import subprocess
+import threading
 from pathlib import Path
 from typing import Mapping, Sequence, cast
 
@@ -34,8 +36,53 @@ BASE_ENVIRONMENT = {
 }
 
 
+INTERRUPTED_EXIT = 130
+"""The exit code a subcommand reports when an interrupt kept it from running."""
+
+
 class EngineError(RuntimeError):
     """The engine binary is not on PATH."""
+
+
+class Interrupt:
+    """A stop request shared by the heartbeat, the signal handler and the engine.
+
+    Triggering it sends SIGINT to the running subcommand, which the engine treats
+    as a graceful stop that releases the state lock, and keeps any later
+    subcommand from starting.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._process: subprocess.Popen[str] | None = None
+        self.reason = ""
+
+    @property
+    def requested(self) -> bool:
+        """Whether a stop has been asked for."""
+        return bool(self.reason)
+
+    def trigger(self, reason: str) -> None:
+        """Ask the engine to stop, keeping the first reason given."""
+        with self._lock:
+            if not self.reason:
+                self.reason = reason
+            process = self._process
+        if process is not None and process.poll() is None:
+            process.send_signal(signal.SIGINT)
+
+    def attach(self, process: subprocess.Popen[str]) -> None:
+        """Track the running subcommand, stopping it at once if a stop came first."""
+        with self._lock:
+            self._process = process
+            requested = bool(self.reason)
+        if requested and process.poll() is None:
+            process.send_signal(signal.SIGINT)
+
+    def detach(self) -> None:
+        """Forget the subcommand once it has exited."""
+        with self._lock:
+            self._process = None
 
 
 def resolve_binary(engine: Engine) -> str:
@@ -56,8 +103,10 @@ class EngineRunner:
         environment: dict[str, str],
         sink: LogSink,
         binary: str | None = None,
+        interrupt: Interrupt | None = None,
     ) -> None:
         self._binary = binary or resolve_binary(engine)
+        self._interrupt = interrupt or Interrupt()
         self._engine = engine
         self._directory = directory
         self._environment = environment
@@ -74,8 +123,12 @@ class EngineRunner:
 
         `capture` returns stdout instead of streaming it, for the JSON producing
         subcommands whose output is a document rather than progress.
-        `extra_environment` is added for this subcommand alone.
+        `extra_environment` is added for this subcommand alone. Once an interrupt
+        is requested no subcommand starts and each reports `INTERRUPTED_EXIT`.
         """
+        if self._interrupt.requested:
+            self._sink.write(f"skipped {self._engine} {' '.join(arguments)}: {self._interrupt.reason}")
+            return INTERRUPTED_EXIT, ""
         command = [self._binary, *arguments]
         environment = {**self._environment, **(extra_environment or {})}
         self._sink.write(f"$ {self._engine} {' '.join(arguments)}")
@@ -100,11 +153,15 @@ class EngineRunner:
             text=True,
             bufsize=1,
         )
-        assert process.stdout is not None
-        for line in process.stdout:
-            self._sink.write(line)
-        process.stdout.close()
-        return process.wait(), ""
+        self._interrupt.attach(process)
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                self._sink.write(line)
+            process.stdout.close()
+            return process.wait(), ""
+        finally:
+            self._interrupt.detach()
 
     def init(self, extra_environment: Mapping[str, str] | None = None) -> int:
         """Initialise the working directory against the S3 backend.

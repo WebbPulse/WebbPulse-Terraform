@@ -1,5 +1,5 @@
 {
-  "Comment": "One execution per run. The execution input carries run_id, workspace_id and plan_only, and every state keeps that input on the state path so the apply task still sees the run id. No run token is passed to a task: the runner trades its signed task identity for one at POST /runs/{id}/runner-token, so no token is written to the execution history. Acquires the environment wide semaphore, launches the plan task and waits for the runner to report, waits for a confirmation when the run needs one, launches the apply task, then releases the semaphore and marks the run. A discard arrives as a `RunDiscarded` task failure on the confirmation token, after the API has already written the discarded status, so that error is caught ahead of `States.ALL` and takes a release path that drops the semaphore holder without marking the run. Every other confirmation failure, the `States.Timeout` of a confirmation nobody answered included, still marks the run errored.",
+  "Comment": "One execution per run. The execution input carries run_id, workspace_id and plan_only, and every state keeps that input on the state path so the apply task still sees the run id. No run token is passed to a task: the runner trades its signed task identity for one at POST /runs/{id}/runner-token, so no token is written to the execution history. Acquires the environment wide semaphore, launches the plan task and waits for the runner to report, kept alive by the runner's heartbeats through the API, waits for a confirmation when the run needs one, launches the apply task, then releases the semaphore and marks the run. A discard arrives as a `RunDiscarded` task failure on the confirmation token, after the API has already written the discarded status, so that error is caught ahead of `States.ALL` and takes a release path that drops the semaphore holder without marking the run. Every other confirmation failure, the `States.Timeout` of a confirmation nobody answered included, still marks the run errored. A phase that misses its heartbeat or outruns its budget stops its runner task and errors the run with a message saying which.",
   "StartAt": "AcquireSemaphore",
   "QueryLanguage": "JSONPath",
   "States": {
@@ -77,6 +77,16 @@
       "ResultPath": "$.plan",
       "Next": "PlanOutcome",
       "Catch": [
+        {
+          "ErrorEquals": ["States.HeartbeatTimeout"],
+          "ResultPath": "$.error",
+          "Next": "PlanRunnerSilent"
+        },
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "ResultPath": "$.error",
+          "Next": "PlanOverBudget"
+        },
         {
           "ErrorEquals": ["States.ALL"],
           "ResultPath": "$.error",
@@ -169,6 +179,16 @@
       "Next": "MarkApplied",
       "Catch": [
         {
+          "ErrorEquals": ["States.HeartbeatTimeout"],
+          "ResultPath": "$.error",
+          "Next": "ApplyRunnerSilent"
+        },
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "ResultPath": "$.error",
+          "Next": "ApplyOverBudget"
+        },
+        {
           "ErrorEquals": ["States.ALL"],
           "ResultPath": "$.error",
           "Next": "MarkErrored"
@@ -217,6 +237,124 @@
         "ExpressionAttributeValues": {
           ":status": { "S": "errored" },
           ":error": { "S.$": "States.Format('The run failed with {}.', $.error.Error)" },
+          ":applied": { "S": "applied" },
+          ":planned_and_finished": { "S": "planned_and_finished" },
+          ":errored": { "S": "errored" },
+          ":cancelled": { "S": "cancelled" },
+          ":discarded": { "S": "discarded" }
+        }
+      },
+      "ResultPath": null,
+      "Next": "ReleaseSemaphoreAfterFailure",
+      "Catch": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "ResultPath": null,
+          "Next": "ReleaseSemaphoreAfterFailure"
+        }
+      ]
+    },
+
+    "PlanRunnerSilent": {
+      "Type": "Pass",
+      "Result": {
+        "message": "The plan runner sent no heartbeat for ${TaskHeartbeatText}, so its task was stopped and the run errored. The task hung, lost its network or never started."
+      },
+      "ResultPath": "$.failure",
+      "Next": "FindRunnerTask"
+    },
+
+    "PlanOverBudget": {
+      "Type": "Pass",
+      "Result": {
+        "message": "The plan ran past its ${PlanTimeoutText} budget, so its task was stopped and the run errored."
+      },
+      "ResultPath": "$.failure",
+      "Next": "FindRunnerTask"
+    },
+
+    "ApplyRunnerSilent": {
+      "Type": "Pass",
+      "Result": {
+        "message": "The apply runner sent no heartbeat for ${TaskHeartbeatText}, so its task was stopped and the run errored. The task hung, lost its network or never started. Check the state for resources the apply created before it stopped."
+      },
+      "ResultPath": "$.failure",
+      "Next": "FindRunnerTask"
+    },
+
+    "ApplyOverBudget": {
+      "Type": "Pass",
+      "Result": {
+        "message": "The apply ran past its ${ApplyTimeoutText} budget, so its task was stopped and the run errored. Check the state for resources the apply created before it stopped."
+      },
+      "ResultPath": "$.failure",
+      "Next": "FindRunnerTask"
+    },
+
+    "FindRunnerTask": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:getItem",
+      "Comment": "A waitForTaskToken state that times out leaves its ECS task running, so the task the runner exchanged its identity from is read off the run and stopped. A runner that never exchanged has no task id to stop.",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S.$": "$.run_id" } },
+        "ProjectionExpression": "runner_task_id"
+      },
+      "ResultPath": "$.runner",
+      "Next": "RunnerTaskKnown",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
+          "Next": "MarkErroredWithMessage"
+        }
+      ]
+    },
+
+    "RunnerTaskKnown": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.runner.Item.runner_task_id.S",
+          "IsPresent": true,
+          "Next": "StopRunnerTask"
+        }
+      ],
+      "Default": "MarkErroredWithMessage"
+    },
+
+    "StopRunnerTask": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ecs:stopTask",
+      "Parameters": {
+        "Cluster": "${ClusterArn}",
+        "Task.$": "$.runner.Item.runner_task_id.S",
+        "Reason": "The run phase timed out in Step Functions."
+      },
+      "ResultPath": null,
+      "Next": "MarkErroredWithMessage",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
+          "Next": "MarkErroredWithMessage"
+        }
+      ]
+    },
+
+    "MarkErroredWithMessage": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Comment": "A phase that timed out, on its heartbeat or on its budget, errors the run with a message that says which, guarded like `MarkErrored`.",
+      "Parameters": {
+        "TableName": "${RunsTable}",
+        "Key": { "run_id": { "S.$": "$.run_id" } },
+        "UpdateExpression": "SET #status = :status, #error = if_not_exists(#error, :error) REMOVE confirm_task_token",
+        "ConditionExpression": "NOT #status IN (:applied, :planned_and_finished, :errored, :cancelled, :discarded)",
+        "ExpressionAttributeNames": { "#status": "status", "#error": "error" },
+        "ExpressionAttributeValues": {
+          ":status": { "S": "errored" },
+          ":error": { "S.$": "$.failure.message" },
           ":applied": { "S": "applied" },
           ":planned_and_finished": { "S": "planned_and_finished" },
           ":errored": { "S": "errored" },

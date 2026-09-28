@@ -1,8 +1,8 @@
-"""The Terraform module registry protocol, as `terraform init` calls it.
+"""The Terraform module and provider registry protocols, as `terraform init` calls them.
 
 Mounted at the root because service discovery points `modules.v1` at
-`<api host>/v1/modules/`. Terraform sends the `TF_TOKEN_<host>` credential for
-the module source's host as a bearer, which is a `wpk_` key holding
+`<api host>/v1/modules/` and `providers.v1` at `<api host>/v1/providers/`.
+Terraform sends the `TF_TOKEN_<host>` credential for the source's host as a bearer, which is a `wpk_` key holding
 `registry:read`. The routes are exposed past the staging gate with
 `authorization_type = "NONE"`, so no authorizer context exists and only a key
 verified here in process gets through.
@@ -22,12 +22,13 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
+from fastapi.responses import JSONResponse
 from webbpulse.identity.api_keys import is_api_key, verify
 from webbpulse.identity.scopes import FORBIDDEN_ERROR_CODE, bearer_credential, missing_scopes
 from webbpulse.messages import forbidden
 
 from ...common.core.auth import REGISTRY_READ, RUN_TOKEN_TENANT, RUNNER_REGISTRY_SCOPE, api_key_store, claims
-from . import service
+from . import providers, service
 
 
 def is_run_registry_credential(request: Request) -> bool:
@@ -102,4 +103,39 @@ def download(
     )
 
 
-__all__ = ["router"]
+providers_router = APIRouter(
+    prefix="/v1/providers",
+    include_in_schema=False,
+    dependencies=[Depends(registry_reader)],
+)
+
+Platform = Annotated[str, Path(min_length=1, max_length=32, pattern=r"^[0-9a-z]+$")]
+
+
+@providers_router.get("/{namespace}/{type}/versions")
+def list_provider_versions(namespace: Segment, type: Segment) -> dict[str, Any]:  # noqa: A002
+    """The provider's published versions with their protocols and platforms."""
+    try:
+        versions = providers.published_versions(namespace, type)
+    except providers.ProviderNotFound as error:
+        raise _not_found(error) from error
+    return {"versions": versions}
+
+
+@providers_router.get("/{namespace}/{type}/{version}/download/{os}/{arch}")
+def download_provider(
+    namespace: Segment,
+    type: Segment,  # noqa: A002
+    version: Version,
+    os: Platform,
+    arch: Platform,
+) -> Response:
+    """The zip, checksum list, signature and signing key Terraform verifies one platform's build against."""
+    try:
+        body = providers.download(namespace, type, version, os, arch)
+    except providers.ProviderNotFound as error:
+        raise _not_found(error) from error
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
+
+
+__all__ = ["providers_router", "router"]

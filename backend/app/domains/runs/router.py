@@ -1,8 +1,8 @@
-"""The runs domain's routes, including the three the runner owns.
+"""The runs domain's routes, including the five the runner owns.
 
 Routes on three different credentials. Most are guarded by `require_scopes`
 and reached by a person through the JWT authorizer or an agent through a `wpk_`
-key. Three, the bundle, the artifact upload and the phase result, are guarded by
+key. Four, the bundle, the artifact upload, the heartbeat and the phase result, are guarded by
 a run token bound to the run in the path, because the bundle carries decrypted
 variables and no human scope should open it. The runner token route is guarded
 by nothing but the runner task's own signed AWS identity, which is how the
@@ -42,6 +42,7 @@ from .schemas.run import (
     RunCreated,
     RunDecisionRequest,
     RunList,
+    RunnerHeartbeat,
     RunnerToken,
     RunnerTokenRequest,
     RunPlan,
@@ -49,7 +50,7 @@ from .schemas.run import (
 
 router = APIRouter()
 runner_router = APIRouter(route_class=RunnerRoute)
-"""The four runner routes, whose validation failures answer 401 to a caller without a run token."""
+"""The five runner routes, whose validation failures answer 401 to a caller without a run token."""
 
 RUN_ID_PATTERN = r"^run-[0-9A-HJKMNP-TV-Z]{26}$"
 RunId = Path(min_length=4, max_length=64, pattern=RUN_ID_PATTERN)
@@ -87,6 +88,12 @@ RUN_CREDENTIALS_UNAVAILABLE_CODE = "RUN_CREDENTIALS_UNAVAILABLE"
 
 PHASE_TASK_UNRESOLVED_CODE = "PHASE_TASK_UNRESOLVED"
 """The code a phase result carries when no runner task of the phase matches the run."""
+
+PHASE_MISMATCH_CODE = "PHASE_MISMATCH"
+"""The code a heartbeat carries when the run has left the runner's phase."""
+
+PHASE_TASK_ENDED_CODE = "PHASE_TASK_ENDED"
+"""The code a heartbeat carries when the phase's state no longer waits on its task token."""
 
 
 @router.post(
@@ -367,6 +374,32 @@ def phase_result(payload: PhaseResult, run_id: str = RunId) -> dict[str, Any]:
             "No runner task of that phase can be matched to this run.", error_code=PHASE_TASK_UNRESOLVED_CODE
         ) from error
     return {"run_id": run_id, "status": updated["status"]}
+
+
+@runner_router.post(
+    "/runs/{run_id}/heartbeat",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_run_token())],
+)
+def runner_heartbeat(payload: RunnerHeartbeat, run_id: str = RunId) -> None:
+    """Keep the phase's waiting state alive with a Step Functions heartbeat. Runner only.
+
+    The runner holds no Step Functions permission, so this is how its liveness
+    reaches the state's `HeartbeatSeconds`. Every 409 means the phase is over for
+    this runner, which stops its engine on one.
+    """
+    try:
+        phase_tasks.heartbeat(run_id, payload.phase)
+    except service.RunNotFound as error:
+        raise _not_found("No such run.") from error
+    except service.PhaseMismatch as error:
+        raise _conflict("That run is not in the reported phase.", error_code=PHASE_MISMATCH_CODE) from error
+    except phase_tasks.PhaseTaskUnresolved as error:
+        raise _conflict(
+            "No runner task of that phase can be matched to this run.", error_code=PHASE_TASK_UNRESOLVED_CODE
+        ) from error
+    except phase_tasks.PhaseTaskEnded as error:
+        raise _conflict("That phase no longer waits on its runner.", error_code=PHASE_TASK_ENDED_CODE) from error
 
 
 @runner_router.post("/runs/{run_id}/runner-token", response_model=RunnerToken)

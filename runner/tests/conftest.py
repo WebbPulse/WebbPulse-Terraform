@@ -175,6 +175,8 @@ class ApiRecorder:
         self.upload_headers: dict[str, dict[str, str]] = {}
         self.upload_requests: list[dict[str, Any]] = []
         self.bundle_requests = 0
+        self.heartbeats: list[dict[str, Any]] = []
+        self.heartbeat_headers: list[dict[str, str]] = []
 
 
 def make_transport(
@@ -189,6 +191,7 @@ def make_transport(
     upload_status: int = 200,
     releases: dict[str, bytes] | None = None,
     refused_uploads: frozenset[str] = frozenset(),
+    heartbeat_status: int = 204,
 ) -> httpx.MockTransport:
     """An httpx transport serving the bundle, the config tarball and the artifact uploads.
 
@@ -196,7 +199,8 @@ def make_transport(
     refuses a body whose length does not match it, so a runner that sent the wrong
     `Content-Length` fails here the way S3 fails it. `releases` serves engine
     release files by URL, `refused_uploads` names artifact kinds whose upload
-    request is refused and `bundle_body` is a refused bundle's error body.
+    request is refused, `bundle_body` is a refused bundle's error body and
+    `heartbeat_status` is what every heartbeat is answered with.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -228,6 +232,14 @@ def make_transport(
                     "expires_in": 3600,
                 },
             )
+        if path.endswith("/heartbeat"):
+            recorder.heartbeats.append(json.loads(request.content))
+            recorder.heartbeat_headers.append(dict(request.headers))
+            if heartbeat_status >= 400:
+                return httpx.Response(
+                    heartbeat_status, json={"detail": {"error_code": "PHASE_TASK_ENDED", "message": "ended"}}
+                )
+            return httpx.Response(heartbeat_status)
         if path.endswith("/phase-result"):
             recorder.phase_results.append(json.loads(request.content))
             return httpx.Response(204)
@@ -261,13 +273,14 @@ def fake_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[...
         plan_json: dict[str, Any] | None = None,
         apply_exit: int = 0,
         init_exit: int = 0,
+        plan_sleep: float = 0.0,
         echo_environment: bool = True,
         version: str = BAKED_VERSION,
         directory: Path | None = None,
     ) -> Path:
         document = json.dumps(PLAN_JSON_WITH_CHANGES if plan_json is None else plan_json)
         script = f"""#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 
 SUBCOMMAND = sys.argv[1] if len(sys.argv) > 1 else ""
 ECHO = {echo_environment!r}
@@ -297,7 +310,12 @@ if SUBCOMMAND == "init":
     sys.exit({init_exit})
 if SUBCOMMAND == "plan":
     print("plan arguments " + " ".join(sys.argv[2:]))
-    print("Terraform used the selected providers to generate the plan.")
+    print("Terraform used the selected providers to generate the plan.", flush=True)
+    try:
+        time.sleep({plan_sleep!r})
+    except KeyboardInterrupt:
+        print("Interrupt received. Gracefully shutting down...", flush=True)
+        sys.exit(1)
     open("plan.tfplan", "w").write("fake-plan")
     sys.exit({plan_exit})
 if SUBCOMMAND == "show":
@@ -344,18 +362,19 @@ def engine_release(engine: str, version: str, binary: bytes, *, checksum: str | 
     return {archive_url: archive, sums_url: sums.encode()}
 
 
-def make_env(phase: str = "plan") -> RunnerEnv:
-    """The runner environment for one phase."""
-    return RunnerEnv.from_environ(
-        {
-            "RUN_ID": RUN_ID,
-            "PHASE": phase,
-            "TASK_TOKEN": TASK_TOKEN,
-            "API_BASE_URL": API_BASE_URL,
-            "RUNNER_LOG_GROUP": LOG_GROUP,
-            "AWS_REGION": "us-west-2",
-        }
-    )
+def make_env(phase: str = "plan", heartbeat_interval: float | None = None) -> RunnerEnv:
+    """The runner environment for one phase, beating every `heartbeat_interval` seconds when given."""
+    environ = {
+        "RUN_ID": RUN_ID,
+        "PHASE": phase,
+        "TASK_TOKEN": TASK_TOKEN,
+        "API_BASE_URL": API_BASE_URL,
+        "RUNNER_LOG_GROUP": LOG_GROUP,
+        "AWS_REGION": "us-west-2",
+    }
+    if heartbeat_interval is not None:
+        environ["HEARTBEAT_INTERVAL_SECONDS"] = str(heartbeat_interval)
+    return RunnerEnv.from_environ(environ)
 
 
 def make_clients(transport: httpx.MockTransport) -> Clients:

@@ -34,7 +34,7 @@ def test_a_new_app_subscribes_to_the_bridge_events(auth_client, api_origin):
     """With an API origin the manifest carries the webhook URL and the push and pull request events."""
     manifest = auth_client.post("/api/v1/github/app/manifest", json={}).json()["manifest"]
     assert manifest["hook_attributes"] == {"url": f"{API}{WEBHOOK_PATH}", "active": True}
-    assert manifest["default_events"] == ["push", "pull_request"]
+    assert manifest["default_events"] == ["push", "pull_request", "release"]
     assert manifest["default_permissions"]["contents"] == "read"
 
 
@@ -49,7 +49,7 @@ def test_the_sync_sets_the_url_and_the_secret(auth_client, github, configure_app
         "url": f"{API}{WEBHOOK_PATH}",
         "content_type": "json",
         "insecure_ssl": "0",
-        "events": ["push", "pull_request"],
+        "events": ["push", "pull_request", "release"],
     }
     assert SECRET not in response.text
     [request] = [request for request in github.requests if request.url.path == "/app/hook/config"]

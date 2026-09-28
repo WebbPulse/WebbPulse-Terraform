@@ -53,6 +53,7 @@ locals {
     "GET /api/v1/runs/{run_id}/plan"              = { integration = "runs" }
     "GET /api/v1/runs/{run_id}/bundle"            = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/artifact-uploads" = { integration = "runs", authorization_type = "NONE" }
+    "POST /api/v1/runs/{run_id}/heartbeat"        = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/phase-result"     = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/runner-token"     = { integration = "runs", authorization_type = "NONE" }
   }
@@ -80,7 +81,19 @@ locals {
     "GET /api/v1/registry/modules/{namespace}/{name}/{provider}/versions/{version}" = { integration = "registry" }
     "POST /api/v1/registry/modules/{namespace}/{name}/{provider}/resync"            = { integration = "registry" }
     "DELETE /api/v1/registry/modules/{namespace}/{name}/{provider}"                 = { integration = "registry" }
+    "GET /v1/providers/{namespace}/{type}/versions"                                 = { integration = "registry", authorization_type = "NONE" }
+    "GET /v1/providers/{namespace}/{type}/{version}/download/{os}/{arch}"           = { integration = "registry", authorization_type = "NONE" }
+    "GET /api/v1/registry/providers"                                                = { integration = "registry" }
+    "POST /api/v1/registry/providers"                                               = { integration = "registry" }
+    "GET /api/v1/registry/providers/{namespace}/{type}"                             = { integration = "registry" }
+    "POST /api/v1/registry/providers/{namespace}/{type}/resync"                     = { integration = "registry" }
+    "DELETE /api/v1/registry/providers/{namespace}/{type}"                          = { integration = "registry" }
   } : {}
+
+  terraform_login_routes = {
+    "POST /api/v1/oauth/authorizations" = { integration = "workspaces", require_identity_jwt = true }
+    "POST /v1/oauth/token"              = { integration = "workspaces", authorization_type = "NONE" }
+  }
 
   product_routes = merge(
     { for key, route in local.workspaces_routes : key => merge(route, { require_identity_jwt = true }) },
@@ -96,6 +109,7 @@ locals {
       for key, route in local.registry_routes :
       key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
     },
+    local.terraform_login_routes,
   )
 
   auth_anonymous_routes = {
@@ -239,7 +253,7 @@ module "api" {
   }
 
   disable_execute_api_endpoint = local.custom_domains_enabled
-  authorizer_id                = local.staging_gate_authorizer_attached ? one(module.staging_access_gate[*].http_api_authorizer_id) : null
+  authorizer_id                = local.access_gate_authorizer_attached ? one(module.access_gate[*].http_api_authorizer_id) : null
 
   identity_jwt = local.identity_jwt_api_enforced && local.domain_functions_enabled ? {
     issuer           = local.identity_issuer

@@ -29,12 +29,17 @@ locals {
 
   cors_origins = local.custom_domains_enabled ? "https://${local.host}" : local.frontend_url
 
-  staging_gate_enabled = var.environment == "staging" && var.staging_access_gate && local.custom_domains_enabled
-  staging_gate_count   = local.staging_gate_enabled ? 1 : 0
+  access_gate_requested = var.access_gate || var.staging_access_gate
+  access_gate_enabled   = local.access_gate_requested && local.custom_domains_enabled
+  access_gate_count     = local.access_gate_enabled ? 1 : 0
+  access_gate_name      = var.environment == "production" ? local.prefix : "${local.project}-stg"
+  access_gate_users     = distinct(concat(var.staging_access_users, var.access_gate_users))
 
-  staging_gate_authorizer_attached = local.staging_gate_enabled
+  access_gate_authorizer_attached = local.access_gate_enabled
 
-  identity_jwt_gate_enforced   = var.identity_jwt_mode == "gate" && local.staging_gate_enabled
+  provider_acceptance_count = var.environment == "staging" && local.access_gate_enabled ? 1 : 0
+
+  identity_jwt_gate_enforced   = var.identity_jwt_mode == "gate" && local.access_gate_enabled
   identity_jwt_native_enforced = var.identity_jwt_mode == "native"
   identity_jwt_lambda_enforced = var.identity_jwt_mode == "lambda"
   identity_jwt_api_enforced    = local.identity_jwt_native_enforced || local.identity_jwt_lambda_enforced

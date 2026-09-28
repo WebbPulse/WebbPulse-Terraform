@@ -63,6 +63,16 @@ module "identity" {
 
   api_keys_table_enabled = true
 
+  oauth_server_enabled = true
+  oauth_server_tables = {
+    "authorization-codes" = {
+      attributes             = [{ name = "code_hash", type = "S" }]
+      hash_key               = "code_hash"
+      ttl_attribute          = "expires_at"
+      point_in_time_recovery = false
+    }
+  }
+
   users_stream_enabled = false
 
   tags = {
