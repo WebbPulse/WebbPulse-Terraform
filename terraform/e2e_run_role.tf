@@ -7,7 +7,7 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
   count = local.e2e_run_role_count
 
   statement {
-    sid     = "RunCredentialsVendingAssumes"
+    sid     = "E2ESuiteWorkspaces"
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
 
@@ -20,6 +20,33 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
       test     = "StringLike"
       variable = "sts:ExternalId"
       values   = ["ws-*"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "sts:RoleSessionName"
+      values   = ["run-*@e2e-*"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = length(var.e2e_run_role_workspace_ids) > 0 ? [1] : []
+
+    content {
+      sid     = "DurableE2EWorkspaces"
+      effect  = "Allow"
+      actions = ["sts:AssumeRole"]
+
+      principals {
+        type        = "AWS"
+        identifiers = [aws_iam_role.run_credentials.arn]
+      }
+
+      condition {
+        test     = "StringEquals"
+        variable = "sts:ExternalId"
+        values   = var.e2e_run_role_workspace_ids
+      }
     }
   }
 }
