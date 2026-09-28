@@ -29,6 +29,8 @@ import type {
   InstallationCallback,
   InstallationList,
   InstallStart,
+  LoginAuthorization,
+  LoginAuthorizationCreate,
   Module,
   ModuleCreate,
   ModuleList,
@@ -37,6 +39,10 @@ import type {
   ManifestConversionRequest,
   ManifestStart,
   ManifestStartRequest,
+  Provider,
+  ProviderCreate,
+  ProviderList,
+  ProviderSync,
   RepositoryList,
   Run,
   RunCreate,
@@ -756,6 +762,84 @@ export class TerraformApi {
       this.client.delete(modulePath(namespace, name, provider), options)
     );
   }
+
+  /** Lists every private registry provider with its versions. */
+  async listProviders(options: RequestOptions = {}): Promise<ProviderList> {
+    const response = await this.client.get<ProviderList>(
+      '/registry/providers',
+      options
+    );
+    return response.data;
+  }
+
+  /** Connects a provider to a repository the GitHub App is installed on. */
+  async createProvider(
+    body: ProviderCreate,
+    options: RequestOptions = {}
+  ): Promise<Provider> {
+    const response = await this.sudo(() =>
+      this.client.post<Provider>('/registry/providers', body, options)
+    );
+    return response.data;
+  }
+
+  /** Reads one provider and every version of it. */
+  async getProvider(
+    namespace: string,
+    type: string,
+    options: RequestOptions = {}
+  ): Promise<Provider> {
+    const response = await this.client.get<Provider>(
+      providerPath(namespace, type),
+      options
+    );
+    return response.data;
+  }
+
+  /** Queues an import of every release in the provider's repository. */
+  async resyncProvider(
+    namespace: string,
+    type: string,
+    options: RequestOptions = {}
+  ): Promise<ProviderSync> {
+    const response = await this.client.post<ProviderSync>(
+      `${providerPath(namespace, type)}/resync`,
+      undefined,
+      options
+    );
+    return response.data;
+  }
+
+  /** Removes a provider with every version. Configurations requiring it stop installing. */
+  async deleteProvider(
+    namespace: string,
+    type: string,
+    options: RequestOptions = {}
+  ): Promise<void> {
+    await this.sudo(() =>
+      this.client.delete(providerPath(namespace, type), options)
+    );
+  }
+
+  /** Approves a `terraform login` request and returns the loopback redirect. */
+  async createTerraformLoginAuthorization(
+    body: LoginAuthorizationCreate,
+    options: RequestOptions = {}
+  ): Promise<LoginAuthorization> {
+    const response = await this.sudo(() =>
+      this.client.post<LoginAuthorization>(
+        '/oauth/authorizations',
+        body,
+        options
+      )
+    );
+    return response.data;
+  }
+}
+
+/** The API path of one provider. */
+function providerPath(namespace: string, type: string): string {
+  return `/registry/providers/${[namespace, type].map(encodeURIComponent).join('/')}`;
 }
 
 /** The API path of one module. */

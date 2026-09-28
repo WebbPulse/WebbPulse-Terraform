@@ -688,6 +688,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/oauth/authorizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Authorization
+         * @description Approve a `terraform login` request and return where to send the browser.
+         *
+         *     A signed-in person only: a key approving a login would mint a key, which is the
+         *     same refusal the API keys route makes.
+         */
+        post: operations["create_authorization_api_v1_oauth_authorizations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/registry/modules": {
         parameters: {
             query?: never;
@@ -776,6 +799,78 @@ export interface paths {
         get: operations["get_version_api_v1_registry_modules__namespace___name___provider__versions__version__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Providers
+         * @description Every provider and every version, with pending and failed versions shown.
+         */
+        get: operations["list_providers_api_v1_registry_providers_get"];
+        put?: never;
+        /**
+         * Create Provider
+         * @description Connect a provider to a `terraform-provider-<type>` repository; each release published there publishes it.
+         *
+         *     A release must carry GoReleaser's registry layout, its `SHA256SUMS` signed by
+         *     this registry's signing key. Existing releases are imported in the background
+         *     unless `import_releases` is false.
+         */
+        post: operations["create_provider_api_v1_registry_providers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/providers/{namespace}/{type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Provider
+         * @description One provider and every version of it.
+         */
+        get: operations["get_provider_api_v1_registry_providers__namespace___type__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Provider
+         * @description Remove a provider with every version and stored file. Configurations requiring it stop installing.
+         */
+        delete: operations["delete_provider_api_v1_registry_providers__namespace___type__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/providers/{namespace}/{type}/resync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resync Provider
+         * @description Queue an import of every release in the provider's repository. Published versions are left alone.
+         */
+        post: operations["resync_provider_api_v1_registry_providers__namespace___type__resync_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1798,6 +1893,37 @@ export interface components {
             run_id: string;
         };
         /**
+         * LoginAuthorization
+         * @description Where to send the browser, and the scopes the new key will carry.
+         */
+        LoginAuthorization: {
+            /** Redirect Url */
+            redirect_url: string;
+            /** Scopes */
+            scopes: string[];
+        };
+        /**
+         * LoginAuthorizationCreate
+         * @description The query Terraform CLI opened the approve page with, forwarded as is.
+         */
+        LoginAuthorizationCreate: {
+            /** Client Id */
+            client_id: string;
+            /** Code Challenge */
+            code_challenge: string;
+            /** Code Challenge Method */
+            code_challenge_method: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+            /** Response Type */
+            response_type: string;
+            /**
+             * State
+             * @default
+             */
+            state?: string;
+        };
+        /**
          * ManifestConversionRequest
          * @description The create callback's query, forwarded by the SPA.
          */
@@ -2176,6 +2302,103 @@ export interface components {
             replace_paths?: (string | number)[][];
             /** Type */
             type: string;
+        };
+        /**
+         * Provider
+         * @description One provider and every version published or attempted for it, newest first.
+         */
+        Provider: {
+            /** Created At */
+            created_at?: string | null;
+            /** Namespace */
+            namespace: string;
+            /** Source */
+            source: string;
+            /** Type */
+            type: string;
+            /** Vcs Repo */
+            vcs_repo: string;
+            /** Versions */
+            versions: components["schemas"]["ProviderVersion"][];
+        };
+        /**
+         * ProviderCreate
+         * @description A provider to connect to a GitHub repository the App is installed on.
+         *
+         *     Like HCP Terraform's private provider publishing, driven from releases: each
+         *     published GitHub release with a `vX.Y.Z` tag publishes that version, from the
+         *     GoReleaser registry layout its assets carry. The namespace is the repository
+         *     owner and the type comes from a `terraform-provider-<type>` repository name.
+         */
+        ProviderCreate: {
+            /**
+             * Import Releases
+             * @default true
+             */
+            import_releases?: boolean;
+            /** Vcs Repo */
+            vcs_repo: string;
+        };
+        /**
+         * ProviderList
+         * @description Every provider in the registry.
+         */
+        ProviderList: {
+            /** Providers */
+            providers: components["schemas"]["Provider"][];
+        };
+        /**
+         * ProviderPlatform
+         * @description One operating system and architecture a version ships a build for.
+         */
+        ProviderPlatform: {
+            /** Arch */
+            arch: string;
+            /** Filename */
+            filename: string;
+            /** Os */
+            os: string;
+            /** Shasum */
+            shasum: string;
+        };
+        /**
+         * ProviderSync
+         * @description A queued import of a provider's existing releases.
+         */
+        ProviderSync: {
+            /** Delivery */
+            delivery: string;
+            /** Source */
+            source: string;
+        };
+        /**
+         * ProviderVersion
+         * @description One version of a provider and where its publishing stands.
+         */
+        ProviderVersion: {
+            /** Actor */
+            actor: string;
+            /** Created At */
+            created_at: string;
+            /** Error */
+            error?: string | null;
+            /** Key Id */
+            key_id?: string | null;
+            /** Platforms */
+            platforms: components["schemas"]["ProviderPlatform"][];
+            /** Protocols */
+            protocols: string[];
+            /** Published At */
+            published_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "published" | "failed";
+            /** Tag */
+            tag: string;
+            /** Version */
+            version: string;
         };
         /**
          * RegistryCredentials
@@ -4590,6 +4813,39 @@ export interface operations {
             };
         };
     };
+    create_authorization_api_v1_oauth_authorizations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginAuthorizationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginAuthorization"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_modules_api_v1_registry_modules_get: {
         parameters: {
             query?: never;
@@ -4820,6 +5076,195 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
+            };
+        };
+    };
+    list_providers_api_v1_registry_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_provider_api_v1_registry_providers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Provider"];
+                };
+            };
+            /** @description A provider already sits at the address, or there is no GitHub App. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The App is not installed on the repository, or it is not a provider repository. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_provider_api_v1_registry_providers__namespace___type__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Provider"];
+                };
+            };
+            /** @description No provider sits at the address. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_provider_api_v1_registry_providers__namespace___type__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No provider sits at the address. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resync_provider_api_v1_registry_providers__namespace___type__resync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderSync"];
+                };
+            };
+            /** @description No provider sits at the address. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The sync could not be queued. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

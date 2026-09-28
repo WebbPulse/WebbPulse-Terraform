@@ -13,16 +13,19 @@ import {
 import {
   ApiKeys,
   ConnectModule,
+  ConnectProvider,
   GitHubCreated,
   GitHubSettings,
   GitHubSetup,
   ModuleDetail,
   NewWorkspace,
   NotFound,
+  ProviderDetail,
   Registry,
   RunDetail,
   Runs,
   SignIn,
+  TerraformLogin,
   Workspaces,
   workspaceRoutes,
 } from './pages';
@@ -42,6 +45,14 @@ export function AppRoutes(): React.ReactElement {
         }
       />
       <Route
+        path="/oauth/authorize"
+        element={
+          <RequireAuth>
+            <TerraformLogin />
+          </RequireAuth>
+        }
+      />
+      <Route
         element={
           <RequireAuth>
             <Layout />
@@ -56,6 +67,11 @@ export function AppRoutes(): React.ReactElement {
         <Route path="/runs/:runId" element={<RunDetail />} />
         <Route path="/registry" element={<Registry />} />
         <Route path="/registry/new" element={<ConnectModule />} />
+        <Route path="/registry/providers/new" element={<ConnectProvider />} />
+        <Route
+          path="/registry/providers/:namespace/:type"
+          element={<ProviderDetail />}
+        />
         <Route
           path="/registry/:namespace/:name/:provider"
           element={<ModuleDetail />}

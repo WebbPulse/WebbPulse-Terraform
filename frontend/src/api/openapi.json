@@ -989,6 +989,73 @@
         "title": "LogPage",
         "type": "object"
       },
+      "LoginAuthorization": {
+        "description": "Where to send the browser, and the scopes the new key will carry.",
+        "properties": {
+          "redirect_url": {
+            "title": "Redirect Url",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "redirect_url",
+          "scopes"
+        ],
+        "title": "LoginAuthorization",
+        "type": "object"
+      },
+      "LoginAuthorizationCreate": {
+        "description": "The query Terraform CLI opened the approve page with, forwarded as is.",
+        "properties": {
+          "client_id": {
+            "maxLength": 64,
+            "title": "Client Id",
+            "type": "string"
+          },
+          "code_challenge": {
+            "maxLength": 128,
+            "title": "Code Challenge",
+            "type": "string"
+          },
+          "code_challenge_method": {
+            "maxLength": 16,
+            "title": "Code Challenge Method",
+            "type": "string"
+          },
+          "redirect_uri": {
+            "maxLength": 256,
+            "title": "Redirect Uri",
+            "type": "string"
+          },
+          "response_type": {
+            "maxLength": 16,
+            "title": "Response Type",
+            "type": "string"
+          },
+          "state": {
+            "default": "",
+            "maxLength": 512,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "response_type",
+          "redirect_uri",
+          "code_challenge",
+          "code_challenge_method"
+        ],
+        "title": "LoginAuthorizationCreate",
+        "type": "object"
+      },
       "ManifestConversionRequest": {
         "description": "The create callback's query, forwarded by the SPA.",
         "properties": {
@@ -1903,6 +1970,229 @@
           "action"
         ],
         "title": "PlanResourceChange",
+        "type": "object"
+      },
+      "Provider": {
+        "description": "One provider and every version published or attempted for it, newest first.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "vcs_repo": {
+            "title": "Vcs Repo",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderVersion"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "namespace",
+          "type",
+          "source",
+          "vcs_repo",
+          "versions"
+        ],
+        "title": "Provider",
+        "type": "object"
+      },
+      "ProviderCreate": {
+        "description": "A provider to connect to a GitHub repository the App is installed on.\n\nLike HCP Terraform's private provider publishing, driven from releases: each\npublished GitHub release with a `vX.Y.Z` tag publishes that version, from the\nGoReleaser registry layout its assets carry. The namespace is the repository\nowner and the type comes from a `terraform-provider-<type>` repository name.",
+        "properties": {
+          "import_releases": {
+            "default": true,
+            "title": "Import Releases",
+            "type": "boolean"
+          },
+          "vcs_repo": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+            "title": "Vcs Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vcs_repo"
+        ],
+        "title": "ProviderCreate",
+        "type": "object"
+      },
+      "ProviderList": {
+        "description": "Every provider in the registry.",
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/Provider"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "title": "ProviderList",
+        "type": "object"
+      },
+      "ProviderPlatform": {
+        "description": "One operating system and architecture a version ships a build for.",
+        "properties": {
+          "arch": {
+            "title": "Arch",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "os": {
+            "title": "Os",
+            "type": "string"
+          },
+          "shasum": {
+            "title": "Shasum",
+            "type": "string"
+          }
+        },
+        "required": [
+          "os",
+          "arch",
+          "filename",
+          "shasum"
+        ],
+        "title": "ProviderPlatform",
+        "type": "object"
+      },
+      "ProviderSync": {
+        "description": "A queued import of a provider's existing releases.",
+        "properties": {
+          "delivery": {
+            "title": "Delivery",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "delivery"
+        ],
+        "title": "ProviderSync",
+        "type": "object"
+      },
+      "ProviderVersion": {
+        "description": "One version of a provider and where its publishing stands.",
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Id"
+          },
+          "platforms": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderPlatform"
+            },
+            "title": "Platforms",
+            "type": "array"
+          },
+          "protocols": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Protocols",
+            "type": "array"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "published",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "title": "Tag",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "status",
+          "tag",
+          "protocols",
+          "platforms",
+          "actor",
+          "created_at"
+        ],
+        "title": "ProviderVersion",
         "type": "object"
       },
       "RegistryCredentials": {
@@ -5548,6 +5838,48 @@
         ]
       }
     },
+    "/api/v1/oauth/authorizations": {
+      "post": {
+        "description": "Approve a `terraform login` request and return where to send the browser.\n\nA signed-in person only: a key approving a login would mint a key, which is the\nsame refusal the API keys route makes.",
+        "operationId": "create_authorization_api_v1_oauth_authorizations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginAuthorizationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginAuthorization"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Create Authorization",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
     "/api/v1/registry/modules": {
       "get": {
         "description": "Every module and every version, with pending and failed versions shown.",
@@ -5909,6 +6241,251 @@
           }
         },
         "summary": "Get Version",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/providers": {
+      "get": {
+        "description": "Every provider and every version, with pending and failed versions shown.",
+        "operationId": "list_providers_api_v1_registry_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Providers",
+        "tags": [
+          "registry"
+        ]
+      },
+      "post": {
+        "description": "Connect a provider to a `terraform-provider-<type>` repository; each release published there publishes it.\n\nA release must carry GoReleaser's registry layout, its `SHA256SUMS` signed by\nthis registry's signing key. Existing releases are imported in the background\nunless `import_releases` is false.",
+        "operationId": "create_provider_api_v1_registry_providers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Provider"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "A provider already sits at the address, or there is no GitHub App."
+          },
+          "422": {
+            "description": "The App is not installed on the repository, or it is not a provider repository."
+          }
+        },
+        "summary": "Create Provider",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/providers/{namespace}/{type}": {
+      "delete": {
+        "description": "Remove a provider with every version and stored file. Configurations requiring it stop installing.",
+        "operationId": "delete_provider_api_v1_registry_providers__namespace___type__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No provider sits at the address."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Delete Provider",
+        "tags": [
+          "registry"
+        ]
+      },
+      "get": {
+        "description": "One provider and every version of it.",
+        "operationId": "get_provider_api_v1_registry_providers__namespace___type__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Provider"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No provider sits at the address."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Provider",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/api/v1/registry/providers/{namespace}/{type}/resync": {
+      "post": {
+        "description": "Queue an import of every release in the provider's repository. Published versions are left alone.",
+        "operationId": "resync_provider_api_v1_registry_providers__namespace___type__resync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9A-Za-z_-]+$",
+              "title": "Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderSync"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No provider sits at the address."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          },
+          "503": {
+            "description": "The sync could not be queued."
+          }
+        },
+        "summary": "Resync Provider",
         "tags": [
           "registry"
         ]

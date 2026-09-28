@@ -11,7 +11,8 @@ signed payload alone. A branch push or a pull request goes to the webhooks queue
 through `delivery_message`, and the runs function reads it back with
 `parse_message`. A push of a semantic version tag goes to the registry's ingest
 queue through `tag_message`, and the registry function reads it back with
-`parse_tag_message`. Both sides live here so the functions share the shape without
+`parse_tag_message`; a published release goes the same way through
+`release_message` and `parse_release_message`. Both sides live here so the functions share the shape without
 importing each other.
 """
 
@@ -40,6 +41,9 @@ WEBHOOK_KIND: Final = "github_webhook"
 TAG_KIND: Final = "module_tag"
 """The `kind` a queued tag push carries, which the registry function routes on."""
 
+RELEASE_KIND: Final = "provider_release"
+"""The `kind` a queued release carries, which the registry function routes on."""
+
 SIGNATURE_HEADER: Final = "x-hub-signature-256"
 EVENT_HEADER: Final = "x-github-event"
 DELIVERY_HEADER: Final = "x-github-delivery"
@@ -53,6 +57,7 @@ MAX_CHANGED_PATHS: Final = 3000
 PUSH: Final = "push"
 PULL_REQUEST: Final = "pull_request"
 PING: Final = "ping"
+RELEASE: Final = "release"
 
 PULL_REQUEST_ACTIONS: Final = frozenset({"opened", "synchronize", "reopened"})
 """The pull request actions that change what a speculative plan would read."""
@@ -288,6 +293,48 @@ def tag_message(event: str, delivery: str, payload: Mapping[str, Any]) -> Option
     }
 
 
+def release_message(event: str, delivery: str, payload: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    """The registry message for a published release with a semantic version tag, or `None`.
+
+    A release goes to the provider registry: `published` fires once when a release,
+    prerelease or not, leaves draft. Every other action and any other tag is ignored.
+    """
+    if event != RELEASE or not _DELIVERY.match(delivery) or payload.get("action") != "published":
+        return None
+    release = payload.get("release") or {}
+    if not isinstance(release, Mapping) or release.get("draft"):
+        return None
+    tag = str(release.get("tag_name") or "")
+    version = semver_version(tag)
+    if version is None:
+        return None
+    base = _repository(payload)
+    if not base["repo"] or not base["repository_id"] or not base["installation_id"]:
+        return None
+    return {"kind": RELEASE_KIND, "delivery": delivery, "event": event, **base, "tag": tag, "version": version}
+
+
+def parse_release_message(record: Mapping[str, Any]) -> dict[str, Any]:
+    """The queued release one SQS record carries.
+
+    Raises:
+        MalformedDelivery: The body is not a `provider_release` message with every
+            field it needs, so it parks on the dead letter queue.
+    """
+    raw = record.get("body")
+    try:
+        body = json.loads(raw) if isinstance(raw, str) else None
+    except ValueError as error:
+        raise MalformedDelivery("The body is not JSON.") from error
+    if not isinstance(body, dict) or body.get("kind") != RELEASE_KIND:
+        raise MalformedDelivery(f"The body is not a {RELEASE_KIND} message.")
+    required = ["delivery", "repo", "repository_id", "installation_id", "tag", "version", "actor"]
+    missing = [name for name in required if not body.get(name)]
+    if missing:
+        raise MalformedDelivery(f"The message lacks {', '.join(missing)}.")
+    return body
+
+
 def parse_tag_message(record: Mapping[str, Any]) -> dict[str, Any]:
     """The queued tag push one SQS record carries.
 
@@ -345,6 +392,8 @@ __all__ = [
     "PING",
     "PULL_REQUEST",
     "PUSH",
+    "RELEASE",
+    "RELEASE_KIND",
     "SIGNATURE_HEADER",
     "TAG_KIND",
     "WEBHOOK_KIND",
@@ -353,7 +402,9 @@ __all__ = [
     "WebhookSignatureMiddleware",
     "delivery_message",
     "parse_message",
+    "parse_release_message",
     "parse_tag_message",
+    "release_message",
     "semver_version",
     "tag_message",
     "webhook_secret",

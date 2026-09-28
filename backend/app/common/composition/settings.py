@@ -59,6 +59,13 @@ class Settings(BaseServiceSettings):
     """The queue the webhook route sends each semantic version tag push to, for the
     registry function. Unset, tag pushes are acknowledged and dropped."""
 
+    PROVIDER_SIGNING_KEY_PARAMETER: str = ""
+    """The SSM parameter holding the ASCII armored public key provider releases must be
+    signed with. Unset, no provider version can be published."""
+
+    PROVIDER_SIGNING_KEY_ID_PARAMETER: str = ""
+    """The SSM parameter holding that key's id, which a release's signature must name."""
+
     GITHUB_TABLE: str = ""
     """The GitHub domain's one table: the App row, one-time states and installations."""
 

@@ -1,11 +1,17 @@
-/** The private registry's module list, with the way to connect a module. */
+/** The private registry: its modules and providers, with the way to connect each. */
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
-import { api, type Module, type ModuleList } from '../../api';
+import {
+  api,
+  type Module,
+  type ModuleList,
+  type Provider,
+  type ProviderList,
+} from '../../api';
 import {
   EmptyState,
   ErrorNotice,
@@ -14,6 +20,7 @@ import {
   RelativeTime,
   Spinner,
   Table,
+  Tabs,
   Td,
   Th,
   Tr,
@@ -21,50 +28,161 @@ import {
   useIsAdmin,
 } from '../../components';
 import { MODULES_KEY, latestPublished, modulePagePath } from './moduleText';
+import {
+  PROVIDERS_KEY,
+  latestPublishedProvider,
+  providerPagePath,
+} from './providerText';
 import { VersionStatusBadge } from './VersionStatusBadge';
 
-/** The module list. */
+type RegistryTab = 'modules' | 'providers';
+
+/** The registry page, tabbed between modules and providers like HCP's. */
 export function Registry(): React.ReactElement {
   const auth = useQueryAuth();
   const isAdmin = useIsAdmin();
+  const [search, setSearch] = useSearchParams();
+  const tab: RegistryTab =
+    search.get('tab') === 'providers' ? 'providers' : 'modules';
   const [filter, setFilter] = useState('');
   const query = usePolledQuery<ModuleList>(
     ({ signal }) => api.listModules({ signal }),
     { intervalMs: 30_000, queryKey: MODULES_KEY, auth }
   );
-  const connect = isAdmin ? (
+  const providers = usePolledQuery<ProviderList>(
+    ({ signal }) => api.listProviders({ signal }),
+    { intervalMs: 30_000, queryKey: PROVIDERS_KEY, auth }
+  );
+  const active = tab === 'modules' ? query : providers;
+  const connect = !isAdmin ? null : tab === 'modules' ? (
     <Link to="/registry/new" className={buttonClass('primary')}>
       Connect module
     </Link>
-  ) : null;
+  ) : (
+    <Link to="/registry/providers/new" className={buttonClass('primary')}>
+      Connect provider
+    </Link>
+  );
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Registry"
-        description="Private modules published from GitHub tags, for any workspace to source."
+        description="Private modules published from GitHub tags and providers published from signed GitHub releases."
         meta={
-          query.isFetching && !query.isLoading ? (
-            <Spinner label="Refreshing modules" className="size-3.5" />
+          active.isFetching && !active.isLoading ? (
+            <Spinner label={`Refreshing ${tab}`} className="size-3.5" />
           ) : null
         }
         actions={connect}
       />
-      <ErrorNotice error={query.error} />
-      {query.isLoading ? (
+      <Tabs
+        label="Registry"
+        value={tab}
+        onChange={(next) => {
+          setFilter('');
+          setSearch(next === 'modules' ? {} : { tab: next }, { replace: true });
+        }}
+        tabs={[
+          { id: 'modules', label: 'Modules' },
+          { id: 'providers', label: 'Providers' },
+        ]}
+      />
+      <ErrorNotice error={active.error} />
+      {active.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-text-faint">
-          <Spinner label="Loading modules" className="size-4" />
-          Loading modules
+          <Spinner label={`Loading ${tab}`} className="size-4" />
+          {`Loading ${tab}`}
         </div>
-      ) : query.data === null ? null : (
-        <ModuleTable
-          modules={query.data.modules}
-          filter={filter}
-          onFilter={setFilter}
-          connect={connect}
-        />
+      ) : tab === 'modules' ? (
+        query.data === null ? null : (
+          <ModuleTable
+            modules={query.data.modules}
+            filter={filter}
+            onFilter={setFilter}
+            connect={connect}
+          />
+        )
+      ) : providers.data === null ? null : (
+        <ProviderTable providers={providers.data.providers} connect={connect} />
       )}
     </div>
+  );
+}
+
+/** The table of providers, or an invitation to connect the first one. */
+function ProviderTable({
+  providers,
+  connect,
+}: {
+  providers: Provider[];
+  connect: React.ReactNode;
+}): React.ReactElement {
+  if (providers.length === 0) {
+    return (
+      <EmptyState
+        title="No providers yet."
+        hint="Connect a terraform-provider-name repository the GitHub App can reach. Each signed vX.Y.Z release publishes a version."
+        action={connect}
+      />
+    );
+  }
+  return (
+    <Table label="Providers">
+      <thead>
+        <tr>
+          <Th>Provider</Th>
+          <Th>Latest version</Th>
+          <Th>Repository</Th>
+          <Th>Published</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {providers.map((provider) => {
+          const latest = latestPublishedProvider(provider.versions);
+          const newest = provider.versions[0] ?? null;
+          return (
+            <Tr key={provider.source}>
+              <Td>
+                <Link
+                  to={providerPagePath(provider)}
+                  className="font-medium text-text-strong hover:text-accent hover:underline"
+                >
+                  {provider.type}
+                </Link>
+                <p className="font-mono text-xs text-text-faint">
+                  {provider.namespace}
+                </p>
+              </Td>
+              <Td>
+                <span className="inline-flex items-center gap-2">
+                  {latest === null ? (
+                    <span className="text-xs text-text-faint">
+                      None published
+                    </span>
+                  ) : (
+                    <span className="font-mono text-xs text-text">
+                      {latest.version}
+                    </span>
+                  )}
+                  {newest !== null && newest.status !== 'published' ? (
+                    <VersionStatusBadge status={newest.status} />
+                  ) : null}
+                </span>
+              </Td>
+              <Td className="font-mono text-xs text-text-muted">
+                {provider.vcs_repo}
+              </Td>
+              <Td className="text-xs whitespace-nowrap text-text-faint">
+                {latest?.published_at ? (
+                  <RelativeTime iso={latest.published_at} />
+                ) : null}
+              </Td>
+            </Tr>
+          );
+        })}
+      </tbody>
+    </Table>
   );
 }
 

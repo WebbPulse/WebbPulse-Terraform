@@ -9,6 +9,7 @@ import {
   stubAuthClient,
 } from '../test-helpers/renderWithAuth';
 import { RequireAuth, RequireGuest } from './RequireAuth';
+import { returnPath } from './returnPath';
 
 /** The routes both guards are exercised through. */
 function guardedRoutes(): React.ReactElement {
@@ -98,5 +99,28 @@ describe('RequireGuest', () => {
     await waitFor(() => {
       expect(screen.getByText('Workspaces')).toBeInTheDocument();
     });
+  });
+});
+
+describe('returnPath', () => {
+  it('returns to the page and query the visitor was sent away from', () => {
+    expect(
+      returnPath({
+        from: {
+          pathname: '/oauth/authorize',
+          search: '?client_id=terraform-cli',
+        },
+      })
+    ).toBe('/oauth/authorize?client_id=terraform-cli');
+  });
+
+  it('falls back to the workspaces list for anything but an in-app path', () => {
+    expect(returnPath(null)).toBe('/workspaces');
+    expect(
+      returnPath({ from: { pathname: '//evil.example', search: '' } })
+    ).toBe('/workspaces');
+    expect(returnPath({ from: { pathname: '/sign-in', search: '' } })).toBe(
+      '/workspaces'
+    );
   });
 });
