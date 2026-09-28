@@ -5,18 +5,23 @@ page with its PKCE challenge and a loopback redirect, and exchanges the code the
 back at the token endpoint. These cases play both halves: the run's signed-in user approves
 through `POST /api/v1/oauth/authorizations` (step-up gated, as the approve page is), and the
 exchange posts the form Terraform's oauth2 client sends, with plain `httpx` and no gate
-header, exactly as the CLI does. The minted `terraform login` keys are revoked on teardown,
-whatever the outcome. Skipped outside staging and on the read-only production smoke, since
-a key is minted. No key, code or verifier is ever printed.
+header, exactly as the CLI does. The last case hands the key to `wp-tf` and plans with it.
+The minted `terraform login` keys are revoked on teardown, whatever the outcome. Skipped
+outside staging and on the read-only production smoke, since a key is minted. No key, code or verifier is ever printed.
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
+import re
 import secrets
-from collections.abc import Callable, Iterator
+import subprocess
+import sys
+from collections.abc import Callable, Iterator, Mapping
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -150,3 +155,81 @@ def test_a_wrong_verifier_is_refused(approve: Callable[[str], str]) -> None:
     assert response.status_code == 400
     assert response.json()["error"] == "invalid_grant"
     assert "access_token" not in response.json()
+
+
+WP_TF_PLAN_TIMEOUT_SECONDS = 900
+EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "first-run"
+
+
+def _wp_tf() -> list[str]:
+    """The installed `wp-tf` console script, from the `tf` extra of webbpulse."""
+    script = Path(sys.executable).with_name("wp-tf")
+    if not script.exists():
+        pytest.fail(f"{script} is missing; the e2e group must install webbpulse[tf]")
+    return [str(script)]
+
+
+def test_wp_tf_plans_with_the_login_key(
+    approve: Callable[[str], str],
+    workspace: dict[str, Any],
+    gate_headers: Mapping[str, str],
+    api: Any,
+    tmp_path: Path,
+) -> None:
+    """`wp-tf plan` reads the key `terraform login` stored, streams a plan-only run, and cannot confirm it.
+
+    The key is written to a throwaway `credentials.tfrc.json` under a temporary HOME, the
+    way `terraform login` leaves it, so the CLI is exercised exactly as a workstation runs
+    it. The gate value goes in through the environment and is never printed.
+    """
+    verifier = secrets.token_urlsafe(48)
+    exchanged = _exchange(approve(verifier), verifier)
+    assert exchanged.status_code == 200, f"the exchange answered {exchanged.status_code}"
+    token = exchanged.json()["access_token"]
+    terraform_d = tmp_path / ".terraform.d"
+    terraform_d.mkdir()
+    (terraform_d / "credentials.tfrc.json").write_text(json.dumps({"credentials": {REGISTRY_HOST: {"token": token}}}))
+
+    env = {key: value for key, value in os.environ.items() if not key.startswith(("WP_TF_", "TF_TOKEN_"))}
+    env["HOME"] = str(tmp_path)
+    env["WP_TF_GATE"] = next(iter(gate_headers.values()), "")
+    workspace_id = str(workspace["workspace_id"])
+    completed = subprocess.run(
+        [*_wp_tf(), "--host", REGISTRY_HOST, "plan", str(EXAMPLE), "-w", workspace_id, "-m", "e2e wp-tf"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=WP_TF_PLAN_TIMEOUT_SECONDS,
+        check=False,
+    )
+    output = completed.stdout + completed.stderr
+    assert token not in output, "wp-tf printed the key"
+    assert not env["WP_TF_GATE"] or env["WP_TF_GATE"] not in output, "wp-tf printed the gate value"
+    assert completed.returncode == 0, f"wp-tf plan exited {completed.returncode}: {completed.stderr[-1500:]}"
+    assert "terraform plan" in completed.stdout, "wp-tf streamed no plan log"
+    found = re.search(r"run (run-[0-9A-Z]+) ", completed.stderr)
+    assert found, f"wp-tf named no run: {completed.stderr[-400:]}"
+    run_id = found.group(1)
+
+    run = api.get(f"/api/v1/runs/{run_id}")
+    assert run.status_code == 200, run.text[:400]
+    assert run.json()["status"] == "planned_and_finished", run.text[:400]
+    assert run.json()["workspace_id"] == workspace_id
+
+    status = subprocess.run(
+        [*_wp_tf(), "--host", REGISTRY_HOST, "status", run_id],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT_SECONDS * 2,
+        check=False,
+    )
+    assert status.returncode == 0, status.stderr[-400:]
+    assert json.loads(status.stdout)["run_id"] == run_id
+
+    confirm = httpx.post(
+        f"https://{API_HOST}/api/v1/runs/{run_id}/confirm",
+        headers={"Authorization": f"Bearer {token}", **gate_headers},
+        timeout=TIMEOUT_SECONDS,
+    )
+    assert confirm.status_code == 403, f"a login key confirming a run answered {confirm.status_code}"
