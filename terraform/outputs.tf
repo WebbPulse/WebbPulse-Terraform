@@ -174,7 +174,7 @@ output "workspace_cleanup_queue_url" {
 }
 
 output "provider_signing_key_secret_arn" {
-  description = "ARN of the secret holding the private provider release signing key, set as the SIGNING_KEY_SECRET_ARN variable on both provider repository environments"
+  description = "ARN of the secret holding the private provider release signing key, whose name the provider repository environments carry as SIGNING_KEY_SECRET_ID"
   value       = aws_secretsmanager_secret.provider_signing_key.arn
 }
 
