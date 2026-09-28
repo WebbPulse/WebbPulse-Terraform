@@ -253,7 +253,7 @@ module "api" {
   }
 
   disable_execute_api_endpoint = local.custom_domains_enabled
-  authorizer_id                = local.staging_gate_authorizer_attached ? one(module.staging_access_gate[*].http_api_authorizer_id) : null
+  authorizer_id                = local.access_gate_authorizer_attached ? one(module.access_gate[*].http_api_authorizer_id) : null
 
   identity_jwt = local.identity_jwt_api_enforced && local.domain_functions_enabled ? {
     issuer           = local.identity_issuer

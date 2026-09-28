@@ -23,16 +23,17 @@ the prefix `webbpulse-terraform-<slug>`. Both accounts are `us-west-2`.
 | Slug | `staging` | `prod` |
 | Frontend host | `staging.terraform.webbpulse.com` | `terraform.webbpulse.com` |
 | API host | `api.staging.terraform.webbpulse.com` | `api.terraform.webbpulse.com` |
-| `identity_jwt_mode` | `gate` | `lambda` |
-| Access gate | optional, `var.staging_access_gate` | never |
+| `identity_jwt_mode` | `gate` | `gate` |
+| Access gate | on, `var.access_gate` | on, `var.access_gate` |
 
 Custom domains and the gate require `var.staging_profile` of `full` together with
 `var.route53_zone_id`. With `reduced` the hostnames fall back to the CloudFront
 and HTTP API endpoints, and the CORS origin follows. With custom domains on, the
 default `execute-api` endpoint is disabled, so the API answers only on its host.
 
-Production must run `identity_jwt_mode` as `lambda` or `native`: the plan fails on
-`gate` or `off` there, since neither enforces anything without the staging gate.
+With the access gate on, `identity_jwt_mode` must be `gate`, since a route takes
+one authorizer and the gate's already holds the slot. Production refuses `off`,
+and `gate` without a working access gate, since neither enforces anything there.
 
 ## Repository layout
 
@@ -93,8 +94,8 @@ account row this control plane keeps.
 Every route is mounted under `/api/v1` and reached through the HTTP API. Every
 product route is marked `require_identity_jwt`. A person arrives with a JWT the
 gateway authorizer verified. An agent arrives with a `wpk_` API key, which the
-gateway authorizer (the staging gate, or the `lambda` mode REQUEST authorizer in
-production) passes through by prefix (`identity_jwt.api_key_prefixes`) and
+gateway authorizer (the access gate, or the `lambda` mode REQUEST authorizer where
+the gate is off) passes through by prefix, behind the gate's origin header or signed cookies, (`identity_jwt.api_key_prefixes`) and
 `claims_or_api_key` verifies in process, reloading the owner on every request so a
 disabled or demoted owner's keys lose their scopes at once. Both render as the same claims, so a
 scope guard cannot tell them apart. The two runner routes carry no gateway

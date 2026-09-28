@@ -118,24 +118,24 @@ output "runner_vpc_id" {
   value       = module.vpc.vpc_id
 }
 
-output "staging_access_gate_hosted_ui" {
-  description = "Cognito hosted UI base URL of the staging access gate, null when the gate is off"
-  value       = one(module.staging_access_gate[*].hosted_ui_domain)
+output "access_gate_hosted_ui" {
+  description = "Cognito hosted UI base URL of the access gate, null when the gate is off"
+  value       = one(module.access_gate[*].hosted_ui_domain)
 }
 
 output "e2e_gate_signing_key_ssm_parameter_name" {
   description = "SSM SecureString holding the gate's CloudFront cookie signing key, set as the E2E_GATE_SIGNING_KEY_SSM_PARAMETER environment variable. Null when the gate is off"
-  value       = one(module.staging_access_gate[*].signing_key_ssm_parameter_name)
+  value       = one(module.access_gate[*].signing_key_ssm_parameter_name)
 }
 
 output "e2e_gate_key_pair_id" {
   description = "CloudFront public key id the gate trusts, set as the E2E_GATE_KEY_PAIR_ID environment variable. Null when the gate is off"
-  value       = one(module.staging_access_gate[*].signing_key_pair_id)
+  value       = one(module.access_gate[*].signing_key_pair_id)
 }
 
 output "e2e_gate_cookie_domain" {
   description = "Domain the gate's signed cookies are scoped to, set as the E2E_GATE_COOKIE_DOMAIN environment variable. Null when the gate is off"
-  value       = one(module.staging_access_gate[*].cookie_domain)
+  value       = one(module.access_gate[*].cookie_domain)
 }
 
 output "run_confirmations_queue_url" {
