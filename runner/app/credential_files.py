@@ -64,7 +64,7 @@ def process_document(credentials: VendedCredentials, margin_seconds: int = EXPIR
     return document
 
 
-def _write_private(path: Path, body: str) -> None:
+def write_private(path: Path, body: str) -> None:
     """Replace `path` atomically with an owner only file, so a reader never sees half a document."""
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
@@ -112,10 +112,10 @@ class CredentialFiles:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.directory.chmod(0o700)
         for profile, credentials in ((RUN_PROFILE, provider), (STATE_PROFILE, state)):
-            _write_private(self.session_path(profile), json.dumps(process_document(credentials, self._margin_seconds)))
+            write_private(self.session_path(profile), json.dumps(process_document(credentials, self._margin_seconds)))
         if not self.config_path.exists():
-            _write_private(self.config_path, self._config())
-            _write_private(self.credentials_path, "")
+            write_private(self.config_path, self._config())
+            write_private(self.credentials_path, "")
         expiries = [
             expiry for expiry in (parse_expiration(provider.expiration), parse_expiration(state.expiration)) if expiry
         ]

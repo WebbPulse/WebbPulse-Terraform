@@ -1,4 +1,4 @@
-"""Keeping the engine's vended AWS sessions fresh for as long as the phase runs."""
+"""Keeping the engine's vended AWS sessions and identity tokens fresh for as long as the phase runs."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from app.api import ApiError, CredentialsRefused
 from app.credential_files import CredentialFiles
 from app.logs import Redactor
 from app.models import RefreshedCredentials
+from app.workload_identity import WorkloadIdentityFiles
 
 REFRESH_LEAD_SECONDS = 600
 """How long before the earlier session expires the runner asks for new ones."""
@@ -41,9 +42,11 @@ class CredentialRefresher:
         *,
         lead_seconds: float = REFRESH_LEAD_SECONDS,
         clock: Callable[[], datetime] = _now,
+        identity: WorkloadIdentityFiles | None = None,
     ) -> None:
         self._refresh = refresh
         self._files = files
+        self._identity = identity
         self._redactor = redactor
         self._report = report
         self._interval = interval
@@ -53,9 +56,15 @@ class CredentialRefresher:
         self._thread = threading.Thread(target=self._loop, name="credential-refresher", daemon=True)
         self.refreshes = 0
 
+    def _expires_at(self) -> datetime | None:
+        """The earliest expiry among the sessions and identity tokens."""
+        identity = self._identity.expires_at if self._identity else None
+        known = [expiry for expiry in (self._files.expires_at, identity) if expiry is not None]
+        return min(known) if known else None
+
     def due(self) -> bool:
-        """Whether the earlier session is within the lead of its expiry."""
-        expires_at = self._files.expires_at
+        """Whether the earliest session or token is within the lead of its expiry."""
+        expires_at = self._expires_at()
         return expires_at is not None and expires_at - self._clock() <= self._lead
 
     def refresh_once(self) -> bool:
@@ -70,8 +79,10 @@ class CredentialRefresher:
             return True
         self._redactor.extend(refreshed.secrets())
         self._files.write(refreshed.aws_credentials, refreshed.backend_credentials)
+        if self._identity is not None:
+            self._identity.write(refreshed.workload_identity)
         self.refreshes += 1
-        expires_at = self._files.expires_at
+        expires_at = self._expires_at()
         until = expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if expires_at else "an unknown time"
         self._report(f"credentials refreshed until {until}")
         return True
