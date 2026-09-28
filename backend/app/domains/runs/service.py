@@ -445,9 +445,12 @@ def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any
     cause heals itself the next time someone starts a run rather than sitting in
     `AcquireSemaphore` retrying for an hour. It runs before rather than after
     because this run is about to contend for a slot itself.
+
+    The read is strongly consistent because `create_run` calls this straight
+    after its put, which an eventually consistent read can miss.
     """
     resolved = settings or get_settings()
-    run = get_run(run_id, settings=resolved)
+    run = get_run(run_id, consistent=True, settings=resolved)
     if run.get("execution_arn"):
         return run
 
@@ -541,7 +544,7 @@ def _update_run(
     return dict(result or {})
 
 
-def get_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+def get_run(run_id: str, *, consistent: bool = False, settings: Settings | None = None) -> dict[str, Any]:
     """One run by id.
 
     The concurrency semaphore shares this table under the reserved `run-semaphore`
@@ -549,13 +552,16 @@ def get_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     run with no workspace or status. The route's path pattern already rejects the
     id, and this makes the service itself safe to call from anywhere.
 
+    `consistent` asks for a strongly consistent read, for a caller that reads a
+    row it has just written, which an eventually consistent read can miss.
+
     Raises:
         RunNotFound: No such run, or the reserved semaphore key.
     """
     resolved = settings or get_settings()
     if run_id == SEMAPHORE_RUN_ID:
         raise RunNotFound(run_id)
-    item = _runs(resolved).get({"run_id": run_id})
+    item = _runs(resolved).get({"run_id": run_id}, consistent=consistent)
     if not item:
         raise RunNotFound(run_id)
     return dict(item)
