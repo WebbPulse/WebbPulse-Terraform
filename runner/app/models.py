@@ -113,6 +113,33 @@ class VendedCredentials(BaseModel):
         return [value for value in (self.secret_access_key, self.session_token) if value]
 
 
+def token_variable(host: str) -> str:
+    """The `TF_TOKEN_<host>` name the engine reads a host's credential from.
+
+    Dots become underscores and hyphens double underscores, the encoding
+    Terraform and OpenTofu both use for hosts in variable names.
+    """
+    return "TF_TOKEN_" + host.replace("-", "__").replace(".", "_")
+
+
+class RegistryCredentials(BaseModel):
+    """The run's short lived, read only module registry credential.
+
+    It reaches the engine only for `init`, the one subcommand that installs
+    modules, so the plan and apply never hold it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    hosts: list[str] = Field(default_factory=lambda: list[str]())
+    token: str
+    expires_at: str = ""
+
+    def environment(self) -> dict[str, str]:
+        """One `TF_TOKEN_<host>` per registry host."""
+        return {token_variable(host): self.token for host in self.hosts if host}
+
+
 class BackendConfig(BaseModel):
     """S3 backend settings for the workspace's state, with keys scoped to its prefix."""
 
@@ -188,6 +215,13 @@ class Bundle(BaseModel):
     tfvars file, where the engine parses each one. A bundle from a control plane
     that predates the flag carries none."""
     artifacts: Artifacts = Field(default_factory=Artifacts)
+    registry: RegistryCredentials | None = None
+    """The private registry credential for `init`. A bundle from a control plane with
+    no registry host, or one that predates it, carries none."""
+
+    def init_environment(self) -> dict[str, str]:
+        """The variables `init` alone adds to the engine's environment."""
+        return self.registry.environment() if self.registry else {}
 
     def sensitive_values(self) -> list[str]:
         """Every value that must never reach a log line."""
@@ -202,6 +236,8 @@ class Bundle(BaseModel):
             values.extend(hcl_literal_fragments(expression))
         values.extend(self.aws_credentials.secrets())
         values.extend(self.backend.credentials.secrets())
+        if self.registry and self.registry.token:
+            values.append(self.registry.token)
         return values
 
 

@@ -7,6 +7,12 @@ the module source's host as a bearer, which is a `wpk_` key holding
 `authorization_type = "NONE"`, so no authorizer context exists and only a key
 verified here in process gets through.
 
+A run's registry credential is the other key accepted: one the runs domain mints
+per bundle with `runner:registry` under the run token tenant, for the runner to set
+as `TF_TOKEN_<host>` during `terraform init`. It carries no user, so it is checked
+here by scope and tenant rather than through the owner's live scopes, and it
+reaches no other route.
+
 Left out of the OpenAPI document, since the protocol is Terraform's contract
 rather than this API's.
 """
@@ -15,15 +21,45 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
+from webbpulse.identity.api_keys import is_api_key, verify
+from webbpulse.identity.scopes import FORBIDDEN_ERROR_CODE, bearer_credential, missing_scopes
+from webbpulse.messages import forbidden
 
-from ...common.core.auth import REGISTRY_READ, scopes
+from ...common.core.auth import REGISTRY_READ, RUN_TOKEN_TENANT, RUNNER_REGISTRY_SCOPE, api_key_store, claims
 from . import service
+
+
+def is_run_registry_credential(request: Request) -> bool:
+    """Whether the bearer is a live registry credential a run was given."""
+    presented = bearer_credential(request)
+    if not presented or not is_api_key(presented):
+        return False
+    record = verify(presented, api_key_store())
+    if record is None:
+        return False
+    return RUNNER_REGISTRY_SCOPE in record.scopes and record.tenant_id == RUN_TOKEN_TENANT
+
+
+async def registry_reader(request: Request) -> None:
+    """Admit a run's registry credential, or claims holding `registry:read`.
+
+    Anything else is the 401 or 403 every other scoped route answers.
+    """
+    if is_run_registry_credential(request):
+        return
+    current = await claims(request)
+    if missing_scopes(current, (REGISTRY_READ,)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"message": forbidden(), "error_code": FORBIDDEN_ERROR_CODE},
+        )
+
 
 router = APIRouter(
     prefix="/v1/modules",
     include_in_schema=False,
-    dependencies=[Depends(scopes(REGISTRY_READ))],
+    dependencies=[Depends(registry_reader)],
 )
 
 Segment = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[0-9A-Za-z_-]+$")]

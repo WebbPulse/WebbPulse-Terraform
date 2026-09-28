@@ -18,6 +18,8 @@ from tests.conftest import (
     PLAN_JSON_NO_CHANGES,
     PROVIDER_SECRET_ACCESS_KEY,
     PROVIDER_SESSION_TOKEN,
+    REGISTRY_HOST,
+    REGISTRY_TOKEN,
     RUN_ID,
     RUN_TOKEN,
     SECRET_ENVVAR,
@@ -702,3 +704,77 @@ def test_a_sensitive_hcl_variable_never_reaches_any_log(
     for haystack in haystacks:
         assert SECRET_HCL_TFVAR not in haystack
         assert "secret-list-member-abcdefghij" not in haystack
+
+
+def _registry_bundle(run_role_arn: str, **kwargs: Any) -> dict[str, Any]:
+    """A bundle carrying a registry credential for one module source host."""
+    return bundle_payload(run_role_arn, **kwargs) | {
+        "registry": {"hosts": [REGISTRY_HOST], "token": REGISTRY_TOKEN, "expires_at": "2026-09-27T13:00:00+00:00"}
+    }
+
+
+TOKEN_VARIABLE = "TF_TOKEN_staging_terraform__e2e_webbpulse_com"
+"""The variable the engine reads `REGISTRY_HOST`'s credential from."""
+
+
+def test_the_registry_credential_reaches_init_alone(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`init` sees `TF_TOKEN_<host>`; the plan does not, and the token never reaches a log."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(_registry_bundle(run_role_arn), config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    log = recorder.uploads["/runs/plan.log"].decode()
+    assert f"init holds {TOKEN_VARIABLE}=" in log
+    assert "plan holds" not in log
+    assert "show holds" not in log
+    captured = capsys.readouterr()
+    for haystack in (log, captured.out, captured.err, *log_stream_messages(f"{RUN_ID}/plan")):
+        assert REGISTRY_TOKEN not in haystack
+
+
+def test_the_registry_credential_reaches_the_apply_init_alone(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The apply phase re-initialises with the credential and applies without it."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = _registry_bundle(run_role_arn, plan_get_url="https://artifacts.example.invalid/runs/plan.tfplan?sig=1")
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("apply"), make_clients(transport), tmp_path) == 0
+
+    log = recorder.uploads["/runs/plan.log"].decode() if "/runs/plan.log" in recorder.uploads else ""
+    messages = "\n".join([log, *log_stream_messages(f"{RUN_ID}/apply")])
+    assert f"init holds {TOKEN_VARIABLE}=" in messages
+    assert "apply holds" not in messages
+    assert "output holds" not in messages
+    assert REGISTRY_TOKEN not in messages
+
+
+def test_a_bundle_without_a_registry_credential_sets_no_token(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """An older control plane's bundle runs as before, with no `TF_TOKEN_` at all."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+    assert "holds TF_TOKEN_" not in recorder.uploads["/runs/plan.log"].decode()

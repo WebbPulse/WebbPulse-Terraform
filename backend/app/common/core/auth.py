@@ -52,6 +52,11 @@ RUNNER_SCOPE: Final = "runner"
 """The scope a run token carries. Never granted to a human or an agent key: it
 reaches only the two runner routes, and only for the run it is bound to."""
 
+RUNNER_REGISTRY_SCOPE: Final = "runner:registry"
+"""The scope of a run's registry credential, which the runner sets as `TF_TOKEN_<host>`
+for `terraform init` alone. It opens the module registry protocol and nothing else:
+the key's subject is a run, which holds no user scopes, so every other route refuses it."""
+
 ALL_SCOPES: Final = (
     WORKSPACES_READ,
     WORKSPACES_WRITE,
@@ -225,6 +230,7 @@ __all__ = [
     "ALL_SCOPES",
     "CONFIGS_READ",
     "CONFIGS_WRITE",
+    "RUNNER_REGISTRY_SCOPE",
     "RUNNER_SCOPE",
     "RUNS_APPLY",
     "RUNS_READ",

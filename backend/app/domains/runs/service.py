@@ -42,7 +42,7 @@ from ...common.db.tables import (
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
-from . import vending
+from . import registry_credentials, vending
 from .schemas.run import Phase
 
 _log = logging.getLogger(__name__)
@@ -857,6 +857,8 @@ def _after_ending(run: dict[str, Any], ended: dict[str, Any], *, settings: Setti
     token hash, and `ended` the row as it stands after.
     """
     _revoke_run_token(run, settings=settings)
+    for row in (run, ended):
+        registry_credentials.revoke(row, settings=settings)
     _record_run_role(str(run["workspace_id"]), settings=settings)
     _record_verification(ended, settings=settings)
     _promote_queue(str(run["workspace_id"]), settings=settings)
@@ -1453,6 +1455,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "hcl_variables": variables["hcl"],
         "environment_variables": variables["env"],
         "artifacts": _artifacts(run_id, settings=resolved),
+        "registry": registry_credentials.issue(run, settings=resolved),
     }
 
 
@@ -1579,11 +1582,11 @@ def record_pull_request(run_id: str, number: int, url: str, *, settings: Setting
 def render_run(item: dict[str, Any]) -> dict[str, Any]:
     """Strip the stored-only fields a run row carries.
 
-    The task tokens and the token hash never leave the service: a caller holding a
+    The task tokens and the token hashes never leave the service: a caller holding a
     confirm task token could confirm a run it has no scope for. `collection` is the
     constant `by_recency` partition key and says nothing to a caller.
     """
-    hidden = {"confirm_task_token", "run_token_hash", "collection"}
+    hidden = {"confirm_task_token", "run_token_hash", registry_credentials.HASH_ATTRIBUTE, "collection"}
     return {field: value for field, value in item.items() if field not in hidden}
 
 

@@ -266,6 +266,15 @@ The `registry` domain speaks Terraform's module registry protocol. The SPA serve
 `TF_TOKEN_<host>`. The download is a 204 whose `X-Terraform-Get` is a five minute
 presigned GET ending `.tar.gz`.
 
+Runs read the registry like HCP's injected `TF_TOKEN`. Each bundle carries
+`registry` (`app/domains/runs/registry_credentials.py`): a one hour `wpk_` key
+scoped `runner:registry` with the run as its subject, for the SPA host. The run
+keeps only its hash in `registry_token_hash`; a newer bundle revokes the previous
+key and the run's ending revokes the last. The protocol router accepts it by
+scope and tenant, and every other route refuses it since a run has no user
+scopes. The runner sets it as `TF_TOKEN_<host>` for `init` alone and registers it
+with the redactor.
+
 Publishing follows HCP's tag based "Publish module from VCS". `POST
 /api/v1/registry/modules` (`registry:write`) connects a module to a repository the
 GitHub App is installed on, resolved like a workspace's `vcs_repo` (422

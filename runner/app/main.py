@@ -88,6 +88,7 @@ def _run_plan(
     sink: CloudWatchLogSink,
     *,
     destroy: bool = False,
+    init_environment: dict[str, str] | None = None,
 ) -> tuple[int, Changes, bool, str]:
     """Init, plan and render the plan JSON, returning the exit code and change counts.
 
@@ -97,8 +98,9 @@ def _run_plan(
     The plan runs under `-detailed-exitcode`, so it exits 0 with no changes and 2
     with changes. Both are successful plans, so both return 0 and the change
     counts alone say whether there were changes. Any other code is `PlanFailed`.
+    `init_environment` is the registry credential, given to `init` alone.
     """
-    init_code = runner.init()
+    init_code = runner.init(init_environment)
     if init_code != 0:
         raise PhaseFailure("InitFailed", f"init exited {init_code}")
     plan_code = runner.plan(destroy=destroy)
@@ -111,9 +113,17 @@ def _run_plan(
     return 0, changes, has_changes, plan_json
 
 
-def _run_apply(runner: engine.EngineRunner, sink: CloudWatchLogSink) -> tuple[int, Changes]:
-    """Init and apply the saved plan, returning the counts the engine says it applied."""
-    init_code = runner.init()
+def _run_apply(
+    runner: engine.EngineRunner,
+    sink: CloudWatchLogSink,
+    *,
+    init_environment: dict[str, str] | None = None,
+) -> tuple[int, Changes]:
+    """Init and apply the saved plan, returning the counts the engine says it applied.
+
+    `init_environment` is the registry credential, given to `init` alone.
+    """
+    init_code = runner.init(init_environment)
     if init_code != 0:
         raise PhaseFailure("InitFailed", f"init exited {init_code}")
     apply_code = runner.apply()
@@ -221,7 +231,9 @@ def execute(
         has_changes = False
 
         if env.phase == "plan":
-            exit_code, changes, has_changes, plan_json = _run_plan(runner, sink, destroy=bundle.is_destroy)
+            exit_code, changes, has_changes, plan_json = _run_plan(
+                runner, sink, destroy=bundle.is_destroy, init_environment=bundle.init_environment()
+            )
             plan_json_path.write_text(plan_json)
             try:
                 api.upload_file("plan", plan_path)
@@ -235,7 +247,7 @@ def execute(
                 api.download(bundle.artifacts.plan_get_url, plan_path)
             except ApiError as error:
                 raise PhaseFailure("PlanDownloadFailed", str(error)) from error
-            exit_code, changes = _run_apply(runner, sink)
+            exit_code, changes = _run_apply(runner, sink, init_environment=bundle.init_environment())
             _upload_outputs(runner, api, sink)
 
         sink.flush()

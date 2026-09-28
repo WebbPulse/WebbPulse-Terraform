@@ -341,6 +341,16 @@ class Artifacts(BaseModel):
     plan_get_url: str
 
 
+class RegistryCredentials(BaseModel):
+    """The run's module registry key, which the runner sets as `TF_TOKEN_<host>` for init only."""
+
+    hosts: list[str]
+    """The hosts module sources name, each getting the same token."""
+    token: str
+    """A `wpk_` key scoped `runner:registry`, for this run, for one hour."""
+    expires_at: str
+
+
 ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
 """The objects a phase uploads: the binary plan, its JSON rendering, the
 redacted transcript and, after an apply, the outputs with sensitive values
@@ -404,6 +414,9 @@ class RunBundle(BaseModel):
     writes to a native tfvars file for the engine to parse."""
     environment_variables: dict[str, str]
     artifacts: Artifacts
+    registry: Optional[RegistryCredentials] = None
+    """The private registry credential for `terraform init`, absent where no registry
+    host is configured."""
 
 
 class PhaseResult(BaseModel):
