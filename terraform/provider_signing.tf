@@ -73,7 +73,7 @@ resource "aws_ssm_parameter" "provider_signing" {
 
 module "provider_signing_keygen_role" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "~> 2.27"
+  version = "~> 2.33"
 
   role_name        = "${local.prefix}-provider-signing-keygen"
   role_description = "Writes the provider release signing key generated in CI. Assumable only from the ${var.environment}-signing-key environment of WebbPulse/terraform-provider-webbpulse."
@@ -101,7 +101,7 @@ module "provider_signing_keygen_role" {
 
 module "provider_release_role" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "~> 2.27"
+  version = "~> 2.33"
 
   role_name        = "${local.prefix}-provider-release"
   role_description = "Reads the provider release signing key. Assumable only from the ${var.environment} environment of WebbPulse/terraform-provider-webbpulse."
