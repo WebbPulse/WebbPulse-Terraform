@@ -14,7 +14,7 @@ import secrets
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Final
 
 import pytest
 from runs_cleanup import end_runs_for_workspace
@@ -30,29 +30,42 @@ JOURNEY_RUN_ROLE_ARN_VARIABLE = "E2E_JOURNEY_RUN_ROLE_ARN"
 
 STALE_SECONDS = 3600
 
-SESSION_LOGOUT_TEST = "test_logout_ends_the_session"
-"""The shared suite case that revokes the session user's refresh family."""
+SESSION_ENDING_TESTS: Final = ("test_refresh_issues_a_new_token", "test_logout_ends_the_session")
+"""Shared suite cases that leave the session user's refresh family unusable, in run order.
+
+The refresh case rotates the refresh token without storing the rotation, so the next
+refresh sends a spent token and the family is revoked as a replay; the logout case revokes it.
+"""
+
+RUN_WIDE_CLASSES: Final = ("TestAccessLogHealth", "TestRouteCoverage")
+"""The groups a serial run orders last, which must still see the session-ending requests."""
 
 
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Run the session logout after every other case that shares the session user.
+    """Run the session-ending identity cases after every other case on the session user.
 
-    The shared suite's logout case sorts into `test_shared.py`, ahead of product modules
-    such as `test_step_up.py` whose step-up refreshes the same session, and a refresh after
-    the logout is refused. It is moved to just after the last case in its xdist group, so it
-    still runs before the run-wide groups a serial run orders last.
+    They sort into `test_shared.py`, ahead of product modules such as `test_step_up.py`
+    whose step-up refreshes the same session, and that refresh is then refused. They are
+    moved to just after the last case using `user_session`, still ahead of the run-wide groups.
     """
-    logouts = [item for item in items if item.name == SESSION_LOGOUT_TEST]
-    if not logouts:
+    ending = sorted(
+        (item for item in items if item.name in SESSION_ENDING_TESTS),
+        key=lambda item: SESSION_ENDING_TESTS.index(item.name),
+    )
+    if not ending:
         return
-    group = logouts[0].get_closest_marker("xdist_group")
-    rest = [item for item in items if item.name != SESSION_LOGOUT_TEST]
+    rest = [item for item in items if item.name not in SESSION_ENDING_TESTS]
     last = max(
-        (index for index, item in enumerate(rest) if item.get_closest_marker("xdist_group") == group),
+        (
+            index
+            for index, item in enumerate(rest)
+            if "user_session" in getattr(item, "fixturenames", ())
+            and not any(part in RUN_WIDE_CLASSES for part in item.nodeid.split("::"))
+        ),
         default=len(rest) - 1,
     )
-    items[:] = rest[: last + 1] + logouts + rest[last + 1 :]
+    items[:] = rest[: last + 1] + ending + rest[last + 1 :]
 
 
 _DOCUMENT_ENVIRONMENT = {
