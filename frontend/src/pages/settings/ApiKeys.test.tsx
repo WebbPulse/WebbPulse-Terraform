@@ -18,7 +18,7 @@ import {
 
 vi.mock('../../api/client', () => apiClientModuleMock());
 
-const { ApiKeys, expiryFrom, keyStatus, scopesFromToken } =
+const { ApiKeys, expiryBody, expiryFrom, keyStatus, scopesFromToken } =
   await import('./ApiKeys');
 
 /** A stored key, active unless overridden. */
@@ -77,6 +77,12 @@ describe('ApiKeys helpers', () => {
     expect(keyStatus(aKey({ revoked_at: '2026-09-02T00:00:00Z' }), now)).toBe(
       'revoked'
     );
+  });
+
+  it('builds a no expiry body or a dated one from the choice', () => {
+    const now = Date.parse('2026-09-27T00:00:00Z');
+    expect(expiryBody('never', now)).toEqual({ no_expiry: true });
+    expect(expiryBody(30, now)).toEqual({ expires_at: expiryFrom(30, now) });
   });
 
   it('puts the expiry the given number of days out', () => {
@@ -155,6 +161,50 @@ describe('ApiKeys', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(screen.queryByTestId('new-api-key')).toBeNull();
+  });
+
+  it('creates a key with no expiry and warns it lasts until revoked', async () => {
+    apiMock.listApiKeys.mockResolvedValue({ items: [] });
+    apiMock.createApiKey.mockResolvedValue({
+      ...aKey({ name: 'service', expires_at: null }),
+      key: 'wpk_forever',
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Create an API key' })
+    );
+    const form = screen.getByRole('form', { name: 'Create an API key' });
+    expect(within(form).queryByRole('note')).toBeNull();
+    await userEvent.selectOptions(
+      within(form).getByLabelText('Expiration'),
+      'No expiry'
+    );
+    expect(within(form).getByRole('note')).toHaveTextContent(
+      'stays valid until you revoke it'
+    );
+    await userEvent.type(within(form).getByLabelText('Name'), 'service');
+    await userEvent.click(
+      within(form).getByRole('button', { name: 'Create API key' })
+    );
+
+    await waitFor(() => {
+      expect(apiMock.createApiKey).toHaveBeenCalledTimes(1);
+    });
+    const body = apiMock.createApiKey.mock.calls[0]?.[0];
+    expect(body?.no_expiry).toBe(true);
+    expect(body?.expires_at).toBeUndefined();
+  });
+
+  it('shows Never for a key with no expiry', async () => {
+    apiMock.listApiKeys.mockResolvedValue({
+      items: [aKey({ expires_at: null, last_used_at: '2026-09-02T00:00:00Z' })],
+    });
+    renderPage();
+
+    const table = await screen.findByRole('table', { name: 'API keys' });
+    expect(within(table).getByText('Never')).toBeInTheDocument();
+    expect(within(table).queryByText('Expired')).toBeNull();
   });
 
   it('narrows a key to chosen scopes from those the session holds', async () => {

@@ -17,9 +17,10 @@ time against the claims the minter presented, and again on every request, where
 `auth.key_owner_scopes` intersects the stored set with what the owner holds now,
 so a demoted or disabled owner's keys lose what the owner lost.
 
-A key always expires. One minted without an expiry gets `DEFAULT_EXPIRY_DAYS`,
-and none may be set further out than `MAX_EXPIRY_DAYS`. Keys minted before the
-rule keep the expiry they were minted with.
+A key expires unless its minter explicitly asks for one that does not. One
+minted without an expiry gets `DEFAULT_EXPIRY_DAYS`, a dated one may not be set
+further out than `MAX_EXPIRY_DAYS`, and `no_expiry` mints one that stays valid
+until it is revoked, stored as a zero `expires_at` the package never expires.
 
 A key belongs to the person who minted it. The list route answers one caller's
 own keys and the revoke route refuses another person's, except for an admin, who
@@ -86,7 +87,7 @@ class ScopesExceeded(Exception):
 
 
 class ExpiryOutOfRange(Exception):
-    """The requested expiry is in the past or beyond `MAX_EXPIRY_DAYS`."""
+    """The requested expiry is in the past, beyond `MAX_EXPIRY_DAYS`, or contradicts `no_expiry`."""
 
 
 class TooManyKeys(Exception):
@@ -154,16 +155,25 @@ def narrowed_scopes(requested: "Iterable[str] | None", held: "Iterable[str]") ->
     return wanted
 
 
-def checked_expiry(expires_at: datetime | None, *, now: datetime | None = None) -> int:
+def checked_expiry(
+    expires_at: datetime | None,
+    *,
+    no_expiry: bool = False,
+    now: datetime | None = None,
+) -> int:
     """`expires_at` as the Unix timestamp the record stores.
 
-    `None` means the default, `DEFAULT_EXPIRY_DAYS` from now, so no new key is
-    minted without an end.
+    `None` means the default, `DEFAULT_EXPIRY_DAYS` from now, so a key only lacks
+    an end when `no_expiry` asks for that, which stores `0`.
 
     Raises:
-        ExpiryOutOfRange: The moment has already passed, or it is further than
-            `MAX_EXPIRY_DAYS` ahead.
+        ExpiryOutOfRange: The moment has already passed, it is further than
+            `MAX_EXPIRY_DAYS` ahead, or a date was given alongside `no_expiry`.
     """
+    if no_expiry:
+        if expires_at is not None:
+            raise ExpiryOutOfRange("A key cannot have both an expiry and no expiry.")
+        return 0
     reference = now or datetime.now(UTC)
     if expires_at is None:
         return int((reference + timedelta(days=DEFAULT_EXPIRY_DAYS)).timestamp())
@@ -202,6 +212,7 @@ def mint_key(
     requested_scopes: "Iterable[str] | None",
     held_scopes: "Iterable[str]",
     expires_at: datetime | None = None,
+    no_expiry: bool = False,
     settings: "Settings | None" = None,
 ) -> MintedApiKey:
     """Mint one key for `user_id`, returning the plaintext once.
@@ -217,6 +228,7 @@ def mint_key(
             minter holds.
         held_scopes: What the minter holds, which is the ceiling.
         expires_at: When the key stops working, or `None` for the default.
+        no_expiry: Mint a key that stays valid until it is revoked.
         settings: Settings override, for the suite.
 
     Returns:
@@ -224,11 +236,12 @@ def mint_key(
 
     Raises:
         ScopesExceeded: The request names a scope the minter does not hold.
-        ExpiryOutOfRange: The expiry is in the past or too far ahead.
+        ExpiryOutOfRange: The expiry is in the past, too far ahead, or given
+            alongside `no_expiry`.
         TooManyKeys: The minter already holds `MAX_KEYS_PER_USER` live keys.
     """
     scopes = narrowed_scopes(requested_scopes, held_scopes)
-    expiry = checked_expiry(expires_at)
+    expiry = checked_expiry(expires_at, no_expiry=no_expiry)
 
     store = _store(settings)
     live = [record for record in list_keys(user_id, settings=settings) if record.is_usable()]

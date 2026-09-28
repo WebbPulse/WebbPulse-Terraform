@@ -93,8 +93,8 @@ agent arrives with a `wpk_` API key. Both render as the same claims object, so a
 route guarded by `require_scopes` cannot tell them apart. The scopes are
 `workspaces:{read,write}`, `variables:{read,write}`, `configs:{read,write}`,
 `runs:{read,write,apply}`. A key's stored scopes are intersected on every request
-with what its owner holds now, and a new key expires in 90 days by default and
-365 at most.
+with what its owner holds now, and a new key expires in 90 days by default, 365
+at most for a dated expiry, or never when minted with `no_expiry: true`.
 
 The runner is separate. `POST /runs/{id}/runner-token` mints a `wpk_` key scoped
 `runner` for a runner task that proves its identity, bound to that run and
