@@ -28,7 +28,7 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `s3.tf` | The state bucket and the artifacts bucket, each with its own KMS key. The artifacts bucket sends EventBridge notifications and `ingest/` expires after 3 days. Published modules under `registry/modules/` never expire |
 | `ecr.tf` | `webbpulse-terraform/{workspaces,runs,github,registry,runner}` |
 | `lambda_domains.tf` | The `workspaces`, `runs`, `github` and `registry` functions, their roles and inline policies |
-| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer. The runner routes, the GitHub webhook route, the `/v1/modules/` and `/v1/providers/` registry protocol routes and `POST /v1/oauth/token` carry `authorization_type = "NONE"`, so neither the identity JWT nor the staging gate applies; each verifies its own token in the function |
+| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer. The runner routes, the GitHub webhook route, the `/v1/modules/` and `/v1/providers/` registry protocol routes and `POST /v1/oauth/token` carry `authorization_type = "NONE"`, so neither the identity JWT nor the access gate applies; each verifies its own token in the function |
 | `identity.tf`, `app_secrets.tf` | The identity platform module and the single JSON `app` secret |
 | `vpc.tf`, `ecs.tf`, `runner_logs.tf` | The public-only VPC, the Fargate cluster and the two phase task definitions, the runner log group |
 | `step_functions.tf`, `state_machines/run.asl.json` | The per-run state machine |
@@ -37,14 +37,14 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `registry.tf` | The module registry's ingest queue: the github function sends each semantic version tag push to it as a `module_tag` message and the `registry` function consumes it |
 | `workspace_cleanup.tf` | The queue a workspace delete sends its run artifacts, config tarballs and state history purge to, consumed by the `runs` function as `workspace_cleanup` messages |
 | `task_failures.tf` | The EventBridge rule on runner tasks that failed to start, and the queue it feeds so a run fails without waiting out its phase heartbeat |
-| `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, whose `/.well-known/terraform.json` (emitted by the Vite build, `modules.v1` on the API host) is a public path past the staging gate, the certificates, the staging child zone with its NS delegation, and the alias records |
-| `staging_access_gate.tf` | Staging only, the email gate in front of the site and the API |
+| `frontend.tf`, `acm.tf`, `route53.tf` | The SPA distribution, whose `/.well-known/terraform.json` (emitted by the Vite build, `modules.v1` on the API host) is a public path past the access gate, the certificates, the staging child zone with its NS delegation, and the alias records |
+| `access_gate.tf` | The email gate in front of the site and the API, on in both environments |
 | `iam_github_actions.tf` | The deploy and CI OIDC roles |
 | `monitoring.tf`, `management.tf` | The three aggregate alarms in production, budgets |
 | `transaction_search.tf` | The shared `transaction-search` module: the X-Ray trace segment destination, the spans log resource policy and the indexing rule |
 | `example_run_role.tf` | The run role for the first end to end run, gated on `var.example_workspace_id` |
 | `config.tf` | The operator-owned `/<prefix>/config` SSM parameter |
-| `env/*.tfvars` | Non-secret per environment config, including `identity_jwt_mode` (`gate` in staging, `lambda` in production; production refuses `off` and `gate` at plan time) |
+| `env/*.tfvars` | Non-secret per environment config, including `identity_jwt_mode` (`gate` in both, required while the gate is on; production refuses `off`, and `gate` without the gate, at plan time), `access_gate` and `access_gate_users` |
 | `outputs.tf` | Everything the workflows and the GitHub environment variables read |
 
 ## Hostnames
@@ -154,6 +154,6 @@ Everything else takes its default or comes from `env/<environment>.tfvars`.
 | `domain_image_tags` | `{}` until a later domain's first image is pushed, then `{ github = "sha-<head sha>" }`; see A domain added later |
 | `runner_image_tag` | The runner image tag the task definitions point at. Unlike a Lambda image it is not ignored, so a revision follows it |
 | `route53_zone_id`, `route53_write_role_arn` | The parent zone and the role that writes into it, both required when `staging_profile` is `full` |
-| `staging_access_gate`, `staging_access_users` | Staging only: put the site and API behind the email gate, and who may sign in |
+| `staging_access_gate`, `staging_access_users` | Delivered to staging by the WebbPulse-Platform factory; merged with `access_gate` and `access_gate_users` from the tfvars |
 | `adopt_spans_log_group` | `false` until the first span is written, then `true`; see Transaction Search |
 | `example_workspace_id` | The `ws-` id of the example workspace. Non-empty creates the example run role for the first end to end run; empty, the default, creates nothing. See `examples/first-run/README.md` |

@@ -13,14 +13,14 @@ module "frontend" {
   index_cache_mode     = "policies"
   index_cache_policies = { cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6" }
 
-  access_gate = local.staging_gate_enabled ? {
-    key_group_id                                           = module.staging_access_gate[0].key_group_id
-    viewer_request_function_arn                            = module.staging_access_gate[0].viewer_request_function_arn
-    login_origin_domain_name                               = module.staging_access_gate[0].login_origin_domain_name
-    login_origin_access_control_id                         = module.staging_access_gate[0].login_origin_access_control_id
-    auth_path_pattern                                      = module.staging_access_gate[0].auth_path_pattern
-    cache_policy_id_caching_disabled                       = module.staging_access_gate[0].cache_policy_id_caching_disabled
-    origin_request_policy_id_all_viewer_except_host_header = module.staging_access_gate[0].origin_request_policy_id_all_viewer_except_host_header
+  access_gate = local.access_gate_enabled ? {
+    key_group_id                                           = module.access_gate[0].key_group_id
+    viewer_request_function_arn                            = module.access_gate[0].viewer_request_function_arn
+    login_origin_domain_name                               = module.access_gate[0].login_origin_domain_name
+    login_origin_access_control_id                         = module.access_gate[0].login_origin_access_control_id
+    auth_path_pattern                                      = module.access_gate[0].auth_path_pattern
+    cache_policy_id_caching_disabled                       = module.access_gate[0].cache_policy_id_caching_disabled
+    origin_request_policy_id_all_viewer_except_host_header = module.access_gate[0].origin_request_policy_id_all_viewer_except_host_header
   } : null
 
   public_paths = ["/.well-known/terraform.json"]

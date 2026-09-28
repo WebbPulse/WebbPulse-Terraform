@@ -1,5 +1,5 @@
 module "provider_acceptance_role" {
-  count = local.staging_gate_count
+  count = local.provider_acceptance_count
 
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
   version = "~> 2.27"
@@ -18,7 +18,7 @@ module "provider_acceptance_role" {
     {
       sid       = "ReadGateHeader"
       actions   = ["ssm:GetParameter"]
-      resources = [one(module.staging_access_gate[*].origin_verify_ssm_parameter_arn)]
+      resources = [one(module.access_gate[*].origin_verify_ssm_parameter_arn)]
     },
     {
       sid       = "DecryptGateHeader"

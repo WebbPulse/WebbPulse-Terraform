@@ -53,14 +53,26 @@ variable "route53_write_role_arn" {
   }
 }
 
+variable "access_gate" {
+  description = "Put the site and API behind the access gate: a Cognito sign-in wall at CloudFront and the gate's REQUEST authorizer on every API route, in front of the application's own login, step-up and route scopes. Set in env/<environment>.tfvars. Needs staging_profile full and route53_zone_id."
+  type        = bool
+  default     = false
+}
+
+variable "access_gate_users" {
+  description = "Email addresses allowed through the access gate, each invited as a Cognito user. Set in env/<environment>.tfvars and merged after staging_access_users."
+  type        = list(string)
+  default     = []
+}
+
 variable "staging_access_gate" {
-  description = "Put the staging site and API behind the staging-access-gate module. Staging only; production keeps the default of false."
+  description = "The access gate switch the WebbPulse-Platform workspace factory delivers to staging workspaces. Either this or access_gate turns the gate on."
   type        = bool
   default     = false
 }
 
 variable "staging_access_users" {
-  description = "Email addresses allowed through the staging access gate, each invited as a Cognito user"
+  description = "The access gate allow list the WebbPulse-Platform workspace factory delivers to staging workspaces, merged ahead of access_gate_users."
   type        = list(string)
   default     = []
 }
@@ -125,7 +137,7 @@ variable "artifact_retention_days" {
 }
 
 variable "identity_jwt_mode" {
-  description = "Which mechanism enforces identity access tokens at the gateway: the staging gate's Lambda authorizer (gate), a REQUEST authorizer built from the same source that also passes wpk_ agent keys through (lambda), API Gateway's own JWT authorizer (native), or nothing (off). Production must use lambda or native."
+  description = "Which mechanism enforces identity access tokens at the gateway: the access gate's Lambda authorizer (gate), a REQUEST authorizer built from the same source that also passes wpk_ agent keys through (lambda), API Gateway's own JWT authorizer (native), or nothing (off). With the access gate on it must be gate; production without the gate must use lambda or native."
   type        = string
   default     = "off"
 
@@ -140,8 +152,15 @@ variable "identity_jwt_mode" {
   }
 
   validation {
-    condition     = var.environment != "production" || contains(["lambda", "native"], var.identity_jwt_mode)
-    error_message = "identity_jwt_mode must be lambda or native in production. The staging gate does not exist there, so gate and off both leave every product route open at the gateway. Use lambda, which also admits wpk_ agent keys."
+    condition     = !contains(["native", "lambda"], var.identity_jwt_mode) || !(var.access_gate || var.staging_access_gate)
+    error_message = "identity_jwt_mode must not be native or lambda while the access gate is on. Every route carries the gate's REQUEST authorizer and a route takes exactly one authorizer, so a second authorizer has no slot to occupy. Use gate, which moves the same check into the gate's own Lambda."
+  }
+
+  validation {
+    condition = var.environment != "production" || contains(["lambda", "native"], var.identity_jwt_mode) || (
+      var.identity_jwt_mode == "gate" && (var.access_gate || var.staging_access_gate) && var.staging_profile == "full" && var.route53_zone_id != null
+    )
+    error_message = "identity_jwt_mode must be gate with the access gate on, or lambda or native without it, in production. off, and gate without a working access gate (access_gate true, staging_profile full and route53_zone_id set), leave every product route open at the gateway."
   }
 }
 

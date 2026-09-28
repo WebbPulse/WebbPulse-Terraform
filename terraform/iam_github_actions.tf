@@ -70,8 +70,8 @@ locals {
       sid     = "ReadGateParameters"
       actions = ["ssm:GetParameter"]
       resources = [
-        one(module.staging_access_gate[*].origin_verify_ssm_parameter_arn),
-        one(module.staging_access_gate[*].signing_key_ssm_parameter_arn),
+        one(module.access_gate[*].origin_verify_ssm_parameter_arn),
+        one(module.access_gate[*].signing_key_ssm_parameter_arn),
       ]
     },
     {
@@ -82,7 +82,7 @@ locals {
         StringEquals = { "kms:ViaService" = ["ssm.${var.aws_region}.amazonaws.com"] }
       }
     },
-  ] : statement if local.staging_gate_enabled]
+  ] : statement if local.access_gate_enabled]
 
   github_actions_e2e_statements = concat([
     {
