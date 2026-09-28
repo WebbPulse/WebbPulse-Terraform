@@ -157,4 +157,5 @@ Everything else takes its default or comes from `env/<environment>.tfvars`.
 | `route53_zone_id`, `route53_write_role_arn` | The parent zone and the role that writes into it, both required when `staging_profile` is `full` |
 | `staging_access_gate`, `staging_access_users` | Delivered to staging by the WebbPulse-Platform factory; merged with `access_gate` and `access_gate_users` from the tfvars |
 | `adopt_spans_log_group` | `false` until the first span is written, then `true`; see Transaction Search |
+| `e2e_run_role_workspace_ids` | Staging only, in `env/staging.tfvars`: durable workspace ids the e2e run role trusts besides the suite's `e2e-` named workspaces |
 | `example_workspace_id` | The `ws-` id of the example workspace. Non-empty creates the example run role for the first end to end run; empty, the default, creates nothing. See `examples/first-run/README.md` |

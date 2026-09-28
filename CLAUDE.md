@@ -210,10 +210,14 @@ POST gives the same answer and stamps `run_role_checked_at` and
 Credentials are vended per phase by the runs function when it serves the bundle
 (`app/domains/runs/vending.py`): the runs function role assumes the vending role,
 which assumes the workspace's run role (external id = workspace id; a plan passes
-`ReadOnlyAccess` as its session policy ARN, an apply none) and the state role
+`ReadOnlyAccess` as its session policy ARN, an apply none; the session name is
+`<run>-<phase>@<workspace name>`, cut to 64) and the state role
 `<prefix>-run-state`, narrowed by `session_policy.state_policy` to
 `workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last
 `run_credentials_duration_seconds` (default and chained-role cap 3600, floor 900).
+The staging e2e run role (`terraform/e2e_run_role.tf`) trusts only sessions named
+`run-*@e2e-*`, the suite's own workspaces, plus the durable ids in
+`e2e_run_role_workspace_ids` (the `first-run` workspace).
 `POST /runs/{id}/credentials` (run token, `{phase}`) vends the same pair again, refused
 once the run has left that phase or its task token no longer resolves.
 A refused run role is a 409 `RUN_ROLE_ASSUME_FAILED` on the bundle, which the
