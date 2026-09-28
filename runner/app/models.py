@@ -44,6 +44,23 @@ class RunnerEnvError(RuntimeError):
     """A required runner environment variable is missing or empty."""
 
 
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
+"""How often the runner tells the control plane it is alive, well inside the state's heartbeat timeout."""
+
+
+def _interval(raw: str) -> float:
+    """The heartbeat interval a variable names, the default when unset, refused when not positive."""
+    if not raw.strip():
+        return DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise RunnerEnvError(f"HEARTBEAT_INTERVAL_SECONDS must be a number, not {raw}") from error
+    if value <= 0:
+        raise RunnerEnvError("HEARTBEAT_INTERVAL_SECONDS must be positive")
+    return value
+
+
 class RunnerEnv(BaseModel):
     """The task definition overrides the runner is started with."""
 
@@ -55,6 +72,7 @@ class RunnerEnv(BaseModel):
     api_base_url: str
     log_group: str
     region: str = "us-west-2"
+    heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS
 
     @classmethod
     def from_environ(cls, environ: dict[str, str] | None = None) -> RunnerEnv:
@@ -82,6 +100,7 @@ class RunnerEnv(BaseModel):
             api_base_url=required("API_BASE_URL").rstrip("/"),
             log_group=required("RUNNER_LOG_GROUP"),
             region=source.get("AWS_REGION", "").strip() or "us-west-2",
+            heartbeat_interval_seconds=_interval(source.get("HEARTBEAT_INTERVAL_SECONDS", "")),
         )
 
 

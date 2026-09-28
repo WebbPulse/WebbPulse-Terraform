@@ -1,19 +1,24 @@
 variable "plan_timeout_seconds" {
-  description = "Seconds the plan phase may run before Step Functions times the state out and marks the run errored"
-  type        = number
-  default     = 1800
-}
-
-variable "apply_timeout_seconds" {
-  description = "Seconds the apply phase may run before Step Functions times the state out and marks the run errored"
+  description = "Seconds the plan phase may run before Step Functions times the state out, stops the runner task and marks the run errored. Two hours, like HCP Terraform's plan limit"
   type        = number
   default     = 7200
 }
 
-variable "task_heartbeat_seconds" {
-  description = "Seconds a plan or apply state waits without a heartbeat from its Fargate task. The runner sends none, so this is the budget for the task to start and finish, and it covers a slow Fargate placement, which has taken 14 minutes in staging"
+variable "apply_timeout_seconds" {
+  description = "Seconds the apply phase may run before Step Functions times the state out, stops the runner task and marks the run errored. Four hours: the run token the runner exchanges at the start of the phase lasts four hours, so a longer budget would outlive the token it reports with"
   type        = number
-  default     = 1800
+  default     = 14400
+
+  validation {
+    condition     = var.apply_timeout_seconds <= 14400
+    error_message = "apply_timeout_seconds must not exceed the four hour run token lifetime."
+  }
+}
+
+variable "task_heartbeat_seconds" {
+  description = "Seconds a plan or apply state waits between heartbeats from its runner before it stops the task and marks the run errored. The runner beats every minute once it has its run token, so this mostly covers the time before that: a slow Fargate placement has taken 14 minutes in staging"
+  type        = number
+  default     = 1200
 }
 
 variable "confirmation_timeout_seconds" {
@@ -23,6 +28,19 @@ variable "confirmation_timeout_seconds" {
 }
 
 locals {
+  phase_budget_seconds = {
+    plan      = var.plan_timeout_seconds
+    apply     = var.apply_timeout_seconds
+    heartbeat = var.task_heartbeat_seconds
+  }
+  phase_budget_text = {
+    for name, seconds in local.phase_budget_seconds : name => (
+      seconds % 3600 == 0 ? "${seconds / 3600} ${seconds == 3600 ? "hour" : "hours"}" :
+      seconds % 60 == 0 ? "${seconds / 60} ${seconds == 60 ? "minute" : "minutes"}" :
+      "${seconds} seconds"
+    )
+  }
+
   confirmation_timeout_env_seconds = var.environment == "production" ? 86400 : 7200
   confirmation_timeout_seconds     = coalesce(var.confirmation_timeout_seconds, local.confirmation_timeout_env_seconds)
 }
@@ -61,6 +79,10 @@ module "run_state_machine" {
     ApplyTimeoutSeconds        = tostring(var.apply_timeout_seconds)
     TaskHeartbeatSeconds       = tostring(var.task_heartbeat_seconds)
     ConfirmationTimeoutSeconds = tostring(local.confirmation_timeout_seconds)
+
+    PlanTimeoutText   = local.phase_budget_text["plan"]
+    ApplyTimeoutText  = local.phase_budget_text["apply"]
+    TaskHeartbeatText = local.phase_budget_text["heartbeat"]
   }
 
   policy_statements = [

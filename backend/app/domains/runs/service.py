@@ -9,7 +9,7 @@ it when it finishes, which is the only place a queued run is promoted.
 
 A run token is minted when an execution starts and revoked when the run finishes.
 It is a `wpk_` key whose subject is the run id and whose only scope is `runner`,
-so it opens the two runner routes for one run and nothing else. Revoking it on
+so it opens the runner routes for one run and nothing else. Revoking it on
 every terminal transition is what keeps a leaked token from outliving its run.
 
 The environment wide concurrency semaphore lives in this table too, as one row

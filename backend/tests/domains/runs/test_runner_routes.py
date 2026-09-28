@@ -1,4 +1,4 @@
-"""The three routes the runner owns, and the token that gates them.
+"""The routes the runner owns, and the token that gates them.
 
 The bundle carries decrypted sensitive variables and, on an apply, the run
 role's unrestricted session keys, so the gate is the security boundary of this domain
@@ -26,6 +26,8 @@ class RecordingStepFunctions:
     def __init__(self) -> None:
         self.successes: list[dict[str, Any]] = []
         self.failures: list[dict[str, Any]] = []
+        self.heartbeats: list[dict[str, Any]] = []
+        self.heartbeat_error = ""
 
     def send_task_success(self, **kwargs: Any) -> None:
         """Record a success."""
@@ -34,6 +36,14 @@ class RecordingStepFunctions:
     def send_task_failure(self, **kwargs: Any) -> None:
         """Record a failure."""
         self.failures.append(kwargs)
+
+    def send_task_heartbeat(self, **kwargs: Any) -> None:
+        """Record a heartbeat, or refuse it with the configured error code."""
+        from botocore.exceptions import ClientError
+
+        if self.heartbeat_error:
+            raise ClientError({"Error": {"Code": self.heartbeat_error, "Message": "no"}}, "SendTaskHeartbeat")
+        self.heartbeats.append(kwargs)
 
 
 @pytest.fixture
@@ -622,6 +632,7 @@ def test_an_unknown_phase_is_422(runner_client, created_run):
         ("GET", "bundle", None),
         ("POST", "artifact-uploads", {"artifact": "nonsense"}),
         ("POST", "phase-result", {"phase": 7}),
+        ("POST", "heartbeat", {"phase": 7}),
     ],
 )
 def test_a_malformed_request_without_a_token_is_a_401(client, method, suffix, body):
@@ -637,3 +648,72 @@ def test_a_malformed_request_with_the_run_token_is_still_a_422(runner_client, cr
     response = runner_client.post(f"{BASE}/{created_run['run_id']}/phase-result", json={"phase": 7})
 
     assert response.status_code == 422
+
+
+def test_the_heartbeat_needs_a_token(client, auth_client, created_run, stepfunctions):
+    """Neither a stranger nor a person can keep a phase alive; only the run's own token can."""
+    for caller in (client, auth_client):
+        response = caller.post(f"{BASE}/{created_run['run_id']}/heartbeat", json={"phase": "plan"})
+        assert response.status_code == 401
+    assert stepfunctions.heartbeats == []
+
+
+def test_the_runner_heartbeat_reaches_the_phase_task(runner_client, created_run, stepfunctions):
+    """A heartbeat becomes `SendTaskHeartbeat` on the phase's own task token and changes nothing else."""
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/heartbeat", json={"phase": "plan"})
+
+    assert response.status_code == 204, response.text
+    assert stepfunctions.heartbeats == [{"taskToken": TASK_TOKEN}]
+    assert stepfunctions.successes == stepfunctions.failures == []
+    assert runs_service.get_run(created_run["run_id"])["status"] == "planning"
+
+
+def test_a_heartbeat_for_another_phase_is_409(runner_client, created_run, stepfunctions):
+    """A plan runner cannot keep an apply alive, and a run that left the phase tells the runner to stop."""
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/heartbeat", json={"phase": "apply"})
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "PHASE_MISMATCH"
+    assert stepfunctions.heartbeats == []
+
+
+@pytest.mark.parametrize("code", ["TaskTimedOut", "TaskDoesNotExist", "InvalidToken"])
+def test_a_heartbeat_on_an_ended_task_is_409(runner_client, created_run, stepfunctions, code):
+    """A token Step Functions stopped waiting on answers the code the runner stops its engine on."""
+    stepfunctions.heartbeat_error = code
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/heartbeat", json={"phase": "plan"})
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "PHASE_TASK_ENDED"
+
+
+def test_a_heartbeat_whose_task_cannot_be_resolved_is_409(runner_client, created_run, monkeypatch):
+    """With no live runner task behind the token there is nothing to keep alive."""
+
+    def unresolved(run, phase, *, settings):
+        raise phase_tasks.PhaseTaskUnresolved("no runner task")
+
+    monkeypatch.setattr(phase_tasks, "phase_token", unresolved)
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/heartbeat", json={"phase": "plan"})
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "PHASE_TASK_UNRESOLVED"
+
+
+def test_a_heartbeat_after_the_run_ended_is_refused(runner_client, created_run, stepfunctions):
+    """Ending a run revokes its token, so a runner still beating learns the run is over."""
+    runs_service.finish_run(created_run["run_id"], "cancelled")
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/heartbeat", json={"phase": "plan"})
+
+    assert response.status_code in (401, 409)
+    assert stepfunctions.heartbeats == []
+
+
+def test_a_heartbeat_takes_only_a_phase(runner_client, created_run, stepfunctions):
+    """Anything beyond the phase is refused, so the route cannot grow a side channel by accident."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/heartbeat", json={"phase": "plan", "task_token": "forged"}
+    )
+
+    assert response.status_code == 422
+    assert stepfunctions.heartbeats == []

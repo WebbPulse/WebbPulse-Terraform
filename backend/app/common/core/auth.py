@@ -51,7 +51,7 @@ admin holds it, and a key carries it only when an admin minted it."""
 
 RUNNER_SCOPE: Final = "runner"
 """The scope a run token carries. Never granted to a human or an agent key: it
-reaches only the two runner routes, and only for the run it is bound to."""
+reaches only the runner routes, and only for the run it is bound to."""
 
 RUNNER_REGISTRY_SCOPE: Final = "runner:registry"
 """The scope of a run's registry credential, which the runner sets as `TF_TOKEN_<host>`
@@ -220,7 +220,7 @@ def run_token_record(request: Request, run_id: str) -> ApiKeyRecord:
 
 
 def require_run_token() -> Any:
-    """Build the dependency gating the two runner-only routes."""
+    """Build the dependency gating the runner-only routes."""
 
     async def dependency(request: Request, run_id: str) -> ApiKeyRecord:
         """Return the verified run token bound to the run in the path."""

@@ -453,6 +453,14 @@ class PhaseResultAccepted(BaseModel):
     status: RunStatus
 
 
+class RunnerHeartbeat(BaseModel):
+    """A runner's liveness report for the phase it is running."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phase: Phase
+
+
 class RunnerTokenRequest(BaseModel):
     """A runner task's signed STS `GetCallerIdentity` headers, traded for its run token."""
 

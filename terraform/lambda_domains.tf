@@ -325,7 +325,7 @@ locals {
       {
         Sid      = "ResolveARunsTaskTokens"
         Effect   = "Allow"
-        Action   = ["states:SendTaskSuccess", "states:SendTaskFailure"]
+        Action   = ["states:SendTaskSuccess", "states:SendTaskFailure", "states:SendTaskHeartbeat"]
         Resource = ["*"]
       },
       {

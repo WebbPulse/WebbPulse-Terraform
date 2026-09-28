@@ -5,8 +5,10 @@ token, so a runner task allowed to call them could complete any execution's
 waiting state. The runner therefore holds no Step Functions permission. It
 reports through `POST /runs/{id}/phase-result` with its run token, and this module
 resolves the token its phase waits on from that task's own overrides and sends
-the outcome. A runner that dies before it can report is failed by the task stop
-consumer instead.
+the outcome. Liveness takes the same road: `POST /runs/{id}/heartbeat` becomes a
+`SendTaskHeartbeat` on that token, so a runner that goes silent is caught by the
+state's heartbeat timeout. A runner that dies before it can report is failed by
+the task stop consumer instead.
 """
 
 from __future__ import annotations
@@ -30,6 +32,10 @@ def _stepfunctions(settings: Settings) -> Any:
 
 class PhaseTaskUnresolved(Exception):
     """No live runner task of this run's phase could be found to resolve."""
+
+
+class PhaseTaskEnded(Exception):
+    """The phase's task token is no longer waiting, so the execution has moved on without it."""
 
 
 def phase_token(run: Mapping[str, Any], phase: str, *, settings: Settings) -> str:
@@ -122,4 +128,44 @@ def report(run_id: str, result: dict[str, Any], *, settings: Settings | None = N
     return updated
 
 
-__all__ = ["REPORTED_FAILURE_ERROR", "PhaseTaskUnresolved", "fail", "phase_token", "report", "succeed"]
+def heartbeat(run_id: str, phase: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """Tell the phase's waiting state that its runner is still alive.
+
+    Resolved exactly like a result, so a runner can only keep its own phase
+    alive. A token Step Functions has already timed out or completed is
+    `PhaseTaskEnded`, which tells the runner to stop its engine.
+
+    Raises:
+        RunNotFound: No such run.
+        PhaseMismatch: The run is not in the phase the runner is running.
+        PhaseTaskUnresolved: The phase's runner task cannot be resolved.
+        PhaseTaskEnded: The phase's task token no longer waits.
+    """
+    from botocore.exceptions import ClientError
+
+    resolved = settings or get_settings()
+    run = service.get_run(run_id, settings=resolved)
+    expected = {"plan": "planning", "apply": "applying"}[phase]
+    if run.get("status") != expected:
+        raise service.PhaseMismatch(f"{run_id} is {run.get('status')}, not {expected}")
+    token = phase_token(run, phase, settings=resolved)
+    try:
+        _stepfunctions(resolved).send_task_heartbeat(taskToken=token)
+    except ClientError as client_error:
+        code = str(client_error.response.get("Error", {}).get("Code", ""))
+        if code in service.CONSUMED_TOKEN_ERRORS or code == "InvalidToken":
+            raise PhaseTaskEnded(code) from client_error
+        raise
+    return run
+
+
+__all__ = [
+    "REPORTED_FAILURE_ERROR",
+    "PhaseTaskEnded",
+    "PhaseTaskUnresolved",
+    "fail",
+    "heartbeat",
+    "phase_token",
+    "report",
+    "succeed",
+]

@@ -1061,6 +1061,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Runner Heartbeat
+         * @description Keep the phase's waiting state alive with a Step Functions heartbeat. Runner only.
+         *
+         *     The runner holds no Step Functions permission, so this is how its liveness
+         *     reaches the state's `HeartbeatSeconds`. Every 409 means the phase is over for
+         *     this runner, which stops its engine on one.
+         */
+        post: operations["runner_heartbeat_api_v1_runs__run_id__heartbeat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/logs": {
         parameters: {
             query?: never;
@@ -2902,6 +2926,17 @@ export interface components {
             repository_id: string;
             /** Sha */
             sha: string;
+        };
+        /**
+         * RunnerHeartbeat
+         * @description A runner's liveness report for the phase it is running.
+         */
+        RunnerHeartbeat: {
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "plan" | "apply";
         };
         /**
          * RunnerToken
@@ -5520,6 +5555,39 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Run"];
                 };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    runner_heartbeat_api_v1_runs__run_id__heartbeat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerHeartbeat"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Request validation failed. */
             422: {
