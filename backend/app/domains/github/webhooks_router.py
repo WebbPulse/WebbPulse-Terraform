@@ -6,6 +6,11 @@ module runs, so everything read here is GitHub's own signed payload. The route o
 queues: the fetch, the ingest and the report happen on the runs function, and GitHub
 gets its answer within its ten second window whatever the repository's size.
 
+GitHub signs the body but no time, so a delivery whose event is older than
+`MAX_DELIVERY_AGE`, or that carries no event time, is acknowledged and dropped:
+within the window the consumers' dedupe makes a replay a no-op, past it nothing
+genuine can arrive.
+
 A push of a semantic version tag, and a published release, go to the registry's own
 ingest queue instead, so module and provider publishing never pass through the runs
 function or its VCS ingest.
@@ -27,6 +32,7 @@ from ...common.github.webhooks import (
     PING,
     WEBHOOK_PATH,
     delivery_message,
+    is_stale,
     release_message,
     tag_message,
 )
@@ -97,12 +103,18 @@ async def receive(request: Request) -> Response:
         )
     extra = {"event": "github.webhook.received", "github_event": event, "delivery": delivery[:64]}
     tag = tag_message(event, delivery, payload) or release_message(event, delivery, payload)
-    if tag is not None:
-        enqueue_tag(tag, settings=settings)
-        return Response(status_code=status.HTTP_202_ACCEPTED)
-    message = delivery_message(event, delivery, payload)
+    message = tag or delivery_message(event, delivery, payload)
     if message is None:
         _log.info("Acknowledged a delivery the bridge ignores.", extra={**extra, "queued": False})
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+    if is_stale(event, payload):
+        _log.warning(
+            "Dropped a delivery older than GitHub's redelivery window.",
+            extra={**extra, "event": "github.webhook.stale", "queued": False},
+        )
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+    if tag is not None:
+        enqueue_tag(tag, settings=settings)
         return Response(status_code=status.HTTP_202_ACCEPTED)
     if not settings.GITHUB_WEBHOOKS_QUEUE_URL:
         _log.warning("No webhooks queue is configured.", extra={**extra, "queued": False})

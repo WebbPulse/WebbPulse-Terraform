@@ -409,8 +409,8 @@ and a new repository under the old name does not inherit it. `working_directory`
 is normalized to a clean relative path, `tracked_branch` must be a valid git branch
 name, and trigger patterns are trimmed.
 
-The webhook consumer (below) writes an ingest record to `vcs-uploads` (three day
-TTL) and the tarball to `ingest/<upload_id>.tar.gz`. S3 Object Created on `ingest/`
+The webhook consumer (below) writes an ingest record to `vcs-uploads` (four day
+TTL, longer than the webhook age window) and the tarball to `ingest/<upload_id>.tar.gz`. S3 Object Created on `ingest/`
 goes through EventBridge to the
 `vcs-ingest` queue as `config_ingested`, and `app/domains/runs/consumers/ingest.py`
 reads the record by the upload id in the key, never the object's metadata. For
@@ -436,6 +436,10 @@ app secret's `GITHUB_WEBHOOK_SECRET` and answers 401 before routing. A branch pu
 or a same-repository pull request (opened, synchronize, reopened) is queued on
 `github-webhooks` and a semantic version tag push on `registry-ingest` (above);
 forks, other tags and other events are acknowledged and dropped.
+GitHub signs no time, so a delivery whose event (`repository.pushed_at`,
+`pull_request.updated_at` or `release.published_at`) is older than
+`MAX_DELIVERY_AGE` (three days, GitHub's redelivery window) or missing is
+acknowledged and dropped; inside the window the delivery keyed dedupe makes a replay a no-op.
 `app/domains/runs/consumers/webhooks.py` resolves the commit (a pull request waits
 for GitHub's merge commit and uses it, reporting on the head), takes the changed
 paths from the push payload or `/pulls/{n}/files`, fetches the tarball with an

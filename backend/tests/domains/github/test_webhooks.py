@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import time
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import boto3
@@ -19,11 +21,13 @@ import pytest
 from app.common.composition import settings as settings_module
 from app.common.github import loader
 from app.common.github.webhooks import (
+    MAX_DELIVERY_AGE,
     TAG_KIND,
     WEBHOOK_KIND,
     WEBHOOK_PATH,
     MalformedDelivery,
     delivery_message,
+    is_stale,
     parse_message,
     parse_tag_message,
     tag_message,
@@ -85,7 +89,7 @@ def push(**overrides: Any) -> dict[str, Any]:
             {"added": ["infra/new.tf"], "removed": [], "modified": ["infra/main.tf"]},
             {"added": [], "removed": ["old.tf"], "modified": ["infra/main.tf"]},
         ],
-        "repository": {"id": REPOSITORY_ID, "full_name": REPO},
+        "repository": {"id": REPOSITORY_ID, "full_name": REPO, "pushed_at": int(time.time())},
         "installation": {"id": INSTALLATION_ID},
         "sender": {"login": "octocat"},
     }
@@ -101,6 +105,7 @@ def pull_request(action: str = "opened", head_repository: int = REPOSITORY_ID) -
             "number": 7,
             "head": {"sha": SHA, "ref": "feature", "repo": {"id": head_repository}},
             "base": {"sha": BEFORE, "ref": "main", "repo": {"id": REPOSITORY_ID}},
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
         "repository": {"id": REPOSITORY_ID, "full_name": REPO},
         "installation": {"id": INSTALLATION_ID},
@@ -299,3 +304,64 @@ def test_a_tag_message_missing_a_field_is_malformed():
         parse_tag_message({"body": json.dumps({"kind": TAG_KIND, "repo": REPO})})
     with pytest.raises(MalformedDelivery):
         parse_tag_message({"body": json.dumps({"kind": WEBHOOK_KIND})})
+
+
+def aged(payload: dict[str, Any], age: timedelta) -> dict[str, Any]:
+    """A push payload whose GitHub push time is `age` ago."""
+    repository = {**payload["repository"], "pushed_at": int(time.time() - age.total_seconds())}
+    return {**payload, "repository": repository}
+
+
+def test_a_push_older_than_the_redelivery_window_is_dropped(client, queue):
+    """A captured push replayed after its dedupe record could expire is acknowledged and never queued."""
+    payload = aged(push(), MAX_DELIVERY_AGE + timedelta(minutes=1))
+    assert send(client, "push", payload, delivery="replayed").status_code == 202
+    assert queued(queue) == []
+
+
+def test_a_redelivery_inside_the_window_is_queued(client, queue):
+    """GitHub's own redelivery of a two day old push still reaches the consumer, whose dedupe settles it."""
+    payload = aged(push(), timedelta(days=2))
+    assert send(client, "push", payload, delivery="redelivered").status_code == 202
+    assert [message["delivery"] for message in queued(queue)] == ["redelivered"]
+
+
+def test_a_push_with_no_event_time_is_dropped(client, queue):
+    """A body that gives no time cannot be placed inside the window, so it is refused."""
+    payload = push()
+    payload["repository"] = {"id": REPOSITORY_ID, "full_name": REPO}
+    assert send(client, "push", payload).status_code == 202
+    assert queued(queue) == []
+
+
+def test_a_stale_tag_push_never_reaches_the_registry(client, queue, registry_queue):
+    """The window covers the registry's tag pushes too."""
+    payload = aged(push(ref="refs/tags/v1.2.3"), timedelta(days=30))
+    assert send(client, "push", payload).status_code == 202
+    assert queued(registry_queue) == []
+
+
+def test_a_stale_pull_request_is_dropped(client, queue):
+    """A pull request carries its time in `updated_at`."""
+    payload = pull_request()
+    payload["pull_request"]["updated_at"] = "2020-01-01T00:00:00Z"
+    assert send(client, "pull_request", payload).status_code == 202
+    assert queued(queue) == []
+
+
+def test_a_release_is_placed_by_its_published_time():
+    """A release is judged by `published_at`, and a missing or unreadable time is stale."""
+    now = datetime(2026, 9, 28, tzinfo=timezone.utc)
+    fresh = {"release": {"published_at": "2026-09-27T12:00:00Z"}}
+    old = {"release": {"published_at": "2026-09-20T12:00:00Z"}}
+    assert not is_stale("release", fresh, now)
+    assert is_stale("release", old, now)
+    assert is_stale("release", {"release": {"published_at": "yesterday"}}, now)
+    assert is_stale("release", {}, now)
+
+
+def test_the_dedupe_record_outlives_the_window():
+    """A replay inside the window must find its record, so the record lasts longer than the window."""
+    from app.domains.runs.vcs import RECORD_TTL
+
+    assert RECORD_TTL > MAX_DELIVERY_AGE
