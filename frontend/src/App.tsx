@@ -6,6 +6,7 @@ import { AuthProvider, type AnyAuthClient } from '@webbpulse/auth/react';
 import { api } from './api';
 import { Layout, RequireAuth, RequireGuest } from './components';
 import {
+  ApiKeys,
   GitHubCreated,
   GitHubSettings,
   GitHubSetup,
@@ -45,6 +46,7 @@ export function AppRoutes(): React.ReactElement {
         {workspaceRoutes()}
         <Route path="/runs" element={<Runs />} />
         <Route path="/runs/:runId" element={<RunDetail />} />
+        <Route path="/settings/api-keys" element={<ApiKeys />} />
         <Route path="/settings/github" element={<GitHubSettings />} />
         <Route path="/settings/github/created" element={<GitHubCreated />} />
         <Route path="/settings/github/setup" element={<GitHubSetup />} />

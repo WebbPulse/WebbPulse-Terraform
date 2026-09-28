@@ -15,6 +15,10 @@ import {
 import { identityOriginFrom as packageIdentityOriginFrom } from '@webbpulse/auth/browser';
 
 import type {
+  ApiKey,
+  ApiKeyCreate,
+  ApiKeyCreated,
+  ApiKeyList,
   ConfigVersion,
   ConfigVersionCreate,
   ConfigVersionList,
@@ -577,6 +581,37 @@ export class TerraformApi {
       `/github/installations/${encodeURIComponent(installationId)}`,
       options
     );
+  }
+
+  /** Lists the caller's own API keys, newest first, revoked and expired ones included. */
+  async listApiKeys(options: RequestOptions = {}): Promise<ApiKeyList> {
+    const response = await this.client.get<ApiKeyList>('/api-keys', options);
+    return response.data;
+  }
+
+  /** Mints an API key. The response is the only time its plaintext is readable. */
+  async createApiKey(
+    body: ApiKeyCreate,
+    options: RequestOptions = {}
+  ): Promise<ApiKeyCreated> {
+    const response = await this.client.post<ApiKeyCreated>(
+      '/api-keys',
+      body,
+      options
+    );
+    return response.data;
+  }
+
+  /** Revokes one API key by its id, returning it as it was. */
+  async revokeApiKey(
+    keyId: string,
+    options: RequestOptions = {}
+  ): Promise<ApiKey> {
+    const response = await this.client.delete<ApiKey>(
+      `/api-keys/${encodeURIComponent(keyId)}`,
+      options
+    );
+    return response.data;
   }
 
   /** Lists the repositories one installation can reach. */

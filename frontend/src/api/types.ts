@@ -264,3 +264,15 @@ export type Repository = Schemas['Repository'];
 
 /** Every repository an installation can reach. */
 export type RepositoryList = Schemas['RepositoryList'];
+
+/** One of the caller's API keys. Never carries the plaintext. */
+export type ApiKey = Schemas['ApiKey'];
+
+/** The body that mints an API key. */
+export type ApiKeyCreate = Schemas['ApiKeyCreate'];
+
+/** A freshly minted key, carrying its plaintext exactly once. */
+export type ApiKeyCreated = Schemas['ApiKeyCreated'];
+
+/** The caller's API keys, newest first. */
+export type ApiKeyList = Schemas['ApiKeyList'];
