@@ -23,6 +23,7 @@ from app.models import (
     BackendConfig,
     Bundle,
     Changes,
+    Phase,
     PhaseResult,
     VendedCredentials,
     hcl_literal_fragments,
@@ -216,6 +217,7 @@ def test_build_environment_drops_the_runner_tokens(tmp_path: Path) -> None:
         "us-west-2",
         tmp_path,
         {"AWS_PROFILE": "webbpulse-run"},
+        run_phase="plan",
     )
     assert "RUN_TOKEN" not in environment
     assert "TASK_TOKEN" not in environment
@@ -226,6 +228,63 @@ def test_build_environment_drops_the_runner_tokens(tmp_path: Path) -> None:
     assert environment["HOME"] == "/home/runner"
     assert environment["TF_IN_AUTOMATION"] == "1"
     assert environment["AWS_REGION"] == "us-west-2"
+
+
+@pytest.mark.parametrize("phase", ["plan", "apply"])
+def test_build_environment_exports_the_run_phase_over_a_workspace_variable(tmp_path: Path, phase: Phase) -> None:
+    """A configuration reads the phase as `var.webbpulse_run_phase`, and no workspace variable can set it."""
+    environment = build_environment(
+        {"TF_VAR_webbpulse_run_phase": "apply"},
+        {"TF_VAR_webbpulse_run_phase": "apply"},
+        "us-west-2",
+        tmp_path,
+        run_phase=phase,
+    )
+    assert environment["TF_VAR_webbpulse_run_phase"] == phase
+
+
+PHASE_SELECTOR_CONFIG = """
+variable "webbpulse_run_phase" {
+  type      = string
+  default   = "apply"
+  ephemeral = true
+}
+
+check "phase" {
+  assert {
+    condition     = var.webbpulse_run_phase == "apply"
+    error_message = "selected the reader"
+  }
+}
+"""
+
+
+@pytest.mark.skipif(shutil.which("terraform") is None, reason="needs a terraform binary")
+def test_an_ephemeral_phase_variable_selects_the_writer_when_the_saved_plan_is_applied(tmp_path: Path) -> None:
+    """The plan reads `plan` and the apply of that saved plan reads `apply`, since an ephemeral value is not saved."""
+    (tmp_path / "main.tf").write_text(PHASE_SELECTOR_CONFIG)
+    binary = str(shutil.which("terraform"))
+
+    def engine(phase: Phase, *arguments: str) -> subprocess.CompletedProcess[str]:
+        """Run the engine with the environment the runner builds for `phase`."""
+        environment = build_environment(
+            {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path)},
+            {"TF_PLUGIN_CACHE_DIR": ""},
+            "us-west-2",
+            tmp_path,
+            run_phase=phase,
+        )
+        return subprocess.run(  # noqa: S603
+            [binary, *arguments], cwd=tmp_path, env=environment, capture_output=True, text=True, check=False
+        )
+
+    assert engine("plan", "init", "-input=false").returncode == 0
+    planned = engine("plan", "plan", "-input=false", "-out=plan.tfplan")
+    assert planned.returncode == 0, planned.stderr
+    assert "selected the reader" in planned.stdout + planned.stderr
+    applied = engine("apply", "apply", "-input=false", "plan.tfplan")
+    assert applied.returncode == 0, applied.stderr
+    assert "selected the reader" not in applied.stdout + applied.stderr
 
 
 def test_bundle_sensitive_values_cover_variables_and_vended_keys(run_role_arn: str) -> None:

@@ -100,3 +100,53 @@ def test_another_workspace_prefix_is_not_a_prefix_match() -> None:
     for statement in document["Statement"]:
         for resource in statement["Resource"]:
             assert "workspaces/ws-1*" not in resource
+
+
+READER = "arn:aws:iam::488386929690:role/WebbPulse-Terraform-Route53-Reader"
+OTHER_READER = "arn:aws:iam::123456789012:role/Other-Reader"
+
+
+def test_a_plan_with_reader_roles_may_assume_exactly_those() -> None:
+    """The plan keeps ReadOnlyAccess and gains one statement allowing `sts:AssumeRole` on the named ARNs."""
+    policy = session_policy.for_phase("plan", [READER, OTHER_READER, READER])
+    assert policy.policy_arns == ("arn:aws:iam::aws:policy/ReadOnlyAccess",)
+    assert policy.document is not None
+    (statement,) = policy.document["Statement"]
+    assert statement == {
+        "Sid": "PlanAssumeReaderRoles",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": [READER, OTHER_READER],
+    }
+
+
+def test_an_empty_reader_list_leaves_the_plan_unchanged() -> None:
+    """No reader roles means no inline document, the plan's session as before."""
+    assert session_policy.for_phase("plan", []).document is None
+    assert session_policy.for_phase("plan", [""]).document is None
+
+
+def test_the_apply_phase_ignores_reader_roles() -> None:
+    """An apply is bounded by the run role alone, list or not."""
+    policy = session_policy.for_phase("apply", [READER])
+    assert policy.policy_arns == ()
+    assert policy.document is None
+
+
+def test_the_largest_allowed_reader_list_fits_the_session_policy_limit() -> None:
+    """Ten ARNs of the longest accepted length, beside ReadOnlyAccess, stay inside the STS plaintext limit."""
+    from app.domains.workspaces.schemas.workspace import (
+        PLAN_ASSUME_ROLE_ARN_MAX_LENGTH,
+        PLAN_ASSUME_ROLE_ARNS_MAX,
+        validate_plan_assume_role_arns,
+    )
+
+    head = "arn:aws:iam::123456789012:role/"
+    arns = [
+        f"{head}{index:02d}{'r' * (PLAN_ASSUME_ROLE_ARN_MAX_LENGTH - len(head) - 2)}"
+        for index in range(PLAN_ASSUME_ROLE_ARNS_MAX)
+    ]
+    assert all(len(arn) == PLAN_ASSUME_ROLE_ARN_MAX_LENGTH for arn in arns)
+    assert validate_plan_assume_role_arns(arns) == arns
+    size = session_policy.plaintext_size(session_policy.for_phase("plan", arns))
+    assert size <= session_policy.SESSION_POLICY_PLAINTEXT_LIMIT, size

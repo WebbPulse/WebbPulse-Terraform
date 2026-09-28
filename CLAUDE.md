@@ -218,6 +218,37 @@ once the run has left that phase or its task token no longer resolves.
 A refused run role is a 409 `RUN_ROLE_ASSUME_FAILED` on the bundle, which the
 runner reports as `AssumeRoleFailed`.
 
+`ReadOnlyAccess` holds no `sts:AssumeRole`, so a plan whose providers assume
+roles elsewhere (Route 53 writers in a zone account, say) is denied. A workspace
+lists exact reader role ARNs in `plan_assume_role_arns` (at most 10, 160
+characters each, no wildcards, null clears), and a plan's run role request then
+also carries an inline `sts:AssumeRole` statement on exactly those ARNs; an apply
+is unchanged. The runner exports `TF_VAR_webbpulse_run_phase` (`plan` or `apply`,
+set after workspace variables so they cannot override it). A config that assumes
+roles declares it and selects readers in plan, writers in apply:
+
+```hcl
+variable "webbpulse_run_phase" {
+  type      = string
+  default   = "apply"
+  ephemeral = true
+}
+
+provider "aws" {
+  alias = "dns"
+  assume_role {
+    role_arn = var.webbpulse_run_phase == "plan" ? local.dns_reader : local.dns_writer
+  }
+}
+```
+
+`ephemeral = true` is required, not style: a saved plan stores every other
+variable's value, so the apply of `plan.tfplan` would keep `plan` and pick the
+reader. The default `apply` keeps the config working on HCP Terraform and
+locally, and an undeclared `TF_VAR_webbpulse_run_phase` is ignored by both
+engines. Needs Terraform 1.10 or OpenTofu 1.11 and later. The session policy is
+the boundary, the variable only picks which listed role to ask for.
+
 `POST /workspaces/{id}/run-role/quick-setup` takes an optional account id, saves the
 derived ARN when one is given and returns an AWS CloudFormation quick create link. The template
 (`app/domains/workspaces/quick_setup.py`) trusts only the vending role with

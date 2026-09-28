@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Mapping, Sequence, cast
 
 from app.logs import LogSink
-from app.models import Changes, Engine
+from app.models import Changes, Engine, Phase
 
 PLAN_FILE = "plan.tfplan"
 PLAN_JSON_FILE = "plan.json"
@@ -35,6 +35,16 @@ BASE_ENVIRONMENT = {
     "TF_PLUGIN_CACHE_DIR": "/opt/terraform-plugin-cache",
 }
 
+
+RUN_PHASE_VARIABLE = "TF_VAR_webbpulse_run_phase"
+"""The phase a configuration can read as `var.webbpulse_run_phase` to pick a reader or writer role.
+
+Set after the workspace's own variables so none can override it. It is only a
+selector: the plan session's policy is what keeps a plan off a writer role. A
+configuration declares it `ephemeral` so a saved plan does not carry `plan` into
+the apply, and defaults it to `apply` so HCP Terraform, which never sets it,
+keeps using the writers. An engine ignores it where it is undeclared.
+"""
 
 INTERRUPTED_EXIT = 130
 """The exit code a subcommand reports when an interrupt kept it from running."""
@@ -233,6 +243,8 @@ def build_environment(
     region: str,
     directory: Path,
     credential_environment: dict[str, str] | None = None,
+    *,
+    run_phase: Phase,
 ) -> dict[str, str]:
     """Assemble the engine's environment without letting the runner's own tokens through.
 
@@ -240,7 +252,8 @@ def build_environment(
     which the runner rotates in place. Static keys from anywhere would win over a
     profile and never rotate, so neither the task nor a workspace variable may set
     them, and no path to the task role's credentials survives either, though that
-    role reaches nothing but the runner's log stream.
+    role reaches nothing but the runner's log stream. `run_phase` is exported as
+    `RUN_PHASE_VARIABLE`.
     """
     blocked = TASK_CREDENTIAL_KEYS | VENDED_CREDENTIAL_KEYS
     environment = {key: value for key, value in base.items() if key not in RUNNER_ONLY_KEYS}
@@ -250,6 +263,7 @@ def build_environment(
     environment["TF_DATA_DIR"] = str(directory / ".terraform")
     environment.update({key: value for key, value in bundle_environment.items() if key not in blocked})
     environment.update(credential_environment or {})
+    environment[RUN_PHASE_VARIABLE] = run_phase
     return environment
 
 

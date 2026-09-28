@@ -24,6 +24,20 @@ WORKING_DIRECTORY_MAX_LENGTH: Final = 255
 TRIGGER_PATTERN_MAX_LENGTH: Final = 255
 _BRANCH_FORBIDDEN: Final = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]|\.\.|@\{|//")
 
+PLAN_ASSUME_ROLE_ARN_PATTERN: Final = re.compile(r"^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$")
+"""An exact IAM role ARN, the same shape `external_run_role_arns` accepts in Terraform. No wildcards."""
+
+PLAN_ASSUME_ROLE_ARNS_MAX: Final = 10
+"""How many reader roles one workspace may name."""
+
+PLAN_ASSUME_ROLE_ARN_MAX_LENGTH: Final = 160
+"""The longest reader role ARN accepted.
+
+With the count cap this keeps the plan's inline session policy, plus the
+`ReadOnlyAccess` ARN beside it, inside the 2,048 plaintext characters STS allows
+for session policies in total.
+"""
+
 
 def normalize_working_directory(value: str) -> str:
     """A working directory as a clean relative path, `""` for the repository root.
@@ -76,6 +90,29 @@ def validate_trigger_patterns(values: list[str]) -> list[str]:
     return cleaned
 
 
+def validate_plan_assume_role_arns(values: list[str]) -> list[str]:
+    """Trimmed exact role ARNs, refusing wildcards, oversized entries and repeats.
+
+    These are the only roles a plan session may assume, so a pattern would widen
+    what a plan can reach past what the person named, and a repeat usually means a
+    typo in the other entry.
+    """
+    cleaned: list[str] = []
+    for value in values:
+        arn = value.strip()
+        if len(arn) > PLAN_ASSUME_ROLE_ARN_MAX_LENGTH:
+            raise ValueError(f"a plan assume role ARN is longer than {PLAN_ASSUME_ROLE_ARN_MAX_LENGTH} characters")
+        if not PLAN_ASSUME_ROLE_ARN_PATTERN.match(arn):
+            raise ValueError(
+                "plan_assume_role_arns entries must be exact IAM role ARNs of the form "
+                "arn:aws:iam::<12 digit account id>:role/<name>, with no wildcards"
+            )
+        if arn in cleaned:
+            raise ValueError(f"plan_assume_role_arns repeats {arn}")
+        cleaned.append(arn)
+    return cleaned
+
+
 class RunRoleSetup(BaseModel):
     """What a person needs to build the run role for one workspace.
 
@@ -117,6 +154,9 @@ class WorkspaceBase(BaseModel):
     file_triggers_enabled: bool = True
     """Whether uploads are filtered by changed paths. False always triggers a run, the
     way HCP Terraform's "Always trigger runs" does."""
+    plan_assume_role_arns: list[str] = Field(default_factory=list, max_length=PLAN_ASSUME_ROLE_ARNS_MAX)
+    """Exact role ARNs a plan session may assume beside its read only access, such as
+    Route 53 reader roles. An apply is not limited by this list."""
 
 
 class WorkspaceCreate(WorkspaceBase):
@@ -142,6 +182,12 @@ class WorkspaceCreate(WorkspaceBase):
         """Trim the patterns and refuse empty or oversized ones."""
         return validate_trigger_patterns(value)
 
+    @field_validator("plan_assume_role_arns")
+    @classmethod
+    def _validate_plan_assume_role_arns(cls, value: list[str]) -> list[str]:
+        """Accept exact role ARNs only."""
+        return validate_plan_assume_role_arns(value)
+
 
 CLEARABLE_WORKSPACE_FIELDS: Final = (
     "run_role_arn",
@@ -153,6 +199,7 @@ CLEARABLE_WORKSPACE_FIELDS: Final = (
     "trigger_patterns",
     "speculative_plans",
     "file_triggers_enabled",
+    "plan_assume_role_arns",
 )
 """The update fields an explicit JSON null clears.
 
@@ -190,6 +237,8 @@ class WorkspaceUpdate(BaseModel):
     trigger_patterns: Optional[list[str]] = Field(default=None, max_length=50)
     speculative_plans: Optional[bool] = None
     file_triggers_enabled: Optional[bool] = None
+    plan_assume_role_arns: Optional[list[str]] = Field(default=None, max_length=PLAN_ASSUME_ROLE_ARNS_MAX)
+    """Replace the roles a plan may assume. Null or an empty list leaves none."""
 
     @field_validator("working_directory")
     @classmethod
@@ -208,6 +257,12 @@ class WorkspaceUpdate(BaseModel):
     def _validate_trigger_patterns(cls, value: Optional[list[str]]) -> Optional[list[str]]:
         """Trim the patterns and refuse empty or oversized ones."""
         return None if value is None else validate_trigger_patterns(value)
+
+    @field_validator("plan_assume_role_arns")
+    @classmethod
+    def _validate_plan_assume_role_arns(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        """Accept exact role ARNs only."""
+        return None if value is None else validate_plan_assume_role_arns(value)
 
     @model_validator(mode="before")
     @classmethod
