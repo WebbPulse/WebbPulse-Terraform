@@ -21,6 +21,12 @@ LOCALHOST_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+"""The Vite dev server's origins, allowed only where `LOCALHOST_ORIGIN_ENVIRONMENTS` names
+the raw `ENVIRONMENT`, so no deployed stack answers a page served from a workstation."""
+
+LOCALHOST_ORIGIN_ENVIRONMENTS = frozenset({"local", "dev", "development"})
+"""The explicit spellings of a workstation stack. An unrecognised value maps to "local"
+for the base class but is not listed here, so a typo on a deployed function stays closed."""
 
 ENVIRONMENT_ALIASES = {
     "development": "local",
@@ -203,7 +209,9 @@ class Settings(BaseServiceSettings):
         )
         object.__setattr__(self, "log_level", self.LOG_LEVEL.strip().upper())
         origins = [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
-        object.__setattr__(self, "cors_allow_origins", sorted(set(origins + LOCALHOST_ORIGINS)))
+        if self.ENVIRONMENT.strip().lower() in LOCALHOST_ORIGIN_ENVIRONMENTS:
+            origins += LOCALHOST_ORIGINS
+        object.__setattr__(self, "cors_allow_origins", sorted(set(origins)))
         if self.app_secret_arn and not self.app_secrets_arn:
             object.__setattr__(self, "app_secrets_arn", self.app_secret_arn)
         return self
