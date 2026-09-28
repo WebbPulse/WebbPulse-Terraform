@@ -172,3 +172,23 @@ output "workspace_cleanup_queue_url" {
   description = "Queue a workspace delete sends its S3 cleanup to, consumed by the runs function"
   value       = module.workspace_cleanup.queue_url
 }
+
+output "provider_signing_key_secret_arn" {
+  description = "ARN of the secret holding the private provider release signing key, set as the SIGNING_KEY_SECRET_ARN variable on both provider repository environments"
+  value       = aws_secretsmanager_secret.provider_signing_key.arn
+}
+
+output "provider_signing_keygen_role_arn" {
+  description = "ARN of the role the provider repository's key generation workflow assumes, set as SIGNING_KEY_ROLE_ARN on its <env>-signing-key environment"
+  value       = module.provider_signing_keygen_role.role_arn
+}
+
+output "provider_release_role_arn" {
+  description = "ARN of the role the provider repository's release workflow assumes, set as SIGNING_KEY_ROLE_ARN on its <env> environment"
+  value       = module.provider_release_role.role_arn
+}
+
+output "provider_signing_public_key_parameters" {
+  description = "SSM parameter names holding the public half of the provider release signing key, keyed public_key (ASCII armor) and key_id (long key id), for the registry to serve"
+  value       = local.provider_signing_parameters
+}
