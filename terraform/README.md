@@ -28,7 +28,7 @@ provider credentials, so a local `terraform plan` has no way to authenticate.
 | `s3.tf` | The state bucket and the artifacts bucket, each with its own KMS key. The artifacts bucket sends EventBridge notifications and `ingest/` expires after 3 days. Published modules under `registry/modules/` never expire |
 | `ecr.tf` | `webbpulse-terraform/{workspaces,runs,github,registry,runner}` |
 | `lambda_domains.tf` | The `workspaces`, `runs`, `github` and `registry` functions, their roles and inline policies |
-| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer. The runner routes, the GitHub webhook route and the `/v1/modules/` registry protocol routes carry `authorization_type = "NONE"`, so neither the identity JWT nor the staging gate applies; each verifies its own token in the function |
+| `apigateway.tf` | The HTTP API, the route keys and the JWT authorizer. The runner routes, the GitHub webhook route, the `/v1/modules/` and `/v1/providers/` registry protocol routes and `POST /v1/oauth/token` carry `authorization_type = "NONE"`, so neither the identity JWT nor the staging gate applies; each verifies its own token in the function |
 | `identity.tf`, `app_secrets.tf` | The identity platform module and the single JSON `app` secret |
 | `vpc.tf`, `ecs.tf`, `runner_logs.tf` | The public-only VPC, the Fargate cluster and the two phase task definitions, the runner log group |
 | `step_functions.tf`, `state_machines/run.asl.json` | The per-run state machine |

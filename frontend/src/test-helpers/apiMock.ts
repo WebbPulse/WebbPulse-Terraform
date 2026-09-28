@@ -68,6 +68,12 @@ export function createApiMock(): ApiMock {
     'getModuleVersion',
     'resyncModule',
     'deleteModule',
+    'listProviders',
+    'createProvider',
+    'getProvider',
+    'resyncProvider',
+    'deleteProvider',
+    'createTerraformLoginAuthorization',
   ];
   const mock = {} as Record<string, Mock>;
   for (const name of names) {

@@ -73,27 +73,33 @@ def _workspaces_routers() -> "list[APIRouter]":
     """
     from app.domains.workspaces.api_keys_router import router as api_keys_router
     from app.domains.workspaces.router import router
+    from app.domains.workspaces.terraform_login_router import router as login_router
 
-    return [router, api_keys_router]
+    return [router, api_keys_router, login_router]
 
 
 def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
-    """The shared package's identity router, which carries the issuer's own path.
+    """The shared package's identity router and `terraform login`'s token route.
 
-    Identity is served by the workspaces function rather than a domain of its own,
-    so the glue mounts here. It takes no prefix; a prefix would double every path to
+    Both carry their own paths: the token route is `/v1/oauth/token`, beside the
+    registry protocols, because service discovery names it. Identity is served by
+    the workspaces function rather than a domain of its own, so the glue mounts
+    here. It takes no prefix; a prefix would double every path to
     `/api/auth/api/auth/...`.
 
-    Empty when `IDENTITY_ISSUER` is unset, so a deployment without an issuer builds
-    none of the glue's AWS clients. The import is inside the body for the same
-    reason every loader's is: the runs image must never reach this module.
+    Only the token route when `IDENTITY_ISSUER` is unset, so a deployment without
+    an issuer builds none of the glue's AWS clients. The imports are inside the
+    body for the same reason every loader's is: the runs image must never reach
+    these modules.
     """
+    from app.domains.workspaces.terraform_login_router import token_router
+
     if not settings.IDENTITY_ISSUER:
-        return []
+        return [token_router]
 
     from app.common.identity.package_glue import build_router
 
-    return [build_router(settings)]
+    return [build_router(settings), token_router]
 
 
 def _runs_routers() -> "list[APIRouter]":
@@ -145,15 +151,16 @@ def _registry_routers() -> "list[APIRouter]":
 
 
 def _registry_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
-    """The module registry protocol and the ingest consumer, both at the root.
+    """The module and provider registry protocols and the ingest consumer, all at the root.
 
-    The protocol mounts at `/v1/modules`, where service discovery points Terraform,
-    and the consumer at the adapter's pass-through path.
+    The protocols mount at `/v1/modules` and `/v1/providers`, where service discovery
+    points Terraform, and the consumer at the adapter's pass-through path.
     """
     from app.domains.registry.consumers.dispatch import build_router
+    from app.domains.registry.protocol_router import providers_router
     from app.domains.registry.protocol_router import router as protocol_router
 
-    return [protocol_router, build_router(settings)]
+    return [protocol_router, providers_router, build_router(settings)]
 
 
 DOMAINS: Final[dict[str, Domain]] = {

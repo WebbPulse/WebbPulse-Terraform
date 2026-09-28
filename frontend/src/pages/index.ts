@@ -17,4 +17,11 @@ export { GitHubCreated } from './settings/GitHubCreated';
 export { GitHubSettings } from './settings/GitHubSettings';
 export { GitHubSetup } from './settings/GitHubSetup';
 export { ApiKeys } from './settings/ApiKeys';
-export { ConnectModule, ModuleDetail, Registry } from './registry';
+export {
+  ConnectModule,
+  ConnectProvider,
+  ModuleDetail,
+  ProviderDetail,
+  Registry,
+} from './registry';
+export { TerraformLogin } from './TerraformLogin';

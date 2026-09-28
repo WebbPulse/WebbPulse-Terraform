@@ -1,3 +1,5 @@
 export { ConnectModule } from './ConnectModule';
 export { ModuleDetail } from './ModuleDetail';
 export { Registry } from './Registry';
+export { ConnectProvider } from './ConnectProvider';
+export { ProviderDetail } from './ProviderDetail';

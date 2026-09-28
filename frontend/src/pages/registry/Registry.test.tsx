@@ -19,7 +19,8 @@ import { aModule, aVersionDetail, someDocs } from './fixtures';
 
 vi.mock('../../api/client', () => apiClientModuleMock());
 
-const { ConnectModule, ModuleDetail, Registry } = await import('./index');
+const { ConnectModule, ModuleDetail, ProviderDetail, Registry } =
+  await import('./index');
 
 /** An auth client for an admin, who may connect, resync and delete. */
 function adminClient(): ReturnType<typeof stubAuthClient> {
@@ -39,6 +40,10 @@ function renderAt(path: string, admin = false): void {
       <Route path="/registry" element={<Registry />} />
       <Route path="/registry/new" element={<ConnectModule />} />
       <Route
+        path="/registry/providers/:namespace/:type"
+        element={<ProviderDetail />}
+      />
+      <Route
         path="/registry/:namespace/:name/:provider"
         element={<ModuleDetail />}
       />
@@ -51,6 +56,7 @@ function renderAt(path: string, admin = false): void {
 describe('Registry list', () => {
   beforeEach(() => {
     resetApiMock();
+    apiMock.listProviders.mockResolvedValue({ providers: [] });
   });
 
   it('lists each module with its newest published version and repository', async () => {
@@ -357,5 +363,68 @@ describe('Connect module', () => {
     expect(
       await screen.findByText(/Only an admin can connect a repository/)
     ).toBeInTheDocument();
+  });
+});
+
+describe('Providers', () => {
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.listModules.mockResolvedValue({ modules: [] });
+  });
+
+  const provider = {
+    namespace: 'WebbPulse',
+    type: 'webbpulse',
+    source: 'WebbPulse/webbpulse',
+    vcs_repo: 'WebbPulse/terraform-provider-webbpulse',
+    created_at: '2026-09-27T00:00:00Z',
+    versions: [
+      {
+        version: '0.1.0-rc.1',
+        status: 'published' as const,
+        error: null,
+        tag: 'v0.1.0-rc.1',
+        protocols: ['6.0'],
+        platforms: [
+          { os: 'linux', arch: 'amd64', filename: 'a.zip', shasum: 'aa' },
+        ],
+        key_id: 'ABCDEF0123456789',
+        actor: 'github',
+        created_at: '2026-09-27T00:00:00Z',
+        published_at: '2026-09-27T00:01:00Z',
+      },
+    ],
+  };
+
+  it('lists providers on their own tab', async () => {
+    apiMock.listProviders.mockResolvedValue({ providers: [provider] });
+
+    renderAt('/registry?tab=providers', true);
+
+    const link = await screen.findByRole('link', { name: 'webbpulse' });
+    expect(link).toHaveAttribute(
+      'href',
+      '/registry/providers/WebbPulse/webbpulse'
+    );
+    expect(screen.getByText('0.1.0-rc.1')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'Connect provider' })
+    ).toBeInTheDocument();
+  });
+
+  it('shows the required_providers snippet and terraform login', async () => {
+    apiMock.getProvider.mockResolvedValue(provider);
+
+    renderAt('/registry/providers/WebbPulse/webbpulse');
+
+    expect(await screen.findByText('linux_amd64')).toBeInTheDocument();
+    const snippet = screen
+      .getAllByTestId('code-block')
+      .find((block) => block.dataset['subject'] === 'provider usage');
+    expect(snippet?.textContent).toContain(
+      `source  = "${window.location.host}/WebbPulse/webbpulse"`
+    );
+    expect(snippet?.textContent).toContain('version = "0.1.0-rc.1"');
+    expect(screen.getAllByText(/terraform login/).length).toBeGreaterThan(0);
   });
 });

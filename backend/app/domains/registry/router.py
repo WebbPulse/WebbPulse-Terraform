@@ -1,9 +1,10 @@
-"""The registry's routes under `/api/v1`: connecting modules to repositories, and the listing.
+"""The registry's routes under `/api/v1`: connecting modules and providers to repositories, and the listings.
 
-Creating and deleting a module needs `registry:write`, which only an admin holds;
-reading needs `registry:read`. Publishing has no route: a semantic version tag
-pushed to a connected repository arrives through the GitHub App's webhook, and
-connecting or resyncing a module imports the tags the repository already holds.
+Creating and deleting a module or a provider needs `registry:write`, which only an
+admin holds; reading needs `registry:read`. Publishing has no route: a semantic
+version tag pushed to a connected module repository, or a release published in a
+connected provider repository, arrives through the GitHub App's webhook, and
+connecting or resyncing imports what the repository already holds.
 """
 
 from __future__ import annotations
@@ -18,12 +19,15 @@ from webbpulse.integrations.github import GitHubError, GitHubRateLimited
 
 from ...common.core.auth import REGISTRY_READ, REGISTRY_WRITE, claims, scopes, sudo
 from ...common.github.repositories import RepositoryNotInstalled
-from . import service
+from . import providers, service
+from .schemas.providers import Provider, ProviderCreate, ProviderList, ProviderSync
 from .schemas.registry import Module, ModuleCreate, ModuleList, ModuleSync, ModuleVersionDetail
 
 router = APIRouter(prefix="/registry")
 
 INVALID_MODULE_NAME_CODE = "REGISTRY_INVALID_MODULE_NAME"
+INVALID_PROVIDER_NAME_CODE = "REGISTRY_INVALID_PROVIDER_NAME"
+PROVIDER_EXISTS_CODE = "REGISTRY_PROVIDER_EXISTS"
 MODULE_EXISTS_CODE = "REGISTRY_MODULE_EXISTS"
 NOT_FOUND_CODE = "REGISTRY_NOT_FOUND"
 VCS_REPO_NOT_INSTALLED_CODE = "VCS_REPO_NOT_INSTALLED"
@@ -56,7 +60,9 @@ def _connect_errors() -> Iterator[None]:
         yield
     except service.RegistryUnavailable as error:
         raise _error(
-            status.HTTP_409_CONFLICT, "Create the GitHub App before connecting a module.", GITHUB_NOT_CONFIGURED_CODE
+            status.HTTP_409_CONFLICT,
+            "Create the GitHub App before connecting a repository.",
+            GITHUB_NOT_CONFIGURED_CODE,
         ) from error
     except RepositoryNotInstalled as error:
         raise _error(
@@ -180,12 +186,101 @@ def delete_module(namespace: Segment, name: Segment, provider: Segment) -> Respo
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post(
+    "/providers",
+    response_model=Provider,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(sudo(REGISTRY_WRITE))],
+    responses={
+        409: {"description": "A provider already sits at the address, or there is no GitHub App."},
+        422: {"description": "The App is not installed on the repository, or it is not a provider repository."},
+    },
+)
+def create_provider(payload: ProviderCreate, current: AuthorizerClaims = Depends(claims)) -> dict[str, Any]:
+    """Connect a provider to a `terraform-provider-<type>` repository; each release published there publishes it.
+
+    A release must carry GoReleaser's registry layout, its `SHA256SUMS` signed by
+    this registry's signing key. Existing releases are imported in the background
+    unless `import_releases` is false.
+    """
+    with _connect_errors():
+        try:
+            return providers.create_provider(payload.vcs_repo, _actor(current), import_releases=payload.import_releases)
+        except providers.InvalidProviderName as error:
+            raise _error(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error), INVALID_PROVIDER_NAME_CODE) from error
+        except providers.ProviderExists as error:
+            raise _error(status.HTTP_409_CONFLICT, f"{error} already exists.", PROVIDER_EXISTS_CODE) from error
+
+
+@router.get("/providers", response_model=ProviderList, dependencies=[Depends(scopes(REGISTRY_READ))])
+def list_providers() -> dict[str, Any]:
+    """Every provider and every version, with pending and failed versions shown."""
+    return {"providers": providers.list_providers()}
+
+
+@router.get(
+    "/providers/{namespace}/{type}",
+    response_model=Provider,
+    dependencies=[Depends(scopes(REGISTRY_READ))],
+    responses={404: {"description": "No provider sits at the address."}},
+)
+def get_provider(namespace: Segment, type: Segment) -> dict[str, Any]:  # noqa: A002
+    """One provider and every version of it."""
+    try:
+        return providers.get_provider(namespace, type)
+    except providers.ProviderNotFound as error:
+        raise _error(status.HTTP_404_NOT_FOUND, f"{error} was not found.", NOT_FOUND_CODE) from error
+
+
+@router.post(
+    "/providers/{namespace}/{type}/resync",
+    response_model=ProviderSync,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(scopes(REGISTRY_WRITE))],
+    responses={
+        404: {"description": "No provider sits at the address."},
+        503: {"description": "The sync could not be queued."},
+    },
+)
+def resync_provider(
+    namespace: Segment,
+    type: Segment,  # noqa: A002
+    current: AuthorizerClaims = Depends(claims),
+) -> dict[str, str]:
+    """Queue an import of every release in the provider's repository. Published versions are left alone."""
+    try:
+        return providers.resync_provider(namespace, type, _actor(current))
+    except providers.ProviderNotFound as error:
+        raise _error(status.HTTP_404_NOT_FOUND, f"{error} was not found.", NOT_FOUND_CODE) from error
+    except service.SyncUnavailable as error:
+        raise _error(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "The release sync could not be queued.", SYNC_UNAVAILABLE_CODE
+        ) from error
+
+
+@router.delete(
+    "/providers/{namespace}/{type}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(sudo(REGISTRY_WRITE))],
+    responses={404: {"description": "No provider sits at the address."}},
+)
+def delete_provider(namespace: Segment, type: Segment) -> Response:  # noqa: A002
+    """Remove a provider with every version and stored file. Configurations requiring it stop installing."""
+    try:
+        providers.delete_provider(namespace, type)
+    except providers.ProviderNotFound as error:
+        raise _error(status.HTTP_404_NOT_FOUND, f"{error} was not found.", NOT_FOUND_CODE) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 __all__ = [
     "GITHUB_NOT_CONFIGURED_CODE",
     "GITHUB_UNAVAILABLE_CODE",
     "INVALID_MODULE_NAME_CODE",
+    "INVALID_PROVIDER_NAME_CODE",
     "MODULE_EXISTS_CODE",
     "NOT_FOUND_CODE",
+    "PROVIDER_EXISTS_CODE",
     "SYNC_UNAVAILABLE_CODE",
     "VCS_REPO_NOT_INSTALLED_CODE",
     "router",

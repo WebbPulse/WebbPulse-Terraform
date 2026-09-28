@@ -293,8 +293,11 @@ function ModulePage({
               Usage instructions
             </h2>
             <p className="text-xs text-text-muted">
-              Runs here fetch the module with their own registry credential. A
-              local init needs an API key with registry read access in{' '}
+              {
+                'Runs here fetch the module with their own registry credential. Locally, run '
+              }
+              <span className="font-mono">terraform login {host}</span>
+              {' once, or set an API key with registry read access in '}
               <span className="font-mono">{tokenVariable(host)}</span>.
             </p>
             <CodeBlock

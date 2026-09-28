@@ -158,7 +158,8 @@ agent with a `wpk_` API key that the gateway authorizer (the staging gate, or th
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
 runner routes, `POST /github/webhooks` (a webhook signature), the registry protocol
-under `/v1/modules` (a `wpk_` key only) and the anonymous identity documents do not.
+under `/v1/modules` and `/v1/providers` (a `wpk_` key only), `POST /v1/oauth/token`
+(a PKCE code) and the anonymous identity documents do not.
 The scopes are `workspaces:{read,write}`, `variables:{read,write}`,
 `configs:{read,write}`, `runs:{read,write,apply}`, `state:download` and
 `registry:{read,write}`. A key's stored scopes are intersected per request with
@@ -322,6 +323,31 @@ older than `docs.DOCS_SCHEMA` is extracted from the tarball on the first view.
 
 In Root A the consumer route is shadowed by the runs consumer at the same
 pass-through path, so tests call `route_record` directly.
+
+### Provider registry
+
+`providers.v1` points at `<api host>/v1/providers/`: `.../{ns}/{type}/versions` and
+`.../{version}/download/{os}/{arch}`, with the same `registry:read` or runner registry
+key as modules. `POST /api/v1/registry/providers` connects a
+`terraform-provider-<type>` repository (the namespace is the owner) and imports its
+releases; `.../resync` does it again, and a `release` webhook (published, a `vX.Y.Z`
+tag) publishes one. `app/domains/registry/providers.py` reads the GoReleaser registry
+layout from the release assets (`_manifest.json`, `_SHA256SUMS`, `_SHA256SUMS.sig`),
+verifies the detached signature against the SSM public key
+`/<prefix>/provider-signing/public-key` (`openpgp.py`), checks each zip's sum, and
+stores everything under `registry/providers/`. The download answer carries presigned
+URLs and that key as `signing_keys.gpg_public_keys`.
+
+### Terraform login
+
+`login.v1` in the discovery document makes `terraform login <SPA host>` work like
+HCP's. The CLI opens `/oauth/authorize` (the SPA's approve page) with its PKCE
+challenge and a loopback redirect on ports 10000 to 10010; approving calls `POST
+/api/v1/oauth/authorizations` (a person only, behind step-up) for a code stored in
+the identity module's `authorization-codes` table, and the CLI exchanges it at `POST
+/v1/oauth/token` for a `wpk_` key named `terraform login`, valid 90 days, carrying the
+read, config and plan scopes the person holds (`terraform_login.LOGIN_SCOPES`), never
+`runs:apply` or `state:download`.
 
 ### VCS ingest
 

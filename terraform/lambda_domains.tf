@@ -82,6 +82,7 @@ locals {
     }
     registry = {
       memory        = 512
+      timeout       = local.registry_timeout
       tables        = ["registry"]
       read_tables   = ["users"]
       buckets       = false
@@ -169,7 +170,7 @@ module "lambda_domain" {
   architectures = ["arm64"]
   memory_size   = each.value.memory
 
-  timeout = local.lambda_domain_timeout
+  timeout = try(each.value.timeout, local.lambda_domain_timeout)
 
   sqs_event_sources             = each.value.sqs_event_sources
   dynamodb_stream_event_sources = each.value.stream_sources
@@ -211,6 +212,9 @@ module "lambda_domain" {
       GITHUB_WEBHOOKS_QUEUE_URL   = module.github_webhooks.queue_url
       REGISTRY_INGEST_QUEUE_URL   = module.registry_ingest.queue_url
       AWS_CONNECT_TOPIC_ARN       = aws_sns_topic.aws_connect.arn
+
+      PROVIDER_SIGNING_KEY_PARAMETER    = local.provider_signing_parameters.public_key
+      PROVIDER_SIGNING_KEY_ID_PARAMETER = local.provider_signing_parameters.key_id
 
       RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
       RUNNER_CLUSTER_ARN   = module.runner.cluster_arn
@@ -300,6 +304,12 @@ locals {
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
         Resource = [module.registry_ingest.queue_arn]
+      },
+      {
+        Sid      = "ReadTheProviderSigningPublicKey"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = [for parameter in aws_ssm_parameter.provider_signing : parameter.arn]
       },
     ])
     runs = [

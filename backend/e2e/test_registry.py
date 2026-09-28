@@ -19,23 +19,18 @@ is minted. No key, token or presigned URL is ever printed.
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import os
-import platform
-import shutil
-import stat
 import subprocess
-import sys
 import tarfile
-import zipfile
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from terraform_cli import find_or_fetch_terraform
 
 REGISTRY_HOST = "staging.terraform.webbpulse.com"
 API_HOST = "api.staging.terraform.webbpulse.com"
@@ -51,9 +46,6 @@ TOKEN_VARIABLE = "TF_TOKEN_" + REGISTRY_HOST.replace(".", "_").replace("-", "__"
 MODULES_URL = f"https://{API_HOST}/v1/modules/{NAMESPACE}/{NAME}/{PROVIDER}"
 TIMEOUT_SECONDS = 30
 INIT_TIMEOUT_SECONDS = 300
-DOWNLOAD_TIMEOUT_SECONDS = 120
-VERSIONS_FILE = Path(__file__).resolve().parents[2] / "runner" / "versions.env"
-ARCHITECTURES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
 pytestmark = [
     pytest.mark.e2e_writes,
@@ -134,47 +126,10 @@ def _terraform_files(payload: bytes) -> dict[str, bytes]:
     return files
 
 
-def _pinned_versions() -> dict[str, str]:
-    """The `KEY=value` pins in `runner/versions.env`."""
-    pins: dict[str, str] = {}
-    for line in VERSIONS_FILE.read_text().splitlines():
-        name, separator, value = line.strip().partition("=")
-        if separator and not name.startswith("#"):
-            pins[name.strip()] = value.strip()
-    return pins
-
-
 @pytest.fixture(scope="session")
 def terraform_binary(tmp_path_factory: pytest.TempPathFactory) -> str:
-    """A `terraform` executable: the one on PATH, else the pinned release, SHA256 checked.
-
-    The download is the version `runner/versions.env` pins, for this machine's OS and
-    architecture, verified against the sum pinned there before it is unzipped.
-    """
-    found = shutil.which("terraform")
-    if found is not None:
-        return found
-    architecture = ARCHITECTURES.get(platform.machine().lower())
-    if sys.platform != "linux" or architecture is None:
-        pytest.skip(f"no terraform on PATH and no pinned sum for {sys.platform} {platform.machine()}")
-    pins = _pinned_versions()
-    version = pins["TERRAFORM_VERSION"]
-    expected = pins[f"TERRAFORM_SHA256_{architecture.upper()}"]
-    archive = f"terraform_{version}_linux_{architecture}.zip"
-    response = httpx.get(
-        f"https://releases.hashicorp.com/terraform/{version}/{archive}",
-        timeout=DOWNLOAD_TIMEOUT_SECONDS,
-        follow_redirects=True,
-    )
-    assert response.status_code == 200, f"downloading {archive} answered {response.status_code}"
-    actual = hashlib.sha256(response.content).hexdigest()
-    assert actual == expected, f"{archive} hashed {actual}, versions.env pins {expected}"
-    directory = tmp_path_factory.mktemp("terraform-bin")
-    with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
-        bundle.extract("terraform", directory)
-    binary = directory / "terraform"
-    binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
-    return str(binary)
+    """A `terraform` executable, the one on PATH or the pinned release."""
+    return find_or_fetch_terraform(tmp_path_factory)
 
 
 def test_discovery_is_anonymous_and_points_at_the_api_host() -> None:

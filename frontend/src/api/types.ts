@@ -315,3 +315,24 @@ export type Submodule = Schemas['Submodule'];
 
 /** A queued tag import for a module. */
 export type ModuleSync = Schemas['ModuleSync'];
+
+/** One private registry provider with every version published or attempted. */
+export type Provider = Schemas['Provider'];
+
+/** Every provider in the private registry. */
+export type ProviderList = Schemas['ProviderList'];
+
+/** The body that connects a provider to a repository. */
+export type ProviderCreate = Schemas['ProviderCreate'];
+
+/** One version of a provider and where its publishing stands. */
+export type ProviderVersion = Schemas['ProviderVersion'];
+
+/** A queued release import for a provider. */
+export type ProviderSync = Schemas['ProviderSync'];
+
+/** The query Terraform CLI opened the approve page with. */
+export type LoginAuthorizationCreate = Schemas['LoginAuthorizationCreate'];
+
+/** Where to send the browser after approving, and the scopes the key carries. */
+export type LoginAuthorization = Schemas['LoginAuthorization'];

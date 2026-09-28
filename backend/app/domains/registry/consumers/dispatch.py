@@ -18,7 +18,7 @@ from fastapi import APIRouter
 from webbpulse.events import register_stream_consumer
 
 from ....common.composition.settings import Settings
-from . import sync, tags
+from . import providers, sync, tags
 
 Handler = Callable[[Mapping[str, Any], Settings | None], None]
 
@@ -51,7 +51,22 @@ def _sync(record: Mapping[str, Any], settings: Settings | None) -> None:
     sync.handle_record(record, settings=settings)
 
 
-HANDLERS: dict[str, Handler] = {tags.KIND: _tag, sync.KIND: _sync}
+def _release(record: Mapping[str, Any], settings: Settings | None) -> None:
+    """Hand one published release to the provider consumer, discarding its outcome."""
+    providers.handle_release(record, settings=settings)
+
+
+def _provider_sync(record: Mapping[str, Any], settings: Settings | None) -> None:
+    """Hand one provider release sync request to the provider consumer, discarding its outcome."""
+    providers.handle_sync(record, settings=settings)
+
+
+HANDLERS: dict[str, Handler] = {
+    tags.KIND: _tag,
+    sync.KIND: _sync,
+    providers.RELEASE: _release,
+    providers.SYNC: _provider_sync,
+}
 """Each `kind` this function consumes, against the consumer that owns it."""
 
 
