@@ -24,7 +24,10 @@ class ApiKeyCreate(BaseModel):
     empty list means everything the caller holds."""
     expires_at: Optional[datetime] = None
     """When the key stops working, at most 365 days ahead. `null` mints one that
-    expires in 90 days."""
+    expires in 90 days unless `no_expiry` is set."""
+    no_expiry: bool = False
+    """Mint a key that stays valid until it is revoked. Refused alongside
+    `expires_at`."""
 
 
 class ApiKey(BaseModel):
@@ -40,7 +43,7 @@ class ApiKey(BaseModel):
     scopes: list[str]
     created_at: str
     expires_at: Optional[int] = None
-    """Unix seconds. `null` only on a key minted before every key had an expiry."""
+    """Unix seconds, or `null` for a key that never expires."""
     last_used_at: Optional[str] = None
     revoked_at: Optional[str] = None
 

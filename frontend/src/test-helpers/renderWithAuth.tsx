@@ -2,8 +2,13 @@
 
 import { render, type RenderResult } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { vi, type Mock } from 'vitest';
 import type { ReactNode } from 'react';
-import { createAuthClient, type AuthClient } from '@webbpulse/auth';
+import {
+  createAuthClient,
+  type AuthClient,
+  type WebAuthnAdapter,
+} from '@webbpulse/auth';
 import { AuthProvider, type AnyAuthClient } from '@webbpulse/auth/react';
 
 /** A JSON `Response`, which is what every route answers with. */
@@ -27,12 +32,29 @@ export function unauthorizedResponse(): Response {
   );
 }
 
+/** A stand-in authenticator whose calls a test can read back. */
+export interface StubAuthenticator {
+  create: Mock<(options: unknown) => Promise<unknown>>;
+  get: Mock<(options: unknown) => Promise<unknown>>;
+}
+
+/** An authenticator that answers every ceremony with `credentialId`. */
+export function stubAuthenticator(credentialId = 'cred-1'): StubAuthenticator {
+  const credential = { id: credentialId, type: 'public-key' };
+  return {
+    create: vi.fn((_options: unknown) => Promise.resolve<unknown>(credential)),
+    get: vi.fn((_options: unknown) => Promise.resolve<unknown>(credential)),
+  };
+}
+
 /** Options for {@link stubAuthClient}. */
 export interface StubAuthClientOptions {
   /** Answers the refresh and session calls. Defaults to a 401, so anonymous. */
   fetch?: typeof globalThis.fetch;
   /** The user the client reports once a token is held. */
   user?: unknown;
+  /** Stands in for `navigator.credentials` in a passkey test. */
+  webAuthn?: WebAuthnAdapter;
 }
 
 /**
@@ -45,14 +67,18 @@ export interface StubAuthClientOptions {
 export function stubAuthClient(
   options: StubAuthClientOptions = {}
 ): AuthClient<unknown> {
-  const { fetch = () => Promise.resolve(unauthorizedResponse()), user = null } =
-    options;
+  const {
+    fetch = () => Promise.resolve(unauthorizedResponse()),
+    user = null,
+    webAuthn,
+  } = options;
 
   return createAuthClient({
     baseUrl: 'https://api.test',
     disableProactiveRefresh: true,
     loadUser: () => Promise.resolve(user),
     clientOptions: { fetch, retries: 0 },
+    ...(webAuthn === undefined ? {} : { webAuthn }),
   });
 }
 

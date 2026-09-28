@@ -180,6 +180,7 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "trigger_patterns": list(payload.get("trigger_patterns") or []),
         "speculative_plans": bool(payload.get("speculative_plans", True)),
         "file_triggers_enabled": bool(payload.get("file_triggers_enabled", True)),
+        "plan_assume_role_arns": list(payload.get("plan_assume_role_arns") or []),
         "created_at": now_iso(),
     }
     if payload.get("tracked_branch"):

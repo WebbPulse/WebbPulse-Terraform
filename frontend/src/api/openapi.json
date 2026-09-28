@@ -92,6 +92,11 @@
             "title": "Name",
             "type": "string"
           },
+          "no_expiry": {
+            "default": false,
+            "title": "No Expiry",
+            "type": "boolean"
+          },
           "scopes": {
             "anyOf": [
               {
@@ -4092,6 +4097,14 @@
             ],
             "title": "Pending Run Role Arn"
           },
+          "plan_assume_role_arns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Plan Assume Role Arns",
+            "type": "array"
+          },
           "run_role_account_id": {
             "anyOf": [
               {
@@ -4263,6 +4276,14 @@
             "title": "Name",
             "type": "string"
           },
+          "plan_assume_role_arns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Plan Assume Role Arns",
+            "type": "array"
+          },
           "run_role_arn": {
             "anyOf": [
               {
@@ -4410,6 +4431,21 @@
               }
             ],
             "title": "Pending Run Role Arn"
+          },
+          "plan_assume_role_arns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Assume Role Arns"
           },
           "run_role_arn": {
             "anyOf": [

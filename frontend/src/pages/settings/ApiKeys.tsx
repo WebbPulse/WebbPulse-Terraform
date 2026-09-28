@@ -43,6 +43,19 @@ export const DEFAULT_EXPIRY_DAYS = 90;
 /** The expiries offered, in days. The API refuses anything past 365. */
 export const EXPIRY_CHOICES: readonly number[] = [7, 30, 60, 90, 180, 365];
 
+/** The select value for a key that never expires. */
+export const NO_EXPIRY = 'never';
+
+/** The expiry part of a create request for a choice from the select. */
+export function expiryBody(
+  choice: number | typeof NO_EXPIRY,
+  now: number = Date.now()
+): { expires_at: string } | { no_expiry: true } {
+  return choice === NO_EXPIRY
+    ? { no_expiry: true }
+    : { expires_at: expiryFrom(choice, now) };
+}
+
 /** The longest name the API accepts. */
 const NAME_MAX = 120;
 
@@ -293,7 +306,9 @@ function CreateKeyDialog({
   const { getAccessToken } = useAuth();
   const held = scopesFromToken(getAccessToken());
   const [name, setName] = useState('');
-  const [days, setDays] = useState(DEFAULT_EXPIRY_DAYS);
+  const [days, setDays] = useState<number | typeof NO_EXPIRY>(
+    DEFAULT_EXPIRY_DAYS
+  );
   const [restrict, setRestrict] = useState(false);
   const [chosen, setChosen] = useState<string[]>([]);
   const create = useMutationWithRefetch(
@@ -308,7 +323,7 @@ function CreateKeyDialog({
     try {
       const key = await create.mutate({
         name: trimmed,
-        expires_at: expiryFrom(days),
+        ...expiryBody(days),
         scopes: restrict ? chosen : null,
       });
       onCreated(key);
@@ -350,16 +365,14 @@ function CreateKeyDialog({
             />
           )}
         </Field>
-        <Field
-          label="Expiration"
-          hint="Keys always expire, at most a year out."
-        >
+        <Field label="Expiration" hint="A dated expiry is at most a year out.">
           {(control) => (
             <select
               {...control}
               value={days}
               onChange={(event) => {
-                setDays(Number(event.target.value));
+                const value = event.target.value;
+                setDays(value === NO_EXPIRY ? NO_EXPIRY : Number(value));
               }}
               className={INPUT_CLASS}
             >
@@ -368,9 +381,18 @@ function CreateKeyDialog({
                   {`${String(choice)} days`}
                 </option>
               ))}
+              <option value={NO_EXPIRY}>No expiry</option>
             </select>
           )}
         </Field>
+        {days === NO_EXPIRY ? (
+          <p
+            role="note"
+            className="rounded-md border border-warning-line bg-warning-soft px-3 py-2 text-xs text-warning"
+          >
+            This key will never expire. It stays valid until you revoke it.
+          </p>
+        ) : null}
         <fieldset className="space-y-2 text-sm">
           <legend className="text-text-muted">Scopes</legend>
           <label className="flex items-center gap-2 text-text">

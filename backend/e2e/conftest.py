@@ -49,56 +49,20 @@ _DOCUMENT_ENVIRONMENT = {
 
 _PRODUCTION_DOCUMENT_FLAGS = {
     "IDENTITY_EPHEMERAL_USERS_ENABLED": "false",
-    "IDENTITY_PASSKEYS_ENABLED": "false",
-    "IDENTITY_PASSKEYS_PASSWORDLESS": "false",
 }
-
-WEB_ORIGIN_GATED_REASON = (
-    "production's web origin sits behind the access gate and the shared plugin mints gate "
-    "cookies for staging only, so this case would read the gate's answer rather than the "
-    "app. The API cases still run with the origin-verify header."
-)
-
-_WEB_ORIGIN_FIXTURES = frozenset({"http", "page", "signed_in_page", "context", "browser"})
 
 
 def _document_settings(environment: str) -> dict[str, str]:
     """The settings the document is built with, carrying the deployed environment's flags.
 
-    Terraform declares the passkey and ephemeral user routes outside production only, so
-    a production run builds its document with them off; otherwise the coverage and
-    reachability groups would expect routes production deliberately does not serve.
+    Terraform declares the ephemeral user routes outside production only, so a production
+    run builds its document with them off; otherwise the coverage and reachability groups
+    would expect routes production deliberately does not serve. Passkeys are on everywhere.
     """
     settings = dict(_DOCUMENT_ENVIRONMENT)
     if environment.strip().lower() == "production":
         settings.update(_PRODUCTION_DOCUMENT_FLAGS)
     return settings
-
-
-def _production_web_origin_is_gated() -> bool:
-    """Whether this is a production run against a gated origin it holds no cookies for."""
-    return (
-        os.environ.get("E2E_ENVIRONMENT", "").strip().lower() == "production"
-        and bool(os.environ.get("E2E_GATE_SSM_PARAMETER", "").strip())
-        and not os.environ.get("E2E_GATE_SIGNING_KEY_SSM_PARAMETER", "").strip()
-    )
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip the web origin cases in a gated production run, leaving every API probe.
-
-    The browser group resolves its page inside the case, so the whole group is matched
-    by class as well as every case that asks for a web origin fixture by name.
-    """
-    del config
-    if not _production_web_origin_is_gated():
-        return
-    skip = pytest.mark.skip(reason=WEB_ORIGIN_GATED_REASON)
-    for item in items:
-        cls = getattr(item, "cls", None)
-        in_browser_group = cls is not None and cls.__name__ == "TestBrowser"
-        if in_browser_group or _WEB_ORIGIN_FIXTURES.intersection(getattr(item, "fixturenames", ())):
-            item.add_marker(skip)
 
 
 @contextmanager

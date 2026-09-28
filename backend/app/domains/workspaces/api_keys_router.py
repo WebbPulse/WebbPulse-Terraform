@@ -104,6 +104,7 @@ def create_api_key(payload: ApiKeyCreate, current: "AuthorizerClaims" = Depends(
             requested_scopes=payload.scopes,
             held_scopes=held,
             expires_at=payload.expires_at,
+            no_expiry=payload.no_expiry,
         )
     except service.ScopesExceeded as error:
         raise _forbidden(

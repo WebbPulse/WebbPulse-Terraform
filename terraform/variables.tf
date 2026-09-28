@@ -182,7 +182,7 @@ variable "adopt_spans_log_group" {
 }
 
 variable "oidc_issuer_enabled" {
-  description = "Serve the control plane's OIDC issuer on oidc.<host> and let the runs function sign workload identity tokens for Google and Azure. Needs the custom domains; in production the Platform Route 53 writer must also list oidc.terraform.webbpulse.com before it can be true"
+  description = "Serve the control plane's OIDC issuer on oidc.<host> and let the runs function sign workload identity tokens for Google and Azure. Needs the custom domains and a Platform Route 53 writer that lists the oidc host"
   type        = bool
   default     = true
 }

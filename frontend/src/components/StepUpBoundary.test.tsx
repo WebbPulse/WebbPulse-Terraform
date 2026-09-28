@@ -1,11 +1,19 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TerraformApi, describeError } from '../api';
-import { jsonResponse, renderWithAuth } from '../test-helpers/renderWithAuth';
-import { StepUpBoundary, confirmationWindow } from './StepUpBoundary';
+import {
+  jsonResponse,
+  renderWithAuth,
+  stubAuthenticator,
+} from '../test-helpers/renderWithAuth';
+import {
+  StepUpBoundary,
+  confirmationWindow,
+  stepUpErrorMessage,
+} from './StepUpBoundary';
 
 /** The refusal the control plane answers a stale sign-in with. */
 function stepUpRequired(): Response {
@@ -50,12 +58,18 @@ function backend(correctPassword: string): {
         jsonResponse({ access_token: 'login-token', expires_in: 3600 })
       );
     }
+    if (path.endsWith('/auth/step-up/passkey/options')) {
+      return Promise.resolve(
+        jsonResponse({ challenge_id: 'ch-1', publicKey: {} })
+      );
+    }
     if (path.endsWith('/auth/step-up')) {
       const raw = typeof init?.body === 'string' ? init.body : '{}';
       const body = JSON.parse(raw) as {
         password?: string;
+        credential?: unknown;
       };
-      if (body.password !== correctPassword) {
+      if (body.credential === undefined && body.password !== correctPassword) {
         return Promise.resolve(
           jsonResponse(
             {
@@ -112,12 +126,16 @@ function MintButton({ api }: { api: TerraformApi }): React.ReactElement {
 }
 
 /** Mounts the boundary around the button, sharing the API's own auth client. */
-function mount(password: string): { calls: string[] } {
+function mount(
+  password: string,
+  webAuthn = stubAuthenticator()
+): { calls: string[] } {
   const { fetch, calls } = backend(password);
   const api = new TerraformApi({
     baseUrl: 'https://api.test/api/v1',
     fetch,
     retries: 0,
+    webAuthn,
   });
   renderWithAuth(
     <StepUpBoundary api={api}>
@@ -136,14 +154,68 @@ describe('confirmationWindow', () => {
   });
 });
 
+describe('stepUpErrorMessage', () => {
+  it('says nothing for a dismissed passkey prompt', () => {
+    expect(stepUpErrorMessage(null)).toBeNull();
+    expect(
+      stepUpErrorMessage({
+        ok: false,
+        reason: 'cancelled',
+        code: undefined,
+        message: 'Cancelled.',
+      })
+    ).toBeNull();
+    expect(stepUpErrorMessage(new Error('That password is not right.'))).toBe(
+      'That password is not right.'
+    );
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe('StepUpBoundary', () => {
+  it('confirms with a passkey and replays the call once', async () => {
+    vi.stubGlobal('PublicKeyCredential', {});
+    const user = userEvent.setup();
+    const webAuthn = stubAuthenticator();
+    const { calls } = mount('hunter22', webAuthn);
+
+    await user.click(screen.getByRole('button', { name: 'Mint' }));
+    await screen.findByRole('dialog', { name: 'Confirm it is you' });
+    await user.click(screen.getByRole('button', { name: 'Use a passkey' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('outcome')).toHaveTextContent('minted');
+    });
+    expect(webAuthn.get).toHaveBeenCalledTimes(1);
+    expect(calls).toContain('POST /api/auth/step-up/passkey/options');
+    expect(
+      calls.filter((call) => call === 'POST /api/v1/api-keys')
+    ).toHaveLength(2);
+  });
+
+  it('offers no passkey where the browser cannot run one', async () => {
+    vi.stubGlobal('PublicKeyCredential', undefined);
+    const user = userEvent.setup();
+    mount('hunter22');
+
+    await user.click(screen.getByRole('button', { name: 'Mint' }));
+    await screen.findByRole('dialog', { name: 'Confirm it is you' });
+
+    expect(
+      screen.queryByRole('button', { name: 'Use a passkey' })
+    ).not.toBeInTheDocument();
+  });
+
   it('asks for the password on STEP_UP_REQUIRED and replays the call once', async () => {
     const user = userEvent.setup();
     const { calls } = mount('hunter22');
 
     await user.click(screen.getByRole('button', { name: 'Mint' }));
     const dialog = await screen.findByRole('dialog', {
-      name: 'Confirm your password',
+      name: 'Confirm it is you',
     });
     expect(dialog).toHaveTextContent('15 minutes');
 
@@ -169,7 +241,7 @@ describe('StepUpBoundary', () => {
 
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(
-      screen.getByRole('dialog', { name: 'Confirm your password' })
+      screen.getByRole('dialog', { name: 'Confirm it is you' })
     ).toBeInTheDocument();
     expect(screen.getByTestId('outcome')).toHaveTextContent('');
   });
@@ -179,12 +251,12 @@ describe('StepUpBoundary', () => {
     const { calls } = mount('hunter22');
 
     await user.click(screen.getByRole('button', { name: 'Mint' }));
-    await screen.findByRole('dialog', { name: 'Confirm your password' });
+    await screen.findByRole('dialog', { name: 'Confirm it is you' });
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('outcome')).toHaveTextContent(
-        'Your password was not confirmed, so nothing changed.'
+        'You did not confirm it is you, so nothing changed.'
       );
     });
     expect(

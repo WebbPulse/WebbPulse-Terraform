@@ -138,6 +138,7 @@ def test_the_engine_environment_carries_no_other_credential_source() -> None:
             "AWS_SHARED_CREDENTIALS_FILE": "/aws/credentials",
             "AWS_PROFILE": RUN_PROFILE,
         },
+        run_phase="plan",
     )
 
     assert not TASK_CREDENTIAL_KEYS & environment.keys()
@@ -253,6 +254,7 @@ def test_terraform_sends_state_requests_with_the_state_keys_under_the_workspace_
             "us-west-2",
             directory,
             files.environment(),
+            run_phase="plan",
         )
         init = subprocess.run(  # noqa: S603
             [str(shutil.which("terraform")), "init", "-input=false"],
