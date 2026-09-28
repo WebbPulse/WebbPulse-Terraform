@@ -24,6 +24,7 @@ import {
   Registry,
   RunDetail,
   Runs,
+  Security,
   SignIn,
   TerraformLogin,
   Workspaces,
@@ -77,6 +78,7 @@ export function AppRoutes(): React.ReactElement {
           element={<ModuleDetail />}
         />
         <Route path="/settings/api-keys" element={<ApiKeys />} />
+        <Route path="/settings/security" element={<Security />} />
         <Route path="/settings/github" element={<GitHubSettings />} />
         <Route path="/settings/github/created" element={<GitHubCreated />} />
         <Route path="/settings/github/setup" element={<GitHubSetup />} />
