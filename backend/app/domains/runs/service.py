@@ -1380,6 +1380,43 @@ def _phase_for_status(status: str) -> Phase:
     return "apply" if status == "applying" else "plan"
 
 
+def _vending_role_arn(run: Mapping[str, Any], workspace: Mapping[str, Any]) -> str:
+    """The run role a phase is vended: the one the run was checked against, else the workspace's."""
+    return str((run.get("run_role_arn") if run.get("run_role_check") else workspace.get("run_role_arn", "")) or "")
+
+
+def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Settings | None = None) -> dict[str, Any]:
+    """A fresh pair of provider and state keys for a run still in `phase`.
+
+    Vended exactly as the bundle vends them, with the same run role and the same
+    phase's session policies, so a refresh can never widen what the phase holds.
+    The caller has already checked the run is in `phase` and that its runner task
+    is the live one.
+
+    Raises:
+        WorkspaceNotFound: The workspace was deleted under the run.
+        VendingUnavailable: No vending role is configured or it cannot be assumed.
+        RunRoleAssumeFailed: The run role is unset or now refuses the vending role.
+        StateCredentialsFailed: The state role could not be assumed.
+    """
+    resolved = settings or get_settings()
+    run_id = str(run["run_id"])
+    workspace_id = str(run["workspace_id"])
+    workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
+    provider, state = vending.vend(
+        role_arn=_vending_role_arn(run, workspace),
+        workspace_id=workspace_id,
+        run_id=run_id,
+        phase=phase,
+        settings=resolved,
+    )
+    _log.info(
+        "Refreshed a run phase's credentials.",
+        extra={"event": "runs.credentials.refreshed", "run_id": run_id, "phase": phase},
+    )
+    return {"aws_credentials": provider.as_dict(), "backend_credentials": state.as_dict()}
+
+
 def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
     """Everything the runner needs for this run's current phase.
 
@@ -1423,7 +1460,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     region = resolved.AWS_REGION_NAME
     endpoint = resolved.s3_endpoint_url
     workspace_state_key = state_key(workspace_id)
-    role_arn = str((run.get("run_role_arn") if run.get("run_role_check") else workspace.get("run_role_arn", "")) or "")
+    role_arn = _vending_role_arn(run, workspace)
     provider, state = vending.vend(
         role_arn=role_arn,
         workspace_id=workspace_id,

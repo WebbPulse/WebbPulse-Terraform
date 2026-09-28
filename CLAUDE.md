@@ -187,7 +187,7 @@ requires `ecs:DescribeTasks` on `RUNNER_CLUSTER_ARN` to show that task still
 running with this `RUN_ID` and a `PHASE` matching the run's status. It mints a
 token, swaps `run_token_hash` conditionally on that status and revokes the one
 it replaced; every refusal is the same 401 and logs `runs.runner_token.refused`.
-The four runner routes use `RunnerRoute`, so a malformed request answers that
+The runner routes use `RunnerRoute`, so a malformed request answers that
 401 rather than a 422 naming the schema, unless it carries the run's own token.
 So the token never has to travel in the Step Functions execution input.
 
@@ -211,7 +211,10 @@ Credentials are vended per phase by the runs function when it serves the bundle
 which assumes the workspace's run role (external id = workspace id; a plan passes
 `ReadOnlyAccess` as its session policy ARN, an apply none) and the state role
 `<prefix>-run-state`, narrowed by `session_policy.state_policy` to
-`workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last an hour.
+`workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last
+`run_credentials_duration_seconds` (default and chained-role cap 3600, floor 900).
+`POST /runs/{id}/credentials` (run token, `{phase}`) vends the same pair again, refused
+once the run has left that phase or its task token no longer resolves.
 A refused run role is a 409 `RUN_ROLE_ASSUME_FAILED` on the bundle, which the
 runner reports as `AssumeRoleFailed`.
 
@@ -452,8 +455,13 @@ the exchange is refused (no `RUN_TOKEN` override is read), then fetches the
 bundle, which carries the vended run role keys (`aws_credentials`) and state keys
 (`backend.credentials`), unpacks the config tarball, writes the S3 backend
 override (`workspace_key_prefix = "workspaces/<id>/env"`) and the auto loaded
-tfvars files, gives the providers the run role keys and the S3 backend the state
-keys through the `webbpulse-state` profile, runs the engine (`terraform` or
+tfvars files, gives the providers the run role keys (`webbpulse-run`, set as
+`AWS_PROFILE`) and the S3 backend the state keys (`webbpulse-state`), both as
+`credential_process` profiles printing JSON files with an `Expiration` five minutes
+early (`app/credential_files.py`). `app/refresher.py` rewrites those files ten
+minutes before expiry from the credentials route, and the SDK rereads them, so
+phases outlive the one hour chained-role cap; static `AWS_*` keys are stripped from
+the engine's environment since they would win and never rotate. It runs the engine (`terraform` or
 `tofu`, from the bundle), streams redacted output to CloudWatch Logs, uploads its
 artifacts to presigned URLs and reports through `POST /runs/{id}/phase-result`
 (an `error_name` for a failure). The runner holds no Step Functions permission:

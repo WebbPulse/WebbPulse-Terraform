@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.common.composition import settings as settings_module
 from app.common.core.auth import RUNNER_SCOPE
 from app.domains.runs import phase_tasks, vending
 from app.domains.runs import service as runs_service
@@ -633,6 +634,7 @@ def test_an_unknown_phase_is_422(runner_client, created_run):
         ("POST", "artifact-uploads", {"artifact": "nonsense"}),
         ("POST", "phase-result", {"phase": 7}),
         ("POST", "heartbeat", {"phase": 7}),
+        ("POST", "credentials", {"phase": 7}),
     ],
 )
 def test_a_malformed_request_without_a_token_is_a_401(client, method, suffix, body):
@@ -717,3 +719,113 @@ def test_a_heartbeat_takes_only_a_phase(runner_client, created_run, stepfunction
 
     assert response.status_code == 422
     assert stepfunctions.heartbeats == []
+
+
+def test_a_credential_refresh_needs_the_run_token(client, auth_client, created_run, stepfunctions, sts_requests):
+    """Neither a stranger nor a person can mint a phase's keys; only the run's own token can."""
+    for caller in (client, auth_client):
+        response = caller.post(f"{BASE}/{created_run['run_id']}/credentials", json={"phase": "plan"})
+        assert response.status_code == 401
+    assert sts_requests == []
+
+
+def test_a_refresh_vends_the_phase_again(runner_client, created_run, workspace, stepfunctions, sts_requests, settings):
+    """A plan runner gets fresh run role and state keys under the plan's own session policies."""
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/credentials", json={"phase": "plan"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"aws_credentials", "backend_credentials"}
+    vending_request, run_role_request, state_request = sts_requests
+    assert vending_request["RoleArn"] == settings.RUN_CREDENTIALS_ROLE_ARN
+    assert run_role_request["RoleArn"] == workspace["run_role_arn"]
+    assert run_role_request["ExternalId"] == workspace["workspace_id"]
+    assert run_role_request["PolicyArns"] == [{"arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}]
+    sids = {statement["Sid"] for statement in json.loads(state_request["Policy"])["Statement"]}
+    assert "WorkspaceStateWrites" not in sids
+    role_name = workspace["run_role_arn"].rsplit("/", 1)[-1]
+    assert body["aws_credentials"]["access_key_id"] == f"ASIA-{role_name}"
+    state_name = settings.RUN_STATE_ROLE_ARN.rsplit("/", 1)[-1]
+    assert body["backend_credentials"]["access_key_id"] == f"ASIA-{state_name}"
+    assert stepfunctions.heartbeats == stepfunctions.successes == stepfunctions.failures == []
+
+
+def test_an_apply_refresh_keeps_the_apply_session(
+    auth_client, runner_client, awaiting_confirmation, stepfunctions, sts_requests
+):
+    """An applying run's refresh carries no session policy on the run role and may write state."""
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    response = runner_client.post(f"{BASE}/{run_id}/credentials", json={"phase": "apply"})
+
+    assert response.status_code == 200, response.text
+    run_role_request, state_request = sts_requests[-2], sts_requests[-1]
+    assert "PolicyArns" not in run_role_request
+    assert "Policy" not in run_role_request
+    sids = {statement["Sid"] for statement in json.loads(state_request["Policy"])["Statement"]}
+    assert "WorkspaceStateWrites" in sids
+
+
+def test_a_refresh_for_another_phase_is_409(runner_client, created_run, stepfunctions, sts_requests):
+    """A plan runner cannot ask for the apply phase's unrestricted keys."""
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/credentials", json={"phase": "apply"})
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "PHASE_MISMATCH"
+    assert sts_requests == []
+
+
+def test_a_refresh_after_the_run_settled_is_refused(runner_client, created_run, stepfunctions, sts_requests):
+    """Settling revokes the token and leaves the phase, so nothing is vended afterwards."""
+    runs_service.finish_run(created_run["run_id"], "cancelled")
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/credentials", json={"phase": "plan"})
+
+    assert response.status_code in (401, 409)
+    assert sts_requests == []
+
+
+def test_a_refresh_whose_task_cannot_be_resolved_is_409(runner_client, created_run, sts_requests, monkeypatch):
+    """A token outliving its runner task cannot keep drawing keys."""
+
+    def unresolved(run, phase, *, settings):
+        raise phase_tasks.PhaseTaskUnresolved("no runner task")
+
+    monkeypatch.setattr(phase_tasks, "phase_token", unresolved)
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/credentials", json={"phase": "plan"})
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "PHASE_TASK_UNRESOLVED"
+    assert sts_requests == []
+
+
+def test_a_refresh_the_run_role_refuses_is_409(runner_client, created_run, workspace, stepfunctions, monkeypatch):
+    """A run role that stopped trusting the vending role answers the bundle's own code, with no keys."""
+    refusing = RecordingSTS([], refuse=workspace["run_role_arn"])
+    monkeypatch.setattr(vending, "_sts", lambda settings, credentials=None: refusing)
+    response = runner_client.post(f"{BASE}/{created_run['run_id']}/credentials", json={"phase": "plan"})
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "RUN_ROLE_ASSUME_FAILED"
+    assert "secret" not in response.text
+
+
+def test_a_refresh_takes_only_a_phase(runner_client, created_run, stepfunctions, sts_requests):
+    """Anything beyond the phase is refused, so the caller cannot steer the session."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/credentials", json={"phase": "plan", "duration_seconds": 43200}
+    )
+
+    assert response.status_code == 422
+    assert sts_requests == []
+
+
+@pytest.mark.parametrize(("configured", "vended"), [(3600, 3600), (900, 900), (60, 900), (43200, 3600)])
+def test_the_session_length_is_configurable_within_sts_limits(
+    runner_client, created_run, stepfunctions, sts_requests, monkeypatch, configured, vended
+):
+    """Every vended session honours the setting, clamped to what a chained AssumeRole accepts."""
+    monkeypatch.setenv("RUN_CREDENTIALS_DURATION_SECONDS", str(configured))
+    settings_module.reset_settings_cache()
+    runner_client.post(f"{BASE}/{created_run['run_id']}/credentials", json={"phase": "plan"})
+
+    assert [request["DurationSeconds"] for request in sts_requests] == [vended, vended, vended]

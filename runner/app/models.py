@@ -119,17 +119,22 @@ class VendedCredentials(BaseModel):
     session_token: str
     expiration: str = ""
 
-    def environment(self) -> dict[str, str]:
-        """The keys as the `AWS_*` variables the providers read."""
-        return {
-            "AWS_ACCESS_KEY_ID": self.access_key_id,
-            "AWS_SECRET_ACCESS_KEY": self.secret_access_key,
-            "AWS_SESSION_TOKEN": self.session_token,
-        }
-
     def secrets(self) -> list[str]:
         """The parts that must never reach a log line."""
         return [value for value in (self.secret_access_key, self.session_token) if value]
+
+
+class RefreshedCredentials(BaseModel):
+    """A fresh pair of sessions for the running phase, from `POST /runs/{id}/credentials`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    aws_credentials: VendedCredentials
+    backend_credentials: VendedCredentials
+
+    def secrets(self) -> list[str]:
+        """Both sessions' parts that must never reach a log line."""
+        return [*self.aws_credentials.secrets(), *self.backend_credentials.secrets()]
 
 
 def token_variable(host: str) -> str:

@@ -8,7 +8,8 @@ resolves the token its phase waits on from that task's own overrides and sends
 the outcome. Liveness takes the same road: `POST /runs/{id}/heartbeat` becomes a
 `SendTaskHeartbeat` on that token, so a runner that goes silent is caught by the
 state's heartbeat timeout. A runner that dies before it can report is failed by
-the task stop consumer instead.
+the task stop consumer instead. A credential refresh is resolved the same way, so
+only the live runner of the phase the run is in can get fresh keys.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from typing import Any, Mapping
 
 from ...common.composition.settings import Settings, get_settings
 from . import runner_tokens, service
+from .schemas.run import Phase
 
 _log = logging.getLogger(__name__)
 
@@ -159,6 +161,39 @@ def heartbeat(run_id: str, phase: str, *, settings: Settings | None = None) -> d
     return run
 
 
+def _live_phase_run(run_id: str, phase: str, *, settings: Settings) -> dict[str, Any]:
+    """The run, once it is in `phase` and that phase's runner task is resolvable.
+
+    Raises:
+        RunNotFound: No such run.
+        PhaseMismatch: The run is not in the phase the runner is running.
+        PhaseTaskUnresolved: The phase's runner task cannot be resolved.
+    """
+    run = service.get_run(run_id, settings=settings)
+    expected = {"plan": "planning", "apply": "applying"}[phase]
+    if run.get("status") != expected:
+        raise service.PhaseMismatch(f"{run_id} is {run.get('status')}, not {expected}")
+    phase_token(run, phase, settings=settings)
+    return run
+
+
+def refresh_credentials(run_id: str, phase: Phase, *, settings: Settings | None = None) -> dict[str, Any]:
+    """Vend the live runner of a run's current phase a fresh pair of keys.
+
+    A settled run, a run that has left `phase` and a task that is no longer the
+    phase's runner are all refused before anything is vended, so a refresh never
+    outlives the phase or crosses into the next one.
+
+    Raises:
+        RunNotFound: No such run.
+        PhaseMismatch: The run is not in the phase the runner is running.
+        PhaseTaskUnresolved: The phase's runner task cannot be resolved.
+    """
+    resolved = settings or get_settings()
+    run = _live_phase_run(run_id, phase, settings=resolved)
+    return service.refresh_credentials(run, phase, settings=resolved)
+
+
 __all__ = [
     "REPORTED_FAILURE_ERROR",
     "PhaseTaskEnded",
@@ -166,6 +201,7 @@ __all__ = [
     "fail",
     "heartbeat",
     "phase_token",
+    "refresh_credentials",
     "report",
     "succeed",
 ]

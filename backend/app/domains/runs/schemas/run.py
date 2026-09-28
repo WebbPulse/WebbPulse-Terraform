@@ -23,9 +23,6 @@ RunStatus = Literal[
 Phase = Literal["plan", "apply"]
 """Which half of a run a task, a log stream or a phase result belongs to."""
 
-RUN_ROLE_DURATION_SECONDS = 3600
-"""One hour on the assumed run role, matching the plan timeout plus headroom."""
-
 ActorKind = Literal["user", "agent", "vcs", "system"]
 """How a run was triggered: `user` is a person's JWT, `agent` a `wpk_` API key
 acting for the person who minted it, `vcs` a GitHub App delivery, named by the
@@ -321,7 +318,7 @@ class BackendConfig(BaseModel):
 
 
 class VendedCredentials(BaseModel):
-    """One hour of AWS keys the control plane assumed for a phase."""
+    """At most an hour of AWS keys the control plane assumed for a phase."""
 
     access_key_id: str
     secret_access_key: str
@@ -459,6 +456,25 @@ class RunnerHeartbeat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     phase: Phase
+
+
+class RunnerCredentialsRequest(BaseModel):
+    """A runner's request for a fresh pair of keys for the phase it is running."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phase: Phase
+
+
+class RunnerCredentials(BaseModel):
+    """A fresh pair of keys for the phase, vended exactly as the bundle's were.
+
+    `aws_credentials` replaces the bundle's run role keys and `backend_credentials`
+    its `backend.credentials`, so the runner rotates both before either expires.
+    """
+
+    aws_credentials: VendedCredentials
+    backend_credentials: VendedCredentials
 
 
 class RunnerTokenRequest(BaseModel):

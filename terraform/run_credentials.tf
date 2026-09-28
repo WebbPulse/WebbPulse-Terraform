@@ -1,3 +1,14 @@
+variable "run_credentials_duration_seconds" {
+  description = "Seconds each vended run role and state session lasts. Chained AssumeRole caps it at an hour, and the runner refreshes sessions before they expire, so a lower value only shortens how long a leaked key works"
+  type        = number
+  default     = 3600
+
+  validation {
+    condition     = var.run_credentials_duration_seconds >= 900 && var.run_credentials_duration_seconds <= 3600
+    error_message = "run_credentials_duration_seconds must be between 900 and 3600, the range STS accepts for a chained role session."
+  }
+}
+
 locals {
   runs_lambda_role_arn        = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.prefix}-runs-lambda"
   run_credentials_role_name   = "${local.prefix}-run-credentials"

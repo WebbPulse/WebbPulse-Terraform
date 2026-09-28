@@ -1,8 +1,9 @@
-"""Vended credentials: the backend uses the workspace scoped state keys, the providers the run role session."""
+"""Vended credentials: process profiles the runner rotates, the state one for the backend, the run one for providers."""
 
 from __future__ import annotations
 
 import http.server
+import json
 import shutil
 import stat
 import subprocess
@@ -14,10 +15,10 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from app import workspace
-from app.engine import RUNNER_ONLY_KEYS, TASK_CREDENTIAL_KEYS, build_environment
+from app.credential_files import RUN_PROFILE, STATE_PROFILE, CredentialFiles, parse_expiration, process_document
+from app.engine import RUNNER_ONLY_KEYS, TASK_CREDENTIAL_KEYS, VENDED_CREDENTIAL_KEYS, build_environment
 from app.main import run
 from app.models import BackendConfig, VendedCredentials
-from app.state_credentials import STATE_PROFILE, write_profile
 from tests.conftest import (
     PROVIDER_ACCESS_KEY_ID,
     PROVIDER_SECRET_ACCESS_KEY,
@@ -38,6 +39,14 @@ STATE_KEYS = VendedCredentials(
     access_key_id="ASIASTATEKEY00000001",
     secret_access_key="state-secret",
     session_token="state-token",
+    expiration="2026-09-27T13:00:00+00:00",
+)
+
+RUN_KEYS = VendedCredentials(
+    access_key_id="ASIARUNROLEKEY000001",
+    secret_access_key="run-secret",
+    session_token="run-token",
+    expiration="2026-09-27T12:30:00.123456+00:00",
 )
 
 TASK_CREDENTIAL_ENVIRONMENT = {
@@ -49,44 +58,94 @@ TASK_CREDENTIAL_ENVIRONMENT = {
 }
 
 
-def test_the_profile_holds_only_the_state_keys_in_owner_only_files(tmp_path: Path) -> None:
-    """The shared credentials file names the state profile, and neither file is readable by others."""
-    added = write_profile(tmp_path / "aws", STATE_KEYS)
+def test_each_profile_prints_its_own_session_in_owner_only_files(tmp_path: Path) -> None:
+    """Both profiles run a process that prints their session, and nothing is readable by others."""
+    files = CredentialFiles(tmp_path / "aws")
+    files.write(RUN_KEYS, STATE_KEYS)
 
-    config = Path(added["AWS_CONFIG_FILE"])
-    shared = Path(added["AWS_SHARED_CREDENTIALS_FILE"])
-    assert config.read_text() == ""
-    body = shared.read_text()
-    assert body.startswith(f"[{STATE_PROFILE}]\n")
-    assert "aws_access_key_id = ASIASTATEKEY00000001" in body
-    assert "aws_secret_access_key = state-secret" in body
-    assert "aws_session_token = state-token" in body
-    for path in (config, shared):
+    config = files.config_path.read_text()
+    for profile in (RUN_PROFILE, STATE_PROFILE):
+        assert f"[profile {profile}]\ncredential_process = cat {files.session_path(profile)}\n" in config
+        command = config.split(f"[profile {profile}]\ncredential_process = ", 1)[1].splitlines()[0]
+        printed = json.loads(subprocess.run(command, shell=True, capture_output=True, check=True).stdout)  # noqa: S602
+        expected = RUN_KEYS if profile == RUN_PROFILE else STATE_KEYS
+        assert printed["Version"] == 1
+        assert printed["AccessKeyId"] == expected.access_key_id
+        assert printed["SecretAccessKey"] == expected.secret_access_key
+        assert printed["SessionToken"] == expected.session_token
+    assert "secret" not in config
+    assert files.credentials_path.read_text() == ""
+    for path in (
+        files.config_path,
+        files.credentials_path,
+        *(files.session_path(p) for p in (RUN_PROFILE, STATE_PROFILE)),
+    ):
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE((tmp_path / "aws").stat().st_mode) == 0o700
+    assert files.expires_at == parse_expiration(RUN_KEYS.expiration)
+    assert files.environment() == {
+        "AWS_CONFIG_FILE": str(files.config_path),
+        "AWS_SHARED_CREDENTIALS_FILE": str(files.credentials_path),
+        "AWS_PROFILE": RUN_PROFILE,
+        "AWS_SDK_LOAD_CONFIG": "1",
+    }
 
 
-def test_the_engine_environment_carries_no_task_credential_path() -> None:
-    """Neither the task's own environment nor a workspace variable can hand the engine the task role."""
-    base = {"PATH": "/usr/bin", "TASK_TOKEN": "t", "RUN_TOKEN": "r", "AWS_PROFILE": "x"} | TASK_CREDENTIAL_ENVIRONMENT
+def test_the_sdk_is_told_a_session_expires_early() -> None:
+    """The advertised expiry is the margin before the real one, in the form the SDK parses."""
+    assert process_document(RUN_KEYS, 300)["Expiration"] == "2026-09-27T12:25:00Z"
+    assert process_document(STATE_KEYS)["Expiration"] == "2026-09-27T12:55:00Z"
+    assert "Expiration" not in process_document(RUN_KEYS.model_copy(update={"expiration": ""}))
+    assert parse_expiration("soon") is None
+
+
+def test_a_rotation_rewrites_the_sessions_in_place(tmp_path: Path) -> None:
+    """A refresh replaces both session files without touching the profiles, and moves the next expiry on."""
+    files = CredentialFiles(tmp_path / "aws")
+    files.write(RUN_KEYS, STATE_KEYS)
+    config = files.config_path.read_text()
+    later = "2026-09-27T14:00:00+00:00"
+    files.write(
+        RUN_KEYS.model_copy(update={"access_key_id": "ASIAROTATED000000001", "expiration": later}),
+        STATE_KEYS.model_copy(update={"access_key_id": "ASIAROTATEDSTATE0001", "expiration": later}),
+    )
+
+    assert files.config_path.read_text() == config
+    assert json.loads(files.session_path(RUN_PROFILE).read_text())["AccessKeyId"] == "ASIAROTATED000000001"
+    assert json.loads(files.session_path(STATE_PROFILE).read_text())["AccessKeyId"] == "ASIAROTATEDSTATE0001"
+    assert files.expires_at == parse_expiration(later)
+    assert sorted(path.name for path in files.directory.iterdir()) == sorted(
+        ["config", "credentials", f"{RUN_PROFILE}.json", f"{STATE_PROFILE}.json"]
+    )
+
+
+def test_the_engine_environment_carries_no_other_credential_source() -> None:
+    """Neither the task's environment nor a workspace variable can put static or task keys ahead of the profiles."""
+    static = {
+        "AWS_ACCESS_KEY_ID": "ASIASTATIC0000000001",
+        "AWS_SECRET_ACCESS_KEY": "static-secret",
+        "AWS_SESSION_TOKEN": "static-token",
+        "AWS_PROFILE": "elsewhere",
+    }
+    base = {"PATH": "/usr/bin", "TASK_TOKEN": "t", "RUN_TOKEN": "r"} | TASK_CREDENTIAL_ENVIRONMENT | static
     environment = build_environment(
         base,
-        VendedCredentials(
-            access_key_id=PROVIDER_ACCESS_KEY_ID,
-            secret_access_key=PROVIDER_SECRET_ACCESS_KEY,
-            session_token=PROVIDER_SESSION_TOKEN,
-        ).environment(),
-        {"PROVIDER_TOKEN": "p"} | TASK_CREDENTIAL_ENVIRONMENT,
+        {"PROVIDER_TOKEN": "p"} | TASK_CREDENTIAL_ENVIRONMENT | static,
         "us-west-2",
         Path("/work"),
-        {"AWS_CONFIG_FILE": "/aws/config", "AWS_SHARED_CREDENTIALS_FILE": "/aws/credentials"},
+        {
+            "AWS_CONFIG_FILE": "/aws/config",
+            "AWS_SHARED_CREDENTIALS_FILE": "/aws/credentials",
+            "AWS_PROFILE": RUN_PROFILE,
+        },
     )
 
     assert not TASK_CREDENTIAL_KEYS & environment.keys()
-    assert not {"TASK_TOKEN", "RUN_TOKEN", "AWS_PROFILE"} & environment.keys()
-    assert TASK_CREDENTIAL_KEYS <= RUNNER_ONLY_KEYS
-    assert environment["AWS_ACCESS_KEY_ID"] == PROVIDER_ACCESS_KEY_ID
-    assert environment["AWS_SESSION_TOKEN"] == PROVIDER_SESSION_TOKEN
+    assert not {"TASK_TOKEN", "RUN_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} & (
+        environment.keys()
+    )
+    assert TASK_CREDENTIAL_KEYS | VENDED_CREDENTIAL_KEYS <= RUNNER_ONLY_KEYS
+    assert environment["AWS_PROFILE"] == RUN_PROFILE
     assert environment["AWS_SHARED_CREDENTIALS_FILE"] == "/aws/credentials"
     assert environment["PROVIDER_TOKEN"] == "p"
 
@@ -99,7 +158,7 @@ def test_a_phase_gives_the_engine_the_vended_keys_and_the_state_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The engine sees the vended provider keys and the state profile, never the task endpoint or a secret."""
+    """The engine sees the vended profiles, never static keys, the task endpoint or a secret."""
     for key, value in TASK_CREDENTIAL_ENVIRONMENT.items():
         monkeypatch.setenv(key, value)
     fake_engine()
@@ -109,14 +168,17 @@ def test_a_phase_gives_the_engine_the_vended_keys_and_the_state_profile(
     assert run(make_env("plan"), clients, tmp_path) == 0
 
     log = recorder.uploads["/runs/plan.log"].decode()
-    assert f"env AWS_SHARED_CREDENTIALS_FILE={tmp_path / 'aws' / 'credentials'}" in log
-    assert f"env AWS_ACCESS_KEY_ID={PROVIDER_ACCESS_KEY_ID}" in log
+    assert f"env AWS_CONFIG_FILE={tmp_path / 'aws' / 'config'}" in log
+    assert f"env AWS_PROFILE={RUN_PROFILE}" in log
+    assert "env AWS_ACCESS_KEY_ID" not in log
     for key in TASK_CREDENTIAL_KEYS:
         assert key not in log
     for secret in (PROVIDER_SECRET_ACCESS_KEY, PROVIDER_SESSION_TOKEN, STATE_SECRET_ACCESS_KEY, STATE_SESSION_TOKEN):
         assert secret not in log
-    shared = (tmp_path / "aws" / "credentials").read_text()
-    assert STATE_SECRET_ACCESS_KEY in shared
+    run_session = json.loads((tmp_path / "aws" / f"{RUN_PROFILE}.json").read_text())
+    state_session = json.loads((tmp_path / "aws" / f"{STATE_PROFILE}.json").read_text())
+    assert run_session["AccessKeyId"] == PROVIDER_ACCESS_KEY_ID
+    assert state_session["SecretAccessKey"] == STATE_SECRET_ACCESS_KEY
     backend = (tmp_path / "config" / workspace.BACKEND_FILENAME).read_text()
     assert f'profile      = "{STATE_PROFILE}"' in backend
     assert f'workspace_key_prefix = "workspaces/{WORKSPACE_ID}/env"' in backend
@@ -125,7 +187,7 @@ def test_a_phase_gives_the_engine_the_vended_keys_and_the_state_profile(
 
 @pytest.mark.skipif(shutil.which("terraform") is None, reason="needs a terraform binary")
 def test_terraform_sends_state_requests_with_the_state_keys_under_the_workspace_prefix(tmp_path: Path) -> None:
-    """With run role keys in the environment, a real engine signs its backend requests with the state keys.
+    """With the run profile as the default, a real engine signs its backend requests with the state keys.
 
     A loopback S3 endpoint records the access key id each request was signed with
     and the prefix of every listing, which must stay inside the workspace's own.
@@ -180,13 +242,17 @@ def test_terraform_sends_state_requests_with_the_state_keys_under_the_workspace_
                 f'    endpoints = {{ s3 = "http://127.0.0.1:{server.server_address[1]}" }}\n',
             )
         )
+        files = CredentialFiles(tmp_path / "aws")
+        files.write(
+            RUN_KEYS.model_copy(update={"expiration": "2099-01-01T00:00:00+00:00"}),
+            STATE_KEYS.model_copy(update={"expiration": "2099-01-01T00:00:00+00:00"}),
+        )
         environment = build_environment(
             {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path)},
-            {"AWS_ACCESS_KEY_ID": "ASIARUNROLEKEY000001", "AWS_SECRET_ACCESS_KEY": "s", "AWS_SESSION_TOKEN": "t"},
-            {"TF_PLUGIN_CACHE_DIR": str(tmp_path / "plugins")},
+            {"TF_PLUGIN_CACHE_DIR": str(tmp_path / "plugins"), "AWS_ACCESS_KEY_ID": "ASIAWORKSPACEVAR0001"},
             "us-west-2",
             directory,
-            write_profile(tmp_path / "aws", STATE_KEYS),
+            files.environment(),
         )
         init = subprocess.run(  # noqa: S603
             [str(shutil.which("terraform")), "init", "-input=false"],

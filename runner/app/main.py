@@ -19,11 +19,13 @@ from typing import TYPE_CHECKING, Callable, cast
 import boto3
 import httpx
 
-from app import engine, identity, install, state_credentials, workspace
+from app import engine, identity, install, workspace
 from app.api import ApiError, RunnerApi, build_client
+from app.credential_files import CredentialFiles
 from app.heartbeat import Heartbeat
 from app.logs import CloudWatchLogSink, Redactor
 from app.models import Bundle, Changes, PhaseResult, RunnerEnv, RunnerEnvError
+from app.refresher import CredentialRefresher
 
 if TYPE_CHECKING:
     from mypy_boto3_logs.client import CloudWatchLogsClient
@@ -183,7 +185,8 @@ def execute(
     `redactor` and `api` are shared with the caller so a failure it reports is
     scrubbed of the run token this phase obtained and posted with that token.
     Once the token is held the phase beats its heartbeat, and a refused beat or
-    `interrupt` stops the engine, failing the phase as `PhaseInterrupted`.
+    `interrupt` stops the engine, failing the phase as `PhaseInterrupted`. Once the
+    bundle is read the vended AWS sessions are refreshed before they expire.
     """
     redactor = redactor or Redactor(_initial_secrets(env))
     api = api or RunnerApi(env, clients.http)
@@ -242,16 +245,37 @@ def _run_phase(
     except workspace.ConfigError as error:
         raise PhaseFailure("ConfigUnpackFailed", str(error)) from error
 
-    backend_environment = state_credentials.write_profile(directory / "aws", bundle.backend.credentials)
+    credentials = CredentialFiles(directory / "aws")
+    credentials.write(bundle.aws_credentials, bundle.backend.credentials)
     environment = engine.build_environment(
         dict(os.environ),
-        bundle.aws_credentials.environment(),
         bundle.environment_variables,
         bundle.backend.region,
         engine_directory,
-        backend_environment,
+        credentials.environment(),
     )
+    refresher = CredentialRefresher(
+        api.refresh_credentials, credentials, redactor, sink.write, env.heartbeat_interval_seconds
+    )
+    with refresher:
+        return _run_engine(env, clients, directory, api, sink, interrupt, bundle, engine_directory, environment)
 
+
+def _run_engine(
+    env: RunnerEnv,
+    clients: Clients,
+    directory: Path,
+    api: RunnerApi,
+    sink: CloudWatchLogSink,
+    interrupt: engine.Interrupt,
+    bundle: Bundle,
+    engine_directory: Path,
+    environment: dict[str, str],
+) -> PhaseResult:
+    """Install the engine, run the phase's subcommands, upload the artifacts and post the result.
+
+    It runs while the credential refresher keeps the engine's AWS sessions fresh.
+    """
     try:
         binary = install.ensure_engine(bundle.engine, bundle.engine_version, directory / "engines", clients.http, sink)
     except install.InstallError as error:

@@ -1,8 +1,9 @@
-"""The runs domain's routes, including the five the runner owns.
+"""The runs domain's routes, including the six the runner owns.
 
 Routes on three different credentials. Most are guarded by `require_scopes`
 and reached by a person through the JWT authorizer or an agent through a `wpk_`
-key. Four, the bundle, the artifact upload, the heartbeat and the phase result, are guarded by
+key. Five, the bundle, the artifact upload, the heartbeat, the credential refresh
+and the phase result, are guarded by
 a run token bound to the run in the path, because the bundle carries decrypted
 variables and no human scope should open it. The runner token route is guarded
 by nothing but the runner task's own signed AWS identity, which is how the
@@ -42,6 +43,8 @@ from .schemas.run import (
     RunCreated,
     RunDecisionRequest,
     RunList,
+    RunnerCredentials,
+    RunnerCredentialsRequest,
     RunnerHeartbeat,
     RunnerToken,
     RunnerTokenRequest,
@@ -50,7 +53,7 @@ from .schemas.run import (
 
 router = APIRouter()
 runner_router = APIRouter(route_class=RunnerRoute)
-"""The five runner routes, whose validation failures answer 401 to a caller without a run token."""
+"""The six runner routes, whose validation failures answer 401 to a caller without a run token."""
 
 RUN_ID_PATTERN = r"^run-[0-9A-HJKMNP-TV-Z]{26}$"
 RunId = Path(min_length=4, max_length=64, pattern=RUN_ID_PATTERN)
@@ -400,6 +403,40 @@ def runner_heartbeat(payload: RunnerHeartbeat, run_id: str = RunId) -> None:
         ) from error
     except phase_tasks.PhaseTaskEnded as error:
         raise _conflict("That phase no longer waits on its runner.", error_code=PHASE_TASK_ENDED_CODE) from error
+
+
+@runner_router.post(
+    "/runs/{run_id}/credentials",
+    response_model=RunnerCredentials,
+    dependencies=[Depends(require_run_token())],
+)
+def runner_credentials(payload: RunnerCredentialsRequest, run_id: str = RunId) -> dict[str, Any]:
+    """Vend the phase's provider and state keys again, before the old ones expire. Runner only.
+
+    A vended session lasts at most an hour, the role chaining ceiling, and a phase
+    may run for longer. The keys are vended as the bundle vends them, for the phase
+    the run is in, and only while that phase's runner task is the live one: a
+    settled run revokes the run token, and every 409 means the phase is over.
+    """
+    try:
+        return phase_tasks.refresh_credentials(run_id, payload.phase)
+    except service.RunNotFound as error:
+        raise _not_found("No such run.") from error
+    except workspace_reads.WorkspaceNotFound as error:
+        raise _not_found("That run's workspace no longer exists.") from error
+    except service.PhaseMismatch as error:
+        raise _conflict("That run is not in the reported phase.", error_code=PHASE_MISMATCH_CODE) from error
+    except phase_tasks.PhaseTaskUnresolved as error:
+        raise _conflict(
+            "No runner task of that phase can be matched to this run.", error_code=PHASE_TASK_UNRESOLVED_CODE
+        ) from error
+    except vending.RunRoleAssumeFailed as error:
+        raise _conflict(str(error), error_code=RUN_ROLE_ASSUME_FAILED_CODE) from error
+    except (vending.VendingUnavailable, vending.StateCredentialsFailed) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": str(error), "error_code": RUN_CREDENTIALS_UNAVAILABLE_CODE},
+        ) from error
 
 
 @runner_router.post("/runs/{run_id}/runner-token", response_model=RunnerToken)

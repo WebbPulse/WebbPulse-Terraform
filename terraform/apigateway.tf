@@ -54,6 +54,7 @@ locals {
     "GET /api/v1/runs/{run_id}/bundle"            = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/artifact-uploads" = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/heartbeat"        = { integration = "runs", authorization_type = "NONE" }
+    "POST /api/v1/runs/{run_id}/credentials"      = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/phase-result"     = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/runner-token"     = { integration = "runs", authorization_type = "NONE" }
   }

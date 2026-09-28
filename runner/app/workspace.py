@@ -7,8 +7,8 @@ import re
 import tarfile
 from pathlib import Path
 
+from app.credential_files import STATE_PROFILE
 from app.models import BackendConfig, Bundle
-from app.state_credentials import STATE_PROFILE
 
 BACKEND_FILENAME = "zz_webbpulse_backend_override.tf"
 TFVARS_FILENAME = "zz_webbpulse.auto.tfvars.json"
