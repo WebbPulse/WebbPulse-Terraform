@@ -9,6 +9,24 @@ variable "run_credentials_duration_seconds" {
   }
 }
 
+variable "external_run_role_arns" {
+  description = "Exact ARNs of run roles outside the <prefix>-workspace-* naming that the vending role may also assume, such as the WebbPulse-Platform factory's <Workspace>-Terraform roles. Each role still has to trust the vending role with the workspace id as its external id. Wildcards are refused so the grant never widens past the roles named here."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for arn in var.external_run_role_arns : can(regex("^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", arn))
+    ])
+    error_message = "external_run_role_arns entries must be exact IAM role ARNs of the form arn:aws:iam::<12 digit account id>:role/<name>, with no wildcards."
+  }
+
+  validation {
+    condition     = length(distinct(var.external_run_role_arns)) == length(var.external_run_role_arns)
+    error_message = "external_run_role_arns must not repeat an ARN."
+  }
+}
+
 locals {
   runs_lambda_role_arn        = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.prefix}-runs-lambda"
   run_credentials_role_name   = "${local.prefix}-run-credentials"
