@@ -163,7 +163,7 @@ module "lambda_domain" {
   for_each = local.lambda_domains
 
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/lambda-function"
-  version = "~> 2.32"
+  version = "~> 2.33"
 
   function_name = "${local.prefix}-${each.key}"
   role_name     = "${local.prefix}-${each.key}-lambda"
@@ -223,8 +223,9 @@ module "lambda_domain" {
       RUNNER_CLUSTER_ARN   = module.runner.cluster_arn
       RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
 
-      RUN_CREDENTIALS_ROLE_ARN = aws_iam_role.run_credentials.arn
-      RUN_STATE_ROLE_ARN       = aws_iam_role.run_state.arn
+      RUN_CREDENTIALS_ROLE_ARN         = aws_iam_role.run_credentials.arn
+      RUN_STATE_ROLE_ARN               = aws_iam_role.run_state.arn
+      RUN_CREDENTIALS_DURATION_SECONDS = tostring(var.run_credentials_duration_seconds)
 
       APP_SECRETS_ARN = module.app_secrets.arns["app"]
 

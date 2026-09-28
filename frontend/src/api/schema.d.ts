@@ -1039,6 +1039,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Runner Credentials
+         * @description Vend the phase's provider and state keys again, before the old ones expire. Runner only.
+         *
+         *     A vended session lasts at most an hour, the role chaining ceiling, and a phase
+         *     may run for longer. The keys are vended as the bundle vends them, for the phase
+         *     the run is in, and only while that phase's runner task is the live one: a
+         *     settled run revokes the run token, and every 409 means the phase is over.
+         */
+        post: operations["runner_credentials_api_v1_runs__run_id__credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/discard": {
         parameters: {
             query?: never;
@@ -2928,6 +2953,28 @@ export interface components {
             sha: string;
         };
         /**
+         * RunnerCredentials
+         * @description A fresh pair of keys for the phase, vended exactly as the bundle's were.
+         *
+         *     `aws_credentials` replaces the bundle's run role keys and `backend_credentials`
+         *     its `backend.credentials`, so the runner rotates both before either expires.
+         */
+        RunnerCredentials: {
+            aws_credentials: components["schemas"]["VendedCredentials"];
+            backend_credentials: components["schemas"]["VendedCredentials"];
+        };
+        /**
+         * RunnerCredentialsRequest
+         * @description A runner's request for a fresh pair of keys for the phase it is running.
+         */
+        RunnerCredentialsRequest: {
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "plan" | "apply";
+        };
+        /**
          * RunnerHeartbeat
          * @description A runner's liveness report for the phase it is running.
          */
@@ -3161,7 +3208,7 @@ export interface components {
         };
         /**
          * VendedCredentials
-         * @description One hour of AWS keys the control plane assumed for a phase.
+         * @description At most an hour of AWS keys the control plane assumed for a phase.
          */
         VendedCredentials: {
             /** Access Key Id */
@@ -5519,6 +5566,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    runner_credentials_api_v1_runs__run_id__credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerCredentialsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerCredentials"];
                 };
             };
             /** @description Request validation failed. */

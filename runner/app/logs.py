@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from types import TracebackType
 from typing import TYPE_CHECKING, Iterable, Protocol, Sequence
@@ -18,9 +19,14 @@ MAX_BATCH_EVENTS = 500
 
 
 class Redactor:
-    """Replaces known sensitive values with a placeholder before anything is emitted."""
+    """Replaces known sensitive values with a placeholder before anything is emitted.
+
+    Values can be added from another thread while lines are scrubbed: an addition
+    swaps in a new list, so a scrub in flight reads a complete one.
+    """
 
     def __init__(self, secrets: Iterable[str] = ()) -> None:
+        self._lock = threading.Lock()
         self._secrets: list[str] = []
         for secret in secrets:
             self.add(secret)
@@ -29,9 +35,9 @@ class Redactor:
         """Register one more value to mask, ignoring values too short to be meaningful."""
         if not secret or len(secret) < MIN_REDACTABLE_LENGTH:
             return
-        if secret not in self._secrets:
-            self._secrets.append(secret)
-            self._secrets.sort(key=len, reverse=True)
+        with self._lock:
+            if secret not in self._secrets:
+                self._secrets = sorted([*self._secrets, secret], key=len, reverse=True)
 
     def extend(self, secrets: Iterable[str]) -> None:
         """Register several values to mask."""
@@ -57,7 +63,11 @@ class LogSink(Protocol):
 
 
 class CloudWatchLogSink:
-    """Writes redacted lines to a `<run_id>/<phase>` stream and mirrors them to stdout."""
+    """Writes redacted lines to a `<run_id>/<phase>` stream and mirrors them to stdout.
+
+    The engine's output and the credential refresher's notes arrive on different
+    threads, so writes and flushes take one lock.
+    """
 
     def __init__(
         self,
@@ -76,6 +86,7 @@ class CloudWatchLogSink:
         self._pending: list[dict[str, object]] = []
         self._lines: list[str] = []
         self._stream_ready = False
+        self._lock = threading.RLock()
 
     @property
     def lines(self) -> Sequence[str]:
@@ -84,7 +95,8 @@ class CloudWatchLogSink:
 
     def text(self) -> str:
         """The captured log as a single document."""
-        return "\n".join(self._lines) + ("\n" if self._lines else "")
+        with self._lock:
+            return "\n".join(self._lines) + ("\n" if self._lines else "")
 
     def _ensure_stream(self) -> None:
         if self._stream_ready:
@@ -98,15 +110,20 @@ class CloudWatchLogSink:
     def write(self, line: str) -> None:
         """Redact, keep, mirror and buffer one line."""
         scrubbed = self._redactor.scrub(line.rstrip("\n"))
-        self._lines.append(scrubbed)
-        if self._mirror:
-            print(scrubbed, flush=True)
-        self._pending.append({"timestamp": int(time.time() * 1000), "message": scrubbed or " "})
-        if len(self._pending) >= MAX_BATCH_EVENTS:
-            self.flush()
+        with self._lock:
+            self._lines.append(scrubbed)
+            if self._mirror:
+                print(scrubbed, flush=True)
+            self._pending.append({"timestamp": int(time.time() * 1000), "message": scrubbed or " "})
+            if len(self._pending) >= MAX_BATCH_EVENTS:
+                self.flush()
 
     def flush(self) -> None:
         """Send the buffered events, dropping the batch rather than failing the phase."""
+        with self._lock:
+            self._send()
+
+    def _send(self) -> None:
         if not self._pending:
             return
         batch = self._pending

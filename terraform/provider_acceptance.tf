@@ -2,7 +2,7 @@ module "provider_acceptance_role" {
   count = local.provider_acceptance_count
 
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "~> 2.27"
+  version = "~> 2.33"
 
   role_name        = "${local.prefix}-provider-acceptance"
   role_description = "Reads the staging gate header and mints the admin token that creates an ephemeral user for provider acceptance tests. Assumable only from the staging-acceptance environment of WebbPulse/terraform-provider-webbpulse."

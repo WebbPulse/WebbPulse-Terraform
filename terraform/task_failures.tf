@@ -1,6 +1,6 @@
 module "run_task_failures" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/sqs-queue"
-  version = "~> 2.32"
+  version = "~> 2.33"
 
   name = "${local.prefix}-run-task-failures"
 

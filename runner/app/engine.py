@@ -206,48 +206,50 @@ TASK_CREDENTIAL_KEYS: frozenset[str] = frozenset(
 )
 """What the ECS agent gives the task to reach its role's credentials and metadata."""
 
-RUNNER_ONLY_KEYS: frozenset[str] = TASK_CREDENTIAL_KEYS | {
-    "TASK_TOKEN",
-    "RUN_TOKEN",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
-    "AWS_PROFILE",
-    "AWS_DEFAULT_PROFILE",
-    "AWS_CONFIG_FILE",
-    "AWS_SHARED_CREDENTIALS_FILE",
-    "AWS_WEB_IDENTITY_TOKEN_FILE",
-    "AWS_ROLE_ARN",
-    "AWS_ROLE_SESSION_NAME",
-}
+VENDED_CREDENTIAL_KEYS: frozenset[str] = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_SECURITY_TOKEN",
+        "AWS_PROFILE",
+        "AWS_DEFAULT_PROFILE",
+        "AWS_CONFIG_FILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "AWS_ROLE_ARN",
+        "AWS_ROLE_SESSION_NAME",
+    }
+)
+"""Variables that would take the engine's AWS credentials from somewhere other than the vended profiles."""
+
+RUNNER_ONLY_KEYS: frozenset[str] = TASK_CREDENTIAL_KEYS | VENDED_CREDENTIAL_KEYS | {"TASK_TOKEN", "RUN_TOKEN"}
 """The runner's own variables, none of which the engine may inherit."""
 
 
 def build_environment(
     base: dict[str, str],
-    aws_credentials: dict[str, str],
     bundle_environment: dict[str, str],
     region: str,
     directory: Path,
-    backend_environment: dict[str, str] | None = None,
+    credential_environment: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Assemble the engine's environment without letting the runner's own tokens through.
 
-    `aws_credentials` is the vended run role session, which the providers use.
-    `backend_environment` points the SDK at the state profile the backend override
-    names, and is applied last so a workspace variable cannot redirect where state
-    credentials come from. No path to the task role's credentials survives, not
-    even one a workspace variable names, though that role reaches nothing but the
-    runner's log stream.
+    `credential_environment` points the SDK at the vended run and state profiles,
+    which the runner rotates in place. Static keys from anywhere would win over a
+    profile and never rotate, so neither the task nor a workspace variable may set
+    them, and no path to the task role's credentials survives either, though that
+    role reaches nothing but the runner's log stream.
     """
+    blocked = TASK_CREDENTIAL_KEYS | VENDED_CREDENTIAL_KEYS
     environment = {key: value for key, value in base.items() if key not in RUNNER_ONLY_KEYS}
     environment.update(BASE_ENVIRONMENT)
     environment["AWS_REGION"] = region
     environment["AWS_DEFAULT_REGION"] = region
     environment["TF_DATA_DIR"] = str(directory / ".terraform")
-    environment.update({key: value for key, value in bundle_environment.items() if key not in TASK_CREDENTIAL_KEYS})
-    environment.update(aws_credentials)
-    environment.update(backend_environment or {})
+    environment.update({key: value for key, value in bundle_environment.items() if key not in blocked})
+    environment.update(credential_environment or {})
     return environment
 
 

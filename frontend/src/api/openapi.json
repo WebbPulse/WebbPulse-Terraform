@@ -3397,6 +3397,42 @@
         "title": "RunVcs",
         "type": "object"
       },
+      "RunnerCredentials": {
+        "description": "A fresh pair of keys for the phase, vended exactly as the bundle's were.\n\n`aws_credentials` replaces the bundle's run role keys and `backend_credentials`\nits `backend.credentials`, so the runner rotates both before either expires.",
+        "properties": {
+          "aws_credentials": {
+            "$ref": "#/components/schemas/VendedCredentials"
+          },
+          "backend_credentials": {
+            "$ref": "#/components/schemas/VendedCredentials"
+          }
+        },
+        "required": [
+          "aws_credentials",
+          "backend_credentials"
+        ],
+        "title": "RunnerCredentials",
+        "type": "object"
+      },
+      "RunnerCredentialsRequest": {
+        "additionalProperties": false,
+        "description": "A runner's request for a fresh pair of keys for the phase it is running.",
+        "properties": {
+          "phase": {
+            "enum": [
+              "plan",
+              "apply"
+            ],
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "title": "RunnerCredentialsRequest",
+        "type": "object"
+      },
       "RunnerHeartbeat": {
         "additionalProperties": false,
         "description": "A runner's liveness report for the phase it is running.",
@@ -3839,7 +3875,7 @@
         "type": "object"
       },
       "VendedCredentials": {
-        "description": "One hour of AWS keys the control plane assumed for a phase.",
+        "description": "At most an hour of AWS keys the control plane assumed for a phase.",
         "properties": {
           "access_key_id": {
             "title": "Access Key Id",
@@ -6884,6 +6920,59 @@
           }
         },
         "summary": "Confirm Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/credentials": {
+      "post": {
+        "description": "Vend the phase's provider and state keys again, before the old ones expire. Runner only.\n\nA vended session lasts at most an hour, the role chaining ceiling, and a phase\nmay run for longer. The keys are vended as the bundle vends them, for the phase\nthe run is in, and only while that phase's runner task is the live one: a\nsettled run revokes the run token, and every 409 means the phase is over.",
+        "operationId": "runner_credentials_api_v1_runs__run_id__credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerCredentialsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerCredentials"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Runner Credentials",
         "tags": [
           "runs"
         ]

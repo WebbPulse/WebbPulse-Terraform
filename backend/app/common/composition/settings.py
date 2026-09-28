@@ -135,6 +135,11 @@ class Settings(BaseServiceSettings):
     """The state bucket role the vending role assumes, with a session policy
     narrowing it to one workspace's state, for the S3 backend's credentials."""
 
+    RUN_CREDENTIALS_DURATION_SECONDS: int = 3600
+    """How long each vended session lasts, clamped to STS's 900 second floor and the
+    one hour role chaining ceiling. The runner refreshes before expiry, so a shorter
+    session only means more refreshes; `run_credentials_duration_seconds` reads it."""
+
     RUN_ROLE_NAME_PREFIX: str = ""
     """The prefix every workspace run role name carries, `${local.prefix}-workspace-`.
     The runner's AssumeRole grant is scoped to it, so a role named outside it cannot
@@ -208,6 +213,11 @@ class Settings(BaseServiceSettings):
     def run_role_principal_arns(self) -> list[str]:
         """The principals a workspace run role trusts: the vending role alone."""
         return [self.RUN_CREDENTIALS_ROLE_ARN] if self.RUN_CREDENTIALS_ROLE_ARN else []
+
+    @property
+    def run_credentials_duration_seconds(self) -> int:
+        """The vended session length, within what STS accepts for a chained role."""
+        return max(900, min(3600, self.RUN_CREDENTIALS_DURATION_SECONDS))
 
     @property
     def dynamodb_endpoint_url(self) -> str | None:

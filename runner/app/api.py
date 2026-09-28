@@ -7,7 +7,7 @@ from typing import cast
 
 import httpx
 
-from app.models import ArtifactKind, ArtifactUpload, Bundle, PhaseResult, RunnerEnv
+from app.models import ArtifactKind, ArtifactUpload, Bundle, PhaseResult, RefreshedCredentials, RunnerEnv
 
 DEFAULT_TIMEOUT = httpx.Timeout(30.0, read=120.0)
 
@@ -26,6 +26,10 @@ class ApiError(RuntimeError):
 
 class HeartbeatRefused(ApiError):
     """The control plane says the phase is no longer this task's to run."""
+
+
+class CredentialsRefused(ApiError):
+    """The control plane will not vend this phase another session."""
 
 
 REFUSED_HEARTBEAT_STATUSES = frozenset({401, 403, 404, 409})
@@ -132,6 +136,28 @@ class RunnerApi:
             raise HeartbeatRefused(f"heartbeat refused with {response.status_code} {code}".rstrip(), code)
         if response.status_code >= 400:
             raise ApiError(f"heartbeat returned {response.status_code}")
+
+    def refresh_credentials(self) -> RefreshedCredentials:
+        """Ask for fresh run role and state sessions for this phase.
+
+        A refusal the run itself caused raises `CredentialsRefused`; an outage or a
+        server error raises a plain `ApiError`, which a later attempt may outlive.
+        Nothing about the keys goes into either error.
+        """
+        url = f"{self._env.api_base_url}/api/v1/runs/{self._env.run_id}/credentials"
+        try:
+            response = self._client.post(url, headers=self._headers, json={"phase": self._env.phase})
+        except httpx.HTTPError as error:
+            raise ApiError(f"credential refresh failed: {type(error).__name__}") from error
+        if response.status_code in REFUSED_HEARTBEAT_STATUSES:
+            code = _error_code(response)
+            raise CredentialsRefused(f"credential refresh refused with {response.status_code} {code}".rstrip(), code)
+        if response.status_code != 200:
+            raise ApiError(f"credential refresh returned {response.status_code}")
+        try:
+            return RefreshedCredentials.model_validate(response.json())
+        except ValueError as error:
+            raise ApiError("credential refresh returned no usable credentials") from error
 
     def download(self, url: str, destination: Path) -> Path:
         """Stream a presigned GET to disk."""

@@ -54,6 +54,7 @@ locals {
     "GET /api/v1/runs/{run_id}/bundle"            = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/artifact-uploads" = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/heartbeat"        = { integration = "runs", authorization_type = "NONE" }
+    "POST /api/v1/runs/{run_id}/credentials"      = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/phase-result"     = { integration = "runs", authorization_type = "NONE" }
     "POST /api/v1/runs/{run_id}/runner-token"     = { integration = "runs", authorization_type = "NONE" }
   }
@@ -211,7 +212,7 @@ locals {
 
 module "api" {
   source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/http-api"
-  version = "~> 2.32"
+  version = "~> 2.33"
 
   name = "${local.prefix}-api"
 

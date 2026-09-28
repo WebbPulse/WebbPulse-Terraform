@@ -11,7 +11,10 @@ workspace run role trusts, and from there assumes two roles:
 - the control plane's state role, narrowed by a session policy to this
   workspace's state prefix, whose keys only the S3 backend reads.
 
-Both sessions last an hour, the role chaining ceiling, which covers a phase.
+Both sessions last at most an hour, the role chaining ceiling, which a long
+phase outlives. The runner therefore asks for a fresh pair before they expire
+through `POST /runs/{id}/credentials`, which vends again exactly as the bundle
+did, for the phase the run is still in.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from typing import Any, Final
 
 from ...common.composition.settings import Settings
 from . import session_policy
-from .schemas.run import RUN_ROLE_DURATION_SECONDS, Phase
+from .schemas.run import Phase
 
 VENDING_SESSION_NAME: Final = "webbpulse-terraform-vending"
 """The session name the runs function holds the vending role under."""
@@ -105,14 +108,16 @@ def session_name(run_id: str, phase: Phase) -> str:
     return f"{run_id}-{phase}"[:64]
 
 
-def run_role_request(role_arn: str, workspace_id: str, run_id: str, phase: Phase) -> dict[str, Any]:
+def run_role_request(
+    role_arn: str, workspace_id: str, run_id: str, phase: Phase, *, duration_seconds: int
+) -> dict[str, Any]:
     """The `AssumeRole` request for a workspace's run role in one phase."""
     policy = session_policy.for_phase(phase)
     request: dict[str, Any] = {
         "RoleArn": role_arn,
         "RoleSessionName": session_name(run_id, phase),
         "ExternalId": workspace_id,
-        "DurationSeconds": RUN_ROLE_DURATION_SECONDS,
+        "DurationSeconds": duration_seconds,
     }
     if policy.document is not None:
         request["Policy"] = json.dumps(policy.document)
@@ -126,7 +131,7 @@ def state_role_request(workspace_id: str, run_id: str, phase: Phase, *, settings
     return {
         "RoleArn": settings.RUN_STATE_ROLE_ARN,
         "RoleSessionName": session_name(run_id, phase),
-        "DurationSeconds": RUN_ROLE_DURATION_SECONDS,
+        "DurationSeconds": settings.run_credentials_duration_seconds,
         "Policy": json.dumps(
             session_policy.state_policy(settings.STATE_BUCKET, workspace_id, settings.STATE_KMS_KEY_ARN, phase)
         ),
@@ -157,14 +162,24 @@ def vend(
             _sts(settings).assume_role(
                 RoleArn=settings.RUN_CREDENTIALS_ROLE_ARN,
                 RoleSessionName=VENDING_SESSION_NAME,
-                DurationSeconds=RUN_ROLE_DURATION_SECONDS,
+                DurationSeconds=settings.run_credentials_duration_seconds,
             )
         )
     except Exception as error:
         raise VendingUnavailable(f"the vending role could not be assumed: {_error_text(error)}") from error
     client = _sts(settings, vending)
     try:
-        provider = _credentials(client.assume_role(**run_role_request(role_arn, workspace_id, run_id, phase)))
+        provider = _credentials(
+            client.assume_role(
+                **run_role_request(
+                    role_arn,
+                    workspace_id,
+                    run_id,
+                    phase,
+                    duration_seconds=settings.run_credentials_duration_seconds,
+                )
+            )
+        )
     except Exception as error:
         raise RunRoleAssumeFailed(f"assume role failed: {_error_text(error)}") from error
     try:
