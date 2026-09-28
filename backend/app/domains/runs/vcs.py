@@ -11,13 +11,16 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Final
 
+from ...common.github.webhooks import MAX_DELIVERY_AGE
+
 UPLOAD_ID_PREFIX: Final = "up-"
 UPLOAD_ID_PATTERN: Final = r"up-[0-9A-HJKMNP-TV-Z]{26}"
 INGEST_PREFIX: Final = "ingest/"
 INGEST_CONTENT_TYPE: Final = "application/gzip"
-RECORD_TTL: Final = timedelta(days=3)
-"""How long an ingest record outlives its delivery, matching the bucket's lifecycle
-on `ingest/`."""
+RECORD_TTL: Final = MAX_DELIVERY_AGE + timedelta(days=1)
+"""How long an ingest record outlives its delivery. The record is the replay dedupe, so
+it outlasts `MAX_DELIVERY_AGE`, past which the webhook route refuses the delivery
+outright: a signed body replayed at any age either finds its record or is refused."""
 
 PUSH_EVENT: Final = "push"
 PULL_REQUEST_EVENT: Final = "pull_request"

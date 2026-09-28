@@ -22,6 +22,7 @@ import json
 import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import datetime, timedelta, timezone
 from typing import Any, Final, Optional
 
 from webbpulse.http import SignatureMismatch, verify_hmac_signature
@@ -63,6 +64,18 @@ PULL_REQUEST_ACTIONS: Final = frozenset({"opened", "synchronize", "reopened"})
 """The pull request actions that change what a speculative plan would read."""
 
 ZERO_SHA: Final = "0" * 40
+
+MAX_DELIVERY_AGE: Final = timedelta(days=3)
+"""The oldest event a delivery may carry. GitHub signs the body but not a time, and
+redelivers only deliveries from the past three days, so an older signed body can only
+be a replay. The runs dedupe record outlives this window."""
+
+EVENT_TIME_FIELDS: Final = {
+    PUSH: ("repository", "pushed_at"),
+    PULL_REQUEST: ("pull_request", "updated_at"),
+    RELEASE: ("release", "published_at"),
+}
+"""Where each acted on event carries the time GitHub recorded it."""
 
 _BRANCH_REF = re.compile(r"^refs/heads/(?P<branch>.+)$")
 _SEMVER_TAG_REF = re.compile(
@@ -251,6 +264,42 @@ def delivery_message(event: str, delivery: str, payload: Mapping[str, Any]) -> O
             "base_branch": str(base_ref.get("ref") or "") or None,
         }
     return None
+
+
+def _timestamp(raw: Any) -> Optional[datetime]:
+    """An aware datetime from GitHub's epoch seconds or ISO 8601 form, or `None`."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return datetime.fromtimestamp(raw, timezone.utc)
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def event_time(event: str, payload: Mapping[str, Any]) -> Optional[datetime]:
+    """When GitHub says the delivered event happened, read from the signed payload.
+
+    A push carries `repository.pushed_at`, a pull request `pull_request.updated_at`
+    and a release `release.published_at`, each set by GitHub, never by the pusher.
+    """
+    field = EVENT_TIME_FIELDS.get(event)
+    if field is None:
+        return None
+    holder = payload.get(field[0])
+    return _timestamp(holder.get(field[1])) if isinstance(holder, Mapping) else None
+
+
+def is_stale(event: str, payload: Mapping[str, Any], now: Optional[datetime] = None) -> bool:
+    """Whether a delivery is older than `MAX_DELIVERY_AGE`, or carries no event time at all."""
+    happened = event_time(event, payload)
+    if happened is None:
+        return True
+    return (now or datetime.now(timezone.utc)) - happened > MAX_DELIVERY_AGE
 
 
 def semver_version(tag: str) -> Optional[str]:
