@@ -49,6 +49,10 @@ def build_router(settings: "Settings") -> "APIRouter":
     routes, an email sender and token store the email routes, and so on. This
     deployment configures no sender, so the email routes are not declared rather
     than declared and answering 503.
+
+    The `api-keys` store is supplied so the users stream purge deletes a deleted user's
+    keys as well. The identity module creates that table and grants the workspaces role
+    the table policy actions on it, delete and the user index query included.
     """
     from webbpulse.dynamodb import Repository
     from webbpulse.identity import (
@@ -76,6 +80,7 @@ def build_router(settings: "Settings") -> "APIRouter":
         build_identity_router,
         signing_client,
     )
+    from webbpulse.identity.api_keys import API_KEYS_TABLE, DynamoApiKeyStore
 
     from app.common.db.identity_tables import identity_table_prefix
     from app.common.identity.identity_hooks import ControlPlaneIdentityHooks
@@ -108,6 +113,7 @@ def build_router(settings: "Settings") -> "APIRouter":
         oauth_links=DynamoOAuthLinkStore(repository(OAUTH_LINKS_TABLE)),
         passkeys=DynamoPasskeyStore(repository(PASSKEYS_TABLE)),
         webauthn_challenges=DynamoWebAuthnChallengeStore(repository(WEBAUTHN_CHALLENGES_TABLE)),
+        api_keys=DynamoApiKeyStore(repository(API_KEYS_TABLE)),
     )
 
     return build_identity_router(

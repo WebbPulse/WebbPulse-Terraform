@@ -180,7 +180,7 @@ def test_wp_tf_plans_with_the_login_key(
 
     The key is written to a throwaway `credentials.tfrc.json` under a temporary HOME, the
     way `terraform login` leaves it, so the CLI is exercised exactly as a workstation runs
-    it. The gate value goes in through the environment and is never printed.
+    it. `wp-tf` reads the gate value from its SSM parameter itself, and never prints it.
     """
     verifier = secrets.token_urlsafe(48)
     exchanged = _exchange(approve(verifier), verifier)
@@ -192,7 +192,6 @@ def test_wp_tf_plans_with_the_login_key(
 
     env = {key: value for key, value in os.environ.items() if not key.startswith(("WP_TF_", "TF_TOKEN_"))}
     env["HOME"] = str(tmp_path)
-    env["WP_TF_GATE"] = next(iter(gate_headers.values()), "")
     workspace_id = str(workspace["workspace_id"])
     completed = subprocess.run(
         [*_wp_tf(), "--host", REGISTRY_HOST, "plan", str(EXAMPLE), "-w", workspace_id, "-m", "e2e wp-tf"],
@@ -204,7 +203,8 @@ def test_wp_tf_plans_with_the_login_key(
     )
     output = completed.stdout + completed.stderr
     assert token not in output, "wp-tf printed the key"
-    assert not env["WP_TF_GATE"] or env["WP_TF_GATE"] not in output, "wp-tf printed the gate value"
+    gate = next(iter(gate_headers.values()), "")
+    assert not gate or gate not in output, "wp-tf printed the gate value"
     assert completed.returncode == 0, f"wp-tf plan exited {completed.returncode}: {completed.stderr[-1500:]}"
     assert "terraform plan" in completed.stdout, "wp-tf streamed no plan log"
     found = re.search(r"run (run-[0-9A-Z]+) ", completed.stderr)
