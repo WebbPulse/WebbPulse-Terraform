@@ -31,7 +31,7 @@ from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, Repository, new_ulid, now_iso
 
 from ...common.composition.settings import Settings, get_settings
-from ...common.core.auth import api_key_store
+from ...common.core.auth import revoke_run_key
 from ...common.db import repositories
 from ...common.db.tables import (
     RUNS_BY_RECENCY_INDEX,
@@ -910,10 +910,7 @@ def _record_run_role(workspace_id: str, *, settings: Settings) -> None:
 
 def _revoke_run_token(run: dict[str, Any], *, settings: Settings) -> None:
     """Revoke this run's token, tolerating one that was already gone."""
-    key_hash = str(run.get("run_token_hash", ""))
-    if not key_hash:
-        return
-    api_key_store(settings).revoke(key_hash)
+    revoke_run_key(str(run.get("run_token_hash", "") or ""), settings=settings)
 
 
 def _promote_queue(workspace_id: str, *, settings: Settings) -> None:
