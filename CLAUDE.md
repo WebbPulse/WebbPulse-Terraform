@@ -19,8 +19,9 @@ TypeScript SPA on the `@webbpulse/*` packages. Infrastructure is Terraform
 at `api.staging.terraform.webbpulse.com`. `main` serves `terraform.webbpulse.com`
 and `api.terraform.webbpulse.com`.
 
-The replacement plan and current status live in `TFC-REPLACEMENT.md` at the
-WebbPulse root. Read it there rather than restating it here.
+Design and runbooks for the replacement live in `TFC-REPLACEMENT.md` at the
+WebbPulse root. Read it there rather than restating it here. Work tracking is the
+Standupless TF project "HCP Terraform replacement".
 
 ---
 
