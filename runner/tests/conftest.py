@@ -7,8 +7,10 @@ import io
 import json
 import os
 import platform
+import subprocess
 import tarfile
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -412,19 +414,112 @@ sys.exit(1)
     return install
 
 
-def engine_release(engine: str, version: str, binary: bytes, *, checksum: str | None = None) -> dict[str, bytes]:
-    """The archive and SHA256SUMS files one engine release serves, keyed by URL."""
-    architecture = install.ARCHITECTURES[platform.machine().lower()]
-    archive_url, sums_url, archive_name = install.release_urls(
-        "tofu" if engine == "tofu" else "terraform", version, architecture
+@dataclass(frozen=True)
+class ReleaseSigner:
+    """A throwaway OpenPGP key standing in for a publisher's release key."""
+
+    home: Path
+    fingerprint: str
+
+    def sign(self, payload: bytes) -> bytes:
+        """A binary detached signature over `payload`, the form the publishers serve."""
+        completed = subprocess.run(  # noqa: S603
+            ["gpg", "--homedir", str(self.home), "--batch", "--yes", "--local-user", self.fingerprint, "--detach-sign"],
+            input=payload,
+            capture_output=True,
+            check=True,
+        )
+        return completed.stdout
+
+    def export(self, target: Path) -> None:
+        """Write the public key as a binary keyring, as the image bakes it."""
+        completed = subprocess.run(  # noqa: S603
+            ["gpg", "--homedir", str(self.home), "--batch", "--export", self.fingerprint],
+            capture_output=True,
+            check=True,
+        )
+        target.write_bytes(completed.stdout)
+
+
+def make_signer(home: Path) -> ReleaseSigner:
+    """Generate an unprotected Ed25519 signing key in a fresh GnuPG home."""
+    home.mkdir(mode=0o700, parents=True)
+    subprocess.run(  # noqa: S603
+        [
+            "gpg",
+            "--homedir",
+            str(home),
+            "--batch",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase",
+            "",
+            "--quick-generate-key",
+            "Release Test <release-test@example.invalid>",
+            "ed25519",
+            "sign",
+            "never",
+        ],
+        capture_output=True,
+        check=True,
     )
+    listing = subprocess.run(  # noqa: S603
+        ["gpg", "--homedir", str(home), "--batch", "--with-colons", "--list-keys"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    fingerprint = next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
+    return ReleaseSigner(home=home, fingerprint=fingerprint)
+
+
+@pytest.fixture(scope="session")
+def release_signer(tmp_path_factory: pytest.TempPathFactory) -> ReleaseSigner:
+    """The key every test release is signed with."""
+    return make_signer(tmp_path_factory.mktemp("release-key") / "gnupg")
+
+
+@pytest.fixture(scope="session")
+def release_keyrings(tmp_path_factory: pytest.TempPathFactory, release_signer: ReleaseSigner) -> Path:
+    """A keyring directory baking the test key for both engines."""
+    directory = tmp_path_factory.mktemp("keyrings")
+    for engine in ("terraform", "tofu"):
+        release_signer.export(directory / f"{engine}.gpg")
+    return directory
+
+
+@pytest.fixture(autouse=True)
+def pinned_release_key(monkeypatch: pytest.MonkeyPatch, release_signer: ReleaseSigner, release_keyrings: Path) -> None:
+    """Pin the test key in place of the publishers' keys."""
+    monkeypatch.setattr(install, "KEYRING_DIRECTORY", release_keyrings)
+    monkeypatch.setattr(
+        install, "SIGNING_KEYS", {"terraform": release_signer.fingerprint, "tofu": release_signer.fingerprint}
+    )
+
+
+def engine_release(
+    engine: str,
+    version: str,
+    binary: bytes,
+    signer: ReleaseSigner,
+    *,
+    checksum: str | None = None,
+    signature: bytes | None = None,
+) -> dict[str, bytes]:
+    """The archive, SHA256SUMS file and its signature one engine release serves, keyed by URL."""
+    architecture = install.ARCHITECTURES[platform.machine().lower()]
+    urls = install.release_urls("tofu" if engine == "tofu" else "terraform", version, architecture)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as bundle:
         bundle.writestr(engine, binary)
     archive = buffer.getvalue()
     digest = checksum or hashlib.sha256(archive).hexdigest()
-    sums = f"{'0' * 64}  other_{version}_linux_{architecture}.zip\n{digest}  {archive_name}\n"
-    return {archive_url: archive, sums_url: sums.encode()}
+    sums = f"{'0' * 64}  other_{version}_linux_{architecture}.zip\n{digest}  {urls.archive_name}\n".encode()
+    return {
+        urls.archive: archive,
+        urls.sums: sums,
+        urls.signature: signer.sign(sums) if signature is None else signature,
+    }
 
 
 def make_env(phase: str = "plan", heartbeat_interval: float | None = None) -> RunnerEnv:
