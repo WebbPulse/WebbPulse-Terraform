@@ -210,10 +210,14 @@ POST gives the same answer and stamps `run_role_checked_at` and
 Credentials are vended per phase by the runs function when it serves the bundle
 (`app/domains/runs/vending.py`): the runs function role assumes the vending role,
 which assumes the workspace's run role (external id = workspace id; a plan passes
-`ReadOnlyAccess` as its session policy ARN, an apply none) and the state role
+`ReadOnlyAccess` as its session policy ARN, an apply none; the session name is
+`<run>-<phase>@<workspace name>`, cut to 64) and the state role
 `<prefix>-run-state`, narrowed by `session_policy.state_policy` to
 `workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last
 `run_credentials_duration_seconds` (default and chained-role cap 3600, floor 900).
+The staging e2e run role (`terraform/e2e_run_role.tf`) trusts only sessions named
+`run-*@e2e-*`, the suite's own workspaces, plus the durable ids in
+`e2e_run_role_workspace_ids` (the `first-run` workspace).
 `POST /runs/{id}/credentials` (run token, `{phase}`) vends the same pair again, refused
 once the run has left that phase or its task token no longer resolves.
 A refused run role is a 409 `RUN_ROLE_ASSUME_FAILED` on the bundle, which the
@@ -409,8 +413,8 @@ and a new repository under the old name does not inherit it. `working_directory`
 is normalized to a clean relative path, `tracked_branch` must be a valid git branch
 name, and trigger patterns are trimmed.
 
-The webhook consumer (below) writes an ingest record to `vcs-uploads` (three day
-TTL) and the tarball to `ingest/<upload_id>.tar.gz`. S3 Object Created on `ingest/`
+The webhook consumer (below) writes an ingest record to `vcs-uploads` (four day
+TTL, longer than the webhook age window) and the tarball to `ingest/<upload_id>.tar.gz`. S3 Object Created on `ingest/`
 goes through EventBridge to the
 `vcs-ingest` queue as `config_ingested`, and `app/domains/runs/consumers/ingest.py`
 reads the record by the upload id in the key, never the object's metadata. For
@@ -436,6 +440,10 @@ app secret's `GITHUB_WEBHOOK_SECRET` and answers 401 before routing. A branch pu
 or a same-repository pull request (opened, synchronize, reopened) is queued on
 `github-webhooks` and a semantic version tag push on `registry-ingest` (above);
 forks, other tags and other events are acknowledged and dropped.
+GitHub signs no time, so a delivery whose event (`repository.pushed_at`,
+`pull_request.updated_at` or `release.published_at`) is older than
+`MAX_DELIVERY_AGE` (three days, GitHub's redelivery window) or missing is
+acknowledged and dropped; inside the window the delivery keyed dedupe makes a replay a no-op.
 `app/domains/runs/consumers/webhooks.py` resolves the commit (a pull request waits
 for GitHub's merge commit and uses it, reporting on the head), takes the changed
 paths from the push payload or `/pulls/{n}/files`, fetches the tarball with an

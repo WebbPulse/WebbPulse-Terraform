@@ -5,6 +5,7 @@ role's unrestricted session keys, so the gate is the security boundary of this d
 and is tested from every angle a caller could come at it.
 """
 
+import fnmatch
 import json
 from typing import Any
 
@@ -391,7 +392,9 @@ def test_the_bundle_vends_the_run_role_through_the_vending_role(
     assert run_role_request["RoleArn"] == workspace["run_role_arn"]
     assert run_role_request["ExternalId"] == workspace["workspace_id"]
     assert run_role_request["DurationSeconds"] == 3600
+    assert run_role_request["RoleSessionName"] == f"{created_run['run_id']}-plan@{workspace['name']}"
     assert state_request["RoleArn"] == settings.RUN_STATE_ROLE_ARN
+    assert state_request["RoleSessionName"] == f"{created_run['run_id']}-plan"
     assert "ExternalId" not in state_request
     role_name = workspace["run_role_arn"].rsplit("/", 1)[-1]
     assert body["run_role_arn"] == workspace["run_role_arn"]
@@ -830,3 +833,17 @@ def test_the_session_length_is_configurable_within_sts_limits(
     runner_client.post(f"{BASE}/{created_run['run_id']}/credentials", json={"phase": "plan"})
 
     assert [request["DurationSeconds"] for request in sts_requests] == [vended, vended, vended]
+
+
+def test_the_run_role_session_name_keeps_the_workspace_prefix_within_the_sts_limit():
+    """A long workspace name is cut to STS's 64 characters from the end, so a name prefix trust still matches.
+
+    The e2e run role trusts only sessions matching `run-*@e2e-*`, which is what keeps
+    any other workspace from naming it.
+    """
+    run_id = "run-01K0000000000000000000000Z"
+    session_name = vending.run_role_session_name(run_id, "apply", "e2e-123456789-" + "x" * 80)
+    assert len(session_name) == 64
+    assert session_name.startswith(f"{run_id}-apply@e2e-123456789-")
+    assert fnmatch.fnmatchcase(session_name, "run-*@e2e-*")
+    assert not fnmatch.fnmatchcase(vending.run_role_session_name(run_id, "plan", "prod-network"), "run-*@e2e-*")

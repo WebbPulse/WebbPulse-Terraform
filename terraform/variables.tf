@@ -175,6 +175,17 @@ variable "example_workspace_id" {
   }
 }
 
+variable "e2e_run_role_workspace_ids" {
+  description = "Durable workspace ids the e2e run role trusts besides the suite's own. The suite's workspaces are matched by name instead: the vending session name ends `@<workspace name>` and the role trusts only `run-*@e2e-*`. Ignored where the e2e run role does not exist."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for id in var.e2e_run_role_workspace_ids : can(regex("^ws-[0-9A-HJKMNP-TV-Z]{26}$", id))])
+    error_message = "e2e_run_role_workspace_ids must hold workspace ids: ws- followed by a 26 character ULID."
+  }
+}
+
 variable "adopt_spans_log_group" {
   description = "Adopt the reserved aws/spans log group into state and hold it at 7 day retention. X-Ray creates that group itself the first time it writes a span to the CloudWatchLogs destination, and it cannot be created ahead of time because CreateLogGroup rejects names beginning with aws/. An import block whose target does not exist is a plan time error, so a new account applies once with this false, generates one span, then sets the workspace variable true and applies again. Neither account has written a span yet, so the default is false."
   type        = bool

@@ -1415,6 +1415,7 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         run_id=run_id,
         phase=phase,
         settings=resolved,
+        workspace_name=str(workspace.get("name", "")),
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
     )
     identity = _workload_identity(
@@ -1507,6 +1508,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         run_id=run_id,
         phase=phase,
         settings=resolved,
+        workspace_name=str(workspace.get("name", "")),
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
     )
     identity = _workload_identity(
