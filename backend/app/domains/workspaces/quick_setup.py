@@ -22,6 +22,10 @@ Where the environment has an AWS connect topic, the template also carries a cust
 resource that reports the stack back, and the link carries a one-time connect
 token. The account id is then optional: the stack's own ARN names the account, so
 the person only clicks the link. See `app.common.workspaces.aws_connect`.
+
+By default the stack also creates a read only plan role beside the run role, under
+the IAM path `/<role prefix>plan/`, with the same trust. Plans then assume it, so a
+plan never holds keys that could apply, and applies keep the run role.
 """
 
 from __future__ import annotations
@@ -62,6 +66,9 @@ TEMPLATE_URL_EXPIRES_IN: Final = 3600
 
 MAX_SESSION_DURATION: Final = 3600
 """The role's session ceiling, matching the one hour the runner asks for per phase."""
+
+PLAN_ROLE_POLICY_ARN: Final = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+"""The managed policy the plan role gets."""
 
 WORKSPACE_TAG_KEY: Final = "webbpulse-terraform:workspace"
 """The tag that names the workspace a role belongs to, for finding it in the account."""
@@ -111,6 +118,7 @@ def _report_back(template: dict[str, Any], topic_arn: str) -> dict[str, Any]:
                 "ConnectToken": {"Ref": "ConnectToken"},
                 "WorkspaceId": {"Ref": "ExternalId"},
                 "RoleArn": {"Fn::GetAtt": ["RunRole", "Arn"]},
+                "PlanRoleArn": {"Fn::If": ["CreatePlanRole", {"Fn::GetAtt": ["PlanRole", "Arn"]}, ""]},
                 "TrustVersion": aws_connect.TRUST_VERSION,
             },
         }
@@ -137,6 +145,20 @@ def template_body(settings: Settings) -> dict[str, Any]:
     if not principals or not settings.RUN_ROLE_NAME_PREFIX:
         raise QuickSetupUnavailable("No credential vending role is configured for this environment.")
     policy_values = [arn for arn in PERMISSIONS_POLICY_ARNS.values() if arn is not None]
+    trust = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "WebbPulseTerraformCredentialVending",
+                "Effect": "Allow",
+                "Principal": {"AWS": principals},
+                "Action": "sts:AssumeRole",
+                "Condition": {"StringEquals": {"sts:ExternalId": {"Ref": "ExternalId"}}},
+            }
+        ],
+    }
+    tags = [{"Key": WORKSPACE_TAG_KEY, "Value": {"Ref": "ExternalId"}}]
+    plan_prefix = aws_connect.PLAN_ROLE_NAME_PREFIX
     template: dict[str, Any] = {
         "AWSTemplateFormatVersion": "2010-09-09",
         "Description": (
@@ -147,12 +169,13 @@ def template_body(settings: Settings) -> dict[str, Any]:
             "AWS::CloudFormation::Interface": {
                 "ParameterGroups": [
                     {"Label": {"default": "Workspace"}, "Parameters": ["RoleName", "ExternalId"]},
-                    {"Label": {"default": "Permissions"}, "Parameters": ["PermissionsPolicyArn"]},
+                    {"Label": {"default": "Permissions"}, "Parameters": ["PermissionsPolicyArn", "PlanRoleName"]},
                 ],
                 "ParameterLabels": {
                     "RoleName": {"default": "Role name"},
                     "ExternalId": {"default": "Workspace id (external id)"},
                     "PermissionsPolicyArn": {"default": "Permissions policy"},
+                    "PlanRoleName": {"default": "Read only plan role name"},
                 },
             }
         },
@@ -177,9 +200,19 @@ def template_body(settings: Settings) -> dict[str, Any]:
                 "Default": policy_values[0],
                 "AllowedValues": [*policy_values, NO_POLICY],
             },
+            "PlanRoleName": {
+                "Type": "String",
+                "Description": (
+                    "A read only role that plans assume instead of the run role. Leave empty to plan with the run role."
+                ),
+                "Default": "",
+                "AllowedPattern": f"^({re.escape(plan_prefix)}[0-9A-Za-z]{{26}})?$",
+                "ConstraintDescription": f"must be empty or start with {plan_prefix}",
+            },
         },
         "Conditions": {
             "AttachPolicy": {"Fn::Not": [{"Fn::Equals": [{"Ref": "PermissionsPolicyArn"}, NO_POLICY]}]},
+            "CreatePlanRole": {"Fn::Not": [{"Fn::Equals": [{"Ref": "PlanRoleName"}, ""]}]},
         },
         "Resources": {
             "RunRole": {
@@ -188,30 +221,53 @@ def template_body(settings: Settings) -> dict[str, Any]:
                     "RoleName": {"Ref": "RoleName"},
                     "Description": {"Fn::Sub": "Assumed by WebbPulse Terraform runs for workspace ${ExternalId}"},
                     "MaxSessionDuration": MAX_SESSION_DURATION,
-                    "AssumeRolePolicyDocument": {
-                        "Version": "2012-10-17",
-                        "Statement": [
-                            {
-                                "Sid": "WebbPulseTerraformCredentialVending",
-                                "Effect": "Allow",
-                                "Principal": {"AWS": principals},
-                                "Action": "sts:AssumeRole",
-                                "Condition": {"StringEquals": {"sts:ExternalId": {"Ref": "ExternalId"}}},
-                            }
-                        ],
-                    },
+                    "AssumeRolePolicyDocument": trust,
                     "ManagedPolicyArns": {
                         "Fn::If": ["AttachPolicy", [{"Ref": "PermissionsPolicyArn"}], {"Ref": "AWS::NoValue"}]
                     },
-                    "Tags": [{"Key": WORKSPACE_TAG_KEY, "Value": {"Ref": "ExternalId"}}],
+                    "Tags": tags,
                 },
-            }
+            },
+            "PlanRole": {
+                "Type": "AWS::IAM::Role",
+                "Condition": "CreatePlanRole",
+                "Properties": {
+                    "RoleName": {"Ref": "PlanRoleName"},
+                    "Path": aws_connect.plan_role_path(settings=settings),
+                    "Description": {"Fn::Sub": "Assumed by WebbPulse Terraform plans for workspace ${ExternalId}"},
+                    "MaxSessionDuration": MAX_SESSION_DURATION,
+                    "AssumeRolePolicyDocument": trust,
+                    "ManagedPolicyArns": [PLAN_ROLE_POLICY_ARN],
+                    "Policies": [
+                        {
+                            "PolicyName": "assume-roles",
+                            "PolicyDocument": {
+                                "Version": "2012-10-17",
+                                "Statement": [
+                                    {
+                                        "Sid": "AssumeOtherRoles",
+                                        "Effect": "Allow",
+                                        "Action": "sts:AssumeRole",
+                                        "Resource": "*",
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                    "Tags": tags,
+                },
+            },
         },
         "Outputs": {
             "RoleArn": {
                 "Description": "The role WebbPulse Terraform runs assume. It is already saved on the workspace.",
                 "Value": {"Fn::GetAtt": ["RunRole", "Arn"]},
-            }
+            },
+            "PlanRoleArn": {
+                "Condition": "CreatePlanRole",
+                "Description": "The read only role WebbPulse Terraform plans assume.",
+                "Value": {"Fn::GetAtt": ["PlanRole", "Arn"]},
+            },
         },
     }
     if settings.AWS_CONNECT_TOPIC_ARN:
@@ -279,6 +335,7 @@ def start_quick_setup(
     account_id: str | None,
     permissions: PermissionsChoice,
     *,
+    plan_role: bool = True,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Issue a connect token, stage the role for a given account, and return the link.
@@ -288,7 +345,8 @@ def start_quick_setup(
     created, so no account id is needed. A given account id still saves or stages
     the derived ARN at once, as it did before the topic existed: a workspace with
     no role takes it, and one already running as another role stages it as
-    `pending_run_role_arn` until a verification run assumes it.
+    `pending_run_role_arn` until a verification run assumes it. With `plan_role`
+    the stack also creates the read only plan role, which travels with the run role.
 
     Raises:
         WorkspaceNotFound: No such workspace.
@@ -304,12 +362,18 @@ def start_quick_setup(
         raise QuickSetupUnavailable("No connect topic is configured, so the account id is required.")
     key = ensure_template(resolved)
     role_name = service.run_role_name(workspace_id, settings=resolved)
+    plan_role_name = aws_connect.plan_role_name(workspace_id) if plan_role else ""
     role_arn: str | None = None
+    plan_role_arn: str | None = None
     pending = False
     if account_id:
         role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
+        if plan_role:
+            plan_role_arn = aws_connect.expected_plan_role_arn(workspace_id, "aws", account_id, settings=resolved)
         updated = service.update_workspace(workspace_id, {"pending_run_role_arn": role_arn}, settings=resolved)
         pending = str(updated.get("pending_run_role_arn") or "") == role_arn
+        if not pending and str(updated.get("plan_role_arn") or "") != (plan_role_arn or ""):
+            service.update_workspace(workspace_id, {"plan_role_arn": plan_role_arn}, settings=resolved)
 
     region = resolved.AWS_REGION_NAME or "us-west-2"
     download = presigned_get(
@@ -325,6 +389,8 @@ def start_quick_setup(
         "ExternalId": workspace_id,
         "PermissionsPolicyArn": policy_arn or NO_POLICY,
     }
+    if plan_role_name:
+        parameters["PlanRoleName"] = plan_role_name
     connect_expires_at: str | None = None
     if reports_back:
         token, connect_expires_at = aws_connect.issue_token(workspace_id, settings=resolved)
@@ -334,6 +400,8 @@ def start_quick_setup(
         "role_arn": role_arn,
         "pending": pending,
         "role_name": role_name,
+        "plan_role_name": plan_role_name or None,
+        "plan_role_arn": plan_role_arn,
         "stack_name": role_name,
         "region": region,
         "permissions_policy_arn": policy_arn,

@@ -180,7 +180,10 @@ The runner is separate. A run token is a `wpk_` key scoped `runner`, bound to
 one run and expiring after four hours, and only it opens the bundle, the
 artifact uploads and the phase result. The bundle carries decrypted sensitive
 variables, so no human scope reaches it, and every terminal transition revokes
-the token. The runner gets it from `POST /runs/{id}/runner-token` (no
+the token. Every run key revoke goes through `revoke_run_key`, which also stamps
+`purge_at`, the `api-keys` table's TTL, one day out, so dead run keys leave the
+table; agent keys never get it. `scripts/backfill_run_key_ttl.py` stamps rows
+revoked before that. The runner gets its token from `POST /runs/{id}/runner-token` (no
 authorizer) by sending the headers of an STS `GetCallerIdentity` it signed with
 its task role, with the run id in the signed `x-webbpulse-run-id` header
 (`app/domains/runs/runner_tokens.py`). The route replays that to regional STS,
@@ -277,6 +280,16 @@ plan. The `Connection` resource carries `TrustVersion` (`aws_connect.TRUST_VERSI
 "2" since vending), recorded on the connection; a Quick setup role whose
 connection lacks the current version is `run_role_reconnect_required`, and the UI
 asks for the stack to be deleted and connected again, or updated in place.
+
+A workspace may also carry `plan_role_arn`, a read only role a plan assumes for
+its provider keys; the plan still assumes the run role first (900 seconds, keys
+discarded) so the run role check keeps its evidence, and applies ignore it.
+Quick setup creates it by default (`plan_role`, `PlanRoleName` parameter) at
+`role/<run role prefix>plan/plan-<ulid>`, a path because the run role name is
+already 64 characters; the existing `<prefix>-workspace-*` vending grant covers
+it. It is reported as `PlanRoleArn`, kept on the connection, staged and promoted
+with its run role, and dropped with the stack or a hand picked run role. Reader
+roles in `plan_assume_role_arns` must trust the plan role.
 
 ### Runs
 

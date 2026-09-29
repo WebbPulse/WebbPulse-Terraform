@@ -148,6 +148,8 @@ class Run(BaseModel):
     """Whether this run verifies a staged role rather than running as the current one."""
     run_role_arn: Optional[str] = None
     """The role this run was created with, and for a role check the role it assumes."""
+    plan_role_arn: Optional[str] = None
+    """The separate read only role its plan assumes, when the workspace has one."""
     created_at: str
     updated_at: Optional[str] = None
     started_at: Optional[str] = None

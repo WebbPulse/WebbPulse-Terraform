@@ -343,6 +343,17 @@
             "title": "Pending",
             "type": "boolean"
           },
+          "plan_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Role Arn"
+          },
           "reported_at": {
             "anyOf": [
               {
@@ -2446,6 +2457,17 @@
             "title": "Plan Only",
             "type": "boolean"
           },
+          "plan_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Role Arn"
+          },
           "queued_behind": {
             "anyOf": [
               {
@@ -2875,6 +2897,17 @@
             "title": "Plan Only",
             "type": "boolean"
           },
+          "plan_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Role Arn"
+          },
           "queued_behind": {
             "anyOf": [
               {
@@ -3270,6 +3303,28 @@
             ],
             "title": "Permissions Policy Arn"
           },
+          "plan_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Role Arn"
+          },
+          "plan_role_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Role Name"
+          },
           "region": {
             "title": "Region",
             "type": "string"
@@ -3334,6 +3389,11 @@
             ],
             "title": "Permissions",
             "type": "string"
+          },
+          "plan_role": {
+            "default": true,
+            "title": "Plan Role",
+            "type": "boolean"
           }
         },
         "title": "RunRoleQuickSetupCreate",
@@ -4105,6 +4165,19 @@
             "title": "Plan Assume Role Arns",
             "type": "array"
           },
+          "plan_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Role Arn"
+          },
           "run_role_account_id": {
             "anyOf": [
               {
@@ -4284,6 +4357,19 @@
             "title": "Plan Assume Role Arns",
             "type": "array"
           },
+          "plan_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Role Arn"
+          },
           "run_role_arn": {
             "anyOf": [
               {
@@ -4446,6 +4532,19 @@
               }
             ],
             "title": "Plan Assume Role Arns"
+          },
+          "plan_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Role Arn"
           },
           "run_role_arn": {
             "anyOf": [

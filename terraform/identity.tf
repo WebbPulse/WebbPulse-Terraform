@@ -60,6 +60,28 @@ module "identity" {
   enable_mfa_encryption_key = false
 
   api_keys_table_enabled = true
+  api_keys_table = {
+    attributes = [
+      { name = "key_hash", type = "S" },
+      { name = "user_id", type = "S" },
+      { name = "tenant_id", type = "S" },
+      { name = "created_at", type = "S" },
+    ]
+    hash_key = "key_hash"
+    global_secondary_indexes = [
+      {
+        name      = "user_id-created_at-index"
+        hash_key  = "user_id"
+        range_key = "created_at"
+      },
+      {
+        name      = "tenant_id-created_at-index"
+        hash_key  = "tenant_id"
+        range_key = "created_at"
+      },
+    ]
+    ttl_attribute = "purge_at"
+  }
 
   oauth_server_enabled = true
   oauth_server_tables = {

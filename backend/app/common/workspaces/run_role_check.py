@@ -38,6 +38,7 @@ from webbpulse.dynamodb import ConditionFailed, now_iso
 from ..composition.settings import Settings, get_settings
 from ..db import repositories
 from ..db.tables import RUNS_BY_WORKSPACE_INDEX, SEMAPHORE_RUN_ID
+from . import aws_connect
 from .reads import RunRoleMissing, get_workspace
 
 RunRoleCheckStatus = Literal["connected", "failed", "unverified"]
@@ -249,12 +250,28 @@ def check_run_role(workspace_id: str, *, settings: Settings | None = None) -> di
 
 
 def _promote(workspace_id: str, role_arn: str, *, settings: Settings) -> bool:
-    """Make the staged `role_arn` the workspace's run role, unless the staging changed meanwhile."""
+    """Make the staged `role_arn` the workspace's run role, unless the staging changed meanwhile.
+
+    A role a Quick setup connection staged brings its plan role along, or clears the
+    old one when the stack made none, so plans never keep a role from another stack.
+    """
+    workspace = get_workspace(workspace_id, settings=settings)
+    connection = dict(workspace.get(aws_connect.CONNECTION_ATTRIBUTE) or {})
+    expression = "SET run_role_arn = :role, updated_at = :now"
+    values: dict[str, Any] = {":role": role_arn, ":now": now_iso()}
+    removals = ["pending_run_role_arn"]
+    if connection.get("role_arn") == role_arn:
+        plan_role_arn = aws_connect.staged_plan_role(workspace, role_arn)
+        if plan_role_arn:
+            expression += f", {aws_connect.PLAN_ROLE_ATTRIBUTE} = :plan"
+            values[":plan"] = plan_role_arn
+        else:
+            removals.append(aws_connect.PLAN_ROLE_ATTRIBUTE)
     try:
         repositories.workspaces(settings).update(
             {"workspace_id": workspace_id},
-            update_expression="SET run_role_arn = :role, updated_at = :now REMOVE pending_run_role_arn",
-            expression_values={":role": role_arn, ":now": now_iso()},
+            update_expression=f"{expression} REMOVE {', '.join(removals)}",
+            expression_values=values,
             condition=Attr("pending_run_role_arn").eq(role_arn),
         )
     except ConditionFailed:

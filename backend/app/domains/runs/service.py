@@ -31,7 +31,7 @@ from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, Repository, new_ulid, now_iso
 
 from ...common.composition.settings import Settings, get_settings
-from ...common.core.auth import api_key_store
+from ...common.core.auth import revoke_run_key
 from ...common.db import repositories
 from ...common.db.tables import (
     RUNS_BY_RECENCY_INDEX,
@@ -413,6 +413,13 @@ def create_run(
         "created_at": timestamp,
         "updated_at": timestamp,
     }
+    plan_role_arn = (
+        aws_connect.staged_plan_role(workspace, role_arn)
+        if role_check
+        else str(workspace.get(aws_connect.PLAN_ROLE_ATTRIBUTE) or "")
+    )
+    if plan_role_arn:
+        item["plan_role_arn"] = plan_role_arn
     if role_check:
         item["run_role_check"] = True
     if vcs is not None:
@@ -910,10 +917,7 @@ def _record_run_role(workspace_id: str, *, settings: Settings) -> None:
 
 def _revoke_run_token(run: dict[str, Any], *, settings: Settings) -> None:
     """Revoke this run's token, tolerating one that was already gone."""
-    key_hash = str(run.get("run_token_hash", ""))
-    if not key_hash:
-        return
-    api_key_store(settings).revoke(key_hash)
+    revoke_run_key(str(run.get("run_token_hash", "") or ""), settings=settings)
 
 
 def _promote_queue(workspace_id: str, *, settings: Settings) -> None:
@@ -1385,6 +1389,12 @@ def _vending_role_arn(run: Mapping[str, Any], workspace: Mapping[str, Any]) -> s
     return str((run.get("run_role_arn") if run.get("run_role_check") else workspace.get("run_role_arn", "")) or "")
 
 
+def _plan_role_arn(run: Mapping[str, Any], workspace: Mapping[str, Any]) -> str:
+    """The separate plan role a plan is vended, or empty to vend the run role narrowed to read only."""
+    source = run if run.get("run_role_check") else workspace
+    return str(source.get("plan_role_arn") or "")
+
+
 def _plan_assume_role_arns(workspace: Mapping[str, Any]) -> list[str]:
     """The reader roles the workspace lets a plan assume, read at each vend so an edit takes effect on refresh."""
     return [str(arn) for arn in workspace.get("plan_assume_role_arns") or [] if str(arn).strip()]
@@ -1417,6 +1427,7 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         settings=resolved,
         workspace_name=str(workspace.get("name", "")),
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
+        plan_role_arn=_plan_role_arn(run, workspace),
     )
     identity = _workload_identity(
         workspace_reads.resolved_variables(workspace_id, settings=resolved)["env"],
@@ -1502,6 +1513,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
     endpoint = resolved.s3_endpoint_url
     workspace_state_key = state_key(workspace_id)
     role_arn = _vending_role_arn(run, workspace)
+    plan_role_arn = _plan_role_arn(run, workspace)
     provider, state = vending.vend(
         role_arn=role_arn,
         workspace_id=workspace_id,
@@ -1510,6 +1522,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         settings=resolved,
         workspace_name=str(workspace.get("name", "")),
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
+        plan_role_arn=plan_role_arn,
     )
     identity = _workload_identity(
         variables["env"], workspace_id, str(workspace.get("name", "")), run_id, phase, settings=resolved
@@ -1538,7 +1551,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
             "kms_key_id": resolved.STATE_KMS_KEY_ARN,
             "credentials": state.as_dict(),
         },
-        "run_role_arn": role_arn,
+        "run_role_arn": (phase == "plan" and plan_role_arn) or role_arn,
         "aws_credentials": provider.as_dict(),
         "terraform_variables": variables["terraform"],
         "hcl_variables": variables["hcl"],
