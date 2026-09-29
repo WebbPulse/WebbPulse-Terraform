@@ -191,7 +191,7 @@ def test_list_tags_stops_at_a_short_page(settings, github):
         httpx.Client(transport=httpx.MockTransport(github.handle)) as http,
         GitHubAppClient.from_settings(credentials, client=http) as app,
     ):
-        listed = list_tags(app, http, installation_id=INSTALLATION_ID, repository=REPO, max_pages=10)
+        listed = list_tags(app, installation_id=INSTALLATION_ID, repository=REPO, max_pages=10)
 
     assert len(listed) == 150
     assert github.tag_pages() == 2
