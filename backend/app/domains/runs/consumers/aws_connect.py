@@ -246,6 +246,15 @@ def _verify(workspace_id: str, account_id: str, pending: bool, request_id: str, 
     aws_connect.record_run(workspace_id, request_id, str(run["run_id"]), settings=settings)
 
 
+def _plan_role_allowed(
+    plan_role_arn: str, workspace_id: str, partition: str, account_id: str, *, settings: Settings
+) -> bool:
+    """Whether a reported plan role is none, or the one this workspace's stack in that account creates."""
+    return not plan_role_arn or plan_role_arn == aws_connect.expected_plan_role_arn(
+        workspace_id, partition, account_id, settings=settings
+    )
+
+
 def _create(request: Mapping[str, Any], *, settings: Settings, physical_id: str | None = None) -> None:
     """Connect the workspace a create names, or refuse it so the stack rolls back."""
     properties = _properties(request)
@@ -260,6 +269,10 @@ def _create(request: Mapping[str, Any], *, settings: Settings, physical_id: str 
     if role_arn != aws_connect.expected_role_arn(workspace_id, partition, account_id, settings=settings):
         _answer(request, "FAILED", refused, reason="The role is not this workspace's run role in this account.")
         return
+    plan_role_arn = properties.get("PlanRoleArn", "")
+    if not _plan_role_allowed(plan_role_arn, workspace_id, partition, account_id, settings=settings):
+        _answer(request, "FAILED", refused, reason="The plan role is not this workspace's plan role in this account.")
+        return
     result = aws_connect.connect(
         workspace_id,
         token=properties.get("ConnectToken", ""),
@@ -269,6 +282,7 @@ def _create(request: Mapping[str, Any], *, settings: Settings, physical_id: str 
         request_id=str(request["RequestId"]),
         physical_id=physical_id,
         trust_version=properties.get("TrustVersion", ""),
+        plan_role_arn=plan_role_arn,
         settings=settings,
     )
     if result.outcome == "invalid":
@@ -296,9 +310,9 @@ def _update(request: Mapping[str, Any], *, settings: Settings) -> None:
 
     An update that leaves the workspace, the stack and the role as the connection
     recorded them is answered SUCCESS unchanged, which also covers the rollback of a
-    refused update, and records the trust version the template now grants. A new
-    token is a fresh connect under the same physical id. A different workspace or a
-    role in another account is refused.
+    refused update, and records the trust version and plan role the template now
+    grants. A new token is a fresh connect under the same physical id. A different
+    workspace or a role in another account is refused.
     """
     physical_id = str(request.get("PhysicalResourceId") or "")
     new = _properties(request)
@@ -317,9 +331,15 @@ def _update(request: Mapping[str, Any], *, settings: Settings) -> None:
         and connection.get("role_arn") == new.get("RoleArn")
     )
     if unchanged:
+        plan_role_arn = new.get("PlanRoleArn", "")
+        if not _plan_role_allowed(plan_role_arn, workspace_id, stack[0], stack[1], settings=settings):
+            _answer(request, "FAILED", physical_id, reason="The plan role is not this workspace's plan role.")
+            return
         trust_version = new.get("TrustVersion", "")
         if trust_version != str(connection.get(aws_connect.TRUST_VERSION_FIELD) or ""):
             aws_connect.record_trust_version(workspace_id, physical_id, trust_version, settings=settings)
+        if plan_role_arn != str(connection.get(aws_connect.PLAN_ROLE_ATTRIBUTE) or ""):
+            aws_connect.record_plan_role(workspace_id, physical_id, plan_role_arn, settings=settings)
         _answer(request, "SUCCESS", physical_id, data={"WorkspaceId": workspace_id, "AccountId": stack[1]})
         return
     if workspace_id != old.get("WorkspaceId") or new.get("ConnectToken") == old.get("ConnectToken"):

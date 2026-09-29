@@ -347,7 +347,9 @@ def start_run_role_quick_setup(payload: RunRoleQuickSetupCreate, workspace_id: s
     does one with no connect topic when no account id is given.
     """
     try:
-        return quick_setup.start_quick_setup(workspace_id, payload.account_id, payload.permissions)
+        return quick_setup.start_quick_setup(
+            workspace_id, payload.account_id, payload.permissions, plan_role=payload.plan_role
+        )
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     except quick_setup.QuickSetupUnavailable as error:

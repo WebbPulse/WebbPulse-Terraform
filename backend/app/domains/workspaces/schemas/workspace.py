@@ -90,6 +90,17 @@ def validate_trigger_patterns(values: list[str]) -> list[str]:
     return cleaned
 
 
+def validate_plan_role_arn(value: str) -> str:
+    """A trimmed exact role ARN for the plan role, refusing wildcards and oversized values."""
+    arn = value.strip()
+    if len(arn) > PLAN_ASSUME_ROLE_ARN_MAX_LENGTH or not PLAN_ASSUME_ROLE_ARN_PATTERN.match(arn):
+        raise ValueError(
+            "plan_role_arn must be an exact IAM role ARN of the form "
+            "arn:aws:iam::<12 digit account id>:role/<name>, with no wildcards"
+        )
+    return arn
+
+
 def validate_plan_assume_role_arns(values: list[str]) -> list[str]:
     """Trimmed exact role ARNs, refusing wildcards, oversized entries and repeats.
 
@@ -140,6 +151,8 @@ class WorkspaceBase(BaseModel):
     engine: Engine = "terraform"
     engine_version: str = Field(min_length=1, max_length=32)
     run_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
+    plan_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
+    """A read only role plans assume instead of the run role. Applies keep the run role."""
     working_directory: str = ""
     description: str = ""
     vcs_repo: Optional[str] = Field(default=None, max_length=140, pattern=VCS_REPO_PATTERN)
@@ -188,10 +201,17 @@ class WorkspaceCreate(WorkspaceBase):
         """Accept exact role ARNs only."""
         return validate_plan_assume_role_arns(value)
 
+    @field_validator("plan_role_arn")
+    @classmethod
+    def _validate_plan_role_arn(cls, value: Optional[str]) -> Optional[str]:
+        """Accept an exact role ARN only."""
+        return None if value is None else validate_plan_role_arn(value)
+
 
 CLEARABLE_WORKSPACE_FIELDS: Final = (
     "run_role_arn",
     "pending_run_role_arn",
+    "plan_role_arn",
     "working_directory",
     "description",
     "vcs_repo",
@@ -230,6 +250,8 @@ class WorkspaceUpdate(BaseModel):
     """Switch runs to this role at once, dropping any pending role."""
     pending_run_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
     """Stage a role to switch to once a verification run assumes it. Null discards it."""
+    plan_role_arn: Optional[str] = Field(default=None, min_length=20, max_length=2048)
+    """Plan with this read only role instead of the run role. Null plans with the run role."""
     working_directory: Optional[str] = None
     description: Optional[str] = None
     vcs_repo: Optional[str] = Field(default=None, max_length=140, pattern=VCS_REPO_PATTERN)
@@ -263,6 +285,12 @@ class WorkspaceUpdate(BaseModel):
     def _validate_plan_assume_role_arns(cls, value: Optional[list[str]]) -> Optional[list[str]]:
         """Accept exact role ARNs only."""
         return None if value is None else validate_plan_assume_role_arns(value)
+
+    @field_validator("plan_role_arn")
+    @classmethod
+    def _validate_plan_role_arn(cls, value: Optional[str]) -> Optional[str]:
+        """Accept an exact role ARN only."""
+        return None if value is None else validate_plan_role_arn(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -309,6 +337,8 @@ class AwsConnection(BaseModel):
     """The account the stack was created in, from the stack's own ARN."""
     role_arn: Optional[str] = None
     """The role the stack created."""
+    plan_role_arn: Optional[str] = None
+    """The read only plan role the stack created beside it, if any."""
     pending: bool = False
     """True when the role was staged beside a working one, waiting on its verification run."""
     stack_id: Optional[str] = None
@@ -416,6 +446,8 @@ class RunRoleQuickSetupCreate(BaseModel):
     """The twelve digit AWS account the role is created in. Optional where the stack
     reports back, since the stack's own ARN names the account."""
     permissions: RunRolePermissions = "administrator"
+    plan_role: bool = True
+    """Also create a read only role for plans, so a plan never holds apply capable keys."""
 
     @model_validator(mode="before")
     @classmethod
@@ -438,6 +470,10 @@ class RunRoleQuickSetup(BaseModel):
     """True when the workspace already runs as another role, so this one is staged as
     `pending_run_role_arn` and switched to only once a verification run assumes it."""
     role_name: str
+    plan_role_name: Optional[str] = None
+    """The read only plan role's name, under its IAM path, or `None` when none is created."""
+    plan_role_arn: Optional[str] = None
+    """The plan role ARN for the given account, or `None` until the stack reports back."""
     stack_name: str
     region: str
     """The region the CloudFormation console opens in. The role itself is global."""

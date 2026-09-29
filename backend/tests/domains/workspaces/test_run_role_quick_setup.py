@@ -6,6 +6,7 @@ the rendering function alone.
 """
 
 import json
+import re
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
@@ -275,3 +276,56 @@ def test_no_vending_role_is_503(auth_client, monkeypatch):
     response = _start(auth_client, workspace_id)
     assert response.status_code == 503, response.text
     assert auth_client.get(f"{BASE}/{workspace_id}").json()["run_role_arn"] is None
+
+
+def test_quick_setup_creates_a_plan_role_by_default(auth_client):
+    """The link names the plan role, and the derived plan role is saved beside the run role."""
+    workspace_id = _create(auth_client)["workspace_id"]
+    suffix = workspace_id.removeprefix("ws-")
+
+    body = _start(auth_client, workspace_id).json()
+
+    assert body["plan_role_name"] == f"plan-{suffix}"
+    assert body["plan_role_arn"] == f"arn:aws:iam::{ACCOUNT}:role/{RUN_ROLE_NAME_PREFIX}plan/plan-{suffix}"
+    assert _fragment(body["console_url"])["param_PlanRoleName"] == f"plan-{suffix}"
+    saved = auth_client.get(f"{BASE}/{workspace_id}").json()
+    assert saved["plan_role_arn"] == body["plan_role_arn"]
+
+
+def test_quick_setup_without_a_plan_role(auth_client):
+    """Turning the plan role off leaves the parameter at its empty default and clears a previous plan role."""
+    workspace_id = _create(auth_client)["workspace_id"]
+    _start(auth_client, workspace_id)
+
+    body = _start(auth_client, workspace_id, plan_role=False).json()
+
+    assert body["plan_role_name"] is None
+    assert body["plan_role_arn"] is None
+    assert "param_PlanRoleName" not in _fragment(body["console_url"])
+    assert auth_client.get(f"{BASE}/{workspace_id}").json()["plan_role_arn"] is None
+
+
+def test_plan_role_name_pattern_admits_only_empty_or_a_workspace_plan_role(settings):
+    """The plan role name is empty or `plan-` and a workspace ULID."""
+    pattern = re.compile(quick_setup.template_body(settings)["Parameters"]["PlanRoleName"]["AllowedPattern"])
+    assert pattern.match("")
+    assert pattern.match("plan-01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    assert not pattern.match("plan-admin")
+    assert not pattern.match("Admin")
+
+
+@pytest.mark.parametrize("arn", ["arn:aws:iam::123456789012:role/*", "not-an-arn-at-all-really"])
+def test_a_hand_set_plan_role_must_be_an_exact_arn(auth_client, arn):
+    """A plan role set by hand is an exact role ARN, never a pattern."""
+    workspace_id = _create(auth_client)["workspace_id"]
+    response = auth_client.patch(f"{BASE}/{workspace_id}", json={"plan_role_arn": arn})
+    assert response.status_code == 422
+
+
+def test_a_plan_role_can_be_set_and_cleared_by_hand(auth_client):
+    """A hand made plan role is saved as given and a null clears it."""
+    workspace_id = _create(auth_client)["workspace_id"]
+    arn = "arn:aws:iam::123456789012:role/terraform/plan-reader"
+
+    assert auth_client.patch(f"{BASE}/{workspace_id}", json={"plan_role_arn": arn}).json()["plan_role_arn"] == arn
+    assert auth_client.patch(f"{BASE}/{workspace_id}", json={"plan_role_arn": None}).json()["plan_role_arn"] is None

@@ -76,6 +76,32 @@ def run_role_name(workspace_id: str, *, settings: Settings | None = None) -> str
     return f"{resolved.RUN_ROLE_NAME_PREFIX}{workspace_id.removeprefix(WORKSPACE_ID_PREFIX)}"
 
 
+PLAN_ROLE_PATH_SUFFIX: Final = "plan/"
+"""Appended to the run role prefix to form the path plan roles live under.
+
+A plan role cannot carry the run role's name plus a suffix, since that name already
+fills the sixty four characters IAM allows. The path does not count against that
+limit, and a path starting with the run role prefix keeps the plan role's ARN inside
+the vending role's existing AssumeRole grant."""
+
+PLAN_ROLE_NAME_PREFIX: Final = "plan-"
+"""What a plan role's name starts with, before the workspace ULID."""
+
+PLAN_ROLE_ATTRIBUTE: Final = "plan_role_arn"
+"""The workspace attribute naming the role plans assume instead of the run role."""
+
+
+def plan_role_path(*, settings: Settings | None = None) -> str:
+    """The IAM path Quick setup plan roles are created under."""
+    resolved = settings or get_settings()
+    return f"/{resolved.RUN_ROLE_NAME_PREFIX}{PLAN_ROLE_PATH_SUFFIX}"
+
+
+def plan_role_name(workspace_id: str) -> str:
+    """The name of one workspace's Quick setup plan role."""
+    return f"{PLAN_ROLE_NAME_PREFIX}{workspace_id.removeprefix(WORKSPACE_ID_PREFIX)}"
+
+
 def hash_token(token: str) -> str:
     """The stored form of a token. A plain hash suffices: the token carries 256 random bits."""
     return hashlib.sha256(token.encode()).hexdigest()
@@ -90,6 +116,12 @@ def stack_account(stack_id: str) -> tuple[str, str] | None:
 def expected_role_arn(workspace_id: str, partition: str, account_id: str, *, settings: Settings) -> str:
     """The only role ARN a stack in `account_id` may report for this workspace."""
     return f"arn:{partition}:iam::{account_id}:role/{run_role_name(workspace_id, settings=settings)}"
+
+
+def expected_plan_role_arn(workspace_id: str, partition: str, account_id: str, *, settings: Settings) -> str:
+    """The only plan role ARN a stack in `account_id` may report for this workspace."""
+    path = plan_role_path(settings=settings)
+    return f"arn:{partition}:iam::{account_id}:role{path}{plan_role_name(workspace_id)}"
 
 
 def _expires_at(now: datetime) -> str:
@@ -188,12 +220,15 @@ def connect(
     request_id: str,
     physical_id: str | None = None,
     trust_version: str = "",
+    plan_role_arn: str = "",
     settings: Settings | None = None,
 ) -> ConnectResult:
     """Consume a stack's token and stage the role it created.
 
-    The caller has already checked that `role_arn` is the one this workspace's
-    stack in `account_id` creates. A retry of a request that connected answers
+    The caller has already checked that `role_arn`, and `plan_role_arn` when the
+    stack made one, are the roles this workspace's stack in `account_id` creates.
+    The plan role travels with the run role: taken with it, or kept on the
+    connection until a verification run promotes the pair. A retry of a request that connected answers
     `repeat` with the same physical id. The write is conditional on the token
     hash, so two deliveries of one token cannot both consume it.
     """
@@ -229,6 +264,7 @@ def connect(
         "reported_at": now,
         "verification": "pending",
         TRUST_VERSION_FIELD: trust_version,
+        PLAN_ROLE_ATTRIBUTE: plan_role_arn,
     }
     names = {
         "#connection": CONNECTION_ATTRIBUTE,
@@ -244,6 +280,11 @@ def connect(
         removals.append("pending_run_role_arn")
         if current != role_arn:
             removals.extend(CHECK_FIELDS)
+        if plan_role_arn:
+            assignments += f", {PLAN_ROLE_ATTRIBUTE} = :plan"
+            values[":plan"] = plan_role_arn
+        else:
+            removals.append(PLAN_ROLE_ATTRIBUTE)
     try:
         repositories.workspaces(resolved).update(
             {"workspace_id": workspace_id},
@@ -382,6 +423,51 @@ def record_trust_version(
     return True
 
 
+def record_plan_role(
+    workspace_id: str, physical_id: str, plan_role_arn: str, *, settings: Settings | None = None
+) -> bool:
+    """Record the plan role an updated stack now provides, or no longer provides.
+
+    The connection always takes it. The workspace takes it too while it runs as the
+    connection's role; a staged connection hands it over when it is promoted.
+    """
+    resolved = settings or get_settings()
+    try:
+        workspace = get_workspace(workspace_id, settings=resolved)
+    except WorkspaceNotFound:
+        return False
+    connection = dict(workspace.get(CONNECTION_ATTRIBUTE) or {})
+    if connection.get("physical_id") != physical_id:
+        return False
+    names = {"#connection": CONNECTION_ATTRIBUTE, "#plan": PLAN_ROLE_ATTRIBUTE}
+    values: dict[str, Any] = {":plan": plan_role_arn}
+    expression = "SET #connection.#plan = :plan"
+    if connection.get("role_arn") and connection.get("role_arn") == workspace.get("run_role_arn"):
+        if plan_role_arn:
+            expression += ", #plan = :plan"
+        else:
+            expression += " REMOVE #plan"
+    try:
+        repositories.workspaces(resolved).update(
+            {"workspace_id": workspace_id},
+            update_expression=expression,
+            expression_names=names,
+            expression_values=values,
+            condition=Attr(f"{CONNECTION_ATTRIBUTE}.physical_id").eq(physical_id),
+        )
+    except ConditionFailed:
+        return False
+    return True
+
+
+def staged_plan_role(workspace: dict[str, Any], role_arn: str) -> str:
+    """The plan role that goes with `role_arn`, when a Quick setup connection provided both."""
+    connection = dict(workspace.get(CONNECTION_ATTRIBUTE) or {})
+    if not role_arn or connection.get("role_arn") != role_arn:
+        return ""
+    return str(connection.get(PLAN_ROLE_ATTRIBUTE) or "")
+
+
 def reconnect_required(workspace: dict[str, Any]) -> bool:
     """Whether the workspace's run role came from a Quick setup stack with an outdated trust.
 
@@ -427,6 +513,9 @@ def disconnect(workspace_id: str, *, stack_id: str, physical_id: str, settings: 
         removals.extend(("run_role_arn", *CHECK_FIELDS))
     if role_arn and str(workspace.get("pending_run_role_arn") or "") == role_arn:
         removals.append("pending_run_role_arn")
+    plan_role_arn = str(connection.get(PLAN_ROLE_ATTRIBUTE) or "")
+    if plan_role_arn and str(workspace.get(PLAN_ROLE_ATTRIBUTE) or "") == plan_role_arn:
+        removals.append(PLAN_ROLE_ATTRIBUTE)
     expression = "SET #connection.#status = :status, #connection.disconnected_at = :now, updated_at = :now"
     if removals:
         expression += " REMOVE " + ", ".join(removals)
@@ -447,6 +536,7 @@ __all__ = [
     "CONNECTION_ATTRIBUTE",
     "FAILED_RUN_STATUSES",
     "PHYSICAL_ID_PREFIX",
+    "PLAN_ROLE_ATTRIBUTE",
     "TRUST_VERSION",
     "TRUST_VERSION_FIELD",
     "TOKEN_EXPIRES_ATTRIBUTE",
@@ -459,14 +549,19 @@ __all__ = [
     "connect",
     "current_connection",
     "disconnect",
+    "expected_plan_role_arn",
     "expected_role_arn",
     "fail_verification",
     "hash_token",
     "issue_token",
+    "plan_role_name",
+    "plan_role_path",
     "reconnect_required",
+    "record_plan_role",
     "record_run",
     "record_trust_version",
     "record_verification",
     "run_role_name",
     "stack_account",
+    "staged_plan_role",
 ]

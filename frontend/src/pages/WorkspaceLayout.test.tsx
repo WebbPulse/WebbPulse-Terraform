@@ -1021,7 +1021,7 @@ describe('Connect AWS', () => {
     expect(open).toHaveBeenCalledWith('', '_blank');
     expect(apiMock.startRunRoleQuickSetup).toHaveBeenCalledWith(
       'ws-01J000000000000000000000',
-      { permissions: 'read_only' }
+      { permissions: 'read_only', plan_role: true }
     );
     const waiting = await screen.findByTestId('aws-connect-waiting');
     expect(waiting).toHaveTextContent('Waiting for the stack in AWS');
@@ -1031,6 +1031,29 @@ describe('Connect AWS', () => {
     expect(
       screen.getByRole('button', { name: 'Connect AWS again' })
     ).toBeInTheDocument();
+  });
+
+  it('lets the separate plan role be turned off', async () => {
+    const tab = aTab();
+    vi.spyOn(window, 'open').mockReturnValue(tab as never);
+    apiMock.startRunRoleQuickSetup.mockResolvedValue(aQuickSetup());
+
+    renderDetail();
+
+    const setup = await screen.findByRole('form', { name: 'Connect AWS' });
+    const planRole = within(setup).getByRole('checkbox', {
+      name: /separate read only role for plans/,
+    });
+    expect(planRole).toBeChecked();
+    await userEvent.click(planRole);
+    await userEvent.click(
+      within(setup).getByRole('button', { name: 'Connect AWS' })
+    );
+
+    expect(apiMock.startRunRoleQuickSetup).toHaveBeenCalledWith(
+      'ws-01J000000000000000000000',
+      { permissions: 'administrator', plan_role: false }
+    );
   });
 
   it('rereads the workspace while the stack has not reported back', async () => {
@@ -1195,6 +1218,25 @@ describe('Connect AWS', () => {
       'href',
       '/workspaces/ws-01J000000000000000000000/runs/run-01J000000000000000000009'
     );
+  });
+
+  it('shows the plan role beside the run role', async () => {
+    const planRoleArn =
+      'arn:aws:iam::123456789012:role/webbpulse-terraform-test-workspace-plan/plan-01J000000000000000000000';
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({
+        plan_role_arn: planRoleArn,
+        aws_connection: aReport({ plan_role_arn: planRoleArn }),
+      })
+    );
+
+    renderDetail(RUN_ROLE_SETTINGS);
+
+    const connected = await screen.findByTestId('connected-account');
+    expect(connected).toHaveTextContent('Run role ARN');
+    expect(connected).toHaveTextContent('Plan role ARN');
+    expect(connected).toHaveTextContent(planRoleArn);
+    expect(connected).toHaveTextContent('Plans assume the read only plan role');
   });
 
   it('marks the account verified once a run has assumed the role', async () => {

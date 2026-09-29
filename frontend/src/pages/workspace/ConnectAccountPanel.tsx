@@ -448,6 +448,7 @@ function ConnectedRole({
       ? accountStatus(workspace, runRoleCheck).state === 'connected'
       : verification.state === 'verified';
   const reported = connectionFor(workspace.aws_connection ?? null, arn);
+  const planRoleArn = workspace.plan_role_arn ?? null;
   return (
     <section
       aria-label="Connected AWS account"
@@ -467,7 +468,9 @@ function ConnectedRole({
             />
           </h3>
           <p className="mt-0.5 text-xs text-text-muted">
-            Runs assume this role to read and write your infrastructure.
+            {planRoleArn === null
+              ? 'Runs assume this role to read and write your infrastructure.'
+              : 'Applies assume the run role. Plans assume the read only plan role, so a plan never holds keys that can change your infrastructure.'}
           </p>
         </div>
         <Button variant="secondary" onClick={onChange}>
@@ -476,8 +479,20 @@ function ConnectedRole({
       </div>
       <div className="space-y-4 px-4 py-4">
         <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
-          <ValueRow label="Role ARN" value={arn} />
+          <ValueRow
+            label={planRoleArn === null ? 'Role ARN' : 'Run role ARN'}
+            value={arn}
+          />
+          {planRoleArn === null ? null : (
+            <ValueRow label="Plan role ARN" value={planRoleArn} />
+          )}
         </dl>
+        {planRoleArn === null ? null : (
+          <p className="text-xs text-text-faint">
+            Roles a plan assumes beyond its own account must trust the plan
+            role.
+          </p>
+        )}
         <VerificationOutcome verification={verification} />
         <ConnectionCheck
           workspace={workspace}
@@ -654,13 +669,14 @@ function QuickSetup({
 }): React.ReactElement {
   const [permissions, setPermissions] =
     useState<RunRolePermissions>('administrator');
+  const [planRole, setPlanRole] = useState(true);
   const [launched, setLaunched] = useState<RunRoleQuickSetup | null>(null);
   const [blocked, setBlocked] = useState(false);
   const connection = workspace.aws_connection ?? null;
   const waiting = isWaiting(connection);
 
   const start = useMutationWithRefetch(
-    (body: { permissions: RunRolePermissions }) =>
+    (body: { permissions: RunRolePermissions; plan_role: boolean }) =>
       api.startRunRoleQuickSetup(workspace.workspace_id, body),
     keys.workspace
   );
@@ -674,7 +690,7 @@ function QuickSetup({
       tab.opener = null;
     }
     try {
-      const answer = await start.mutate({ permissions });
+      const answer = await start.mutate({ permissions, plan_role: planRole });
       invalidateQueries(keys.runRoleCheck);
       setLaunched(answer);
       setBlocked(tab === null);
@@ -733,6 +749,23 @@ function QuickSetup({
             )}
           </Field>
         </div>
+        <label className="flex items-start gap-2 text-sm text-text">
+          <input
+            type="checkbox"
+            checked={planRole}
+            onChange={(event) => {
+              setPlanRole(event.target.checked);
+            }}
+            className="mt-0.5 accent-accent"
+          />
+          <span>
+            Create a separate read only role for plans
+            <span className="block text-xs text-text-faint">
+              Plans assume a ReadOnlyAccess role, so only applies hold keys that
+              can change your infrastructure.
+            </span>
+          </span>
+        </label>
         <ErrorNotice error={start.error} />
         <div className="flex flex-wrap items-center gap-2">
           <Button
