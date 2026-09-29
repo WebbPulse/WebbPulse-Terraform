@@ -23,7 +23,7 @@ provider "aws" {
     for_each = local.workload_dns_role_arn == "" ? [] : [local.workload_dns_role_arn]
 
     content {
-      role_arn = assume_role.value
+      role_arn = var.webbpulse_run_phase == "plan" ? var.route53_read_role_arn : assume_role.value
     }
   }
 
@@ -40,7 +40,7 @@ provider "aws" {
     for_each = var.route53_write_role_arn == "" ? [] : [var.route53_write_role_arn]
 
     content {
-      role_arn = assume_role.value
+      role_arn = var.webbpulse_run_phase == "plan" ? var.route53_read_role_arn : assume_role.value
     }
   }
 

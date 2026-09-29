@@ -7,10 +7,12 @@ import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
-from typing import Mapping, Sequence, cast
+from typing import IO, Any, Mapping, Sequence, cast
 
+from app.isolation import EngineUser, sweep
 from app.logs import LogSink
 from app.models import Changes, Engine, Phase
 
@@ -104,7 +106,11 @@ def resolve_binary(engine: Engine) -> str:
 
 
 class EngineRunner:
-    """Invokes engine subcommands in one working directory with one credential set."""
+    """Invokes engine subcommands in one working directory with one credential set.
+
+    With a `user` every subcommand runs as that user, and every process of the user
+    is killed once the subcommand exits, before its output is read to the end.
+    """
 
     def __init__(
         self,
@@ -114,6 +120,7 @@ class EngineRunner:
         sink: LogSink,
         binary: str | None = None,
         interrupt: Interrupt | None = None,
+        user: EngineUser | None = None,
     ) -> None:
         self._binary = binary or resolve_binary(engine)
         self._interrupt = interrupt or Interrupt()
@@ -121,6 +128,24 @@ class EngineRunner:
         self._directory = directory
         self._environment = environment
         self._sink = sink
+        self._user = user
+
+    @property
+    def directory(self) -> Path:
+        """The working directory every subcommand runs in."""
+        return self._directory
+
+    def _identity(self) -> dict[str, Any]:
+        """The Popen arguments that drop a subcommand to the engine user, empty without one."""
+        if self._user is None:
+            return {}
+        return {"user": self._user.uid, "group": self._user.gid, "extra_groups": []}
+
+    def _stream(self, stream: IO[str]) -> None:
+        """Copy a subcommand's combined output to the sink until every writer has closed it."""
+        for line in stream:
+            self._sink.write(line)
+        stream.close()
 
     def run(
         self,
@@ -135,43 +160,73 @@ class EngineRunner:
         subcommands whose output is a document rather than progress.
         `extra_environment` is added for this subcommand alone. Once an interrupt
         is requested no subcommand starts and each reports `INTERRUPTED_EXIT`.
+        The exit code is the one the runner saw the engine exit with, and the
+        engine user is swept before the output is read to its end, so nothing the
+        engine left running can add to it.
         """
         if self._interrupt.requested:
             self._sink.write(f"skipped {self._engine} {' '.join(arguments)}: {self._interrupt.reason}")
             return INTERRUPTED_EXIT, ""
         command = [self._binary, *arguments]
-        environment = {**self._environment, **(extra_environment or {})}
+        environment = {
+            **self._environment,
+            **(extra_environment or {}),
+            **(self._user.environment() if self._user else {}),
+        }
         self._sink.write(f"$ {self._engine} {' '.join(arguments)}")
         if capture:
-            completed = subprocess.run(  # noqa: S603
-                command,
-                cwd=self._directory,
-                env=environment,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            for line in completed.stderr.splitlines():
-                self._sink.write(line)
-            return completed.returncode, completed.stdout
+            return self._run_captured(command, environment)
         process = subprocess.Popen(  # noqa: S603
             command,
             cwd=self._directory,
             env=environment,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            **self._identity(),
         )
+        assert process.stdout is not None
+        reader = threading.Thread(target=self._stream, args=(process.stdout,), daemon=True)
+        reader.start()
         self._interrupt.attach(process)
         try:
-            assert process.stdout is not None
-            for line in process.stdout:
-                self._sink.write(line)
-            process.stdout.close()
-            return process.wait(), ""
+            exit_code = process.wait()
         finally:
             self._interrupt.detach()
+            sweep(self._user)
+        reader.join()
+        return exit_code, ""
+
+    def _run_captured(self, command: list[str], environment: dict[str, str]) -> tuple[int, str]:
+        """Run one subcommand into runner owned files, returning its exit code and stdout.
+
+        The files are read only after the engine user is swept, so the document is
+        what the engine printed before it exited and nothing written after.
+        """
+        with tempfile.TemporaryFile("w+") as stdout, tempfile.TemporaryFile("w+") as stderr:
+            process = subprocess.Popen(  # noqa: S603
+                command,
+                cwd=self._directory,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=stdout,
+                stderr=stderr,
+                text=True,
+                **self._identity(),
+            )
+            self._interrupt.attach(process)
+            try:
+                exit_code = process.wait()
+            finally:
+                self._interrupt.detach()
+                sweep(self._user)
+            stderr.seek(0)
+            for line in stderr.read().splitlines():
+                self._sink.write(line)
+            stdout.seek(0)
+            return exit_code, stdout.read()
 
     def init(self, extra_environment: Mapping[str, str] | None = None) -> int:
         """Initialise the working directory against the S3 backend.
@@ -190,9 +245,9 @@ class EngineRunner:
         exit_code, _ = self.run(arguments)
         return exit_code
 
-    def show_plan_json(self) -> tuple[int, str]:
-        """Render the plan file as JSON."""
-        return self.run(["show", "-json", PLAN_FILE], capture=True)
+    def show_plan_json(self, plan: Path | None = None) -> tuple[int, str]:
+        """Render a plan file as JSON, the working directory's own unless `plan` names another."""
+        return self.run(["show", "-json", str(plan) if plan else PLAN_FILE], capture=True)
 
     def apply(self) -> int:
         """Apply a saved plan file."""

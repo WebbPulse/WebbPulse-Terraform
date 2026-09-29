@@ -17,7 +17,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from app.credential_files import parse_expiration, write_private
+from app.credential_files import parse_expiration, private_directory, write_private
 from app.models import GcpWorkloadIdentity, WorkloadIdentity
 
 GOOGLE_STS_URL = "https://sts.googleapis.com/v1/token"
@@ -55,8 +55,9 @@ class WorkloadIdentityFiles:
     what the run uploads.
     """
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, group: int | None = None) -> None:
         self.directory = directory
+        self._group = group
         self.expires_at: datetime | None = None
         self._environment: dict[str, str] = {}
 
@@ -82,17 +83,20 @@ class WorkloadIdentityFiles:
         """
         if identity is None or (identity.gcp is None and identity.azure is None):
             return
-        self.directory.mkdir(parents=True, exist_ok=True)
-        self.directory.chmod(0o700)
+        private_directory(self.directory, self._group)
         environment: dict[str, str] = {}
         expiries: list[datetime | None] = []
         if identity.gcp is not None:
-            write_private(self.gcp_token_path, identity.gcp.token)
-            write_private(self.gcp_credentials_path, json.dumps(external_account(identity.gcp, self.gcp_token_path)))
+            write_private(self.gcp_token_path, identity.gcp.token, self._group)
+            write_private(
+                self.gcp_credentials_path,
+                json.dumps(external_account(identity.gcp, self.gcp_token_path)),
+                self._group,
+            )
             environment["GOOGLE_APPLICATION_CREDENTIALS"] = str(self.gcp_credentials_path)
             expiries.append(parse_expiration(identity.gcp.expiration))
         if identity.azure is not None:
-            write_private(self.azure_token_path, identity.azure.token)
+            write_private(self.azure_token_path, identity.azure.token, self._group)
             environment.update(
                 {
                     "ARM_USE_OIDC": "true",
