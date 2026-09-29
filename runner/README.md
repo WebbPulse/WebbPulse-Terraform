@@ -9,7 +9,7 @@ domain, runs Terraform or OpenTofu, and reports back through the task token.
 | Path | Holds |
 | --- | --- |
 | `Dockerfile` | linux/arm64 image: pinned Terraform and OpenTofu, git, the uv installed `app` package |
-| `versions.env` | the pinned engine versions and their per architecture SHA256 sums |
+| `versions.env` | the pinned engine versions, their per architecture SHA256 sums and the release key fingerprints |
 | `app/models.py` | the runner environment and the bundle the runs domain serves |
 | `app/api.py` | bundle fetch, presigned artifact transfers, phase result post |
 | `app/workspace.py` | config tarball unpack, the S3 backend override, the two tfvars files |
@@ -110,11 +110,20 @@ The engine comes from the bundle's `engine` field, `terraform` or `tofu`, and it
 version from `engine_version`. An empty pin, or one equal to the release the image
 bakes (read from `version -json`), runs the baked binary. Any other pin must be an
 exact release such as `1.11.0`: the runner downloads that release's linux zip and
-`SHA256SUMS` from `releases.hashicorp.com` or the OpenTofu GitHub releases, checks
-the archive against the listed sum, unpacks it into the run's temporary directory
-and runs it from there. A constraint, a missing release or a checksum mismatch
-fails the phase as `EngineInstallFailed`. The SUMS file's GPG signature is not
-checked, so the download trusts TLS and the publisher's SUMS file.
+`SHA256SUMS` from `releases.hashicorp.com` or the OpenTofu GitHub releases,
+verifies the SUMS file's detached signature (`.sig`, or `.gpgsig` for OpenTofu)
+with `gpgv` against the publisher's release key baked into the image, requires the
+signing primary key to be the fingerprint pinned in `app/install.py`, checks the
+archive against the listed sum, unpacks it into the run's temporary directory and
+runs it from there. A constraint, a missing release or signature, a signature from
+any other key or a checksum mismatch fails the phase as `EngineInstallFailed`.
+
+The image build fetches each release key from the publisher's own published
+location (`https://www.hashicorp.com/.well-known/pgp-key.txt` and
+`https://get.opentofu.org/opentofu.asc`), not from the download hosts, refuses it
+unless it is exactly the key whose fingerprint `versions.env` pins, and bakes it
+under `/usr/local/share/webbpulse-runner/keys` (`ENGINE_KEYRING_DIRECTORY`). A unit
+test keeps the `versions.env` and `app/install.py` fingerprints equal.
 
 ## Logging
 

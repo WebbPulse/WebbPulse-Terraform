@@ -179,7 +179,11 @@ def test_a_passkey_is_added_on_the_security_page(
     login_form: Any,
     e2e_env: Any,
 ) -> None:
-    """Signed in with a password, the security page registers a passkey on the device."""
+    """Signed in with a password, the security page registers a passkey on the device.
+
+    The added notice shows as soon as registration succeeds, while the list is still being
+    read again, so the new row is awaited rather than counted the moment the notice appears.
+    """
     timeout = e2e_env.browser_timeout_ms
     page = passkey_browser.page
     page.goto(login_form.path, wait_until="domcontentloaded")
@@ -195,7 +199,8 @@ def test_a_passkey_is_added_on_the_security_page(
 
     page.wait_for_selector(ADDED_NOTICE, state="visible", timeout=timeout)
     rows = page.locator(PASSKEY_ROWS).filter(has_text=PASSKEY_NAME)
-    assert rows.count() == 1, "the new passkey is not listed on the security page"
+    rows.first.wait_for(state="visible", timeout=timeout)
+    assert rows.count() == 1, "the new passkey is not listed once on the security page"
     assert _credential_count(passkey_browser) == 1, "the authenticator holds no credential after adding one"
     passkey_user.registered = True
 
