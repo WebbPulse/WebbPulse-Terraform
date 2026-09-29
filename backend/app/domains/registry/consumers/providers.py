@@ -34,7 +34,6 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Collection, Final, Mapping
 
-import httpx
 from boto3.dynamodb.conditions import Attr
 from webbpulse.dynamodb import ConditionFailed, now_iso
 from webbpulse.integrations.github import GitHubAppClient, GitHubNotConfigured
@@ -335,7 +334,6 @@ def publish(
     provider: Mapping[str, Any],
     message: Mapping[str, Any],
     app: GitHubAppClient,
-    http: httpx.Client,
     *,
     settings: Settings,
 ) -> str:
@@ -344,19 +342,16 @@ def publish(
 
     def source() -> tuple[Collection[str], Fetch]:
         """The release's asset names and a fetch through the installation token."""
-        release = get_release(
-            app, http, installation_id=installation_id, repository=repository, tag=str(message["tag"])
-        )
-        assets = {str(item.get("name")): item for item in release.get("assets") or [] if isinstance(item, Mapping)}
+        release = get_release(app, installation_id=installation_id, repository=repository, tag=str(message["tag"]))
+        assets = {asset.name: asset.id for asset in release.assets}
 
         def fetch(name: str, target: Path, max_bytes: int) -> str:
             """Download one asset by its id."""
             return download_asset(
                 app,
-                http,
                 installation_id=installation_id,
                 repository=repository,
-                asset_id=str(assets[name]["id"]),
+                asset_id=assets[name],
                 target=target,
                 max_bytes=max_bytes,
             )
@@ -400,9 +395,7 @@ def handle_release(record: Mapping[str, Any], *, settings: Settings | None = Non
     outcomes: dict[str, str] = {}
     with tags.http_client() as http, GitHubAppClient.from_settings(credentials, client=http) as app:
         for provider in sorted(connected, key=lambda row: str(row["pk"])):
-            outcomes[f"{provider['namespace']}/{provider['type']}"] = publish(
-                provider, message, app, http, settings=resolved
-            )
+            outcomes[f"{provider['namespace']}/{provider['type']}"] = publish(provider, message, app, settings=resolved)
     return outcomes
 
 
@@ -653,16 +646,15 @@ def handle_sync(record: Mapping[str, Any], *, settings: Settings | None = None) 
     with tags.http_client() as http, GitHubAppClient.from_settings(credentials, client=http) as app:
         listed = list_releases(
             app,
-            http,
             installation_id=str(provider["vcs_installation_id"]),
             repository=str(provider["vcs_repo"]),
             max_pages=MAX_RELEASE_PAGES,
         )
     found: dict[str, str] = {}
     for release in listed:
-        if release.get("draft"):
+        if release.draft:
             continue
-        tag = str(release.get("tag_name") or "")
+        tag = release.tag_name
         version = semver_version(tag)
         if version is not None and (version not in found or tag.startswith("v")):
             found[version] = tag
