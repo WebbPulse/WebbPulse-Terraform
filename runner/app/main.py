@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, Callable, cast
 import boto3
 import httpx
 
-from app import engine, identity, install, workspace
+from app import engine, identity, install, isolation, workspace
 from app.api import ApiError, RunnerApi, build_client
 from app.credential_files import CredentialFiles
 from app.heartbeat import Heartbeat
@@ -91,14 +92,49 @@ def obtain_run_token(env: RunnerEnv, clients: Clients, api: RunnerApi) -> str:
     return token
 
 
+def seal_plan(source: Path, destination: Path, user: isolation.EngineUser | None) -> None:
+    """Copy the engine's plan file to where only the runner can write, refusing anything but that file.
+
+    The source sits in a directory the engine user owns, so it could be swapped for
+    a link to a file only the runner may read. It is opened without following a
+    link and must be a regular file, owned by the engine user when there is one.
+    """
+    try:
+        descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as error:
+        raise PhaseFailure("PlanUnavailable", f"the plan file could not be opened: {type(error).__name__}") from error
+    with os.fdopen(descriptor, "rb") as handle:
+        status = os.fstat(handle.fileno())
+        if not stat.S_ISREG(status.st_mode) or (user is not None and status.st_uid != user.uid):
+            raise PhaseFailure("PlanUnavailable", "the plan file is not a regular file the engine wrote")
+        destination.write_bytes(handle.read())
+    destination.chmod(0o644)
+
+
+def plan_document(plan_json: str) -> str:
+    """The `show -json` output, refused unless it is one JSON object.
+
+    Anything else would otherwise count as a plan with no changes.
+    """
+    try:
+        document: object = json.loads(plan_json)
+    except json.JSONDecodeError as error:
+        raise PhaseFailure("PlanShowFailed", "show -json printed no plan document") from error
+    if not isinstance(document, dict):
+        raise PhaseFailure("PlanShowFailed", "show -json printed no plan document")
+    return plan_json
+
+
 def _run_plan(
     runner: engine.EngineRunner,
     sink: CloudWatchLogSink,
+    sealed_plan: Path,
     *,
     destroy: bool = False,
     init_environment: dict[str, str] | None = None,
+    user: isolation.EngineUser | None = None,
 ) -> tuple[int, Changes, bool, str]:
-    """Init, plan and render the plan JSON, returning the exit code and change counts.
+    """Init, plan, seal the plan file and render it as JSON, returning the exit code and change counts.
 
     `destroy` plans the removal of every managed resource, which the apply phase then
     applies from the saved plan like any other.
@@ -106,7 +142,10 @@ def _run_plan(
     The plan runs under `-detailed-exitcode`, so it exits 0 with no changes and 2
     with changes. Both are successful plans, so both return 0 and the change
     counts alone say whether there were changes. Any other code is `PlanFailed`.
-    `init_environment` is the registry credential, given to `init` alone.
+    `init_environment` is the registry credential, given to `init` alone. The plan
+    file is copied to `sealed_plan` once the engine user has been swept, and that
+    copy is the one rendered and uploaded, so the counts and the plan the apply
+    runs are the same file.
     """
     init_code = runner.init(init_environment)
     if init_code != 0:
@@ -114,10 +153,11 @@ def _run_plan(
     plan_code = runner.plan(destroy=destroy)
     if plan_code not in (engine.NO_CHANGES_EXIT, engine.CHANGES_EXIT):
         raise PhaseFailure("PlanFailed", f"plan exited {plan_code}")
-    show_code, plan_json = runner.show_plan_json()
+    seal_plan(runner.directory / engine.PLAN_FILE, sealed_plan, user)
+    show_code, plan_json = runner.show_plan_json(sealed_plan)
     if show_code != 0:
         raise PhaseFailure("PlanShowFailed", f"show -json exited {show_code}")
-    changes, has_changes = engine.parse_changes(plan_json)
+    changes, has_changes = engine.parse_changes(plan_document(plan_json))
     return 0, changes, has_changes, plan_json
 
 
@@ -229,6 +269,12 @@ def _run_phase(
 ) -> PhaseResult:
     """The phase itself, from the bundle fetch to the posted result."""
     try:
+        user = isolation.engine_user()
+    except isolation.IsolationError as error:
+        raise PhaseFailure("EngineIsolationUnavailable", str(error)) from error
+    if user is not None:
+        directory.chmod(0o711)
+    try:
         bundle: Bundle = api.fetch_bundle()
     except ApiError as error:
         if error.error_code == RUN_ROLE_ASSUME_FAILED_CODE:
@@ -250,10 +296,12 @@ def _run_phase(
         engine_directory = workspace.prepare(config_directory, bundle, archive)
     except workspace.ConfigError as error:
         raise PhaseFailure("ConfigUnpackFailed", str(error)) from error
+    isolation.hand_over(config_directory, user)
 
-    credentials = CredentialFiles(directory / "aws")
+    group = user.gid if user else None
+    credentials = CredentialFiles(directory / "aws", group=group)
     credentials.write(bundle.aws_credentials, bundle.backend.credentials)
-    identity_files = WorkloadIdentityFiles(directory / "identity")
+    identity_files = WorkloadIdentityFiles(directory / "identity", group=group)
     identity_files.write(bundle.workload_identity)
     environment = engine.build_environment(
         dict(os.environ),
@@ -272,7 +320,7 @@ def _run_phase(
         identity=identity_files,
     )
     with refresher:
-        return _run_engine(env, clients, directory, api, sink, interrupt, bundle, engine_directory, environment)
+        return _run_engine(env, clients, directory, api, sink, interrupt, bundle, engine_directory, environment, user)
 
 
 def _run_engine(
@@ -285,29 +333,40 @@ def _run_engine(
     bundle: Bundle,
     engine_directory: Path,
     environment: dict[str, str],
+    user: isolation.EngineUser | None = None,
 ) -> PhaseResult:
     """Install the engine, run the phase's subcommands, upload the artifacts and post the result.
 
     It runs while the credential refresher keeps the engine's AWS sessions fresh.
+    Every subcommand runs as `user` when there is one. The plan artifacts are kept
+    in a directory only the runner can write, never in the engine's own.
     """
     try:
         binary = install.ensure_engine(bundle.engine, bundle.engine_version, directory / "engines", clients.http, sink)
     except install.InstallError as error:
         raise PhaseFailure("EngineInstallFailed", str(error)) from error
-    runner = engine.EngineRunner(bundle.engine, engine_directory, environment, sink, binary, interrupt)
+    runner = engine.EngineRunner(bundle.engine, engine_directory, environment, sink, binary, interrupt, user)
 
     plan_path = engine_directory / engine.PLAN_FILE
-    plan_json_path = engine_directory / engine.PLAN_JSON_FILE
+    artifacts = directory / "artifacts"
+    artifacts.mkdir(mode=0o755, exist_ok=True)
+    sealed_plan = artifacts / engine.PLAN_FILE
+    plan_json_path = artifacts / engine.PLAN_JSON_FILE
     changes = Changes()
     has_changes = False
 
     if env.phase == "plan":
         exit_code, changes, has_changes, plan_json = _run_plan(
-            runner, sink, destroy=bundle.is_destroy, init_environment=bundle.init_environment()
+            runner,
+            sink,
+            sealed_plan,
+            destroy=bundle.is_destroy,
+            init_environment=bundle.init_environment(),
+            user=user,
         )
         plan_json_path.write_text(plan_json)
         try:
-            api.upload_file("plan", plan_path)
+            api.upload_file("plan", sealed_plan)
             api.upload_file("plan_json", plan_json_path)
         except ApiError as error:
             raise PhaseFailure("ArtifactUploadFailed", str(error)) from error

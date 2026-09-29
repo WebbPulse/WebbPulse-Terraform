@@ -24,6 +24,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from app.isolation import share
 from app.models import VendedCredentials
 
 RUN_PROFILE = "webbpulse-run"
@@ -64,13 +65,25 @@ def process_document(credentials: VendedCredentials, margin_seconds: int = EXPIR
     return document
 
 
-def write_private(path: Path, body: str) -> None:
-    """Replace `path` atomically with an owner only file, so a reader never sees half a document."""
+def private_directory(directory: Path, group: int | None = None) -> None:
+    """Create `directory` for the runner alone, or readable by `group` as well when one is given."""
+    directory.mkdir(parents=True, exist_ok=True)
+    directory.chmod(0o700)
+    share(directory, group)
+
+
+def write_private(path: Path, body: str, group: int | None = None) -> None:
+    """Replace `path` atomically with an owner only file, so a reader never sees half a document.
+
+    With `group` the file is readable by that group too, which is how the engine
+    user reads what the runner writes without being able to rewrite it.
+    """
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         with os.fdopen(descriptor, "w") as handle:
             handle.write(body)
         os.chmod(temporary, 0o600)
+        share(Path(temporary), group)
         os.replace(temporary, path)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
@@ -84,9 +97,10 @@ class CredentialFiles:
     packed into what the run uploads.
     """
 
-    def __init__(self, directory: Path, margin_seconds: int = EXPIRY_MARGIN_SECONDS) -> None:
+    def __init__(self, directory: Path, margin_seconds: int = EXPIRY_MARGIN_SECONDS, group: int | None = None) -> None:
         self.directory = directory
         self._margin_seconds = margin_seconds
+        self._group = group
         self.expires_at: datetime | None = None
 
     @property
@@ -109,13 +123,16 @@ class CredentialFiles:
         `expires_at` becomes the earlier of the two real expiries, which is when
         the next refresh is due.
         """
-        self.directory.mkdir(parents=True, exist_ok=True)
-        self.directory.chmod(0o700)
+        private_directory(self.directory, self._group)
         for profile, credentials in ((RUN_PROFILE, provider), (STATE_PROFILE, state)):
-            write_private(self.session_path(profile), json.dumps(process_document(credentials, self._margin_seconds)))
+            write_private(
+                self.session_path(profile),
+                json.dumps(process_document(credentials, self._margin_seconds)),
+                self._group,
+            )
         if not self.config_path.exists():
-            write_private(self.config_path, self._config())
-            write_private(self.credentials_path, "")
+            write_private(self.config_path, self._config(), self._group)
+            write_private(self.credentials_path, "", self._group)
         expiries = [
             expiry for expiry in (parse_expiration(provider.expiration), parse_expiration(state.expiration)) if expiry
         ]
