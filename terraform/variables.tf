@@ -53,6 +53,29 @@ variable "route53_write_role_arn" {
   }
 }
 
+variable "route53_read_role_arn" {
+  description = "Read-only counterpart of route53_write_role_arn, assumed instead of it during plans on the WebbPulse control plane. Pushed by WebbPulse-Platform next to the writer."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.route53_write_role_arn == "" || var.route53_read_role_arn != ""
+    error_message = "route53_read_role_arn must be set whenever route53_write_role_arn is: plans on the WebbPulse control plane assume the reader. WebbPulse-Platform pushes both to the workspace."
+  }
+}
+
+variable "webbpulse_run_phase" {
+  description = "Run phase the WebbPulse control plane exports as TF_VAR_webbpulse_run_phase: plan or apply. Plans assume route53_read_role_arn and applies route53_write_role_arn. Ephemeral so a saved plan never carries plan into its apply, and defaulted to apply so HCP Terraform, which never sets it, keeps the writer."
+  type        = string
+  default     = "apply"
+  ephemeral   = true
+
+  validation {
+    condition     = contains(["plan", "apply"], var.webbpulse_run_phase)
+    error_message = "webbpulse_run_phase must be plan or apply."
+  }
+}
+
 variable "access_gate" {
   description = "Put the site and API behind the access gate: a Cognito sign-in wall at CloudFront and the gate's REQUEST authorizer on every API route, in front of the application's own login, step-up and route scopes. Set in env/<environment>.tfvars. Needs staging_profile full and route53_zone_id."
   type        = bool
