@@ -338,14 +338,18 @@ def fake_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[...
         echo_environment: bool = True,
         version: str = BAKED_VERSION,
         directory: Path | None = None,
+        plan_link: str | None = None,
+        show_output: str | None = None,
     ) -> Path:
         document = json.dumps(PLAN_JSON_WITH_CHANGES if plan_json is None else plan_json)
+        shown = document if show_output is None else show_output
         script = f"""#!/usr/bin/env python3
 import json, os, sys, time
 
 SUBCOMMAND = sys.argv[1] if len(sys.argv) > 1 else ""
 ECHO = {echo_environment!r}
 VERSION = {version!r}
+PLAN_LINK = {plan_link!r}
 
 if SUBCOMMAND == "version":
     if sys.argv[2:] == ["-json"]:
@@ -383,10 +387,17 @@ if SUBCOMMAND == "plan":
     except KeyboardInterrupt:
         print("Interrupt received. Gracefully shutting down...", flush=True)
         sys.exit(1)
-    open("plan.tfplan", "w").write("fake-plan")
+    if PLAN_LINK:
+        os.symlink(PLAN_LINK, "plan.tfplan")
+    else:
+        open("plan.tfplan", "w").write("fake-plan")
     sys.exit({plan_exit})
 if SUBCOMMAND == "show":
-    print(json.dumps(json.loads({document!r})))
+    shown_plan = sys.argv[-1]
+    if os.path.basename(os.path.dirname(shown_plan)) != "artifacts" or open(shown_plan).read() != "fake-plan":
+        print("show was not given the sealed plan", file=sys.stderr)
+        sys.exit(1)
+    print({shown!r})
     sys.exit(0)
 if SUBCOMMAND == "apply":
     print("apply arguments " + " ".join(sys.argv[2:]))

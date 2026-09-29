@@ -121,7 +121,8 @@ ENV VIRTUAL_ENV=/opt/venv \
     CHECKPOINT_DISABLE=1 \
     TF_PLUGIN_CACHE_DIR=/opt/terraform-plugin-cache \
     ENGINE_KEYRING_DIRECTORY=/usr/local/share/webbpulse-runner/keys \
-    GIT_TERMINAL_PROMPT=0
+    GIT_TERMINAL_PROMPT=0 \
+    ENGINE_USER=runner
 
 RUN set -eu; \
     terraform version; \
@@ -132,7 +133,6 @@ RUN set -eu; \
     test -s /usr/local/share/webbpulse-runner/keys/tofu.gpg; \
     PYTHONPATH=/srv/runner /opt/venv/bin/python -c "import app.main; print('entrypoint importable')"
 
-USER runner
 WORKDIR /work
 
 CMD ["python", "-m", "app.main"]
