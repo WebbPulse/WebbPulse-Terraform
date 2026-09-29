@@ -2278,6 +2278,13 @@
             "title": "Hosts",
             "type": "array"
           },
+          "module_hosts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Module Hosts",
+            "type": "object"
+          },
           "token": {
             "title": "Token",
             "type": "string"
