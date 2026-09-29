@@ -13,10 +13,11 @@ import boto3
 import httpx
 import pytest
 
-from app import workspace
+from app import install, workspace
 from app.api import ApiError, RunnerApi
 from app.engine import build_environment, parse_apply_changes, parse_changes
-from app.install import release_urls
+from app.install import SIGNING_KEYS as PINNED_SIGNING_KEYS
+from app.install import InstallError, ReleaseUrls, release_urls
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
 from app.main import redact_outputs
 from app.models import (
@@ -42,8 +43,10 @@ from tests.conftest import (
     STATE_SESSION_TOKEN,
     WORKSPACE_ID,
     ApiRecorder,
+    ReleaseSigner,
     bundle_payload,
     make_env,
+    make_signer,
     make_transport,
 )
 
@@ -624,17 +627,79 @@ def test_redact_outputs_drops_sensitive_values() -> None:
 
 
 def test_release_urls_follow_each_projects_layout() -> None:
-    """Terraform and OpenTofu publish their archives and sums under different paths."""
-    assert release_urls("terraform", "1.11.0", "arm64") == (
+    """Terraform and OpenTofu publish their archives, sums and signatures under different paths."""
+    assert release_urls("terraform", "1.11.0", "arm64") == ReleaseUrls(
         "https://releases.hashicorp.com/terraform/1.11.0/terraform_1.11.0_linux_arm64.zip",
         "https://releases.hashicorp.com/terraform/1.11.0/terraform_1.11.0_SHA256SUMS",
+        "https://releases.hashicorp.com/terraform/1.11.0/terraform_1.11.0_SHA256SUMS.sig",
         "terraform_1.11.0_linux_arm64.zip",
     )
-    assert release_urls("tofu", "1.9.0", "amd64") == (
+    assert release_urls("tofu", "1.9.0", "amd64") == ReleaseUrls(
         "https://github.com/opentofu/opentofu/releases/download/v1.9.0/tofu_1.9.0_linux_amd64.zip",
         "https://github.com/opentofu/opentofu/releases/download/v1.9.0/tofu_1.9.0_SHA256SUMS",
+        "https://github.com/opentofu/opentofu/releases/download/v1.9.0/tofu_1.9.0_SHA256SUMS.gpgsig",
         "tofu_1.9.0_linux_amd64.zip",
     )
+
+
+def test_the_pinned_release_keys_match_the_image_build() -> None:
+    """The fingerprints the runner requires are the ones the Dockerfile checks the baked keys against."""
+    pinned = dict(
+        line.split("=", 1)
+        for line in (Path(__file__).parent.parent / "versions.env").read_text().splitlines()
+        if "=" in line
+    )
+    assert pinned["TERRAFORM_KEY_FINGERPRINT"] == PINNED_SIGNING_KEYS["terraform"]
+    assert pinned["TOFU_KEY_FINGERPRINT"] == PINNED_SIGNING_KEYS["tofu"]
+
+
+def test_a_good_signature_from_the_pinned_key_verifies(release_signer: ReleaseSigner) -> None:
+    """A SUMS file signed by the pinned key passes."""
+    sums = b"abc  terraform_1.11.0_linux_arm64.zip\n"
+    install.verify_signature("terraform", sums, release_signer.sign(sums))
+
+
+def test_a_signature_over_other_sums_is_refused(release_signer: ReleaseSigner) -> None:
+    """A signature made over different bytes does not vouch for these ones."""
+    signature = release_signer.sign(b"abc  terraform_1.11.0_linux_arm64.zip\n")
+    with pytest.raises(InstallError, match="not signed by the pinned release key"):
+        install.verify_signature("terraform", b"def  terraform_1.11.0_linux_arm64.zip\n", signature)
+
+
+def test_a_signature_from_another_key_is_refused(tmp_path: Path) -> None:
+    """A key the keyring does not hold cannot sign a release."""
+    impostor = make_signer(tmp_path / "impostor")
+    sums = b"abc  tofu_1.9.0_linux_arm64.zip\n"
+    with pytest.raises(InstallError, match="not signed by the pinned release key"):
+        install.verify_signature("tofu", sums, impostor.sign(sums))
+
+
+def test_a_keyring_key_that_is_not_the_pinned_one_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, release_signer: ReleaseSigner
+) -> None:
+    """A swapped keyring fails the fingerprint pin even when its key made the signature."""
+    impostor = make_signer(tmp_path / "impostor")
+    keyrings = tmp_path / "keyrings"
+    keyrings.mkdir()
+    impostor.export(keyrings / "terraform.gpg")
+    monkeypatch.setattr(install, "KEYRING_DIRECTORY", keyrings)
+    sums = b"abc  terraform_1.11.0_linux_arm64.zip\n"
+    with pytest.raises(InstallError, match="not signed by the pinned release key"):
+        install.verify_signature("terraform", sums, impostor.sign(sums))
+    assert release_signer.fingerprint != impostor.fingerprint
+
+
+def test_garbage_in_place_of_a_signature_is_refused() -> None:
+    """Bytes that are not an OpenPGP signature fail rather than pass."""
+    with pytest.raises(InstallError, match="not signed by the pinned release key"):
+        install.verify_signature("terraform", b"abc\n", b"<html>not found</html>")
+
+
+def test_a_missing_keyring_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An image without the baked key installs nothing."""
+    monkeypatch.setattr(install, "KEYRING_DIRECTORY", tmp_path / "absent")
+    with pytest.raises(InstallError, match="no release key is baked"):
+        install.verify_signature("terraform", b"abc\n", b"sig")
 
 
 @pytest.mark.parametrize(

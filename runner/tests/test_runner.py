@@ -30,10 +30,12 @@ from tests.conftest import (
     STATE_SESSION_TOKEN,
     TASK_TOKEN,
     ApiRecorder,
+    ReleaseSigner,
     bundle_payload,
     engine_release,
     make_clients,
     make_env,
+    make_signer,
     make_transport,
 )
 
@@ -260,11 +262,12 @@ def test_a_pinned_version_is_installed_and_used(
     fake_engine: Callable[..., Path],
     tmp_path: Path,
     engine: str,
+    release_signer: ReleaseSigner,
 ) -> None:
     """A pin the image does not bake is downloaded, verified and run in place of the baked one."""
     fake_engine()
     release_directory = fake_engine(version="1.11.0", directory=tmp_path / "release")
-    releases = engine_release(engine, "1.11.0", (release_directory / engine).read_bytes())
+    releases = engine_release(engine, "1.11.0", (release_directory / engine).read_bytes(), release_signer)
     recorder = ApiRecorder()
     bundle = bundle_payload(run_role_arn, engine=engine, engine_version="1.11.0")
     clients = make_clients(make_transport(bundle, config_tarball, recorder, releases=releases))
@@ -283,10 +286,11 @@ def test_a_release_that_fails_its_checksum_is_refused(
     fake_engine: Callable[..., Path],
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    release_signer: ReleaseSigner,
 ) -> None:
     """An archive whose digest differs from the published SUMS never runs."""
     fake_engine()
-    releases = engine_release("terraform", "1.11.0", b"tampered", checksum="f" * 64)
+    releases = engine_release("terraform", "1.11.0", b"tampered", release_signer, checksum="f" * 64)
     recorder = ApiRecorder()
     bundle = bundle_payload(run_role_arn, engine_version="1.11.0")
     clients = make_clients(make_transport(bundle, config_tarball, recorder, releases=releases))
@@ -294,6 +298,54 @@ def test_a_release_that_fails_its_checksum_is_refused(
     assert run(make_env("plan"), clients, tmp_path) == 1
     assert recorder.failure_names() == ["EngineInstallFailed"]
     assert "EngineInstallFailed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("engine", ["terraform", "tofu"])
+def test_a_release_whose_sums_are_not_signed_by_the_pinned_key_is_refused(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    engine: str,
+) -> None:
+    """SUMS and archive that agree still never run when another key signed the SUMS."""
+    fake_engine()
+    release_directory = fake_engine(version="1.11.0", directory=tmp_path / "release")
+    impostor = make_signer(tmp_path / "impostor")
+    releases = engine_release(engine, "1.11.0", (release_directory / engine).read_bytes(), impostor)
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, engine=engine, engine_version="1.11.0")
+    clients = make_clients(make_transport(bundle, config_tarball, recorder, releases=releases))
+
+    assert run(make_env("plan"), clients, tmp_path / "work") == 1
+    assert recorder.failure_names() == ["EngineInstallFailed"]
+    assert "not signed by the pinned release key" in capsys.readouterr().err
+    assert not (tmp_path / "work" / "engines" / engine / "1.11.0" / engine).exists()
+
+
+def test_a_release_without_a_sums_signature_is_refused(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    release_signer: ReleaseSigner,
+) -> None:
+    """A release whose signature file is missing is not installed."""
+    fake_engine()
+    release_directory = fake_engine(version="1.11.0", directory=tmp_path / "release")
+    releases = engine_release("terraform", "1.11.0", (release_directory / "terraform").read_bytes(), release_signer)
+    del releases[next(url for url in releases if url.endswith(".sig"))]
+    recorder = ApiRecorder()
+    bundle = bundle_payload(run_role_arn, engine_version="1.11.0")
+    clients = make_clients(make_transport(bundle, config_tarball, recorder, releases=releases))
+
+    assert run(make_env("plan"), clients, tmp_path / "work") == 1
+    assert recorder.failure_names() == ["EngineInstallFailed"]
+    assert "returned 404" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("pin", ["~> 1.11", "latest", "1.11"])

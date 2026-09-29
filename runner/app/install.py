@@ -1,9 +1,11 @@
 """Installing the engine version a workspace pins when the image bakes a different one.
 
 The image carries one Terraform and one OpenTofu release. A workspace that pins
-another version gets that release downloaded into the run's temporary directory,
-checked against the release's own SHA256SUMS file, and run from there, the way
-HCP Terraform runs the version a workspace names rather than whatever it has.
+another version gets that release downloaded into the run's temporary directory
+and run from there, the way HCP Terraform runs the version a workspace names
+rather than whatever it has. As HCP does, the release's SHA256SUMS file must carry
+a good detached signature from the publisher's release key, which the image bakes
+with its fingerprint pinned, before the archive is checked against it.
 """
 
 from __future__ import annotations
@@ -11,10 +13,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import platform
 import re
 import subprocess
+import tempfile
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -27,21 +32,88 @@ from app.models import Engine
 VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$")
 ARCHITECTURES = {"aarch64": "arm64", "arm64": "arm64", "x86_64": "amd64", "amd64": "amd64"}
 DOWNLOAD_TIMEOUT = httpx.Timeout(30.0, read=300.0)
+KEYRING_DIRECTORY = Path(os.environ.get("ENGINE_KEYRING_DIRECTORY", "/usr/local/share/webbpulse-runner/keys"))
+SIGNING_KEYS: dict[Engine, str] = {
+    "terraform": "C874011F0AB405110D02105534365D9472D7468F",
+    "tofu": "E3E6E43D84CB852EADB0051D0C0AF313E5FD9F80",
+}
 
 
 class InstallError(RuntimeError):
     """The pinned engine version could not be resolved, fetched or verified."""
 
 
-def release_urls(engine: Engine, version: str, architecture: str) -> tuple[str, str, str]:
-    """The archive URL, the SHA256SUMS URL and the archive's file name for one release."""
+@dataclass(frozen=True)
+class ReleaseUrls:
+    """Where one release's archive, SHA256SUMS file and SUMS signature are published."""
+
+    archive: str
+    sums: str
+    signature: str
+    archive_name: str
+
+
+def release_urls(engine: Engine, version: str, architecture: str) -> ReleaseUrls:
+    """The download locations for one engine release on this architecture."""
     if engine == "terraform":
         base = f"https://releases.hashicorp.com/terraform/{version}"
         archive = f"terraform_{version}_linux_{architecture}.zip"
-        return f"{base}/{archive}", f"{base}/terraform_{version}_SHA256SUMS", archive
+        sums = f"{base}/terraform_{version}_SHA256SUMS"
+        return ReleaseUrls(f"{base}/{archive}", sums, f"{sums}.sig", archive)
     base = f"https://github.com/opentofu/opentofu/releases/download/v{version}"
     archive = f"tofu_{version}_linux_{architecture}.zip"
-    return f"{base}/{archive}", f"{base}/tofu_{version}_SHA256SUMS", archive
+    sums = f"{base}/tofu_{version}_SHA256SUMS"
+    return ReleaseUrls(f"{base}/{archive}", sums, f"{sums}.gpgsig", archive)
+
+
+def keyring_path(engine: Engine) -> Path:
+    """The baked keyring holding one engine publisher's release key."""
+    return KEYRING_DIRECTORY / f"{engine}.gpg"
+
+
+def verify_signature(engine: Engine, sums: bytes, signature: bytes) -> None:
+    """Require a good signature over `sums` from the publisher key pinned for `engine`.
+
+    `gpgv` checks the detached signature against the baked keyring alone, and the
+    primary key fingerprint it reports must equal the pinned one, so neither a
+    swapped keyring nor a signature from another key passes.
+    """
+    keyring = keyring_path(engine)
+    if not keyring.is_file():
+        raise InstallError(f"no release key is baked for {engine} at {keyring}")
+    with tempfile.TemporaryDirectory() as scratch:
+        home = Path(scratch)
+        sums_file = home / "SHA256SUMS"
+        signature_file = home / "SHA256SUMS.sig"
+        sums_file.write_bytes(sums)
+        signature_file.write_bytes(signature)
+        try:
+            completed = subprocess.run(  # noqa: S603
+                [
+                    "gpgv",
+                    "--homedir",
+                    str(home),
+                    "--keyring",
+                    str(keyring.resolve()),
+                    "--status-fd",
+                    "1",
+                    str(signature_file),
+                    str(sums_file),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise InstallError(f"gpgv could not run: {type(error).__name__}") from error
+    primaries = {
+        fields[-1].upper()
+        for fields in (line.split() for line in completed.stdout.splitlines())
+        if len(fields) >= 3 and fields[:2] == ["[GNUPG:]", "VALIDSIG"]
+    }
+    if completed.returncode != 0 or primaries != {SIGNING_KEYS[engine]}:
+        raise InstallError(f"the {engine} release checksums are not signed by the pinned release key")
 
 
 def binary_version(binary: str) -> str | None:
@@ -99,10 +171,12 @@ def _expected_sum(sums: str, archive: str) -> str:
 
 def install(engine: Engine, version: str, directory: Path, client: httpx.Client) -> str:
     """Download, verify and unpack one engine release, returning the binary's path."""
-    architecture = _architecture()
-    archive_url, sums_url, archive_name = release_urls(engine, version, architecture)
-    expected = _expected_sum(_fetch(client, sums_url).decode(errors="replace"), archive_name)
-    archive = _fetch(client, archive_url)
+    urls = release_urls(engine, version, _architecture())
+    archive_name = urls.archive_name
+    sums = _fetch(client, urls.sums)
+    verify_signature(engine, sums, _fetch(client, urls.signature))
+    expected = _expected_sum(sums.decode(errors="replace"), archive_name)
+    archive = _fetch(client, urls.archive)
     if hashlib.sha256(archive).hexdigest() != expected:
         raise InstallError(f"{archive_name} does not match its published checksum")
     target = directory / engine / version
