@@ -10,6 +10,10 @@ It travels only in the bundle, which the runner fetches with its run token, neve
 in the Step Functions input or the task overrides. The runner sets it as
 `TF_TOKEN_<host>` for `init` alone, for the host module sources name, which is the
 SPA host that serves `/.well-known/terraform.json`.
+
+Until cutover, module sources still name `app.terraform.io`. The bundle maps that host
+to this plane's own `modules.v1` endpoint, so the runner's CLI config answers its
+module lookups from this registry with the same token, and no HCP credential exists.
 """
 
 from __future__ import annotations
@@ -32,6 +36,12 @@ REGISTRY_TOKEN_TTL: Final = timedelta(hours=1)
 HASH_ATTRIBUTE: Final = "registry_token_hash"
 """Where the run keeps the hash of its live registry credential."""
 
+MIRRORED_MODULE_HOSTS: Final = ("app.terraform.io",)
+"""Registry hosts whose module lookups this plane answers until cutover."""
+
+MODULES_PATH: Final = "/v1/modules/"
+"""Where the registry protocol router serves `modules.v1` on the API origin."""
+
 PHASE_STATUSES: Final = ("planning", "applying")
 """The statuses a runner phase fetches its bundle in."""
 
@@ -42,6 +52,14 @@ def registry_hosts(settings: Settings) -> list[str]:
     """The hosts module sources name for this registry: the SPA host, when configured."""
     host = urlparse(settings.IDENTITY_FRONTEND_BASE_URL or "").hostname or ""
     return [host] if host else []
+
+
+def module_hosts(settings: Settings) -> dict[str, str]:
+    """Each mirrored host mapped to this plane's `modules.v1` URL, empty with no API origin."""
+    origin = (settings.API_BASE_URL or "").rstrip("/")
+    if not origin:
+        return {}
+    return {host: origin + MODULES_PATH for host in MIRRORED_MODULE_HOSTS}
 
 
 def issue(run: Mapping[str, Any], *, settings: Settings) -> dict[str, Any] | None:
@@ -84,7 +102,12 @@ def issue(run: Mapping[str, Any], *, settings: Settings) -> dict[str, Any] | Non
         "Issued a run's registry credential.",
         extra={"event": "runs.registry_token.issued", "run_id": run_id},
     )
-    return {"hosts": hosts, "token": minted.plaintext, "expires_at": expires_at.isoformat()}
+    return {
+        "hosts": hosts,
+        "token": minted.plaintext,
+        "expires_at": expires_at.isoformat(),
+        "module_hosts": module_hosts(settings),
+    }
 
 
 def revoke(run: Mapping[str, Any], *, settings: Settings) -> None:
@@ -92,4 +115,12 @@ def revoke(run: Mapping[str, Any], *, settings: Settings) -> None:
     revoke_run_key(str(run.get(HASH_ATTRIBUTE, "") or ""), settings=settings)
 
 
-__all__ = ["HASH_ATTRIBUTE", "REGISTRY_TOKEN_TTL", "issue", "registry_hosts", "revoke"]
+__all__ = [
+    "HASH_ATTRIBUTE",
+    "MIRRORED_MODULE_HOSTS",
+    "REGISTRY_TOKEN_TTL",
+    "issue",
+    "module_hosts",
+    "registry_hosts",
+    "revoke",
+]
