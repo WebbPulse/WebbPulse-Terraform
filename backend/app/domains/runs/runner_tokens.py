@@ -29,7 +29,7 @@ from boto3.dynamodb.conditions import Attr
 from webbpulse.dynamodb import ConditionFailed
 
 from ...common.composition.settings import Settings, get_settings
-from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store
+from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_SCOPE, api_key_store, revoke_run_key
 from ...common.db import repositories
 from . import service
 
@@ -222,11 +222,11 @@ def _exchange(run_id: str, headers: Mapping[str, str], *, settings: Settings) ->
             return_values="UPDATED_OLD",
         )
     except ConditionFailed as error:
-        store.revoke(minted.record.key_hash)
+        revoke_run_key(minted.record.key_hash, settings=resolved)
         raise ExchangeRefused("the run left the task's phase") from error
     previous = str((old or {}).get("run_token_hash", "") or "")
     if previous and previous != minted.record.key_hash:
-        store.revoke(previous)
+        revoke_run_key(previous, settings=resolved)
     _log.info(
         "The runner exchanged its task identity for a run token.",
         extra={"event": "runs.runner_token.exchanged", "run_id": run_id, "phase": phase, "task_id": task_id},

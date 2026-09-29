@@ -16,6 +16,7 @@ the path, so a token for one run cannot read another run's bundle.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Coroutine, Final
 
 import anyio.from_thread
@@ -79,6 +80,15 @@ RUN_TOKEN_TENANT: Final = "webbpulse-terraform"
 """The tenant every run token is minted under. The control plane is single tenant,
 and the claim is required, so one constant stands in for it."""
 
+RUN_KEY_USER_PREFIX: Final = "run-"
+"""The subject prefix of every run-scoped key: runner tokens and registry credentials."""
+
+RUN_KEY_TTL_ATTRIBUTE: Final = "purge_at"
+"""The api-keys table's TTL attribute, in epoch seconds, stamped only on revoked run keys."""
+
+RUN_KEY_RETENTION: Final = timedelta(days=1)
+"""How long a revoked run key stays readable before DynamoDB TTL removes it."""
+
 
 def api_key_store(settings: Settings | None = None) -> ApiKeyStore:
     """The identity `api-keys` table, which holds agent keys and run tokens alike.
@@ -90,19 +100,48 @@ def api_key_store(settings: Settings | None = None) -> ApiKeyStore:
     sets. Deriving it from `ENVIRONMENT` would name the wrong table in production,
     where the stack slugs the environment to `prod`.
     """
+    return DynamoApiKeyStore(_api_keys_repository(settings))
+
+
+def _api_keys_repository(settings: Settings | None = None) -> Any:
+    """The `webbpulse.dynamodb.Repository` over the identity `api-keys` table."""
     from webbpulse.dynamodb import Repository
     from webbpulse.identity.api_keys import API_KEYS_TABLE
 
     resolved = settings or get_settings()
-    prefix = identity_table_prefix(resolved)
-    return DynamoApiKeyStore(
-        Repository(
-            API_KEYS_TABLE,
-            prefix=prefix,
-            region_name=resolved.AWS_REGION_NAME or None,
-            endpoint_url=resolved.dynamodb_endpoint_url,
-        )
+    return Repository(
+        API_KEYS_TABLE,
+        prefix=identity_table_prefix(resolved),
+        region_name=resolved.AWS_REGION_NAME or None,
+        endpoint_url=resolved.dynamodb_endpoint_url,
     )
+
+
+def revoke_run_key(key_hash: str, *, settings: Settings | None = None, now: datetime | None = None) -> None:
+    """Revoke a run-scoped key and stamp the TTL that removes its row `RUN_KEY_RETENTION` later.
+
+    The stamp is conditional on the row existing and belonging to a run, so it never
+    resurrects a deleted row or schedules an agent key for deletion. A key that was
+    already revoked still gets the stamp, which heals rows revoked before it existed.
+    """
+    from boto3.dynamodb.conditions import Attr
+    from webbpulse.dynamodb import ConditionFailed
+
+    if not key_hash:
+        return
+    repository = _api_keys_repository(settings)
+    DynamoApiKeyStore(repository).revoke(key_hash)
+    purge_at = int(((now or datetime.now(timezone.utc)) + RUN_KEY_RETENTION).timestamp())
+    try:
+        repository.update(
+            {"key_hash": key_hash},
+            update_expression="SET #purge = :purge",
+            expression_names={"#purge": RUN_KEY_TTL_ATTRIBUTE},
+            expression_values={":purge": purge_at},
+            condition=Attr("key_hash").exists() & Attr("user_id").begins_with(RUN_KEY_USER_PREFIX),
+        )
+    except ConditionFailed:
+        return
 
 
 def key_owner_scopes(record: ApiKeyRecord) -> tuple[str, ...]:
@@ -272,6 +311,9 @@ __all__ = [
     "RUNS_WRITE",
     "REGISTRY_READ",
     "REGISTRY_WRITE",
+    "RUN_KEY_RETENTION",
+    "RUN_KEY_TTL_ATTRIBUTE",
+    "RUN_KEY_USER_PREFIX",
     "RUN_TOKEN_TENANT",
     "RunnerRoute",
     "STATE_DOWNLOAD",
@@ -287,6 +329,7 @@ __all__ = [
     "key_owner_scopes",
     "recent_auth",
     "require_run_token",
+    "revoke_run_key",
     "run_token_record",
     "scopes",
     "sudo",

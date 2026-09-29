@@ -23,7 +23,7 @@ from boto3.dynamodb.conditions import Attr
 from webbpulse.dynamodb import ConditionFailed
 
 from ...common.composition.settings import Settings
-from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_REGISTRY_SCOPE, api_key_store
+from ...common.core.auth import RUN_TOKEN_TENANT, RUNNER_REGISTRY_SCOPE, api_key_store, revoke_run_key
 from ...common.db import repositories
 
 REGISTRY_TOKEN_TTL: Final = timedelta(hours=1)
@@ -75,11 +75,11 @@ def issue(run: Mapping[str, Any], *, settings: Settings) -> dict[str, Any] | Non
             return_values="UPDATED_OLD",
         )
     except ConditionFailed:
-        store.revoke(minted.record.key_hash)
+        revoke_run_key(minted.record.key_hash, settings=settings)
         return None
     previous = str((old or {}).get(HASH_ATTRIBUTE, "") or "")
     if previous and previous != minted.record.key_hash:
-        store.revoke(previous)
+        revoke_run_key(previous, settings=settings)
     _log.info(
         "Issued a run's registry credential.",
         extra={"event": "runs.registry_token.issued", "run_id": run_id},
@@ -89,9 +89,7 @@ def issue(run: Mapping[str, Any], *, settings: Settings) -> dict[str, Any] | Non
 
 def revoke(run: Mapping[str, Any], *, settings: Settings) -> None:
     """Revoke the run's registry credential, tolerating one that is already gone."""
-    key_hash = str(run.get(HASH_ATTRIBUTE, "") or "")
-    if key_hash:
-        api_key_store(settings).revoke(key_hash)
+    revoke_run_key(str(run.get(HASH_ATTRIBUTE, "") or ""), settings=settings)
 
 
 __all__ = ["HASH_ATTRIBUTE", "REGISTRY_TOKEN_TTL", "issue", "registry_hosts", "revoke"]
