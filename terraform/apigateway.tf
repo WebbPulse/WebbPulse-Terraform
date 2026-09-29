@@ -206,6 +206,10 @@ locals {
         integration          = "workspaces"
         require_identity_jwt = true
       }
+      "POST /api/auth/e2e/users/sweep" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
     } : {},
   )
 }
