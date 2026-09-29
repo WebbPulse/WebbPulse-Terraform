@@ -358,10 +358,13 @@ if SUBCOMMAND == "version":
         print("Terraform v" + VERSION)
     sys.exit(0)
 for key in sorted(os.environ):
-    if key.startswith("TF_TOKEN_"):
+    if key.startswith("TF_TOKEN_") or key == "TF_CLI_CONFIG_FILE":
         print(SUBCOMMAND + " holds " + key + "=" + os.environ[key])
 if SUBCOMMAND == "init":
     print("Initializing the backend...")
+    if "TF_CLI_CONFIG_FILE" in os.environ:
+        for line in open(os.environ["TF_CLI_CONFIG_FILE"]).read().splitlines():
+            print("cli config " + line)
     if ECHO:
         for key in sorted(os.environ):
             if key.startswith(("TF_VAR_", "PROVIDER_", "AWS_", "GOOGLE_", "ARM_")):

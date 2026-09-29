@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Callable, cast
 import boto3
 import httpx
 
-from app import engine, identity, install, isolation, workspace
+from app import cli_config, engine, identity, install, isolation, workspace
 from app.api import ApiError, RunnerApi, build_client
 from app.credential_files import CredentialFiles
 from app.heartbeat import Heartbeat
@@ -142,7 +142,7 @@ def _run_plan(
     The plan runs under `-detailed-exitcode`, so it exits 0 with no changes and 2
     with changes. Both are successful plans, so both return 0 and the change
     counts alone say whether there were changes. Any other code is `PlanFailed`.
-    `init_environment` is the registry credential, given to `init` alone. The plan
+    `init_environment` is the registry credential and CLI config, given to `init` alone. The plan
     file is copied to `sealed_plan` once the engine user has been swept, and that
     copy is the one rendered and uploaded, so the counts and the plan the apply
     runs are the same file.
@@ -169,7 +169,7 @@ def _run_apply(
 ) -> tuple[int, Changes]:
     """Init and apply the saved plan, returning the counts the engine says it applied.
 
-    `init_environment` is the registry credential, given to `init` alone.
+    `init_environment` is the registry credential and CLI config, given to `init` alone.
     """
     init_code = runner.init(init_environment)
     if init_code != 0:
@@ -303,6 +303,12 @@ def _run_phase(
     credentials.write(bundle.aws_credentials, bundle.backend.credentials)
     identity_files = WorkloadIdentityFiles(directory / "identity", group=group)
     identity_files.write(bundle.workload_identity)
+    try:
+        cli_environment = cli_config.write(
+            directory / "cli", bundle.registry.module_hosts if bundle.registry else {}, group
+        )
+    except cli_config.CliConfigError as error:
+        raise PhaseFailure("CliConfigInvalid", str(error)) from error
     environment = engine.build_environment(
         dict(os.environ),
         bundle.environment_variables,
@@ -320,7 +326,19 @@ def _run_phase(
         identity=identity_files,
     )
     with refresher:
-        return _run_engine(env, clients, directory, api, sink, interrupt, bundle, engine_directory, environment, user)
+        return _run_engine(
+            env,
+            clients,
+            directory,
+            api,
+            sink,
+            interrupt,
+            bundle,
+            engine_directory,
+            environment,
+            user,
+            init_environment={**bundle.init_environment(), **cli_environment},
+        )
 
 
 def _run_engine(
@@ -334,12 +352,14 @@ def _run_engine(
     engine_directory: Path,
     environment: dict[str, str],
     user: isolation.EngineUser | None = None,
+    init_environment: dict[str, str] | None = None,
 ) -> PhaseResult:
     """Install the engine, run the phase's subcommands, upload the artifacts and post the result.
 
     It runs while the credential refresher keeps the engine's AWS sessions fresh.
     Every subcommand runs as `user` when there is one. The plan artifacts are kept
     in a directory only the runner can write, never in the engine's own.
+    `init_environment` is the registry credential and CLI config, for `init` alone.
     """
     try:
         binary = install.ensure_engine(bundle.engine, bundle.engine_version, directory / "engines", clients.http, sink)
@@ -361,7 +381,7 @@ def _run_engine(
             sink,
             sealed_plan,
             destroy=bundle.is_destroy,
-            init_environment=bundle.init_environment(),
+            init_environment=init_environment,
             user=user,
         )
         plan_json_path.write_text(plan_json)
@@ -377,7 +397,7 @@ def _run_engine(
             api.download(bundle.artifacts.plan_get_url, plan_path)
         except ApiError as error:
             raise PhaseFailure("PlanDownloadFailed", str(error)) from error
-        exit_code, changes = _run_apply(runner, sink, init_environment=bundle.init_environment())
+        exit_code, changes = _run_apply(runner, sink, init_environment=init_environment)
         _upload_outputs(runner, api, sink)
 
     sink.flush()

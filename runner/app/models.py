@@ -197,10 +197,15 @@ class RegistryCredentials(BaseModel):
     hosts: list[str] = Field(default_factory=lambda: list[str]())
     token: str
     expires_at: str = ""
+    module_hosts: dict[str, str] = Field(default_factory=lambda: dict[str, str]())
+    """Other registry hosts mapped to this plane's `modules.v1` URL, which the CLI
+    config redirects and the same token answers. A bundle from a control plane that
+    predates the mapping carries none."""
 
     def environment(self) -> dict[str, str]:
-        """One `TF_TOKEN_<host>` per registry host."""
-        return {token_variable(host): self.token for host in self.hosts if host}
+        """One `TF_TOKEN_<host>` per registry host and per mapped host."""
+        names = [*self.hosts, *self.module_hosts]
+        return {token_variable(host): self.token for host in names if host}
 
 
 class BackendConfig(BaseModel):
