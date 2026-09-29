@@ -183,7 +183,7 @@ variables, so no human scope reaches it, and every terminal transition revokes
 the token. Every run key revoke goes through `revoke_run_key`, which also stamps
 `purge_at`, the `api-keys` table's TTL, one day out, so dead run keys leave the
 table; agent keys never get it. `scripts/backfill_run_key_ttl.py` stamps rows
-revoked before that. The runner gets it from `POST /runs/{id}/runner-token` (no
+revoked before that. The runner gets its token from `POST /runs/{id}/runner-token` (no
 authorizer) by sending the headers of an STS `GetCallerIdentity` it signed with
 its task role, with the run id in the signed `x-webbpulse-run-id` header
 (`app/domains/runs/runner_tokens.py`). The route replays that to regional STS,
