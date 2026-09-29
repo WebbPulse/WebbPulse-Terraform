@@ -71,7 +71,10 @@ module "identity" {
     }
   }
 
-  users_stream_enabled = false
+  users_stream_enabled   = local.domain_functions_enabled
+  users_table_stream_arn = local.domain_functions_enabled ? module.dynamodb.stream_arns["users"] : null
+  identity_function_name = local.domain_functions_enabled ? module.lambda_domain["workspaces"].function_name : null
+  users_key_attribute    = "id"
 
   tags = {
     Component = "identity"

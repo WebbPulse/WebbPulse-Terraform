@@ -69,6 +69,7 @@ locals {
       global_secondary_indexes = [
         { name = "email_lower-index", hash_key = "email_lower", projection_type = "ALL" },
       ]
+      stream_view_type = "KEYS_ONLY"
     }
 
     registry = {
