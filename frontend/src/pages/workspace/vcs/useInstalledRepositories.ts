@@ -66,10 +66,7 @@ export async function loadInstalledRepositories(
  * The installed repositories, read only for admins.
  *
  * The GitHub routes carry the admin scope, so anyone else would only ever see
- * a 403; `enabled` keeps the query from firing for them at all. Loading is
- * derived from having neither data nor an error, because the admin flag
- * resolves after the first render and the polled query does not flip back to
- * loading when it is enabled late.
+ * a 403; `enabled` keeps the query from firing for them at all.
  */
 export function useInstalledRepositories(enabled: boolean): {
   data: InstalledRepositories | null;
@@ -89,6 +86,6 @@ export function useInstalledRepositories(enabled: boolean): {
   return {
     data: query.data,
     error: query.error,
-    isLoading: enabled && query.data === null && query.error === null,
+    isLoading: query.isLoading,
   };
 }

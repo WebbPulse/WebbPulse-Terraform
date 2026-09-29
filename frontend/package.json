@@ -21,7 +21,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@webbpulse/api-client": ">=0.16.0 <1",
+    "@webbpulse/api-client": ">=0.17.1 <1",
     "@webbpulse/auth": ">=0.18.0 <1",
     "@webbpulse/config": ">=0.13.0 <1",
     "@webbpulse/discovery": ">=0.13.0 <1",
