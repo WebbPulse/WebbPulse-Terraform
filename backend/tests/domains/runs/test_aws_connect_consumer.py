@@ -87,6 +87,11 @@ def _role(workspace_id: str, account: str = ACCOUNT) -> str:
     return f"arn:aws:iam::{account}:role/{RUN_ROLE_NAME_PREFIX}{workspace_id.removeprefix('ws-')}"
 
 
+def _plan_role(workspace_id: str, account: str = ACCOUNT) -> str:
+    """The read only plan role ARN the workspace's stack creates in `account`."""
+    return f"arn:aws:iam::{account}:role/{RUN_ROLE_NAME_PREFIX}plan/plan-{workspace_id.removeprefix('ws-')}"
+
+
 def _request(
     kind: str,
     workspace_id: str,
@@ -99,6 +104,7 @@ def _request(
     old: dict[str, str] | None = None,
     response_url: str = RESPONSE_URL,
     trust_version: str | None = aws_connect.TRUST_VERSION,
+    plan_role_arn: str | None = None,
 ) -> dict[str, Any]:
     """One CloudFormation custom resource request as the topic delivers it.
 
@@ -121,6 +127,8 @@ def _request(
     }
     if trust_version is not None:
         body["ResourceProperties"]["TrustVersion"] = trust_version
+    if plan_role_arn is not None:
+        body["ResourceProperties"]["PlanRoleArn"] = plan_role_arn
     if physical_id is not None:
         body["PhysicalResourceId"] = physical_id
     if old is not None:
@@ -757,3 +765,134 @@ def test_a_staged_role_whose_verification_run_finishes_is_switched_to(auth_clien
 def _config_of(auth_client, run_id: str) -> str:
     """The config version a run planned, so a retry plans the same thing."""
     return str(auth_client.get(f"/api/v1/runs/{run_id}").json()["config_version_id"])
+
+
+def test_template_offers_a_read_only_plan_role(settings):
+    """The plan role is optional, read only, trusted like the run role, and reported back."""
+    template = quick_setup.template_body(settings)
+    plan_role = template["Resources"]["PlanRole"]
+    assert plan_role["Condition"] == "CreatePlanRole"
+    assert plan_role["Properties"]["Path"] == f"/{RUN_ROLE_NAME_PREFIX}plan/"
+    assert plan_role["Properties"]["ManagedPolicyArns"] == [quick_setup.PLAN_ROLE_POLICY_ARN]
+    assert (
+        plan_role["Properties"]["AssumeRolePolicyDocument"]
+        == template["Resources"]["RunRole"]["Properties"]["AssumeRolePolicyDocument"]
+    )
+    assert template["Parameters"]["PlanRoleName"]["Default"] == ""
+    assert template["Outputs"]["PlanRoleArn"]["Condition"] == "CreatePlanRole"
+    reported = template["Resources"]["Connection"]["Properties"]["PlanRoleArn"]
+    assert reported == {"Fn::If": ["CreatePlanRole", {"Fn::GetAtt": ["PlanRole", "Arn"]}, ""]}
+
+
+def test_create_with_a_plan_role_records_it(auth_client, answers, state_machine):
+    """A stack that reports a plan role connects it beside the run role, and runs stamp it."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+
+    _handle(_request("Create", workspace_id, token, plan_role_arn=_plan_role(workspace_id)))
+
+    assert answers["sent"][0]["body"]["Status"] == "SUCCESS"
+    row = _row(workspace_id)
+    assert row["plan_role_arn"] == _plan_role(workspace_id)
+    assert row["aws_connection"]["plan_role_arn"] == _plan_role(workspace_id)
+    workspace = auth_client.get(f"/api/v1/workspaces/{workspace_id}").json()
+    assert workspace["plan_role_arn"] == _plan_role(workspace_id)
+    assert workspace["aws_connection"]["plan_role_arn"] == _plan_role(workspace_id)
+    run = auth_client.get(f"/api/v1/runs/{row['aws_connection']['run_id']}").json()
+    assert run["plan_role_arn"] == _plan_role(workspace_id)
+
+
+@pytest.mark.parametrize(
+    "plan_role_arn",
+    [
+        f"arn:aws:iam::{OTHER_ACCOUNT}:role/{RUN_ROLE_NAME_PREFIX}plan/plan-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "arn:aws:iam::123456789012:role/Admin",
+    ],
+)
+def test_a_plan_role_that_is_not_the_workspaces_is_refused(auth_client, answers, plan_role_arn):
+    """A stack can only report the plan role its own template creates for this workspace."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+
+    _handle(_request("Create", workspace_id, token, plan_role_arn=plan_role_arn))
+
+    assert answers["sent"][0]["body"]["Status"] == "FAILED"
+    assert "plan_role_arn" not in _row(workspace_id)
+
+
+def test_a_staged_plan_role_moves_over_with_its_run_role(auth_client, answers, state_machine):
+    """Beside a working role the plan role waits too, and switches over when the verification finishes."""
+    workspace_id = _workspace(auth_client, with_role=True)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    _handle(_request("Create", workspace_id, token, plan_role_arn=_plan_role(workspace_id)))
+    row = _row(workspace_id)
+    assert "plan_role_arn" not in row
+    run_id = str(row["aws_connection"]["run_id"])
+    assert auth_client.get(f"/api/v1/runs/{run_id}").json()["plan_role_arn"] == _plan_role(workspace_id)
+
+    _plan_succeeds(run_id)
+
+    row = _row(workspace_id)
+    assert row["run_role_arn"] == _role(workspace_id)
+    assert row["plan_role_arn"] == _plan_role(workspace_id)
+
+
+def test_an_update_adds_and_removes_the_plan_role(auth_client, answers, state_machine):
+    """Updating the stack to create or drop the plan role follows it on the workspace."""
+    workspace_id, token, physical_id = _connected(auth_client, answers)
+    old = _request("Create", workspace_id, token)["ResourceProperties"]
+
+    added = _request(
+        "Update",
+        workspace_id,
+        token,
+        physical_id=physical_id,
+        old=old,
+        request_id="req-up",
+        plan_role_arn=_plan_role(workspace_id),
+    )
+    _handle(added)
+    assert answers["sent"][-1]["body"]["Status"] == "SUCCESS"
+    assert _row(workspace_id)["plan_role_arn"] == _plan_role(workspace_id)
+
+    _handle(
+        _request(
+            "Update",
+            workspace_id,
+            token,
+            physical_id=physical_id,
+            old=added["ResourceProperties"],
+            request_id="req-up-2",
+            plan_role_arn="",
+        )
+    )
+    assert answers["sent"][-1]["body"]["Status"] == "SUCCESS"
+    row = _row(workspace_id)
+    assert "plan_role_arn" not in row
+    assert not row["aws_connection"].get("plan_role_arn")
+
+
+def test_deleting_the_stack_forgets_its_plan_role(auth_client, answers, state_machine):
+    """The plan role goes with the stack that created it."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    _handle(_request("Create", workspace_id, token, plan_role_arn=_plan_role(workspace_id)))
+    physical_id = answers["sent"][-1]["body"]["PhysicalResourceId"]
+
+    _handle(_request("Delete", workspace_id, token, physical_id=physical_id, request_id="req-del"))
+
+    assert "plan_role_arn" not in _row(workspace_id)
+
+
+def test_choosing_another_role_by_hand_drops_the_stack_plan_role(auth_client, answers, state_machine):
+    """A hand picked run role does not keep planning with the old stack's plan role."""
+    workspace_id = _workspace(auth_client)["workspace_id"]
+    token = _token(auth_client, workspace_id)
+    _handle(_request("Create", workspace_id, token, plan_role_arn=_plan_role(workspace_id)))
+
+    response = auth_client.patch(
+        f"/api/v1/workspaces/{workspace_id}", json={"run_role_arn": WORKSPACE_PAYLOAD["run_role_arn"]}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["plan_role_arn"] is None

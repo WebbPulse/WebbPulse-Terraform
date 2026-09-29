@@ -11,6 +11,12 @@ workspace run role trusts, and from there assumes two roles:
 - the control plane's state role, narrowed by a session policy to this
   workspace's state prefix, whose keys only the S3 backend reads.
 
+A workspace with a separate plan role, which Quick setup creates beside the run
+role, gets that role's keys for a plan instead, so a plan never holds a session of
+a role that can write. The run role is still assumed during the plan, under the
+plan's read only session policy, and its keys are dropped at once: that keeps a
+plan proving the apply role's trust, which is what the run role check reads.
+
 Both sessions last at most an hour, the role chaining ceiling, which a long
 phase outlives. The runner therefore asks for a fresh pair before they expire
 through `POST /runs/{id}/credentials`, which vends again exactly as the bundle
@@ -42,6 +48,9 @@ from .schemas.run import Phase
 
 VENDING_SESSION_NAME: Final = "webbpulse-terraform-vending"
 """The session name the runs function holds the vending role under."""
+
+PROOF_DURATION_SECONDS: Final = 900
+"""The shortest session STS grants, for the run role assume that only proves its trust."""
 
 _log = logging.getLogger(__name__)
 
@@ -184,11 +193,14 @@ def vend(
     settings: Settings,
     workspace_name: str,
     plan_assume_role_arns: Sequence[str] = (),
+    plan_role_arn: str = "",
 ) -> tuple[VendedCredentials, VendedCredentials]:
     """The provider and state credentials for one phase of one run.
 
     `plan_assume_role_arns` are the reader roles a plan session may assume; an
     apply ignores them. `workspace_name` is carried in the run role's session name.
+    A `plan_role_arn` is what a plan's provider keys come from; the run role is
+    then only assumed to prove its trust.
 
     Raises:
         VendingUnavailable: No vending or state role is configured.
@@ -210,22 +222,41 @@ def vend(
     except Exception as error:
         raise VendingUnavailable(f"the vending role could not be assumed: {_error_text(error)}") from error
     client = _sts(settings, vending)
+    separate = phase == "plan" and bool(plan_role_arn)
     try:
-        provider = _credentials(
-            client.assume_role(
-                **run_role_request(
-                    role_arn,
-                    workspace_id,
-                    run_id,
-                    phase,
-                    duration_seconds=settings.run_credentials_duration_seconds,
-                    workspace_name=workspace_name,
-                    plan_assume_role_arns=plan_assume_role_arns,
-                )
+        run_role_session = client.assume_role(
+            **run_role_request(
+                role_arn,
+                workspace_id,
+                run_id,
+                phase,
+                duration_seconds=PROOF_DURATION_SECONDS if separate else settings.run_credentials_duration_seconds,
+                workspace_name=workspace_name,
+                plan_assume_role_arns=() if separate else plan_assume_role_arns,
             )
         )
     except Exception as error:
         raise RunRoleAssumeFailed(f"assume role failed: {_error_text(error)}") from error
+    if separate:
+        del run_role_session
+        try:
+            provider = _credentials(
+                client.assume_role(
+                    **run_role_request(
+                        plan_role_arn,
+                        workspace_id,
+                        run_id,
+                        phase,
+                        duration_seconds=settings.run_credentials_duration_seconds,
+                        workspace_name=workspace_name,
+                        plan_assume_role_arns=plan_assume_role_arns,
+                    )
+                )
+            )
+        except Exception as error:
+            raise RunRoleAssumeFailed(f"assume plan role failed: {_error_text(error)}") from error
+    else:
+        provider = _credentials(run_role_session)
     try:
         state = _credentials(client.assume_role(**state_role_request(workspace_id, run_id, phase, settings=settings)))
     except Exception as error:

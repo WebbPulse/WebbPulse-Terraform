@@ -2,8 +2,8 @@
 
 Quick setup hands back a quick create link carrying a one-time connect token. The case
 creates that stack itself, waits for the stack's custom resource to report back through
-the connect topic, and checks that the workspace recorded the account, the role and a
-verification run. Deleting the stack must then disconnect the workspace.
+the connect topic, and checks that the workspace recorded the account, the run role, the
+read only plan role and a verification run that plans with it. Deleting the stack must then disconnect the workspace.
 
 A real stack creates an IAM role, so the case runs only where `E2E_AWS_CONNECT_ACCOUNT`
 names the throwaway e2e account and the job's own credentials resolve to exactly that
@@ -119,6 +119,12 @@ def test_a_stack_connects_and_disconnects_the_workspace(api: Any, unconnected_wo
         assert connection["account_id"] == expected_account
         assert str(connection["role_arn"]).startswith(f"arn:aws:iam::{expected_account}:role/")
         assert connection.get("run_id")
+        assert str(connection["plan_role_arn"]).startswith(f"arn:aws:iam::{expected_account}:role/")
+        assert "-workspace-plan/plan-" in str(connection["plan_role_arn"])
+        workspace = api.get(f"/api/v1/workspaces/{workspace_id}").json()
+        assert workspace["plan_role_arn"] == connection["plan_role_arn"]
+        run = api.get(f"/api/v1/runs/{connection['run_id']}").json()
+        assert run["plan_role_arn"] == connection["plan_role_arn"]
     finally:
         client.delete_stack(StackName=stack_name)
         client.get_waiter("stack_delete_complete").wait(StackName=stack_name)

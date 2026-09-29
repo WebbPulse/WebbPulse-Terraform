@@ -281,6 +281,16 @@ plan. The `Connection` resource carries `TrustVersion` (`aws_connect.TRUST_VERSI
 connection lacks the current version is `run_role_reconnect_required`, and the UI
 asks for the stack to be deleted and connected again, or updated in place.
 
+A workspace may also carry `plan_role_arn`, a read only role a plan assumes for
+its provider keys; the plan still assumes the run role first (900 seconds, keys
+discarded) so the run role check keeps its evidence, and applies ignore it.
+Quick setup creates it by default (`plan_role`, `PlanRoleName` parameter) at
+`role/<run role prefix>plan/plan-<ulid>`, a path because the run role name is
+already 64 characters; the existing `<prefix>-workspace-*` vending grant covers
+it. It is reported as `PlanRoleArn`, kept on the connection, staged and promoted
+with its run role, and dropped with the stack or a hand picked run role. Reader
+roles in `plan_assume_role_arns` must trust the plan role.
+
 ### Runs
 
 Runs are serial per workspace. A run created while another is active is stored

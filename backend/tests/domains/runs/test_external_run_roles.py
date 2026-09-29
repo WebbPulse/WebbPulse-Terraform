@@ -82,3 +82,42 @@ def test_a_plan_vends_the_factory_role_read_only(runner_client, created_run, wor
     assert run_role_request["ExternalId"] == workspace["workspace_id"]
     assert run_role_request["PolicyArns"] == READ_ONLY
     assert body["aws_credentials"]["access_key_id"] == "ASIA-WebbPulse-Platform-Terraform"
+
+
+PLAN_ROLE_ARN = "arn:aws:iam::488386929690:role/terraform/plan-reader"
+
+
+def test_a_plan_with_a_plan_role_vends_only_the_plan_role(
+    auth_client, runner_client, created_run, workspace, sts_requests, settings
+):
+    """The run role is assumed briefly to prove its trust, and the plan's keys come from the plan role."""
+    auth_client.patch(f"/api/v1/workspaces/{workspace['workspace_id']}", json={"plan_role_arn": PLAN_ROLE_ARN})
+
+    body = runner_client.get(f"/api/v1/runs/{created_run['run_id']}/bundle").json()
+
+    _vending_request, proof_request, plan_request, _state_request = sts_requests
+    assert proof_request["RoleArn"] == FACTORY_ROLE_ARN
+    assert proof_request["DurationSeconds"] == vending.PROOF_DURATION_SECONDS
+    assert proof_request["PolicyArns"] == READ_ONLY
+    assert plan_request["RoleArn"] == PLAN_ROLE_ARN
+    assert plan_request["ExternalId"] == workspace["workspace_id"]
+    assert plan_request["PolicyArns"] == READ_ONLY
+    assert body["aws_credentials"]["access_key_id"] == "ASIA-plan-reader"
+    assert body["run_role_arn"] == PLAN_ROLE_ARN
+
+
+def test_an_apply_ignores_the_plan_role(sts_requests, settings):
+    """An apply assumes the run role alone, with no session policy."""
+    provider, _state = vending.vend(
+        role_arn=FACTORY_ROLE_ARN,
+        workspace_id="ws-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        run_id="run-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        phase="apply",
+        settings=settings,
+        workspace_name="example",
+        plan_role_arn=PLAN_ROLE_ARN,
+    )
+    _vending_request, run_role_request, _state_request = sts_requests
+    assert run_role_request["RoleArn"] == FACTORY_ROLE_ARN
+    assert "PolicyArns" not in run_role_request
+    assert provider.access_key_id == "ASIA-WebbPulse-Platform-Terraform"

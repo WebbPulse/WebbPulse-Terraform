@@ -183,6 +183,8 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "plan_assume_role_arns": list(payload.get("plan_assume_role_arns") or []),
         "created_at": now_iso(),
     }
+    if payload.get("plan_role_arn"):
+        item["plan_role_arn"] = str(payload["plan_role_arn"])
     if payload.get("tracked_branch"):
         item["tracked_branch"] = str(payload["tracked_branch"])
     if payload.get("vcs_repo"):
@@ -261,7 +263,8 @@ def update_workspace(
     instead, since there is nothing to keep working. Setting `run_role_arn`
     directly switches at once and discards whatever was staged, and a role other
     than the one a Quick setup stack connected also drops that connection and any
-    waiting connect token, since the person chose another role by hand.
+    waiting connect token, since the person chose another role by hand, along with
+    the plan role that stack created unless the edit names a plan role itself.
 
     A change to `vcs_repo` rewrites the lowercased `vcs_repo_key` the binding
     index reads and resolves the repository through the GitHub App, which records
@@ -296,6 +299,13 @@ def update_workspace(
                     aws_connect.TOKEN_EXPIRES_ATTRIBUTE,
                 )
             )
+            stack_plan_role = connected.get(aws_connect.PLAN_ROLE_ATTRIBUTE)
+            if (
+                stack_plan_role
+                and "plan_role_arn" not in changes
+                and existing.get(aws_connect.PLAN_ROLE_ATTRIBUTE) == stack_plan_role
+            ):
+                removals.append(aws_connect.PLAN_ROLE_ATTRIBUTE)
     if "vcs_repo" in changes and not _repository_changed(changes["vcs_repo"], existing):
         assignments.pop("vcs_repo", None)
     elif "vcs_repo" in changes:

@@ -1689,6 +1689,8 @@ export interface components {
              * @default false
              */
             pending?: boolean;
+            /** Plan Role Arn */
+            plan_role_arn?: string | null;
             /** Reported At */
             reported_at?: string | null;
             /** Requested At */
@@ -2556,6 +2558,8 @@ export interface components {
             message?: string;
             /** Plan Only */
             plan_only: boolean;
+            /** Plan Role Arn */
+            plan_role_arn?: string | null;
             /** Queued Behind */
             queued_behind?: string | null;
             /** Run Id */
@@ -2751,6 +2755,8 @@ export interface components {
             message?: string;
             /** Plan Only */
             plan_only: boolean;
+            /** Plan Role Arn */
+            plan_role_arn?: string | null;
             /** Queued Behind */
             queued_behind?: string | null;
             /** Run Id */
@@ -2906,6 +2912,10 @@ export interface components {
             pending?: boolean;
             /** Permissions Policy Arn */
             permissions_policy_arn?: string | null;
+            /** Plan Role Arn */
+            plan_role_arn?: string | null;
+            /** Plan Role Name */
+            plan_role_name?: string | null;
             /** Region */
             region: string;
             /**
@@ -2933,6 +2943,11 @@ export interface components {
              * @enum {string}
              */
             permissions?: "administrator" | "power_user" | "read_only" | "none";
+            /**
+             * Plan Role
+             * @default true
+             */
+            plan_role?: boolean;
         };
         /**
          * RunRoleSetup
@@ -3315,6 +3330,8 @@ export interface components {
             pending_run_role_arn?: string | null;
             /** Plan Assume Role Arns */
             plan_assume_role_arns?: string[];
+            /** Plan Role Arn */
+            plan_role_arn?: string | null;
             /** Run Role Account Id */
             run_role_account_id?: string | null;
             /** Run Role Arn */
@@ -3379,6 +3396,8 @@ export interface components {
             name: string;
             /** Plan Assume Role Arns */
             plan_assume_role_arns?: string[];
+            /** Plan Role Arn */
+            plan_role_arn?: string | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /**
@@ -3433,6 +3452,8 @@ export interface components {
             pending_run_role_arn?: string | null;
             /** Plan Assume Role Arns */
             plan_assume_role_arns?: string[] | null;
+            /** Plan Role Arn */
+            plan_role_arn?: string | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /** Speculative Plans */
