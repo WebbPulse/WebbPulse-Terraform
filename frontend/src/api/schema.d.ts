@@ -1675,7 +1675,7 @@ export interface components {
              * Artifact
              * @enum {string}
              */
-            artifact: "plan" | "plan_json" | "log" | "outputs_json";
+            artifact: "plan" | "plan_json" | "log" | "outputs_json" | "workdir";
             /** Size Bytes */
             size_bytes: number;
         };
@@ -1691,6 +1691,8 @@ export interface components {
         Artifacts: {
             /** Plan Get Url */
             plan_get_url: string;
+            /** Workdir Get Url */
+            workdir_get_url?: string | null;
         };
         /**
          * AwsConnection

@@ -121,6 +121,7 @@ def bundle_payload(
     *,
     engine: str = "terraform",
     plan_get_url: str | None = None,
+    workdir_get_url: str | None = None,
     engine_version: str = BAKED_VERSION,
 ) -> dict[str, Any]:
     """A bundle the runs domain would serve, carrying sensitive variable values."""
@@ -151,13 +152,14 @@ def bundle_payload(
         },
         "environment_variables": {"PROVIDER_TOKEN": SECRET_ENVVAR},
         "terraform_variables": {"db_password": SECRET_TFVAR, "instance_count": 2},
-        "artifacts": {"plan_get_url": plan_get_url},
+        "artifacts": {"plan_get_url": plan_get_url, "workdir_get_url": workdir_get_url},
     }
 
 
 ARTIFACT_OBJECTS: dict[str, tuple[str, str]] = {
     "plan": ("/runs/plan.tfplan", "application/octet-stream"),
     "plan_json": ("/runs/plan.json", "application/json"),
+    "workdir": ("/runs/workdir.tar.gz", "application/gzip"),
     "log": ("/runs/plan.log", "text/plain"),
     "outputs_json": ("/runs/outputs.json", "application/json"),
 }
@@ -245,6 +247,7 @@ def make_transport(
     refused_uploads: frozenset[str] = frozenset(),
     heartbeat_status: int = 204,
     credentials_status: int = 200,
+    workdir_tarball: bytes | None = None,
 ) -> httpx.MockTransport:
     """An httpx transport serving the bundle, the config tarball and the artifact uploads.
 
@@ -254,7 +257,8 @@ def make_transport(
     release files by URL, `refused_uploads` names artifact kinds whose upload
     request is refused, `bundle_body` is a refused bundle's error body and
     `heartbeat_status` is what every heartbeat is answered with and
-    `credentials_status` what every credential refresh is.
+    `credentials_status` what every credential refresh is. `workdir_tarball` is
+    the planned working directory an apply restores.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -317,6 +321,8 @@ def make_transport(
             return httpx.Response(200)
         if path.endswith("plan.tfplan"):
             return httpx.Response(200, content=plan_bytes)
+        if path.endswith("workdir.tar.gz") and workdir_tarball is not None:
+            return httpx.Response(200, content=workdir_tarball)
         return httpx.Response(404)
 
     return httpx.MockTransport(handler)
@@ -340,6 +346,8 @@ def fake_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[...
         directory: Path | None = None,
         plan_link: str | None = None,
         show_output: str | None = None,
+        plan_writes: tuple[str, ...] = (),
+        apply_reads: tuple[str, ...] = (),
     ) -> Path:
         document = json.dumps(PLAN_JSON_WITH_CHANGES if plan_json is None else plan_json)
         shown = document if show_output is None else show_output
@@ -350,6 +358,8 @@ SUBCOMMAND = sys.argv[1] if len(sys.argv) > 1 else ""
 ECHO = {echo_environment!r}
 VERSION = {version!r}
 PLAN_LINK = {plan_link!r}
+PLAN_WRITES = {plan_writes!r}
+APPLY_READS = {apply_reads!r}
 
 if SUBCOMMAND == "version":
     if sys.argv[2:] == ["-json"]:
@@ -392,6 +402,9 @@ if SUBCOMMAND == "plan":
     except KeyboardInterrupt:
         print("Interrupt received. Gracefully shutting down...", flush=True)
         sys.exit(1)
+    for written in PLAN_WRITES:
+        os.makedirs(os.path.dirname(written) or ".", exist_ok=True)
+        open(written, "w").write("generated " + written)
     if PLAN_LINK:
         os.symlink(PLAN_LINK, "plan.tfplan")
     else:
@@ -406,6 +419,10 @@ if SUBCOMMAND == "show":
     sys.exit(0)
 if SUBCOMMAND == "apply":
     print("apply arguments " + " ".join(sys.argv[2:]))
+    for read in APPLY_READS:
+        if not os.path.isfile(read) or open(read).read() != "generated " + read:
+            print("apply is missing " + read, file=sys.stderr)
+            sys.exit(1)
     print("Apply complete! Resources: 1 added, 0 changed, 0 destroyed.")
     sys.exit({apply_exit})
 if SUBCOMMAND == "output":

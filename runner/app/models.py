@@ -247,7 +247,7 @@ class BackendConfig(BaseModel):
     credentials: VendedCredentials
 
 
-ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
+ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json", "workdir"]
 """The objects a phase uploads, named as the artifact upload route names them."""
 
 
@@ -262,6 +262,8 @@ class Artifacts(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     plan_get_url: str | None = None
+    workdir_get_url: str | None = None
+    """The planned working directory, in an apply phase bundle whose plan archived one."""
 
 
 class ArtifactUpload(BaseModel):
@@ -296,6 +298,8 @@ class Bundle(BaseModel):
     """The workspace run role the provider keys are a session of, for the transcript."""
     aws_credentials: VendedCredentials
     """The workspace run role's keys for this phase, read only for a plan."""
+    plan_only: bool = False
+    """The run ends after its plan, so the plan archives no working directory for an apply."""
     is_destroy: bool = False
     """Plan the destruction of every managed resource with `plan -destroy`. Only the
     plan phase reads it: the apply applies the saved plan, which already carries the
