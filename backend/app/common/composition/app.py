@@ -14,26 +14,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from webbpulse.http import create_app
-from webbpulse.identity import LOCAL_ENVIRONMENT, IdentitySettings, LocalAuthorizerMiddleware
+from webbpulse.identity import LOCAL_ENVIRONMENT, LocalAuthorizerMiddleware
 
 from ..core.middleware import MONOLITH_DOMAIN, DomainHeaderMiddleware, TrailingSlashMiddleware
+from ..identity.package_glue import build_identity_settings
 from ..version import VERSION
 from .settings import Settings, get_settings
 from .wiring import DOMAINS, ERROR_ENVELOPE
 
 if TYPE_CHECKING:  # pragma: no cover
     from fastapi import FastAPI
-
-
-def _identity_settings() -> IdentitySettings:
-    """Build `IdentitySettings` from the environment.
-
-    Its `issuer` and `audience` have no defaults, so a type checker reads the
-    zero argument call as missing them. Both come from the environment through
-    pydantic-settings, which the checker cannot see, so the construction is
-    narrowed to this one function rather than suppressed at the call site.
-    """
-    return IdentitySettings()  # pyright: ignore[reportCallIssue]
 
 
 def build_app(settings: Settings | None = None) -> "FastAPI":
@@ -69,7 +59,7 @@ def build_app(settings: Settings | None = None) -> "FastAPI":
     if resolved.ENVIRONMENT.strip().lower() == LOCAL_ENVIRONMENT and resolved.IDENTITY_ISSUER:
         app.add_middleware(
             LocalAuthorizerMiddleware,
-            settings=_identity_settings(),
+            settings=build_identity_settings(resolved),
             environment=resolved.ENVIRONMENT,
             accept_device_tokens=resolved.IDENTITY_DEVICE_GRANT_ENABLED,
         )

@@ -182,87 +182,7 @@ module "lambda_domain" {
     image_uri = "${module.registry.repository_urls[each.key]}:${lookup(var.domain_image_tags, each.key, var.bootstrap_image_tag)}"
   }
 
-  environment_variables = merge(
-    {
-      ENVIRONMENT  = var.environment
-      SERVICE_NAME = "${local.project}-${each.key}"
-      CORS_ORIGINS = local.cors_origins
-      SITE_URL     = local.frontend_url
-      LOG_LEVEL    = "INFO"
-
-      WORKSPACES_TABLE      = module.dynamodb.table_names["workspaces"]
-      RUNS_TABLE            = module.dynamodb.table_names["runs"]
-      VARIABLES_TABLE       = module.dynamodb.table_names["variables"]
-      CONFIG_VERSIONS_TABLE = module.dynamodb.table_names["config-versions"]
-      USERS_TABLE           = module.dynamodb.table_names["users"]
-      GITHUB_TABLE          = module.dynamodb.table_names["github"]
-      VCS_UPLOADS_TABLE     = module.dynamodb.table_names["vcs-uploads"]
-      REGISTRY_TABLE        = module.dynamodb.table_names["registry"]
-
-      GITHUB_APP_SLUG = var.github_app_slug
-      API_BASE_URL    = "https://${local.api_host}"
-
-      IDENTITY_TABLE_PREFIX = local.prefix
-
-      STATE_BUCKET      = module.state.bucket
-      STATE_KMS_KEY_ARN = module.state.kms_key_arn
-      ARTIFACTS_BUCKET  = module.artifacts.bucket
-      RUNNER_LOG_GROUP  = aws_cloudwatch_log_group.runner.name
-
-      RUN_STATE_MACHINE_ARN = module.run_state_machine.arn
-
-      WORKSPACE_CLEANUP_QUEUE_URL = module.workspace_cleanup.queue_url
-      GITHUB_WEBHOOKS_QUEUE_URL   = module.github_webhooks.queue_url
-      REGISTRY_INGEST_QUEUE_URL   = module.registry_ingest.queue_url
-      AWS_CONNECT_TOPIC_ARN       = aws_sns_topic.aws_connect.arn
-
-      PROVIDER_SIGNING_KEY_PARAMETER    = local.provider_signing_parameters.public_key
-      PROVIDER_SIGNING_KEY_ID_PARAMETER = local.provider_signing_parameters.key_id
-
-      RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
-      RUNNER_CLUSTER_ARN   = module.runner.cluster_arn
-      RUN_ROLE_NAME_PREFIX = "${local.prefix}-workspace-"
-
-      RUN_CREDENTIALS_ROLE_ARN         = aws_iam_role.run_credentials.arn
-      RUN_STATE_ROLE_ARN               = aws_iam_role.run_state.arn
-      RUN_CREDENTIALS_DURATION_SECONDS = tostring(var.run_credentials_duration_seconds)
-
-      OIDC_ISSUER_URL      = local.oidc_issuer_enabled ? local.oidc_issuer_url : ""
-      OIDC_SIGNING_KEY_ARN = local.oidc_active_key
-
-      APP_SECRETS_ARN = module.app_secrets.arns["app"]
-
-      WEBBPULSE_OTEL_SAMPLE_RATIO        = var.environment == "production" ? "0.1" : "1.0"
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "https://xray.${var.aws_region}.amazonaws.com/v1/traces"
-    },
-
-    {
-      IDENTITY_ENVIRONMENT       = var.environment
-      IDENTITY_RP_NAME           = var.identity_rp_name
-      IDENTITY_PRODUCT_NAME      = "WebbPulse Terraform"
-      IDENTITY_SUPPORT_EMAIL     = "tyler@webbpulse.com"
-      IDENTITY_FRONTEND_BASE_URL = "https://${local.host}"
-
-      IDENTITY_REGISTRATION_ENABLED = "false"
-
-      IDENTITY_TOTP_CIPHER = "secret"
-
-      IDENTITY_OAUTH_REDIRECT_URIS = local.identity_oauth_redirect_uris
-
-      IDENTITY_EPHEMERAL_USERS_ENABLED = tostring(local.ephemeral_users_enabled)
-
-      IDENTITY_PASSKEYS_ENABLED      = tostring(local.passkeys_enabled)
-      IDENTITY_PASSKEYS_PASSWORDLESS = tostring(local.passkeys_passwordless)
-      IDENTITY_WEBAUTHN_ORIGINS      = local.identity_webauthn_origins
-    },
-
-    module.identity.identity_environment,
-
-    local.identity_device_environment,
-    each.key == "runs" && local.access_gate_enabled ? {
-      ORIGIN_VERIFY_PARAMETER = one(module.access_gate[*].origin_verify_ssm_parameter_name)
-    } : {},
-  )
+  environment_variables = local.lambda_domain_environment[each.key]
 
   log_retention_days           = 7
   log_format                   = "JSON"
@@ -438,4 +358,89 @@ resource "aws_iam_role_policy" "lambda_domain" {
       local.lambda_domain_extra_statements[each.key],
     )
   })
+}
+
+locals {
+  lambda_domain_environment = { for name in keys(local.lambda_domains) : name => merge(
+    {
+      ENVIRONMENT  = var.environment
+      SERVICE_NAME = "${local.project}-${name}"
+      CORS_ORIGINS = local.cors_origins
+      SITE_URL     = local.frontend_url
+      LOG_LEVEL    = "INFO"
+
+      GITHUB_APP_SLUG = var.github_app_slug
+      API_BASE_URL    = "https://${local.api_host}"
+
+      IDENTITY_TABLE_PREFIX = local.prefix
+
+      STATE_BUCKET      = module.state.bucket
+      STATE_KMS_KEY_ARN = module.state.kms_key_arn
+      ARTIFACTS_BUCKET  = module.artifacts.bucket
+      RUNNER_LOG_GROUP  = aws_cloudwatch_log_group.runner.name
+
+      RUN_STATE_MACHINE_ARN = module.run_state_machine.arn
+
+      WORKSPACE_CLEANUP_QUEUE_URL = module.workspace_cleanup.queue_url
+      GITHUB_WEBHOOKS_QUEUE_URL   = module.github_webhooks.queue_url
+      REGISTRY_INGEST_QUEUE_URL   = module.registry_ingest.queue_url
+      AWS_CONNECT_TOPIC_ARN       = aws_sns_topic.aws_connect.arn
+
+      PROVIDER_SIGNING_KEY_PARAMETER    = local.provider_signing_parameters.public_key
+      PROVIDER_SIGNING_KEY_ID_PARAMETER = local.provider_signing_parameters.key_id
+
+      RUNNER_TASK_ROLE_ARN = join(",", sort(values(module.runner.task_role_arns)))
+      RUNNER_CLUSTER_ARN   = module.runner.cluster_arn
+
+      RUN_CREDENTIALS_ROLE_ARN         = aws_iam_role.run_credentials.arn
+      RUN_STATE_ROLE_ARN               = aws_iam_role.run_state.arn
+      RUN_CREDENTIALS_DURATION_SECONDS = tostring(var.run_credentials_duration_seconds)
+
+      OIDC_ISSUER_URL      = local.oidc_issuer_enabled ? local.oidc_issuer_url : ""
+      OIDC_SIGNING_KEY_ARN = local.oidc_active_key
+
+      APP_SECRETS_ARN = module.app_secrets.arns["app"]
+
+      WEBBPULSE_OTEL_SAMPLE_RATIO        = var.environment == "production" ? "0.1" : "1.0"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "https://xray.${var.aws_region}.amazonaws.com/v1/traces"
+    },
+
+    {
+      IDENTITY_ENVIRONMENT       = var.environment
+      IDENTITY_RP_NAME           = var.identity_rp_name
+      IDENTITY_PRODUCT_NAME      = "WebbPulse Terraform"
+      IDENTITY_SUPPORT_EMAIL     = "tyler@webbpulse.com"
+      IDENTITY_FRONTEND_BASE_URL = "https://${local.host}"
+
+      IDENTITY_REGISTRATION_ENABLED = "false"
+
+      IDENTITY_TOTP_CIPHER = "secret"
+
+      IDENTITY_EPHEMERAL_USERS_ENABLED = tostring(local.ephemeral_users_enabled)
+
+      IDENTITY_PASSKEYS_ENABLED      = tostring(local.passkeys_enabled)
+      IDENTITY_PASSKEYS_PASSWORDLESS = tostring(local.passkeys_passwordless)
+    },
+
+    module.identity.identity_environment,
+
+    local.identity_device_environment,
+    name == "runs" && local.access_gate_enabled ? {
+      ORIGIN_VERIFY_PARAMETER = one(module.access_gate[*].origin_verify_ssm_parameter_name)
+    } : {},
+  ) }
+
+  lambda_environment_budget_bytes = 3584
+}
+
+output "lambda_environment_bytes" {
+  description = "Each domain function's environment as Lambda measures it, the compact JSON of its variables, against a 4096 byte hard limit"
+  value       = { for name, environment in local.lambda_domain_environment : name => length(jsonencode(environment)) }
+
+  precondition {
+    condition = alltrue([
+      for environment in values(local.lambda_domain_environment) : length(jsonencode(environment)) <= local.lambda_environment_budget_bytes
+    ])
+    error_message = "A domain function's environment exceeds the ${local.lambda_environment_budget_bytes} byte budget, and Lambda refuses anything over 4096 at apply. Derive the value in code instead of adding a variable."
+  }
 }

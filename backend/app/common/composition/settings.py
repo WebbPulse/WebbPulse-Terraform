@@ -1,6 +1,7 @@
 """The control plane's settings, on the shared package's base.
 
-Every field is an environment variable Terraform sets on the function. The one
+Every field is an environment variable Terraform sets on the function, or derived
+from the stack prefix where Terraform leaves it unset. The one
 secret field, `variables_master_key`, resolves from the `APP_SECRETS_ARN` blob on
 first read, so constructing this makes no Secrets Manager call and importing it
 needs no credentials.
@@ -13,6 +14,8 @@ from typing import Any
 
 from pydantic import model_validator
 from webbpulse.config import BaseServiceSettings
+
+from ..db import tables
 
 VARIABLES_MASTER_KEY_ENTRY = "variables_master_key"
 """The app secret's key holding the base64 HKDF master key for sensitive variables."""
@@ -27,6 +30,18 @@ the raw `ENVIRONMENT`, so no deployed stack answers a page served from a worksta
 LOCALHOST_ORIGIN_ENVIRONMENTS = frozenset({"local", "dev", "development"})
 """The explicit spellings of a workstation stack. An unrecognised value maps to "local"
 for the base class but is not listed here, so a typo on a deployed function stays closed."""
+
+STACK_TABLE_FIELDS = {
+    "WORKSPACES_TABLE": tables.WORKSPACES,
+    "RUNS_TABLE": tables.RUNS,
+    "VARIABLES_TABLE": tables.VARIABLES,
+    "CONFIG_VERSIONS_TABLE": tables.CONFIG_VERSIONS,
+    "USERS_TABLE": tables.USERS,
+    "GITHUB_TABLE": tables.GITHUB,
+    "VCS_UPLOADS_TABLE": tables.VCS_UPLOADS,
+    "REGISTRY_TABLE": tables.REGISTRY,
+}
+"""Each table setting and the logical name the stack prefixes to name that table."""
 
 ENVIRONMENT_ALIASES = {
     "development": "local",
@@ -118,8 +133,10 @@ class Settings(BaseServiceSettings):
     deployment, which is how the composition root tests for it cheaply."""
 
     IDENTITY_TABLE_PREFIX: str = ""
-    """The prefix the identity module's own tables carry, set by Terraform to
-    `local.prefix`.
+    """The stack prefix, set by Terraform to `local.prefix`. The identity module's own
+    tables carry it, every product table is `<prefix>-<logical>`, and run roles are
+    named under `<prefix>-workspace-`, so an unset table or role prefix setting is
+    derived from it and the function environment stays under Lambda's 4KB limit.
 
     It cannot be derived from `ENVIRONMENT`: the stack slugs production to `prod`
     while `ENVIRONMENT` is the word `production`, so a derived prefix would name
@@ -210,7 +227,8 @@ class Settings(BaseServiceSettings):
 
     @model_validator(mode="after")
     def _mirror_base_fields(self) -> "Settings":
-        """Derive the base class's lower case fields from this project's own."""
+        """Derive the base class's lower case fields from this project's own, and the
+        table names and run role prefix the stack prefix implies when none is set."""
         object.__setattr__(
             self,
             "environment",
@@ -223,6 +241,13 @@ class Settings(BaseServiceSettings):
         object.__setattr__(self, "cors_allow_origins", sorted(set(origins)))
         if self.app_secret_arn and not self.app_secrets_arn:
             object.__setattr__(self, "app_secrets_arn", self.app_secret_arn)
+        prefix = self.IDENTITY_TABLE_PREFIX.strip()
+        if prefix:
+            for field, logical_name in STACK_TABLE_FIELDS.items():
+                if not getattr(self, field):
+                    object.__setattr__(self, field, f"{prefix}-{logical_name}")
+            if not self.RUN_ROLE_NAME_PREFIX:
+                object.__setattr__(self, "RUN_ROLE_NAME_PREFIX", f"{prefix}-workspace-")
         return self
 
     @property
