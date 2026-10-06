@@ -13,7 +13,7 @@ behind an HTTP API, DynamoDB for control plane state, S3 for Terraform state wit
 native locking (`use_lockfile = true`), one Step Functions execution per run and
 one Fargate runner task per plan and per apply. The frontend is a React 19
 TypeScript SPA on the `@webbpulse/*` packages. Infrastructure is Terraform
-(`terraform/`), applied by HCP Terraform until cutover.
+(`terraform/`), applied by the plane itself.
 
 **Environments:** `staging` serves `staging.terraform.webbpulse.com` with the API
 at `api.staging.terraform.webbpulse.com`. `main` serves `terraform.webbpulse.com`
@@ -119,8 +119,10 @@ terraform init -backend=false
 terraform validate
 ```
 
-Applies happen in HCP Terraform, never locally. The workspaces use dynamic
-provider credentials, so a local `terraform plan` has no way to authenticate.
+Applies happen on the plane itself (`WebbPulse-Terraform-staging` on `staging`,
+`WebbPulse-Terraform` on `main`), never locally. If the plane cannot apply its
+own fix, `ops/break-glass/break_glass.py` plans and applies against the same S3
+state; see `terraform/README.md`.
 
 ---
 
@@ -652,8 +654,8 @@ repository admin). Rulesets and environments are owned by the
 Every commit to `staging` or `main` deploys, so treat a commit as a release. The
 deploys are path scoped per slice: a commit touching `backend/` rebuilds only the
 affected domains, one touching `frontend/` redeploys the SPA, one touching
-`runner/` rebuilds the runner image, and `terraform/` is applied by HCP Terraform
-from the branch. `all-checks-passed` is the required check.
+`runner/` rebuilds the runner image, and `terraform/` is applied by the plane
+from the branch (production after a `wp-tf confirm`). `all-checks-passed` is the required check.
 
 **Bootstrapping a fresh environment takes two applies.** Lambda resolves an image
 tag during `CreateFunction`, so the domain functions cannot exist before their
@@ -661,7 +663,7 @@ ECR repositories hold an image. The first apply runs with
 `bootstrap_image_tag = ""`, which builds everything but the two functions. The
 backend then deploys and pushes `sha-<sha>` for both domains, and the second
 apply runs with `bootstrap_image_tag` set by hand as a workspace variable on the
-HCP workspace to that tag. After that the deploy workflow owns the image and each
+plane workspace to that tag. After that the deploy workflow owns the image and each
 push updates the function by digest. See `terraform/README.md` for the full
 sequence and the workspace variables.
 

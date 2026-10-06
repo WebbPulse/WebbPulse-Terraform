@@ -74,7 +74,7 @@ resource "aws_ssm_parameter" "provider_signing" {
 }
 
 module "provider_signing_keygen_role" {
-  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
+  source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/github-actions-role"
   version = "~> 2.33"
 
   role_name        = "${local.prefix}-provider-signing-keygen"
@@ -102,7 +102,7 @@ module "provider_signing_keygen_role" {
 }
 
 module "provider_release_role" {
-  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
+  source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/github-actions-role"
   version = "~> 2.33"
 
   role_name        = "${local.prefix}-provider-release"

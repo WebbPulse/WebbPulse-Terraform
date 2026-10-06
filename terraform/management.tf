@@ -1,5 +1,5 @@
 module "app_baseline" {
-  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/app-baseline"
+  source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/app-baseline"
   version = "~> 2.33"
 
   name                = local.prefix
