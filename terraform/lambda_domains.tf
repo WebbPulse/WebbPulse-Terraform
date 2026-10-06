@@ -3,7 +3,7 @@ locals {
     workspaces = {
       memory            = 512
       timeout           = local.lambda_domain_timeout
-      tables            = ["workspaces", "variables", "config-versions", "users"]
+      tables            = ["workspaces", "variables", "config-versions", "users", "rate-limits"]
       read_tables       = ["runs"]
       buckets           = true
       own_image_tag     = false
@@ -368,6 +368,8 @@ locals {
       CORS_ORIGINS = local.cors_origins
       SITE_URL     = local.frontend_url
       LOG_LEVEL    = "INFO"
+
+      DYNAMODB_TABLE_PREFIX = local.prefix
 
       GITHUB_APP_SLUG = var.github_app_slug
       API_BASE_URL    = "https://${local.api_host}"
