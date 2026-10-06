@@ -219,7 +219,6 @@ def test_build_environment_drops_the_runner_tokens(tmp_path: Path) -> None:
         base,
         {"PROVIDER_TOKEN": SECRET_ENVVAR},
         "us-west-2",
-        tmp_path,
         {"AWS_PROFILE": "webbpulse-run"},
         run_phase="plan",
     )
@@ -241,7 +240,6 @@ def test_build_environment_exports_the_run_phase_over_a_workspace_variable(tmp_p
         {"TF_VAR_webbpulse_run_phase": "apply"},
         {"TF_VAR_webbpulse_run_phase": "apply"},
         "us-west-2",
-        tmp_path,
         run_phase=phase,
     )
     assert environment["TF_VAR_webbpulse_run_phase"] == phase
@@ -275,7 +273,6 @@ def test_an_ephemeral_phase_variable_selects_the_writer_when_the_saved_plan_is_a
             {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path)},
             {"TF_PLUGIN_CACHE_DIR": ""},
             "us-west-2",
-            tmp_path,
             run_phase=phase,
         )
         return subprocess.run(  # noqa: S603
@@ -289,6 +286,62 @@ def test_an_ephemeral_phase_variable_selects_the_writer_when_the_saved_plan_is_a
     applied = engine("apply", "apply", "-input=false", "plan.tfplan")
     assert applied.returncode == 0, applied.stderr
     assert "selected the reader" not in applied.stdout + applied.stderr
+
+
+def test_build_environment_uses_a_relative_data_directory() -> None:
+    """`TF_DATA_DIR` is relative to the working directory, whatever the runner's own environment says."""
+    environment = build_environment({"TF_DATA_DIR": "/tmp/elsewhere"}, {}, "us-west-2", run_phase="plan")
+    assert environment["TF_DATA_DIR"] == ".terraform"
+
+
+def module_repository(root: Path) -> Path:
+    """A one-commit git repository holding a module that outputs its own `path.module`."""
+    repository = root / "module"
+    repository.mkdir()
+    (repository / "main.tf").write_text('output "path" {\n  value = path.module\n}\n')
+    git = ["git", "-c", "user.name=runner", "-c", "user.email=runner@example.test", "-C", str(repository)]
+    for arguments in (["init", "-q"], ["add", "main.tf"], ["commit", "-q", "-m", "module"]):
+        subprocess.run([*git, *arguments], check=True)  # noqa: S603
+    return repository
+
+
+@pytest.mark.skipif(
+    shutil.which("terraform") is None or shutil.which("git") is None, reason="needs terraform and git binaries"
+)
+def test_installed_module_paths_match_across_run_directories(tmp_path: Path) -> None:
+    """Installed modules keep a relative `path.module` in every run directory, so `filename` arguments never diff."""
+    binary = str(shutil.which("terraform"))
+    repository = module_repository(tmp_path)
+    config = (
+        f'module "child" {{\n  source = "git::file://{repository}"\n}}\n\n'
+        'output "module_path" {\n  value = module.child.path\n}\n'
+    )
+    paths = []
+    for name in ("webbpulse-run-first", "webbpulse-run-second"):
+        directory = tmp_path / name / "config"
+        directory.mkdir(parents=True)
+        (directory / "main.tf").write_text(config)
+        environment = build_environment(
+            {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path)},
+            {"TF_PLUGIN_CACHE_DIR": ""},
+            "us-west-2",
+            run_phase="plan",
+        )
+        for arguments in (["init", "-input=false"], ["apply", "-input=false", "-auto-approve"]):
+            result = subprocess.run(  # noqa: S603
+                [binary, *arguments], cwd=directory, env=environment, capture_output=True, text=True, check=False
+            )
+            assert result.returncode == 0, result.stderr
+        output = subprocess.run(  # noqa: S603
+            [binary, "output", "-raw", "module_path"],
+            cwd=directory,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        paths.append(output.stdout)
+    assert paths[0] == paths[1] == ".terraform/modules/child"
 
 
 def test_bundle_sensitive_values_cover_variables_and_vended_keys(run_role_arn: str) -> None:

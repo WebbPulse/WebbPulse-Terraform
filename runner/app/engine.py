@@ -288,6 +288,9 @@ VENDED_CREDENTIAL_KEYS: frozenset[str] = frozenset(
 )
 """Variables that would take the engine's AWS credentials from somewhere other than the vended profiles."""
 
+DATA_DIRECTORY = ".terraform"
+"""The engine's data directory, relative to the working directory every subcommand runs in."""
+
 RUNNER_ONLY_KEYS: frozenset[str] = TASK_CREDENTIAL_KEYS | VENDED_CREDENTIAL_KEYS | {"TASK_TOKEN", "RUN_TOKEN"}
 """The runner's own variables, none of which the engine may inherit."""
 
@@ -296,7 +299,6 @@ def build_environment(
     base: dict[str, str],
     bundle_environment: dict[str, str],
     region: str,
-    directory: Path,
     credential_environment: dict[str, str] | None = None,
     *,
     run_phase: Phase,
@@ -308,14 +310,16 @@ def build_environment(
     profile and never rotate, so neither the task nor a workspace variable may set
     them, and no path to the task role's credentials survives either, though that
     role reaches nothing but the runner's log stream. `run_phase` is exported as
-    `RUN_PHASE_VARIABLE`.
+    `RUN_PHASE_VARIABLE`. `TF_DATA_DIR` is the relative `DATA_DIRECTORY`, so module
+    paths, and every `path.module` built from them, match HCP's and stay the same
+    from one run directory to the next.
     """
     blocked = TASK_CREDENTIAL_KEYS | VENDED_CREDENTIAL_KEYS
     environment = {key: value for key, value in base.items() if key not in RUNNER_ONLY_KEYS}
     environment.update(BASE_ENVIRONMENT)
     environment["AWS_REGION"] = region
     environment["AWS_DEFAULT_REGION"] = region
-    environment["TF_DATA_DIR"] = str(directory / ".terraform")
+    environment["TF_DATA_DIR"] = DATA_DIRECTORY
     environment.update({key: value for key, value in bundle_environment.items() if key not in blocked})
     environment.update(credential_environment or {})
     environment[RUN_PHASE_VARIABLE] = run_phase

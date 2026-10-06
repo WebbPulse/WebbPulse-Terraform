@@ -313,7 +313,6 @@ def _run_phase(
         dict(os.environ),
         bundle.environment_variables,
         bundle.backend.region,
-        engine_directory,
         {
             **credentials.environment(),
             **identity_files.environment(),
