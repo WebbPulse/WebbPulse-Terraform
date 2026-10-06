@@ -22,7 +22,7 @@ from app.common.composition import settings as settings_module
 from app.common.core import auth
 from app.common.core.auth import ALL_SCOPES
 from app.common.db.identity_tables import identity_table_prefix
-from app.common.identity.package_glue import consent_theme
+from app.common.identity.package_glue import build_identity_settings, consent_theme
 from tests.conftest import seed_user
 
 USER_ID = "user-device"
@@ -130,12 +130,39 @@ def test_the_consent_theme_defaults_to_dark() -> None:
 
 DEVICE_ENVIRONMENT = {
     "IDENTITY_DEVICE_GRANT_ENABLED": "true",
-    "IDENTITY_DEVICE_CLIENTS": '{"wp-tf": "wp-tf CLI"}',
-    "IDENTITY_DEVICE_SCOPES_SUPPORTED": json.dumps(list(ALL_SCOPES)),
-    "IDENTITY_DEVICE_EXPLICIT_SCOPES": '["runs:apply", "state:download", "admin"]',
-    "IDENTITY_DEVICE_LOGIN_URL": "https://terraform.example.test/sign-in",
+    "IDENTITY_FRONTEND_BASE_URL": "https://terraform.example.test",
 }
-"""What Terraform sets alongside the identity variables when device login is on."""
+"""What Terraform sets alongside the identity variables when device login is on. The
+client, scopes and sign-in page are product facts the identity builder supplies."""
+
+
+def test_device_login_facts_come_from_code_not_the_environment(
+    monkeypatch: pytest.MonkeyPatch, identity_environment: None
+) -> None:
+    del identity_environment
+    for key, value in DEVICE_ENVIRONMENT.items():
+        monkeypatch.setenv(key, value)
+    settings_module.reset_settings_cache()
+    identity = build_identity_settings(settings_module.get_settings())
+    settings_module.reset_settings_cache()
+    assert identity.device_grant_enabled
+    assert identity.device_clients == {"wp-tf": "wp-tf CLI"}
+    assert identity.device_scopes_supported == list(ALL_SCOPES)
+    assert identity.device_explicit_scopes == ["runs:apply", "state:download", "admin"]
+    assert identity.device_login_url == "https://terraform.example.test/sign-in"
+    assert identity.device_audience == ""
+    assert identity.webauthn_origins == ["https://terraform.example.test"]
+
+
+def test_an_explicit_webauthn_origin_wins(monkeypatch: pytest.MonkeyPatch, identity_environment: None) -> None:
+    del identity_environment
+    monkeypatch.setenv("IDENTITY_FRONTEND_BASE_URL", "https://terraform.example.test")
+    monkeypatch.setenv("IDENTITY_WEBAUTHN_ORIGINS", '["http://127.0.0.1:4173"]')
+    settings_module.reset_settings_cache()
+    identity = build_identity_settings(settings_module.get_settings())
+    settings_module.reset_settings_cache()
+    assert identity.webauthn_origins == ["http://127.0.0.1:4173"]
+    assert not identity.device_grant_enabled
 
 
 def test_the_device_routes_mount_and_start_a_login(monkeypatch: pytest.MonkeyPatch, identity_environment: None) -> None:

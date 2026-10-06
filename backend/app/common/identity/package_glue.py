@@ -8,13 +8,16 @@ being a `boto3.client("kms")` this module names, so a local stack signs in proce
 with no AWS credential at all. The package refuses the local signer in production,
 so the switch cannot put a seed derived key in front of real users.
 
-Every import happens in a function body. Importing this module therefore builds no
-AWS client, and the runs image never reaches it at all.
+Every package import happens in a function body. Importing this module therefore builds
+no AWS client, and the runs image never reaches it at all.
 """
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any, Final
+
+from app.common.core.auth import ADMIN, ALL_SCOPES, RUNS_APPLY, STATE_DOWNLOAD
 
 if TYPE_CHECKING:  # pragma: no cover
     from fastapi import APIRouter
@@ -28,6 +31,19 @@ IDENTITY_SERVICE_NAME: Final = "webbpulse-terraform-identity"
 """The service name the identity routes report to logs and traces. Distinct from
 the workspaces function's own, so an auth failure is legible in the logs even
 though one function serves both surfaces."""
+
+
+DEVICE_CLIENTS: Final = {"wp-tf": "wp-tf CLI"}
+"""The one client allowed to start a device login, and the name the approval page shows."""
+
+DEVICE_EXPLICIT_SCOPES: Final = (RUNS_APPLY, STATE_DOWNLOAD, ADMIN)
+"""Scopes a device login gets only when `wp-tf login` names them, never by default."""
+
+SIGN_IN_PATH: Final = "/sign-in"
+"""The SPA's sign-in page, where a signed-out device approval is sent."""
+
+WEBAUTHN_ORIGINS_ENV: Final = "IDENTITY_WEBAUTHN_ORIGINS"
+"""Set only where the passkey origin differs from the SPA's, such as the local e2e stack."""
 
 
 def consent_theme() -> Any:
@@ -70,15 +86,29 @@ def consent_theme() -> Any:
 
 
 def build_identity_settings(settings: "Settings") -> Any:
-    """`IdentitySettings` for this product, read straight from the environment.
+    """`IdentitySettings` for this product: the `IDENTITY_*` environment plus the fixed facts.
 
-    Every field arrives through an `IDENTITY_*` variable Terraform sets, so this is
-    a bare constructor call. Raises `ValidationError` on a bad environment.
+    Device login's client, scopes and sign-in page are product facts rather than
+    deployment config, so they are set here instead of in the function environment,
+    which Lambda caps at 4KB. The WebAuthn origin defaults to the SPA's origin. Raises
+    `ValidationError` on a bad environment.
     """
     from webbpulse.identity import IdentitySettings
 
-    del settings
-    return IdentitySettings()  # pyright: ignore[reportCallIssue]
+    overrides: dict[str, Any] = {}
+    frontend = settings.IDENTITY_FRONTEND_BASE_URL.strip().rstrip("/")
+    if frontend and not os.environ.get(WEBAUTHN_ORIGINS_ENV, "").strip():
+        overrides["webauthn_origins"] = [frontend]
+    if settings.IDENTITY_DEVICE_GRANT_ENABLED:
+        overrides.update(
+            device_grant_enabled=True,
+            device_clients=dict(DEVICE_CLIENTS),
+            device_scopes_supported=list(ALL_SCOPES),
+            device_explicit_scopes=list(DEVICE_EXPLICIT_SCOPES),
+        )
+        if frontend:
+            overrides["device_login_url"] = f"{frontend}{SIGN_IN_PATH}"
+    return IdentitySettings(**overrides)  # pyright: ignore[reportCallIssue]
 
 
 def build_router(settings: "Settings") -> "APIRouter":

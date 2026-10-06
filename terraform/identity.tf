@@ -5,38 +5,9 @@ locals {
 
   identity_registrable_domain = local.host
 
-  identity_oauth_redirect_uris = jsonencode(["${local.identity_issuer}/oauth/callback"])
-
-  identity_webauthn_origins = jsonencode(["https://${local.host}"])
-
   identity_device_audience = "${local.identity_issuer}/device"
 
-  identity_device_scopes = [
-    "workspaces:read",
-    "workspaces:write",
-    "variables:read",
-    "variables:write",
-    "configs:read",
-    "configs:write",
-    "runs:read",
-    "runs:write",
-    "runs:apply",
-    "state:download",
-    "registry:read",
-    "registry:write",
-    "admin",
-  ]
-
-  identity_device_explicit_scopes = ["runs:apply", "state:download", "admin"]
-
-  identity_device_environment = var.device_login_enabled ? {
-    IDENTITY_DEVICE_GRANT_ENABLED    = "true"
-    IDENTITY_DEVICE_CLIENTS          = jsonencode({ "wp-tf" = "wp-tf CLI" })
-    IDENTITY_DEVICE_SCOPES_SUPPORTED = jsonencode(local.identity_device_scopes)
-    IDENTITY_DEVICE_EXPLICIT_SCOPES  = jsonencode(local.identity_device_explicit_scopes)
-    IDENTITY_DEVICE_AUDIENCE         = local.identity_device_audience
-    IDENTITY_DEVICE_LOGIN_URL        = "https://${local.host}/sign-in"
-  } : {}
+  identity_device_environment = var.device_login_enabled ? { IDENTITY_DEVICE_GRANT_ENABLED = "true" } : {}
 }
 
 variable "device_login_enabled" {
