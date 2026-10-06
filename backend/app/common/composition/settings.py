@@ -122,6 +122,11 @@ class Settings(BaseServiceSettings):
     tables that do not exist there. `identity_table_prefix` falls back to the derived
     form only for the local stack and the suite, where the two do agree."""
 
+    IDENTITY_DEVICE_GRANT_ENABLED: bool = False
+    """Whether `wp-tf login` device tokens are accepted. Set by Terraform on every
+    function, so each one checks a device token's grant is still live before
+    trusting it, not only the function that mounts the identity routes."""
+
     RUNNER_TASK_ROLE_ARN: str = ""
     """The runner task roles a workspace run role has to trust, comma separated.
 

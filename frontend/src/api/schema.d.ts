@@ -115,7 +115,7 @@ export interface paths {
         put?: never;
         /**
          * Logout All
-         * @description Revoke every session for the caller and clear the refresh cookie.
+         * @description Revoke every session and device login for the caller and clear the refresh cookie.
          */
         post: operations["logout_all_api_auth_logout_all_post"];
         delete?: never;

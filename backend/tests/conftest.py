@@ -149,11 +149,11 @@ def identity_tables():
     because only the identity tests need them, and creating eleven tables per test
     would slow the rest of the suite for nothing.
     """
-    from webbpulse.identity import TABLES
+    from webbpulse.identity import DEVICE_GRANT_TABLES, TABLES
 
     client = boto3.client("dynamodb", region_name=REGION)
     existing = set(client.list_tables()["TableNames"])
-    for spec in TABLES:
+    for spec in (*TABLES, *DEVICE_GRANT_TABLES):
         request = spec.create_table_request(TABLE_PREFIX)
         if request["TableName"] not in existing:
             client.create_table(**request)

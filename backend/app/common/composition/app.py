@@ -71,6 +71,7 @@ def build_app(settings: Settings | None = None) -> "FastAPI":
             LocalAuthorizerMiddleware,
             settings=_identity_settings(),
             environment=resolved.ENVIRONMENT,
+            accept_device_tokens=resolved.IDENTITY_DEVICE_GRANT_ENABLED,
         )
     app.add_middleware(TrailingSlashMiddleware, router=app.router)
     app.add_middleware(DomainHeaderMiddleware, domain=MONOLITH_DOMAIN)

@@ -14,7 +14,15 @@ import {
 } from '@webbpulse/discovery';
 
 import { API_BASE_URL, identityOriginFrom } from '../api';
-import { Button, ErrorNotice, Field, INPUT_CLASS, Mark } from '../components';
+import { leaveForDeviceApproval } from '../components/deviceNavigation';
+import {
+  Button,
+  ErrorNotice,
+  Field,
+  INPUT_CLASS,
+  Mark,
+  useDeviceHandOff,
+} from '../components';
 
 /** Asks the identity service whether a passkey is a way in on this deployment. */
 function probePasskeyLogin(): Promise<'available' | 'unavailable' | 'unknown'> {
@@ -40,6 +48,13 @@ export function SignIn({
   const [code, setCode] = useState('');
   const [ticket, setTicket] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const handOff = useDeviceHandOff();
+
+  const signedIn = (): void => {
+    if (handOff?.reauthenticate) {
+      leaveForDeviceApproval(handOff.returnTo);
+    }
+  };
 
   const submitPassword = async (): Promise<void> => {
     setError(null);
@@ -47,6 +62,8 @@ export function SignIn({
       const outcome = await login({ email, password });
       if (outcome.mfaRequired) {
         setTicket(outcome.ticket ?? '');
+      } else {
+        signedIn();
       }
     } catch (thrown) {
       setError(thrown);
@@ -61,6 +78,8 @@ export function SignIn({
     setError(null);
     if (result.kind === 'mfa-required') {
       setTicket(result.ticket);
+    } else {
+      signedIn();
     }
   };
 
@@ -80,6 +99,7 @@ export function SignIn({
     setError(null);
     try {
       await completeTotp({ ticket, code });
+      signedIn();
     } catch (thrown) {
       setError(thrown);
     }

@@ -257,6 +257,8 @@ module "lambda_domain" {
     },
 
     module.identity.identity_environment,
+
+    local.identity_device_environment,
   )
 
   log_retention_days           = 7

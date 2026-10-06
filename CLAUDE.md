@@ -417,6 +417,18 @@ the identity module's `authorization-codes` table, and the CLI exchanges it at `
 read, config and plan scopes the person holds (`terraform_login.LOGIN_SCOPES`), never
 `runs:apply` or `state:download`.
 
+`wp-tf login` is the agent path, with no long-lived key. It runs the OAuth device
+grant from the identity package (`device_grant_enabled`, client `wp-tf`) at
+`<api>/api/auth/device/*`: the approval page sends a signed-out or stale (over ten
+minutes) browser to the SPA's `/sign-in?returnTo=...`, whose guest guard hands it
+back once signed in (`deviceHandOff` in `returnPath.ts`). The access token has the
+audience `<issuer>/device`, which the gate's authorizer accepts beside the API
+audience, and `claims_or_api_key` checks its grant is still live
+(`device_grant_liveness`), so a revoke ends it within seconds. The default scopes
+leave out `runs:apply`, `state:download` and `admin`, which must be named. The
+session lives in the OS keyring and refreshes itself; `backend/e2e/test_device_login.py`
+drives the whole flow on staging.
+
 ### VCS ingest
 
 The VCS bridge's ingest half. A workspace binds itself to a repository with

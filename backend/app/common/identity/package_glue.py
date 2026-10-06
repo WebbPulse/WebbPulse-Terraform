@@ -30,6 +30,45 @@ the workspaces function's own, so an auth failure is legible in the logs even
 though one function serves both surfaces."""
 
 
+def consent_theme() -> Any:
+    """The device and consent pages' look, matching the SPA's dark default palette and type."""
+    from webbpulse.identity.consent_page import ConsentPalette, ConsentTheme
+
+    return ConsentTheme(
+        light=ConsentPalette(
+            background="#fafafa",
+            surface="#ffffff",
+            raised="#f1f2f3",
+            line="#e5e6e8",
+            line_strong="#d5d7db",
+            text="#0c0c0e",
+            text_muted="#656a76",
+            text_faint="#737884",
+            accent="#1060ff",
+            accent_foreground="#ffffff",
+            accent_ring="#cce3fe",
+            danger="#c00005",
+        ),
+        dark=ConsentPalette(
+            background="#0f1116",
+            surface="#161920",
+            raised="#1d212a",
+            line="#262b36",
+            line_strong="#333946",
+            text="#f4f6fa",
+            text_muted="#98a0b0",
+            text_faint="#7b8394",
+            accent="#4d9fff",
+            accent_foreground="#08101c",
+            accent_ring="#1e3c5f",
+            danger="#ff6b63",
+        ),
+        color_scheme="dark",
+        font_family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+        revoke_note="Run wp-tf logout on that machine to end the session early.",
+    )
+
+
 def build_identity_settings(settings: "Settings") -> Any:
     """`IdentitySettings` for this product, read straight from the environment.
 
@@ -53,6 +92,9 @@ def build_router(settings: "Settings") -> "APIRouter":
     The `api-keys` store is supplied so the users stream purge deletes a deleted user's
     keys as well. The identity module creates that table and grants the workspaces role
     the table policy actions on it, delete and the user index query included.
+
+    With `device_grant_enabled` on, the device stores back `wp-tf login`, and the same
+    stores sit on `IdentityStores` so the purge removes a deleted user's device grants.
     """
     from webbpulse.dynamodb import Repository
     from webbpulse.identity import (
@@ -78,6 +120,7 @@ def build_router(settings: "Settings") -> "APIRouter":
         DynamoWebAuthnChallengeStore,
         IdentityStores,
         build_identity_router,
+        dynamo_device_grant_stores,
         signing_client,
     )
     from webbpulse.identity.api_keys import API_KEYS_TABLE, DynamoApiKeyStore
@@ -102,6 +145,15 @@ def build_router(settings: "Settings") -> "APIRouter":
         )
 
     identity_settings = build_identity_settings(settings)
+    device_stores = (
+        dynamo_device_grant_stores(
+            prefix,
+            region_name=settings.AWS_REGION_NAME or None,
+            endpoint_url=settings.dynamodb_endpoint_url,
+        )
+        if identity_settings.device_grant_enabled
+        else None
+    )
 
     stores = IdentityStores(
         credentials=DynamoCredentialStore(repository(CREDENTIALS_TABLE)),
@@ -114,6 +166,8 @@ def build_router(settings: "Settings") -> "APIRouter":
         passkeys=DynamoPasskeyStore(repository(PASSKEYS_TABLE)),
         webauthn_challenges=DynamoWebAuthnChallengeStore(repository(WEBAUTHN_CHALLENGES_TABLE)),
         api_keys=DynamoApiKeyStore(repository(API_KEYS_TABLE)),
+        device_grants=device_stores.grants if device_stores else None,
+        device_codes=device_stores.codes if device_stores else None,
     )
 
     return build_identity_router(
@@ -126,4 +180,6 @@ def build_router(settings: "Settings") -> "APIRouter":
         attempts=DynamoLoginAttemptStore(repository(LOGIN_ATTEMPTS_TABLE)),
         email_sender=None,
         oauth_client_secrets={},
+        consent_theme=consent_theme(),
+        device_grant_stores=device_stores,
     )
