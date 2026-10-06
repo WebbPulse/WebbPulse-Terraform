@@ -9,6 +9,8 @@ from typing import Any, Final, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from ....common.core.auth import RUN_API_TOKEN_SCOPES
+
 Engine = Literal["terraform", "tofu"]
 """Which binary runs this workspace. The runner image bundles both."""
 
@@ -30,12 +32,13 @@ PLAN_ASSUME_ROLE_ARN_PATTERN: Final = re.compile(r"^arn:aws:iam::[0-9]{12}:role/
 PLAN_ASSUME_ROLE_ARNS_MAX: Final = 10
 """How many reader roles one workspace may name."""
 
-PLAN_ASSUME_ROLE_ARN_MAX_LENGTH: Final = 160
+PLAN_ASSUME_ROLE_ARN_MAX_LENGTH: Final = 140
 """The longest reader role ARN accepted.
 
-With the count cap this keeps the plan's inline session policy, plus the
-`ReadOnlyAccess` ARN beside it, inside the 2,048 plaintext characters STS allows
-for session policies in total.
+With the count cap this keeps the plan's inline session policy, its secret read
+statements and reader roles together, plus the `ReadOnlyAccess` ARN beside it,
+inside the 2,048 plaintext characters STS allows for session policies in total.
+It still leaves a 64 character role name a 45 character path.
 """
 
 
@@ -122,6 +125,27 @@ def validate_plan_assume_role_arns(values: list[str]) -> list[str]:
             raise ValueError(f"plan_assume_role_arns repeats {arn}")
         cleaned.append(arn)
     return cleaned
+
+
+RunApiTokenScope = Literal[
+    "workspaces:read",
+    "workspaces:write",
+    "variables:read",
+    "variables:write",
+    "registry:read",
+    "registry:write",
+]
+"""A scope a workspace may grant its runs' API token. Never admin, runner or `runs:apply`."""
+
+
+def normalize_run_api_token_scopes(values: list[str]) -> list[str] | None:
+    """The grant deduplicated in canonical order, or `None` for an empty one, which clears it.
+
+    Keeping one order means resending a stored grant reordered is not a change.
+    """
+    chosen = set(values)
+    ordered = [scope for scope in RUN_API_TOKEN_SCOPES if scope in chosen]
+    return ordered or None
 
 
 class RunRoleSetup(BaseModel):
@@ -220,6 +244,7 @@ CLEARABLE_WORKSPACE_FIELDS: Final = (
     "speculative_plans",
     "file_triggers_enabled",
     "plan_assume_role_arns",
+    "run_api_token_scopes",
 )
 """The update fields an explicit JSON null clears.
 
@@ -261,6 +286,8 @@ class WorkspaceUpdate(BaseModel):
     file_triggers_enabled: Optional[bool] = None
     plan_assume_role_arns: Optional[list[str]] = Field(default=None, max_length=PLAN_ASSUME_ROLE_ARNS_MAX)
     """Replace the roles a plan may assume. Null or an empty list leaves none."""
+    run_api_token_scopes: Optional[list[RunApiTokenScope]] = Field(default=None, max_length=12)
+    """Grant each run a short lived API token with these scopes. Admin and step-up only; null or empty revokes."""
 
     @field_validator("working_directory")
     @classmethod
@@ -285,6 +312,12 @@ class WorkspaceUpdate(BaseModel):
     def _validate_plan_assume_role_arns(cls, value: Optional[list[str]]) -> Optional[list[str]]:
         """Accept exact role ARNs only."""
         return None if value is None else validate_plan_assume_role_arns(value)
+
+    @field_validator("run_api_token_scopes")
+    @classmethod
+    def _normalize_run_api_token_scopes(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        """Store the grant in canonical order, with an empty one as a clear."""
+        return None if value is None else normalize_run_api_token_scopes(value)
 
     @field_validator("plan_role_arn")
     @classmethod
@@ -384,6 +417,8 @@ class Workspace(WorkspaceBase):
     """The GitHub App installation that covered the repository when it was connected."""
     aws_connection: Optional[AwsConnection] = None
     """The last Quick setup link's progress, or `None` when none was handed out."""
+    run_api_token_scopes: list[str] = Field(default_factory=list)
+    """The scopes each run's API token carries, read live on every request. Empty grants none."""
 
     model_config = ConfigDict(from_attributes=True)
 

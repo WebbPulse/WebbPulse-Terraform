@@ -214,7 +214,10 @@ POST gives the same answer and stamps `run_role_checked_at` and
 Credentials are vended per phase by the runs function when it serves the bundle
 (`app/domains/runs/vending.py`): the runs function role assumes the vending role,
 which assumes the workspace's run role (external id = workspace id; a plan passes
-`ReadOnlyAccess` as its session policy ARN, an apply none; the session name is
+`ReadOnlyAccess` as its session policy ARN plus an inline document granting
+`secretsmanager:GetSecretValue` and `kms:Decrypt` via Secrets Manager or SSM, so
+refresh and ephemeral reads of secrets and SecureString parameters work, an apply
+none; the session name is
 `<run>-<phase>@<workspace name>`, cut to 64) and the state role
 `<prefix>-run-state`, narrowed by `session_policy.state_policy` to
 `workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last
@@ -229,9 +232,10 @@ runner reports as `AssumeRoleFailed`.
 
 `ReadOnlyAccess` holds no `sts:AssumeRole`, so a plan whose providers assume
 roles elsewhere (Route 53 writers in a zone account, say) is denied. A workspace
-lists exact reader role ARNs in `plan_assume_role_arns` (at most 10, 160
-characters each, no wildcards, null clears), and a plan's run role request then
-also carries an inline `sts:AssumeRole` statement on exactly those ARNs; an apply
+lists exact reader role ARNs in `plan_assume_role_arns` (at most 10, 140
+characters each so the inline document fits STS's 2,048 characters, no wildcards,
+null clears), and a plan's inline document then also carries an `sts:AssumeRole`
+statement on exactly those ARNs; an apply
 is unchanged. The runner exports `TF_VAR_webbpulse_run_phase` (`plan` or `apply`,
 set after workspace variables so they cannot override it). A config that assumes
 roles declares it and selects readers in plan, writers in apply:
@@ -329,6 +333,23 @@ scope and tenant, and every other route refuses it since a run has no user
 scopes. The runner sets it as `TF_TOKEN_<host>` for `init` alone and registers it
 with the redactor.
 
+A configuration that uses the WebbPulse provider (the Platform factory) gets HCP's run
+scoped API token the same way. An admin who passed step-up sets the workspace's
+`run_api_token_scopes` (a subset of `workspaces:{read,write}`, `variables:{read,write}`
+and `registry:{read,write}`, PATCH only, null or `[]` clears), and each bundle then
+carries `api` (`app/domains/runs/api_credentials.py`): a `wpk_` key of kind `run_api`
+with the run as its subject and the workspace in its metadata, lasting its phase's
+timeout. Its scopes are the workspace's current grant intersected with the grant it
+was minted under, read on every request (`key_owner_scopes`), so the registry function
+reads `workspaces` too. The run keeps its hash in `api_token_hash`, and a newer bundle
+or the run's ending revokes it. Behind the access gate the runs function reads the
+gate's `x-origin-verify` from SSM (`ORIGIN_VERIFY_PARAMETER`) into the bundle; the
+runner task role never holds that read. The runner exports `WEBBPULSE_TF_HOST`,
+`WEBBPULSE_TF_TOKEN` and `WEBBPULSE_TF_ORIGIN_VERIFY` to every subcommand, after
+workspace variables, and redacts the token and the gate value. The provider block must
+leave `host`, `token` and `origin_verify` unset, since its config wins over the
+environment.
+
 Publishing follows HCP's tag based "Publish module from VCS". `POST
 /api/v1/registry/modules` (`registry:write`) connects a module to a repository the
 GitHub App is installed on, resolved like a workspace's `vcs_repo` (422
@@ -412,6 +433,18 @@ the identity module's `authorization-codes` table, and the CLI exchanges it at `
 /v1/oauth/token` for a `wpk_` key named `terraform login`, valid 90 days, carrying the
 read, config and plan scopes the person holds (`terraform_login.LOGIN_SCOPES`), never
 `runs:apply` or `state:download`.
+
+`wp-tf login` is the agent path, with no long-lived key. It runs the OAuth device
+grant from the identity package (`device_grant_enabled`, client `wp-tf`) at
+`<api>/api/auth/device/*`: the approval page sends a signed-out or stale (over ten
+minutes) browser to the SPA's `/sign-in?returnTo=...`, whose guest guard hands it
+back once signed in (`deviceHandOff` in `returnPath.ts`). The access token has the
+audience `<issuer>/device`, which the gate's authorizer accepts beside the API
+audience, and `claims_or_api_key` checks its grant is still live
+(`device_grant_liveness`), so a revoke ends it within seconds. The default scopes
+leave out `runs:apply`, `state:download` and `admin`, which must be named. The
+session lives in the OS keyring and refreshes itself; `backend/e2e/test_device_login.py`
+drives the whole flow on staging.
 
 ### VCS ingest
 

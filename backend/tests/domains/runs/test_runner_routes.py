@@ -414,7 +414,8 @@ def test_the_plan_phase_gets_a_read_only_session(runner_client, created_run, sts
     assert body["phase"] == "plan"
     run_role_request, state_request = sts_requests[1], sts_requests[2]
     assert run_role_request["PolicyArns"] == [{"arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}]
-    assert "Policy" not in run_role_request
+    run_role_sids = {statement["Sid"] for statement in json.loads(run_role_request["Policy"])["Statement"]}
+    assert run_role_sids == {"PlanReadSecretValues", "PlanDecryptViaSecretsAndSsm"}
     sids = {statement["Sid"] for statement in json.loads(state_request["Policy"])["Statement"]}
     assert sids == {"WorkspaceStateReads", "WorkspaceStateLocks", "ListWorkspaceState", "StateEncryption"}
 

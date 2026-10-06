@@ -4,7 +4,7 @@ version = "0"
 requires-python = ">=3.13"
 license = "LicenseRef-PolyForm-Strict-1.0.0"
 dependencies = [
-  "webbpulse[fastapi,dynamodb,otel,aws-otel,security,identity,passkeys,github]>=0.70.0",
+  "webbpulse[fastapi,dynamodb,otel,aws-otel,security,identity,passkeys,github]>=0.71.1",
   "cryptography>=43",
   "fastapi>=0.141.1",
   "boto3>=1.43.90",
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-e2e = ["webbpulse[e2e,tf]>=0.66.0"]
+e2e = ["webbpulse[e2e,tf]>=0.71.1"]
 dev = [
   "webbpulse[testing]>=0.62.0",
   "moto[dynamodb,s3,secretsmanager,stepfunctions,logs]>=5.2.3",

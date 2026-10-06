@@ -93,6 +93,9 @@ GATED: dict[str, Callable[[TestClient, dict[str, Any], dict[str, Any]], Call]] =
     "change the run role": lambda _c, ws, _r: Call("PATCH", _workspace_path(ws), {"run_role_arn": NEW_ROLE}),
     "clear the run role": lambda _c, ws, _r: Call("PATCH", _workspace_path(ws), {"run_role_arn": None}),
     "stage a run role": lambda _c, ws, _r: Call("PATCH", _workspace_path(ws), {"pending_run_role_arn": NEW_ROLE}),
+    "grant run API token scopes": lambda _c, ws, _r: Call(
+        "PATCH", _workspace_path(ws), {"run_api_token_scopes": ["workspaces:read"]}
+    ),
     "create a sensitive variable": lambda _c, ws, _r: Call(
         "PUT", f"{_workspace_path(ws)}/variables/fresh", {"value": "v", "sensitive": True}
     ),

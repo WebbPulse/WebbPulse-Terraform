@@ -96,8 +96,14 @@ def test_a_plan_session_may_assume_the_named_readers(auth_client, runner_client,
     run_role_request = sts_requests[1]
     assert run_role_request["PolicyArns"] == READ_ONLY
     document = json.loads(run_role_request["Policy"])
-    assert document["Statement"] == [
-        {"Sid": "PlanAssumeReaderRoles", "Effect": "Allow", "Action": "sts:AssumeRole", "Resource": [READER]}
+    assert document["Statement"][-1] == {
+        "Sid": "PlanAssumeReaderRoles",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": [READER],
+    }
+    assert [statement for statement in document["Statement"] if statement["Action"] == "sts:AssumeRole"] == [
+        document["Statement"][-1]
     ]
 
 

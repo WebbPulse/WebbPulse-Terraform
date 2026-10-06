@@ -208,6 +208,33 @@ class RegistryCredentials(BaseModel):
         return {token_variable(host): self.token for host in names if host}
 
 
+class ApiCredentials(BaseModel):
+    """The run's own short lived key on this control plane, for the WebbPulse provider.
+
+    Only a workspace an admin opted in gets one, and it reaches the engine for every
+    subcommand as `WEBBPULSE_TF_TOKEN`, beside the API origin and the access gate's
+    header value, after workspace variables so they cannot override it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    host: str
+    token: str
+    expires_at: str = ""
+    origin_verify: str | None = None
+
+    def environment(self) -> dict[str, str]:
+        """The provider's host, token and, behind the access gate, its header value."""
+        values = {"WEBBPULSE_TF_HOST": self.host, "WEBBPULSE_TF_TOKEN": self.token}
+        if self.origin_verify:
+            values["WEBBPULSE_TF_ORIGIN_VERIFY"] = self.origin_verify
+        return values
+
+    def secrets(self) -> list[str]:
+        """The values the redactor must hide."""
+        return [value for value in (self.token, self.origin_verify) if value]
+
+
 class BackendConfig(BaseModel):
     """S3 backend settings for the workspace's state, with keys scoped to its prefix."""
 
@@ -289,6 +316,8 @@ class Bundle(BaseModel):
 
     workload_identity: WorkloadIdentity | None = None
     """Google and Azure identity tokens for this phase, absent unless the workspace asks for them."""
+    api: ApiCredentials | None = None
+    """The run's control plane API token, absent unless the workspace grants its runs scopes."""
 
     def init_environment(self) -> dict[str, str]:
         """The variables `init` alone adds to the engine's environment."""
@@ -311,6 +340,8 @@ class Bundle(BaseModel):
             values.append(self.registry.token)
         if self.workload_identity:
             values.extend(self.workload_identity.secrets())
+        if self.api:
+            values.extend(self.api.secrets())
         return values
 
 
