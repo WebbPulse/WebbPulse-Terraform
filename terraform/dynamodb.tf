@@ -91,6 +91,15 @@ locals {
         { name = "sk", type = "S" },
       ]
     }
+
+    "rate-limits" = {
+      hash_key = "pk"
+      attributes = [
+        { name = "pk", type = "S" },
+      ]
+      ttl_attribute          = "expires_at"
+      point_in_time_recovery = false
+    }
   }
 }
 
