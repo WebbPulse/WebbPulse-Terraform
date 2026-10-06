@@ -214,7 +214,10 @@ POST gives the same answer and stamps `run_role_checked_at` and
 Credentials are vended per phase by the runs function when it serves the bundle
 (`app/domains/runs/vending.py`): the runs function role assumes the vending role,
 which assumes the workspace's run role (external id = workspace id; a plan passes
-`ReadOnlyAccess` as its session policy ARN, an apply none; the session name is
+`ReadOnlyAccess` as its session policy ARN plus an inline document granting
+`secretsmanager:GetSecretValue` and `kms:Decrypt` via Secrets Manager or SSM, so
+refresh and ephemeral reads of secrets and SecureString parameters work, an apply
+none; the session name is
 `<run>-<phase>@<workspace name>`, cut to 64) and the state role
 `<prefix>-run-state`, narrowed by `session_policy.state_policy` to
 `workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last
@@ -229,9 +232,10 @@ runner reports as `AssumeRoleFailed`.
 
 `ReadOnlyAccess` holds no `sts:AssumeRole`, so a plan whose providers assume
 roles elsewhere (Route 53 writers in a zone account, say) is denied. A workspace
-lists exact reader role ARNs in `plan_assume_role_arns` (at most 10, 160
-characters each, no wildcards, null clears), and a plan's run role request then
-also carries an inline `sts:AssumeRole` statement on exactly those ARNs; an apply
+lists exact reader role ARNs in `plan_assume_role_arns` (at most 10, 140
+characters each so the inline document fits STS's 2,048 characters, no wildcards,
+null clears), and a plan's inline document then also carries an `sts:AssumeRole`
+statement on exactly those ARNs; an apply
 is unchanged. The runner exports `TF_VAR_webbpulse_run_phase` (`plan` or `apply`,
 set after workspace variables so they cannot override it). A config that assumes
 roles declares it and selects readers in plan, writers in apply:

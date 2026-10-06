@@ -17,6 +17,19 @@ passed together are one boundary, so the session may do what either allows and
 the role permits. A writer role never belongs on the list: plans select readers,
 applies the writers.
 
+A plan also reads secret values, which `ReadOnlyAccess` withholds: it lacks
+`secretsmanager:GetSecretValue` and `kms:Decrypt`. Refreshing a secret version
+or a SecureString parameter, and any ephemeral secret read, needs both, so every
+plan session carries an inline grant for them, always rather than per workspace.
+A plan must refresh what its configuration manages to say anything, the grant
+reads and never writes, the run role still bounds which secrets and keys are
+reachable, and the apply session of the same workspace already holds the role's
+full rights, so an opt-in would add configuration without narrowing anything
+real. `kms:Decrypt` is limited by `kms:ViaService` to Secrets Manager and SSM,
+so the plan cannot decrypt arbitrary ciphertext directly. SSM reads need no
+statement: `ReadOnlyAccess` already holds `ssm:Get*`. The secret statements and
+the reader role statement share one inline document.
+
 State is not the run role's business. The S3 backend gets its own credentials,
 from the control plane's state role narrowed by `state_policy` to one workspace's
 prefix, so a run can reach its own state and nothing else in the bucket, and a
@@ -56,22 +69,44 @@ class SessionPolicy:
     policy_arns: tuple[str, ...]
 
 
-def plan_assume_document(role_arns: Sequence[str]) -> dict[str, Any] | None:
-    """The inline statement letting a plan assume exactly `role_arns`, or None when there are none."""
+PLAN_SECRET_READ_STATEMENTS: Final[tuple[dict[str, Any], ...]] = (
+    {
+        "Sid": "PlanReadSecretValues",
+        "Effect": "Allow",
+        "Action": "secretsmanager:GetSecretValue",
+        "Resource": "arn:aws:secretsmanager:*:*:secret:*",
+    },
+    {
+        "Sid": "PlanDecryptViaSecretsAndSsm",
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "Resource": "*",
+        "Condition": {"StringLike": {"kms:ViaService": ["secretsmanager.*.amazonaws.com", "ssm.*.amazonaws.com"]}},
+    },
+)
+"""The statements every plan session carries so refresh can read secret values and SecureString parameters."""
+
+
+def plan_assume_statement(role_arns: Sequence[str]) -> dict[str, Any] | None:
+    """The statement letting a plan assume exactly `role_arns`, or None when there are none."""
     arns = list(dict.fromkeys(arn for arn in role_arns if arn))
     if not arns:
         return None
     return {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "PlanAssumeReaderRoles",
-                "Effect": "Allow",
-                "Action": "sts:AssumeRole",
-                "Resource": arns,
-            }
-        ],
+        "Sid": "PlanAssumeReaderRoles",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": arns,
     }
+
+
+def plan_document(role_arns: Sequence[str] = ()) -> dict[str, Any]:
+    """The inline document of a plan session: the secret reads, plus `sts:AssumeRole` on `role_arns` when any."""
+    assume = plan_assume_statement(role_arns)
+    statements = [dict(statement) for statement in PLAN_SECRET_READ_STATEMENTS]
+    if assume is not None:
+        statements.append(assume)
+    return {"Version": "2012-10-17", "Statement": statements}
 
 
 def encode(document: dict[str, Any]) -> str:
@@ -88,13 +123,13 @@ def plaintext_size(policy: SessionPolicy) -> int:
 def for_phase(phase: Phase, plan_assume_role_arns: Sequence[str] = ()) -> SessionPolicy:
     """The workspace session policy for one phase.
 
-    A plan is `ReadOnlyAccess`, plus `sts:AssumeRole` on the workspace's named
-    reader roles when it has any. An apply is the role itself, and the list does
-    not apply to it.
+    A plan is `ReadOnlyAccess` plus an inline document allowing secret value
+    reads and, when the workspace names any, `sts:AssumeRole` on its reader
+    roles. An apply is the role itself, and the list does not apply to it.
     """
     if phase == "plan":
         return SessionPolicy(
-            document=plan_assume_document(plan_assume_role_arns),
+            document=plan_document(plan_assume_role_arns),
             policy_arns=PLAN_SESSION_POLICY_ARNS,
         )
     return SessionPolicy(document=None, policy_arns=())
@@ -175,12 +210,14 @@ def state_policy(state_bucket: str, workspace_id: str, kms_key_arn: str, phase: 
 __all__ = [
     "LOCK_FILE_SUFFIX",
     "PLAN_SESSION_POLICY_ARNS",
+    "PLAN_SECRET_READ_STATEMENTS",
     "SESSION_POLICY_PLAINTEXT_LIMIT",
     "SessionPolicy",
     "encode",
     "for_phase",
     "plaintext_size",
-    "plan_assume_document",
+    "plan_assume_statement",
+    "plan_document",
     "state_policy",
     "state_prefix",
 ]
