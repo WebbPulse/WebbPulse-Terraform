@@ -1,7 +1,7 @@
 module "provider_acceptance_role" {
   count = local.provider_acceptance_count
 
-  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/github-actions-role"
+  source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/github-actions-role"
   version = "~> 2.33"
 
   role_name        = "${local.prefix}-provider-acceptance"

@@ -1,7 +1,7 @@
 module "access_gate" {
   count = local.access_gate_count
 
-  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/staging-access-gate"
+  source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/staging-access-gate"
   version = "~> 2.33"
 
   name          = local.access_gate_name

@@ -15,12 +15,4 @@ terraform {
       version = "~> 2.8"
     }
   }
-
-  cloud {
-    organization = "WebbPulse"
-
-    workspaces {
-      name = "WebbPulse-Terraform"
-    }
-  }
 }
