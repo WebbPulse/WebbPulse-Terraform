@@ -121,6 +121,7 @@ rather than failing the call that was meant to fail the run."""
 LOG_CONTENT_TYPE: Final = "text/plain"
 MAX_LOG_BYTES: Final = 50_000_000
 MAX_OUTPUTS_BYTES: Final = 10_000_000
+WORKDIR_CONTENT_TYPE: Final = "application/gzip"
 """A phase transcript is text, so fifty megabytes is far past any real run and
 still small enough that a signed URL cannot be used to park a large object."""
 
@@ -173,6 +174,11 @@ def state_key(workspace_id: str) -> str:
 def plan_key(run_id: str) -> str:
     """The binary plan key for one run."""
     return f"runs/{run_id}/plan.tfplan"
+
+
+def workdir_key(run_id: str) -> str:
+    """The planned working directory archive for one run, which its apply restores."""
+    return f"runs/{run_id}/workdir.tar.gz"
 
 
 def plan_json_key(run_id: str) -> str:
@@ -1652,31 +1658,54 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "terraform_variables": variables["terraform"],
         "hcl_variables": variables["hcl"],
         "environment_variables": variables["env"],
-        "artifacts": _artifacts(run_id, settings=resolved),
+        "artifacts": _artifacts(run_id, phase, settings=resolved),
         "registry": registry_credentials.issue(run, settings=resolved),
         "api": api_credentials.issue(run, workspace, settings=resolved),
         "workload_identity": identity,
     }
 
 
-def _artifacts(run_id: str, *, settings: Settings) -> dict[str, str]:
+def _artifacts(run_id: str, phase: Phase, *, settings: Settings) -> dict[str, str | None]:
     """Presigned URLs the runner reads from, for one run.
 
     Only the read direction is minted with the bundle. An upload's URL signs the
     exact `Content-Length` the client will send, and that is unknown until the
     artifact exists, so each upload is requested separately by `artifact_upload`.
+
+    An apply also gets the working directory its plan archived, so it applies the
+    saved plan where the plan left installed modules and generated files, as HCP
+    Terraform does. A plan from a runner that predates the archive left none, and
+    that apply reads the configuration as before.
     """
     from webbpulse.storage import presigned_get
 
-    return {
-        "plan_get_url": presigned_get(
+    def url(key: str) -> str:
+        return presigned_get(
             settings.ARTIFACTS_BUCKET,
-            plan_key(run_id),
+            key,
             ARTIFACT_URL_TTL,
             region_name=settings.AWS_REGION_NAME,
             endpoint_url=settings.s3_endpoint_url,
-        ).url,
+        ).url
+
+    workdir = workdir_key(run_id)
+    return {
+        "plan_get_url": url(plan_key(run_id)),
+        "workdir_get_url": url(workdir) if phase == "apply" and _artifact_exists(workdir, settings) else None,
     }
+
+
+def _artifact_exists(key: str, settings: Settings) -> bool:
+    """Whether the artifacts bucket holds `key`."""
+    from botocore.exceptions import ClientError
+
+    try:
+        _s3(settings).head_object(Bucket=settings.ARTIFACTS_BUCKET, Key=key)
+    except ClientError as error:
+        if str(error.response.get("Error", {}).get("Code", "")) in {"NoSuchKey", "404", "NotFound"}:
+            return False
+        raise
+    return True
 
 
 def artifact_upload(
@@ -1701,7 +1730,7 @@ def artifact_upload(
         RunNotFound: No such run.
         ArtifactTooLarge: `size_bytes` is above the artifact's ceiling.
         ValueError: `artifact` is not a kind this run uploads, including
-            `outputs_json` outside the apply phase.
+            `outputs_json` outside the apply phase and `workdir` outside the plan.
     """
     from webbpulse.storage import presigned_put
 
@@ -1717,6 +1746,8 @@ def artifact_upload(
         key, content_type, ceiling = log_key(run_id, phase), LOG_CONTENT_TYPE, MAX_LOG_BYTES
     elif artifact == "outputs_json" and phase == "apply":
         key, content_type, ceiling = outputs_key(run_id), PLAN_JSON_CONTENT_TYPE, MAX_OUTPUTS_BYTES
+    elif artifact == "workdir" and phase == "plan":
+        key, content_type, ceiling = workdir_key(run_id), WORKDIR_CONTENT_TYPE, MAX_PLAN_BYTES
     else:
         raise ValueError(f"{artifact} is not an artifact this run uploads")
 

@@ -311,7 +311,8 @@
               "plan",
               "plan_json",
               "log",
-              "outputs_json"
+              "outputs_json",
+              "workdir"
             ],
             "title": "Artifact",
             "type": "string"
@@ -335,6 +336,17 @@
           "plan_get_url": {
             "title": "Plan Get Url",
             "type": "string"
+          },
+          "workdir_get_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workdir Get Url"
           }
         },
         "required": [

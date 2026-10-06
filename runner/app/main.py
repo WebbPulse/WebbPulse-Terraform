@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import stat
 import sys
+import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +36,16 @@ if TYPE_CHECKING:
 else:
     CloudWatchLogsClient = object
 
+
+RUN_DIRECTORY = Path(tempfile.gettempdir()) / "webbpulse-run"
+"""Where every phase runs. The path is fixed, so the apply restores the plan's
+working directory where the plan left it and `path.cwd` reads the same in both."""
+
+CONFIG_DIRECTORY = "config"
+"""The configuration root under the run directory."""
+
+WORKDIR_ARCHIVE = "workdir.tar.gz"
+"""The planned working directory as the plan archives it and the apply restores it."""
 
 RUN_ROLE_ASSUME_FAILED_CODE = "RUN_ROLE_ASSUME_FAILED"
 """The bundle's error code when the workspace's run role refused the control plane."""
@@ -286,14 +298,19 @@ def _run_phase(
 
     sink.write(f"run {bundle.run_id} workspace {bundle.workspace_id} phase {env.phase} engine {bundle.engine}")
 
-    config_directory = directory / "config"
+    config_directory = directory / CONFIG_DIRECTORY
     archive = directory / "config.tar.gz"
+    source_url, download_failure = bundle.config_url, "ConfigDownloadFailed"
+    restoring = env.phase == "apply" and bool(bundle.artifacts.workdir_get_url)
+    if restoring and bundle.artifacts.workdir_get_url:
+        source_url, download_failure = bundle.artifacts.workdir_get_url, "WorkdirDownloadFailed"
+        sink.write("restoring the working directory the plan left")
     try:
-        api.download(bundle.config_url, archive)
+        api.download(source_url, archive)
     except ApiError as error:
-        raise PhaseFailure("ConfigDownloadFailed", str(error)) from error
+        raise PhaseFailure(download_failure, str(error)) from error
     try:
-        engine_directory = workspace.prepare(config_directory, bundle, archive)
+        engine_directory = workspace.prepare(config_directory, bundle, archive, allow_links=restoring)
     except workspace.ConfigError as error:
         raise PhaseFailure("ConfigUnpackFailed", str(error)) from error
     isolation.hand_over(config_directory, user)
@@ -313,7 +330,6 @@ def _run_phase(
         dict(os.environ),
         bundle.environment_variables,
         bundle.backend.region,
-        engine_directory,
         {
             **credentials.environment(),
             **identity_files.environment(),
@@ -343,6 +359,32 @@ def _run_phase(
             user,
             init_environment={**bundle.init_environment(), **cli_environment},
         )
+
+
+def _pack_workdir(directory: Path, engine_directory: Path, artifacts: Path) -> Path:
+    """Archive the planned working directory into `artifacts` for the apply to restore."""
+    try:
+        return workspace.pack_workdir(
+            directory / CONFIG_DIRECTORY,
+            engine_directory,
+            artifacts / WORKDIR_ARCHIVE,
+            engine.DATA_DIRECTORY,
+            (engine.PLAN_FILE,),
+        )
+    except (OSError, tarfile.TarError, ValueError) as error:
+        raise PhaseFailure("WorkdirArchiveFailed", f"{type(error).__name__}: {error}") from error
+
+
+def _upload_workdir(api: RunnerApi, sink: CloudWatchLogSink, archive: Path) -> None:
+    """Upload the planned working directory, leaving the plan standing if it is refused.
+
+    A control plane that predates the archive refuses the kind, and its apply reads
+    the configuration as it always has, so the refusal is reported rather than fatal.
+    """
+    try:
+        api.upload_file("workdir", archive)
+    except ApiError as error:
+        sink.write(f"working directory not uploaded, the apply will read the configuration: {error}")
 
 
 def _run_engine(
@@ -394,6 +436,8 @@ def _run_engine(
             api.upload_file("plan_json", plan_json_path)
         except ApiError as error:
             raise PhaseFailure("ArtifactUploadFailed", str(error)) from error
+        if has_changes and not bundle.plan_only:
+            _upload_workdir(api, sink, _pack_workdir(directory, engine_directory, artifacts))
     else:
         if not bundle.artifacts.plan_get_url:
             raise PhaseFailure("PlanUnavailable", "the apply phase bundle carries no plan get url")
@@ -460,7 +504,7 @@ def run(env: RunnerEnv, clients: Clients, directory: Path, interrupt: engine.Int
 
 
 def main() -> int:
-    """Read the environment, build the clients and run one phase in a temporary directory."""
+    """Read the environment, build the clients and run one phase in the fixed run directory."""
     try:
         env = RunnerEnv.from_environ()
     except RunnerEnvError as error:
@@ -469,8 +513,12 @@ def main() -> int:
     clients = Clients.build(env.region)
     interrupt = engine.Interrupt()
     signal.signal(signal.SIGTERM, lambda _signum, _frame: interrupt.trigger("the task was asked to stop"))
-    with tempfile.TemporaryDirectory(prefix="webbpulse-run-") as temporary:
-        return run(env, clients, Path(temporary), interrupt)
+    shutil.rmtree(RUN_DIRECTORY, ignore_errors=True)
+    RUN_DIRECTORY.mkdir(mode=0o700, parents=True)
+    try:
+        return run(env, clients, RUN_DIRECTORY, interrupt)
+    finally:
+        shutil.rmtree(RUN_DIRECTORY, ignore_errors=True)
 
 
 if __name__ == "__main__":

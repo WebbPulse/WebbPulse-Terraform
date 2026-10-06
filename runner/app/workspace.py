@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import tarfile
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from app.credential_files import STATE_PROFILE
@@ -13,6 +14,10 @@ from app.models import BackendConfig, Bundle
 BACKEND_FILENAME = "zz_webbpulse_backend_override.tf"
 TFVARS_FILENAME = "zz_webbpulse.auto.tfvars.json"
 HCL_TFVARS_FILENAME = "zz_webbpulse.auto.tfvars"
+
+DATA_DIRECTORY_EXCLUDED = ("providers", "terraform.tfstate")
+"""Data directory entries the workdir archive leaves out: the provider binaries, which
+the apply's `init` installs again from the lock file, and the backend record it rewrites."""
 
 
 _VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
@@ -24,8 +29,13 @@ class ConfigError(RuntimeError):
     """The config tarball is absent, unreadable or tries to escape the directory."""
 
 
-def unpack_config(archive: Path, directory: Path) -> Path:
-    """Extract the config tarball into the working directory, rejecting escaping members."""
+def unpack_config(archive: Path, directory: Path, *, allow_links: bool = False) -> Path:
+    """Extract the config tarball into the working directory, rejecting escaping members.
+
+    A config upload never carries links. A restored plan working directory may, as
+    installed modules can, so `allow_links` admits them and the `data` filter still
+    refuses any whose target leaves the directory.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     try:
         with tarfile.open(archive, "r:*") as handle:
@@ -33,7 +43,7 @@ def unpack_config(archive: Path, directory: Path) -> Path:
                 target = (directory / member.name).resolve()
                 if not str(target).startswith(str(directory.resolve())):
                     raise ConfigError(f"config archive member escapes the working directory: {member.name}")
-                if member.issym() or member.islnk():
+                if (member.issym() or member.islnk()) and not allow_links:
                     raise ConfigError(f"config archive carries a link member: {member.name}")
             handle.extractall(directory, filter="data")
     except tarfile.TarError as error:
@@ -149,7 +159,7 @@ def resolve_working_directory(directory: Path, working_directory: str) -> Path:
     return target
 
 
-def prepare(directory: Path, bundle: Bundle, archive: Path) -> Path:
+def prepare(directory: Path, bundle: Bundle, archive: Path, *, allow_links: bool = False) -> Path:
     """Unpack the config, resolve the working directory and lay down the files.
 
     The backend override and the tfvars files go in the working directory rather
@@ -160,9 +170,53 @@ def prepare(directory: Path, bundle: Bundle, archive: Path) -> Path:
     JSON one cannot reinterpret a literal, and the native one is the only place
     an expression is parsed.
     """
-    unpack_config(archive, directory)
+    unpack_config(archive, directory, allow_links=allow_links)
     target = resolve_working_directory(directory, bundle.working_directory)
     write_backend_override(target, bundle.backend)
     write_tfvars(target, bundle.terraform_variables)
     write_hcl_tfvars(target, bundle.hcl_variables)
     return target
+
+
+def _workdir_member(excluded: frozenset[str]) -> Callable[[tarfile.TarInfo], tarfile.TarInfo | None]:
+    """A tar filter keeping files, directories and links outside `excluded`."""
+
+    def keep(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        name = member.name.removeprefix("./")
+        if any(name == path or name.startswith(f"{path}/") for path in excluded):
+            return None
+        if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
+            return None
+        member.uid = member.gid = 0
+        member.uname = member.gname = ""
+        return member
+
+    return keep
+
+
+def pack_workdir(
+    directory: Path, working_directory: Path, destination: Path, data_directory: str, extra: Iterable[str] = ()
+) -> Path:
+    """Archive the planned configuration for the apply phase to restore in its place.
+
+    HCP Terraform applies in the plan's own working directory, so installed modules
+    and files the plan generated, such as an `archive_file` zip a lambda reads at
+    apply, are there. The archive holds the whole configuration root with the data
+    directory's modules. It leaves out the provider binaries, the backend record, the
+    files the runner writes from the bundle (the backend override and both tfvars
+    files, which carry variable values) and `extra`, such as the plan file the apply
+    downloads on its own. Links are archived as links, never followed.
+    """
+    relative = working_directory.resolve().relative_to(directory.resolve())
+
+    def under(name: str) -> str:
+        return (relative / name).as_posix().removeprefix("./")
+
+    excluded = frozenset(
+        [under(name) for name in (BACKEND_FILENAME, TFVARS_FILENAME, HCL_TFVARS_FILENAME, *extra)]
+        + [under(f"{data_directory}/{name}") for name in DATA_DIRECTORY_EXCLUDED]
+    )
+    with tarfile.open(destination, "w:gz") as archive:
+        for child in sorted(directory.iterdir()):
+            archive.add(child, arcname=child.name, recursive=True, filter=_workdir_member(excluded))
+    return destination

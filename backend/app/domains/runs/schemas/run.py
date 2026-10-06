@@ -345,6 +345,8 @@ class Artifacts(BaseModel):
     """
 
     plan_get_url: str
+    workdir_get_url: str | None = None
+    """The working directory the plan archived, in an apply phase bundle only."""
 
 
 class RegistryCredentials(BaseModel):
@@ -401,7 +403,7 @@ class WorkloadIdentity(BaseModel):
     azure: Optional[AzureWorkloadIdentity] = None
 
 
-ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
+ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json", "workdir"]
 """The objects a phase uploads: the binary plan, its JSON rendering, the
 redacted transcript and, after an apply, the outputs with sensitive values
 dropped."""
