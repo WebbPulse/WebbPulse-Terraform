@@ -1278,6 +1278,9 @@ export interface paths {
          *
          *     Changing either run role field is the workspace's AWS connection, so a person has to
          *     have signed in within the step-up window; resending the stored value is not a change.
+         *
+         *     Changing `run_api_token_scopes` hands every later run of this workspace a key on
+         *     this API, so it takes `admin` as well as the step-up.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -1535,6 +1538,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ApiCredentials
+         * @description The run's control plane API key, which the runner sets as `WEBBPULSE_TF_TOKEN` for the provider.
+         */
+        ApiCredentials: {
+            /** Expires At */
+            expires_at: string;
+            /** Host */
+            host: string;
+            /** Origin Verify */
+            origin_verify?: string | null;
+            /** Scopes */
+            scopes: string[];
+            /** Token */
+            token: string;
+        };
         /**
          * ApiKey
          * @description A stored key as every route but the mint renders it. Never the plaintext.
@@ -2624,6 +2643,7 @@ export interface components {
          *     why it is gated on a run token bound to this run rather than on scopes.
          */
         RunBundle: {
+            api?: components["schemas"]["ApiCredentials"] | null;
             artifacts: components["schemas"]["Artifacts"];
             aws_credentials: components["schemas"]["VendedCredentials"];
             backend: components["schemas"]["BackendConfig"];
@@ -3336,6 +3356,8 @@ export interface components {
             plan_assume_role_arns?: string[];
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Run Api Token Scopes */
+            run_api_token_scopes?: string[];
             /** Run Role Account Id */
             run_role_account_id?: string | null;
             /** Run Role Arn */
@@ -3458,6 +3480,8 @@ export interface components {
             plan_assume_role_arns?: string[] | null;
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Run Api Token Scopes */
+            run_api_token_scopes?: ("workspaces:read" | "workspaces:write" | "variables:read" | "variables:write" | "registry:read" | "registry:write")[] | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /** Speculative Plans */

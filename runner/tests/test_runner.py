@@ -911,3 +911,68 @@ def test_a_bundle_without_a_registry_credential_sets_no_token(
     assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
     assert "holds TF_TOKEN_" not in recorder.uploads["/runs/plan.log"].decode()
     assert "holds TF_CLI_CONFIG_FILE" not in recorder.uploads["/runs/plan.log"].decode()
+
+
+API_TOKEN = "wpk_runapitokenabcdefghij"
+API_HOST = "https://api.staging.terraform-e2e.webbpulse.com"
+GATE_VALUE = "gate-value-abcdefghijkl"
+
+
+def _api_bundle(run_role_arn: str, **kwargs: Any) -> dict[str, Any]:
+    """A bundle carrying the run's control plane API token, behind the access gate."""
+    bundle = bundle_payload(run_role_arn, **kwargs)
+    bundle["environment_variables"] = {**bundle["environment_variables"], "WEBBPULSE_TF_TOKEN": "wpk_stale"}
+    bundle["api"] = {
+        "host": API_HOST,
+        "token": API_TOKEN,
+        "expires_at": "2026-10-05T13:00:00+00:00",
+        "scopes": ["workspaces:read"],
+        "origin_verify": GATE_VALUE,
+    }
+    return bundle
+
+
+@pytest.mark.parametrize("phase", ["plan", "apply"])
+def test_the_api_token_reaches_the_provider_in_every_phase(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    phase: str,
+) -> None:
+    """Plan and apply see the host, the token and the gate value, over any workspace variable, all redacted."""
+    fake_engine()
+    recorder = ApiRecorder()
+    extra = {"plan_get_url": "https://artifacts.example.invalid/runs/plan.tfplan?sig=1"} if phase == "apply" else {}
+    transport = make_transport(_api_bundle(run_role_arn, **extra), config_tarball, recorder)
+
+    assert run(make_env(phase), make_clients(transport), tmp_path) == 0, recorder.failure_names()
+
+    log = recorder.uploads.get("/runs/plan.log", b"").decode()
+    messages = "\n".join([log, *log_stream_messages(f"{RUN_ID}/{phase}")])
+    assert f"{phase} holds WEBBPULSE_TF_HOST={API_HOST}" in messages
+    assert f"{phase} holds WEBBPULSE_TF_TOKEN=" in messages
+    assert f"{phase} holds WEBBPULSE_TF_ORIGIN_VERIFY=" in messages
+    assert "wpk_stale" not in messages
+    captured = capsys.readouterr()
+    for haystack in (messages, captured.out, captured.err):
+        assert API_TOKEN not in haystack
+        assert GATE_VALUE not in haystack
+
+
+def test_a_bundle_without_an_api_token_sets_none(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A workspace that grants its runs nothing runs as before."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+    assert "holds WEBBPULSE_TF_" not in recorder.uploads["/runs/plan.log"].decode()

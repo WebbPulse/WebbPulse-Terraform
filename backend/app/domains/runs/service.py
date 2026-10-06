@@ -42,7 +42,7 @@ from ...common.db.tables import (
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
-from . import registry_credentials, vending
+from . import api_credentials, registry_credentials, vending
 from .schemas.run import Phase
 
 _log = logging.getLogger(__name__)
@@ -872,6 +872,7 @@ def _after_ending(run: dict[str, Any], ended: dict[str, Any], *, settings: Setti
     _revoke_run_token(run, settings=settings)
     for row in (run, ended):
         registry_credentials.revoke(row, settings=settings)
+        api_credentials.revoke(row, settings=settings)
     _record_run_role(str(run["workspace_id"]), settings=settings)
     _record_verification(ended, settings=settings)
     _promote_queue(str(run["workspace_id"]), settings=settings)
@@ -1558,6 +1559,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "environment_variables": variables["env"],
         "artifacts": _artifacts(run_id, settings=resolved),
         "registry": registry_credentials.issue(run, settings=resolved),
+        "api": api_credentials.issue(run, workspace, settings=resolved),
         "workload_identity": identity,
     }
 
@@ -1689,7 +1691,13 @@ def render_run(item: dict[str, Any]) -> dict[str, Any]:
     confirm task token could confirm a run it has no scope for. `collection` is the
     constant `by_recency` partition key and says nothing to a caller.
     """
-    hidden = {"confirm_task_token", "run_token_hash", registry_credentials.HASH_ATTRIBUTE, "collection"}
+    hidden = {
+        "confirm_task_token",
+        "run_token_hash",
+        registry_credentials.HASH_ATTRIBUTE,
+        api_credentials.HASH_ATTRIBUTE,
+        "collection",
+    }
     return {field: value for field, value in item.items() if field not in hidden}
 
 

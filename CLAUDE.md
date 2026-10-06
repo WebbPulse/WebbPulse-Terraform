@@ -333,6 +333,23 @@ scope and tenant, and every other route refuses it since a run has no user
 scopes. The runner sets it as `TF_TOKEN_<host>` for `init` alone and registers it
 with the redactor.
 
+A configuration that uses the WebbPulse provider (the Platform factory) gets HCP's run
+scoped API token the same way. An admin who passed step-up sets the workspace's
+`run_api_token_scopes` (a subset of `workspaces:{read,write}`, `variables:{read,write}`
+and `registry:{read,write}`, PATCH only, null or `[]` clears), and each bundle then
+carries `api` (`app/domains/runs/api_credentials.py`): a `wpk_` key of kind `run_api`
+with the run as its subject and the workspace in its metadata, lasting its phase's
+timeout. Its scopes are the workspace's current grant intersected with the grant it
+was minted under, read on every request (`key_owner_scopes`), so the registry function
+reads `workspaces` too. The run keeps its hash in `api_token_hash`, and a newer bundle
+or the run's ending revokes it. Behind the access gate the runs function reads the
+gate's `x-origin-verify` from SSM (`ORIGIN_VERIFY_PARAMETER`) into the bundle; the
+runner task role never holds that read. The runner exports `WEBBPULSE_TF_HOST`,
+`WEBBPULSE_TF_TOKEN` and `WEBBPULSE_TF_ORIGIN_VERIFY` to every subcommand, after
+workspace variables, and redacts the token and the gate value. The provider block must
+leave `host`, `token` and `origin_verify` unset, since its config wins over the
+environment.
+
 Publishing follows HCP's tag based "Publish module from VCS". `POST
 /api/v1/registry/modules` (`registry:write`) connects a module to a repository the
 GitHub App is installed on, resolved like a workspace's `vcs_repo` (422

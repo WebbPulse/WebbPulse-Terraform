@@ -1,6 +1,49 @@
 {
   "components": {
     "schemas": {
+      "ApiCredentials": {
+        "description": "The run's control plane API key, which the runner sets as `WEBBPULSE_TF_TOKEN` for the provider.",
+        "properties": {
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "origin_verify": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Verify"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "token",
+          "expires_at",
+          "scopes"
+        ],
+        "title": "ApiCredentials",
+        "type": "object"
+      },
       "ApiKey": {
         "description": "A stored key as every route but the mint renders it. Never the plaintext.",
         "properties": {
@@ -2620,6 +2663,16 @@
       "RunBundle": {
         "description": "Everything the runner needs for one phase of one run.\n\nThe shape is the runner's `Bundle`: the nested `backend`, `aws_credentials` and\n`artifacts` objects are what `runner/app/models.py` validates, as is\n`is_destroy`, which selects `plan -destroy`. The other extra top level fields\nare what the runner ignores for now but the API states about the phase it is\nserving. Uploads are not here: the runner asks\nfor each one's presigned PUT by size once it has the bytes.\n\nThe only response in the API that carries decrypted variable values, which is\nwhy it is gated on a run token bound to this run rather than on scopes.",
         "properties": {
+          "api": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiCredentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "artifacts": {
             "$ref": "#/components/schemas/Artifacts"
           },
@@ -4185,6 +4238,13 @@
             ],
             "title": "Plan Role Arn"
           },
+          "run_api_token_scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Run Api Token Scopes",
+            "type": "array"
+          },
           "run_role_account_id": {
             "anyOf": [
               {
@@ -4552,6 +4612,29 @@
               }
             ],
             "title": "Plan Role Arn"
+          },
+          "run_api_token_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "workspaces:read",
+                    "workspaces:write",
+                    "variables:read",
+                    "variables:write",
+                    "registry:read",
+                    "registry:write"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 12,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Api Token Scopes"
           },
           "run_role_arn": {
             "anyOf": [
@@ -7725,7 +7808,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging either run role field is the workspace's AWS connection, so a person has to\nhave signed in within the step-up window; resending the stored value is not a change.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging either run role field is the workspace's AWS connection, so a person has to\nhave signed in within the step-up window; resending the stored value is not a change.\n\nChanging `run_api_token_scopes` hands every later run of this workspace a key on\nthis API, so it takes `admin` as well as the step-up.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {

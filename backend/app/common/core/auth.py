@@ -20,7 +20,7 @@ the path, so a token for one run cannot read another run's bundle.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Coroutine, Final
+from typing import Any, Callable, Coroutine, Final, Mapping
 
 import anyio.from_thread
 from fastapi import Depends, HTTPException, Request
@@ -79,6 +79,25 @@ ALL_SCOPES: Final = (
     ADMIN,
 )
 """Every scope a human or an agent can hold, which is what the contract lists."""
+
+RUN_API_TOKEN_SCOPES: Final = (
+    WORKSPACES_READ,
+    WORKSPACES_WRITE,
+    VARIABLES_READ,
+    VARIABLES_WRITE,
+    REGISTRY_READ,
+    REGISTRY_WRITE,
+)
+"""The scopes a workspace may grant its runs' API token, which a configuration using the
+WebbPulse provider reads as `WEBBPULSE_TF_TOKEN`. Never admin, the runner scopes, raw state
+or `runs:apply`, so a run cannot widen its own grant, read another run's bundle or approve
+its own apply."""
+
+RUN_API_TOKEN_KIND: Final = "run_api"
+"""The `kind` a run's API token is minted with, which is what `key_owner_scopes` keys on."""
+
+RUN_API_TOKEN_SCOPES_ATTRIBUTE: Final = "run_api_token_scopes"
+"""The workspace attribute holding the scopes its runs' API token may exercise."""
 
 RUN_TOKEN_TENANT: Final = "webbpulse-terraform"
 """The tenant every run token is minted under. The control plane is single tenant,
@@ -148,14 +167,47 @@ def revoke_run_key(key_hash: str, *, settings: Settings | None = None, now: date
         return
 
 
+def granted_run_api_scopes(workspace: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """The run API token scopes a stored workspace grants, filtered to `RUN_API_TOKEN_SCOPES`."""
+    stored = (workspace or {}).get(RUN_API_TOKEN_SCOPES_ATTRIBUTE) or []
+    return tuple(scope for scope in RUN_API_TOKEN_SCOPES if scope in {str(value) for value in stored})
+
+
+def is_run_api_token(record: ApiKeyRecord) -> bool:
+    """Whether a verified key is a run's API token rather than a person's or an agent's."""
+    return (
+        record.kind == RUN_API_TOKEN_KIND
+        and record.tenant_id == RUN_TOKEN_TENANT
+        and record.user_id.startswith(RUN_KEY_USER_PREFIX)
+    )
+
+
+def run_api_token_scopes(record: ApiKeyRecord) -> tuple[str, ...]:
+    """What a run's API token may do right now: its workspace's current grant.
+
+    Read live on every request, so clearing the workspace's grant or deleting the
+    workspace takes effect at once. Ending the run revokes the key itself.
+    """
+    from ..db import repositories
+
+    workspace_id = str(record.metadata.get("workspace_id", "") or "")
+    if not workspace_id:
+        return ()
+    return granted_run_api_scopes(repositories.workspaces().get({"workspace_id": workspace_id}))
+
+
 def key_owner_scopes(record: ApiKeyRecord) -> tuple[str, ...]:
     """The scopes a key's owner holds right now, read from the `users` table.
 
     Nothing for an owner that is gone, disabled or unverified, which is the same
     test `may_authenticate` applies at sign-in. Otherwise the scopes the owner's
-    current role earns, the same ones a fresh session token would carry.
+    current role earns, the same ones a fresh session token would carry. A run's
+    API token has no person behind it, so its workspace's grant stands in.
     """
     from ..db.users import UserRepository
+
+    if is_run_api_token(record):
+        return run_api_token_scopes(record)
     from ..identity.identity_hooks import ADMIN_ROLE, scope_claim_for_roles
 
     user = UserRepository().get(record.user_id)
@@ -342,6 +394,9 @@ __all__ = [
     "CONFIGS_WRITE",
     "RUNNER_REGISTRY_SCOPE",
     "RUNNER_SCOPE",
+    "RUN_API_TOKEN_KIND",
+    "RUN_API_TOKEN_SCOPES",
+    "RUN_API_TOKEN_SCOPES_ATTRIBUTE",
     "RUNS_APPLY",
     "RUNS_READ",
     "RUNS_WRITE",
@@ -363,11 +418,14 @@ __all__ = [
     "claims",
     "ensure_recent_auth",
     "device_grant_liveness",
+    "granted_run_api_scopes",
+    "is_run_api_token",
     "key_owner_scopes",
     "reset_device_grant_liveness",
     "recent_auth",
     "require_run_token",
     "revoke_run_key",
+    "run_api_token_scopes",
     "run_token_record",
     "scopes",
     "sudo",

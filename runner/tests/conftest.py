@@ -358,7 +358,9 @@ if SUBCOMMAND == "version":
         print("Terraform v" + VERSION)
     sys.exit(0)
 for key in sorted(os.environ):
-    if key.startswith("TF_TOKEN_") or key == "TF_CLI_CONFIG_FILE":
+    if SUBCOMMAND == "show" and key.startswith("WEBBPULSE_TF_"):
+        continue
+    if key.startswith(("TF_TOKEN_", "WEBBPULSE_TF_")) or key == "TF_CLI_CONFIG_FILE":
         print(SUBCOMMAND + " holds " + key + "=" + os.environ[key])
 if SUBCOMMAND == "init":
     print("Initializing the backend...")

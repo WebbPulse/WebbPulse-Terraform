@@ -87,7 +87,7 @@ locals {
       memory        = 512
       timeout       = local.registry_timeout
       tables        = ["registry"]
-      read_tables   = ["users"]
+      read_tables   = ["users", "workspaces"]
       buckets       = false
       own_image_tag = true
       sqs_event_sources = {
@@ -259,6 +259,9 @@ module "lambda_domain" {
     module.identity.identity_environment,
 
     local.identity_device_environment,
+    each.key == "runs" && local.access_gate_enabled ? {
+      ORIGIN_VERIFY_PARAMETER = one(module.access_gate[*].origin_verify_ssm_parameter_name)
+    } : {},
   )
 
   log_retention_days           = 7
@@ -370,6 +373,23 @@ locals {
         Effect   = "Allow"
         Action   = ["kms:Sign"]
         Resource = [local.oidc_active_key]
+      },
+      ] : [], local.access_gate_enabled ? [
+      {
+        Sid      = "ReadTheGateHeaderForRunApiTokens"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = [one(module.access_gate[*].origin_verify_ssm_parameter_arn)]
+      },
+      ] : [], local.access_gate_enabled ? [
+      {
+        Sid      = "DecryptTheGateHeaderForRunApiTokens"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [data.aws_kms_alias.ssm.target_key_arn]
+        Condition = {
+          StringEquals = { "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com" }
+        }
       },
     ] : [])
   }
