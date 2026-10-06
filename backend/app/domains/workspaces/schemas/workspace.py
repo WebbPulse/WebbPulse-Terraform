@@ -30,12 +30,13 @@ PLAN_ASSUME_ROLE_ARN_PATTERN: Final = re.compile(r"^arn:aws:iam::[0-9]{12}:role/
 PLAN_ASSUME_ROLE_ARNS_MAX: Final = 10
 """How many reader roles one workspace may name."""
 
-PLAN_ASSUME_ROLE_ARN_MAX_LENGTH: Final = 160
+PLAN_ASSUME_ROLE_ARN_MAX_LENGTH: Final = 140
 """The longest reader role ARN accepted.
 
-With the count cap this keeps the plan's inline session policy, plus the
-`ReadOnlyAccess` ARN beside it, inside the 2,048 plaintext characters STS allows
-for session policies in total.
+With the count cap this keeps the plan's inline session policy, its secret read
+statements and reader roles together, plus the `ReadOnlyAccess` ARN beside it,
+inside the 2,048 plaintext characters STS allows for session policies in total.
+It still leaves a 64 character role name a 45 character path.
 """
 
 
