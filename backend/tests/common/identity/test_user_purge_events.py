@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from webbpulse.dynamodb import Repository
 from webbpulse.events import events_path
 from webbpulse.identity import CREDENTIALS_TABLE, DynamoCredentialStore
+from webbpulse.identity.api_keys import API_KEYS_TABLE, DynamoApiKeyStore, mint
 from webbpulse.identity.storage import CredentialRecord
 
 from app.common.composition import settings as settings_module
@@ -31,6 +32,13 @@ def credentials(identity_environment: None) -> DynamoCredentialStore:
     """The credentials store over the mocked identity table the purge empties."""
     del identity_environment
     return DynamoCredentialStore(Repository(CREDENTIALS_TABLE, prefix=TABLE_PREFIX, region_name=REGION))
+
+
+@pytest.fixture
+def api_keys(identity_environment: None) -> DynamoApiKeyStore:
+    """The api-keys store over the mocked identity table the purge also empties."""
+    del identity_environment
+    return DynamoApiKeyStore(Repository(API_KEYS_TABLE, prefix=TABLE_PREFIX, region_name=REGION))
 
 
 @pytest.fixture
@@ -70,3 +78,18 @@ def test_a_users_row_delete_purges_that_users_identity_rows(
     assert response.json().get("batchItemFailures") == []
     assert credentials.get(DELETED, "password") is None
     assert credentials.get(KEPT, "password") is not None
+
+
+def test_a_users_row_delete_purges_that_users_api_keys(
+    workspaces_client: TestClient, api_keys: DynamoApiKeyStore
+) -> None:
+    """A REMOVE record deletes the deleted user's API keys and leaves other subjects' keys."""
+    deleted = mint(user_id=DELETED, tenant_id="tenant", scopes=("workspaces:read",), store=api_keys)
+    kept = mint(user_id=KEPT, tenant_id="tenant", scopes=("workspaces:read",), store=api_keys)
+
+    response = workspaces_client.post(events_path(), json={"Records": [_remove(DELETED)]})
+
+    assert response.status_code == 200
+    assert response.json().get("batchItemFailures") == []
+    assert api_keys.get(deleted.record.key_hash) is None
+    assert api_keys.get(kept.record.key_hash) is not None

@@ -816,6 +816,86 @@ def test_the_registry_credential_reaches_the_apply_init_alone(
     assert REGISTRY_TOKEN not in messages
 
 
+MIRROR_TOKEN_VARIABLE = "TF_TOKEN_app_terraform_io"
+"""The variable the engine reads `app.terraform.io`'s credential from."""
+
+MIRROR_MODULES_URL = "https://api.staging.terraform-e2e.webbpulse.com/v1/modules/"
+
+
+def _mirror_bundle(run_role_arn: str, **kwargs: Any) -> dict[str, Any]:
+    """A registry bundle that maps `app.terraform.io` to this plane's modules endpoint."""
+    bundle = _registry_bundle(run_role_arn, **kwargs)
+    bundle["registry"] = {**bundle["registry"], "module_hosts": {"app.terraform.io": MIRROR_MODULES_URL}}
+    return bundle
+
+
+def test_init_resolves_app_terraform_io_through_the_plane(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`init` gets the CLI config and the run's token for `app.terraform.io`; the plan gets neither."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(_mirror_bundle(run_role_arn), config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    log = recorder.uploads["/runs/plan.log"].decode()
+    assert f"init holds {MIRROR_TOKEN_VARIABLE}=" in log
+    assert "init holds TF_CLI_CONFIG_FILE=" in log
+    assert 'cli config host "app.terraform.io" {' in log
+    assert f'cli config     "modules.v1" = "{MIRROR_MODULES_URL}"' in log
+    assert "plan holds" not in log
+    assert "show holds" not in log
+    captured = capsys.readouterr()
+    for haystack in (log, captured.out, captured.err, *log_stream_messages(f"{RUN_ID}/plan")):
+        assert REGISTRY_TOKEN not in haystack
+
+
+def test_the_apply_init_resolves_app_terraform_io_through_the_plane(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """The apply phase re-initialises through the plane and applies without the config."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = _mirror_bundle(run_role_arn, plan_get_url="https://artifacts.example.invalid/runs/plan.tfplan?sig=1")
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("apply"), make_clients(transport), tmp_path) == 0
+
+    messages = "\n".join(log_stream_messages(f"{RUN_ID}/apply"))
+    assert "init holds TF_CLI_CONFIG_FILE=" in messages
+    assert f"init holds {MIRROR_TOKEN_VARIABLE}=" in messages
+    assert "apply holds" not in messages
+    assert REGISTRY_TOKEN not in messages
+
+
+def test_an_invalid_mapping_fails_the_phase_before_the_engine(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A mapped URL that is not https fails the phase as `CliConfigInvalid`."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = _registry_bundle(run_role_arn)
+    bundle["registry"] = {**bundle["registry"], "module_hosts": {"app.terraform.io": "http://plane.example/v1/"}}
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 1
+    assert recorder.failure_names() == ["CliConfigInvalid"]
+
+
 def test_a_bundle_without_a_registry_credential_sets_no_token(
     aws: None,
     run_role_arn: str,
@@ -830,3 +910,4 @@ def test_a_bundle_without_a_registry_credential_sets_no_token(
 
     assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
     assert "holds TF_TOKEN_" not in recorder.uploads["/runs/plan.log"].decode()
+    assert "holds TF_CLI_CONFIG_FILE" not in recorder.uploads["/runs/plan.log"].decode()

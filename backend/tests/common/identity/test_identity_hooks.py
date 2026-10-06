@@ -7,9 +7,12 @@ that must refuse are the ones worth pinning.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from webbpulse.identity import AuthenticationRefused
 from webbpulse.identity.claims import coerce_claims
+from webbpulse.identity.ephemeral_sweep import ephemeral_candidates
 from webbpulse.identity.scopes import SCOPES_KEY
 
 from app.common.core.auth import ALL_SCOPES, RUNNER_SCOPE
@@ -227,3 +230,16 @@ def test_delete_user_succeeds_with_a_totp_factor_stored(hooks: ControlPlaneIdent
 
     assert hooks.delete_user("user-1") is True
     assert hooks.load_user_by_id("user-1") is None
+
+
+def test_the_ephemeral_sweep_finds_only_old_marked_users(hooks: ControlPlaneIdentityHooks) -> None:
+    """The sweep scans the users table behind the hooks and takes only old `e2e-` users."""
+    now = datetime.now(UTC)
+    old = now - timedelta(hours=4)
+    _store(hooks, id="user-old", email="e2e-run-1@e2e.invalid", created_at=old)
+    _store(hooks, id="user-new", email="e2e-run-2@e2e.invalid", created_at=now)
+    _store(hooks, id="user-real", email="someone@example.com", created_at=old)
+
+    found = [row["id"] for row in ephemeral_candidates(hooks, created_before=now - timedelta(hours=3))]
+
+    assert found == ["user-old"]

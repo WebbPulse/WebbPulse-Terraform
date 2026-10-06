@@ -118,7 +118,6 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
     with tags.http_client() as http, GitHubAppClient.from_settings(credentials, client=http) as app:
         listed = list_tags(
             app,
-            http,
             installation_id=str(module["vcs_installation_id"]),
             repository=str(module["vcs_repo"]),
             max_pages=MAX_TAG_PAGES,

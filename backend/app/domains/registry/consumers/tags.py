@@ -135,7 +135,6 @@ def publish(
     module: Mapping[str, Any],
     message: Mapping[str, Any],
     app: GitHubAppClient,
-    http: httpx.Client,
     *,
     settings: Settings,
 ) -> str:
@@ -153,7 +152,6 @@ def publish(
         packed = Path(scratch) / "module.tar.gz"
         download_tarball(
             app,
-            http,
             installation_id=str(message["installation_id"]),
             repository=str(message["repo"]),
             ref=sha,
@@ -224,7 +222,7 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
     with http_client() as http, GitHubAppClient.from_settings(credentials, client=http) as app:
         for module in sorted(modules, key=lambda row: str(row["pk"])):
             address = f"{module['namespace']}/{module['name']}/{module['provider']}"
-            outcomes[address] = publish(module, message, app, http, settings=resolved)
+            outcomes[address] = publish(module, message, app, settings=resolved)
     return outcomes
 
 

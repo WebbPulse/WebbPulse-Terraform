@@ -35,15 +35,14 @@ from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final, Optional
-from urllib.parse import urlsplit
 
-import httpx
 from boto3.dynamodb.conditions import Attr
 from webbpulse.dynamodb import ConditionFailed
-from webbpulse.integrations.github import API_ROOT, API_VERSION
+from webbpulse.integrations.github import PullRequest
 
 from ....common.composition.settings import Settings, get_settings
 from ....common.db import repositories
+from ....common.github.archive import TarballUnavailable, download_tarball
 from ....common.github.webhooks import PUSH, WEBHOOK_KIND, parse_message
 from ....common.workspaces import vcs as workspace_vcs
 from .. import reporting
@@ -61,9 +60,6 @@ in the function's temporary storage."""
 MERGEABLE_ATTEMPTS: Final = 4
 MERGEABLE_WAIT_SECONDS: Final = 2.0
 
-TARBALL_HOSTS: Final = frozenset({"codeload.github.com"})
-"""Where GitHub's tarball redirect may point. Anything else is refused."""
-
 EXCLUDED_PARTS: Final = frozenset({".git", ".terraform"})
 
 sleep: Callable[[float], None] = time.sleep
@@ -72,10 +68,6 @@ sleep: Callable[[float], None] = time.sleep
 
 class MergeStatePending(Exception):
     """GitHub has not computed the pull request's merge commit yet, so the message is retried."""
-
-
-class TarballUnavailable(Exception):
-    """The repository archive could not be fetched, so the message is retried."""
 
 
 def upload_id_for(delivery: str) -> str:
@@ -115,7 +107,7 @@ def _record(upload_id: str, message: Mapping[str, Any], resolved: Mapping[str, A
     return item
 
 
-def _settled_pull(reader: reporting.GitHubReader, message: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+def _settled_pull(reader: reporting.GitHubReader, message: Mapping[str, Any]) -> Optional[PullRequest]:
     """The pull request once its merge state has settled, or `None` when this delivery is moot.
 
     Raises:
@@ -123,13 +115,13 @@ def _settled_pull(reader: reporting.GitHubReader, message: Mapping[str, Any]) ->
     """
     number = int(message["pr_number"])
     for attempt in range(MERGEABLE_ATTEMPTS):
-        pull = reader.get(f"/pulls/{number}")
-        if str((pull.get("head") or {}).get("sha", "")) != str(message["head_sha"]):
+        pull = reader.client.get_pull_request(reader.repository, number, installation_id=reader.installation)
+        if pull.head_sha != str(message["head_sha"]):
             return None
-        if str(pull.get("state", "open")) != "open" or pull.get("mergeable") is False:
+        if (pull.state or "open") != "open" or pull.mergeable is False:
             return None
-        if pull.get("mergeable") is True and pull.get("merge_commit_sha"):
-            return dict(pull)
+        if pull.mergeable is True and pull.merge_commit_sha:
+            return pull
         if attempt + 1 < MERGEABLE_ATTEMPTS:
             sleep(MERGEABLE_WAIT_SECONDS)
     raise MergeStatePending(f"pull request {number} has no merge commit yet")
@@ -137,16 +129,16 @@ def _settled_pull(reader: reporting.GitHubReader, message: Mapping[str, Any]) ->
 
 def _pull_paths(reader: reporting.GitHubReader, number: int) -> Optional[list[str]]:
     """The paths a pull request changes, or `None` for every path once the listing is capped."""
-    files = reader.pages(f"/pulls/{number}/files")
+    files = reader.client.list_pull_request_files(
+        reader.repository, number, max_pages=reporting.MAX_PAGES, installation_id=reader.installation
+    )
     if len(files) >= reporting.PAGE_SIZE * reporting.MAX_PAGES:
         return None
     paths: set[str] = set()
     for item in files:
-        if not isinstance(item, Mapping):
-            return None
-        paths.add(str(item.get("filename", "")))
-        if item.get("previous_filename"):
-            paths.add(str(item["previous_filename"]))
+        paths.add(item.filename)
+        if item.previous_filename:
+            paths.add(item.previous_filename)
     return sorted(path for path in paths if path)
 
 
@@ -158,7 +150,7 @@ def resolve(reader: reporting.GitHubReader, message: Mapping[str, Any]) -> Optio
     if pull is None:
         return None
     return {
-        "sha": str(pull["merge_commit_sha"]),
+        "sha": str(pull.merge_commit_sha),
         "head_sha": str(message["head_sha"]),
         "paths": _pull_paths(reader, int(message["pr_number"])),
     }
@@ -176,48 +168,6 @@ def _matched(workspaces: Iterable[Mapping[str, Any]], upload: Mapping[str, Any],
 def _tracked(workspaces: Iterable[Mapping[str, Any]], branch: str) -> bool:
     """Whether any bound workspace tracks `branch`."""
     return any(str(workspace.get("tracked_branch") or "") == branch for workspace in workspaces if branch)
-
-
-def _download(reader: reporting.GitHubReader, sha: str, target: Path) -> None:
-    """Fetch the repository archive at `sha` into `target`.
-
-    GitHub answers with a redirect to a signed codeload URL. The installation token
-    goes only to the API; the redirect is followed without it.
-
-    Raises:
-        TarballUnavailable: GitHub did not hand over an archive within the size limit.
-    """
-    token = reader.client.installation_token(reader.installation)
-    path = f"/repos/{reader.repository}/tarball/{sha}"
-    try:
-        response = reader.http.get(
-            f"{API_ROOT}{path}",
-            headers={
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": API_VERSION,
-                "Authorization": f"Bearer {token}",
-            },
-        )
-    except httpx.HTTPError as error:
-        raise TarballUnavailable(f"GET {path} did not answer") from error
-    location = response.headers.get("location", "")
-    if response.status_code not in (301, 302, 303, 307, 308) or not location:
-        raise TarballUnavailable(f"GET {path} answered {response.status_code}")
-    parts = urlsplit(location)
-    if parts.scheme != "https" or parts.hostname not in TARBALL_HOSTS:
-        raise TarballUnavailable("the archive redirect points somewhere unexpected")
-    size = 0
-    try:
-        with reader.http.stream("GET", location) as archive, target.open("wb") as handle:
-            if archive.status_code != 200:
-                raise TarballUnavailable(f"the archive answered {archive.status_code}")
-            for chunk in archive.iter_bytes():
-                size += len(chunk)
-                if size > MAX_TARBALL_BYTES:
-                    raise TarballUnavailable("the archive is larger than the ingest limit")
-                handle.write(chunk)
-    except httpx.HTTPError as error:
-        raise TarballUnavailable("the archive download failed") from error
 
 
 def _relative(name: str) -> Optional[str]:
@@ -307,7 +257,14 @@ def _ingest(
     with tempfile.TemporaryDirectory() as scratch:
         downloaded = Path(scratch) / "github.tar.gz"
         packed = Path(scratch) / "configuration.tar.gz"
-        _download(reader, str(item["sha"]), downloaded)
+        download_tarball(
+            reader.client,
+            installation_id=reader.installation,
+            repository=reader.repository,
+            ref=str(item["sha"]),
+            target=downloaded,
+            max_bytes=MAX_TARBALL_BYTES,
+        )
         repack(downloaded, packed, paths)
         downloaded.unlink()
         item["size_bytes"] = packed.stat().st_size

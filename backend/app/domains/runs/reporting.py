@@ -31,8 +31,7 @@ reports on its head, which is recorded rather than trusted, so the head must be 
 the signed merge commit and must be, or have been, a commit of that pull request. A
 commit that fails either check gets nothing.
 
-`webbpulse.integrations.github.GitHubAppClient` writes but does not read, so the reads
-here go through a plain `httpx` call with the client's installation token.
+Every read and write goes through `webbpulse.integrations.github.GitHubAppClient`.
 """
 
 from __future__ import annotations
@@ -46,9 +45,6 @@ from typing import Any, Final
 import httpx
 from boto3.dynamodb.conditions import Key
 from webbpulse.integrations.github import (
-    ACCEPT,
-    API_ROOT,
-    API_VERSION,
     CheckRunConclusion,
     CheckRunOutput,
     CheckRunStatus,
@@ -175,10 +171,9 @@ def run_url(settings: Settings, run: Mapping[str, Any]) -> str | None:
 class GitHubReader:
     """Reads and writes against one repository as the App's installation on it."""
 
-    def __init__(self, client: GitHubAppClient, http: httpx.Client, repository: str, app_id: str) -> None:
-        """Hold the App client, the HTTP client its reads use, and the repository."""
+    def __init__(self, client: GitHubAppClient, repository: str, app_id: str) -> None:
+        """Hold the App client, the repository and the App's id."""
         self.client = client
-        self.http = http
         self.repository = repository
         self.app_id = app_id
         self._installation: int | None = None
@@ -189,36 +184,6 @@ class GitHubReader:
         if self._installation is None:
             self._installation = self.client.repository_installation(self.repository)
         return self._installation
-
-    def get(self, suffix: str, params: Mapping[str, Any] | None = None) -> Any:
-        """One GET under the repository, answering the parsed body or raising `GitHubError`."""
-        token = self.client.installation_token(self.installation)
-        path = f"/repos/{self.repository}{suffix}"
-        try:
-            response = self.http.get(
-                f"{API_ROOT}{path}",
-                params=dict(params or {}),
-                headers={"Accept": ACCEPT, "X-GitHub-Api-Version": API_VERSION, "Authorization": f"Bearer {token}"},
-            )
-        except httpx.HTTPError as exc:
-            raise GitHubError(f"GET {path} did not answer", method="GET", path=path) from exc
-        if response.status_code >= 400:
-            raise GitHubError(
-                f"GET {path} answered {response.status_code}", method="GET", path=path, status_code=response.status_code
-            )
-        return response.json()
-
-    def pages(self, suffix: str, params: Mapping[str, Any] | None = None, key: str | None = None) -> list[Any]:
-        """Every item a paged listing answers, up to `MAX_PAGES` pages."""
-        items: list[Any] = []
-        for page in range(1, MAX_PAGES + 1):
-            body = self.get(suffix, {**(params or {}), "per_page": PAGE_SIZE, "page": page})
-            batch = body.get(key, []) if key and isinstance(body, dict) else body
-            batch = batch if isinstance(batch, list) else []
-            items.extend(batch)
-            if len(batch) < PAGE_SIZE:
-                break
-        return items
 
 
 def verified_commit(reader: GitHubReader, run: Mapping[str, Any]) -> str:
@@ -236,33 +201,28 @@ def verified_commit(reader: GitHubReader, run: Mapping[str, Any]) -> str:
         branch = str(vcs.get("branch") or "")
         if not branch:
             raise UnverifiedCommit("the push run carries no branch")
-        compared = reader.get(f"/compare/{branch}...{sha}")
-        if str(compared.get("status")) not in ("identical", "behind"):
+        compared = reader.client.compare_commits(reader.repository, branch, sha, installation_id=reader.installation)
+        if compared.status not in ("identical", "behind"):
             raise UnverifiedCommit("the commit is not on the pushed branch")
         return sha
     number = vcs.get("pr_number")
     if number is None:
         raise UnverifiedCommit("the pull request run carries no number")
-    commit = reader.get(f"/commits/{sha}")
-    parents = [str(parent.get("sha", "")) for parent in commit.get("parents", []) if isinstance(parent, Mapping)]
+    parents = list(reader.client.get_commit(reader.repository, sha, installation_id=reader.installation).parents)
     if len(parents) < 2:
         raise UnverifiedCommit("the signed commit is not a merge commit")
     head = str(vcs.get("head_sha") or parents[-1])
     if head not in parents[1:]:
         raise UnverifiedCommit("the head is not a parent of the signed merge commit")
-    pull = reader.get(f"/pulls/{int(number)}")
-    if str((pull.get("head") or {}).get("sha", "")) == head:
+    pull = reader.client.get_pull_request(reader.repository, int(number), installation_id=reader.installation)
+    if pull.head_sha == head:
         return head
-    commits = reader.pages(f"/pulls/{int(number)}/commits")
-    if any(isinstance(item, Mapping) and item.get("sha") == head for item in commits):
+    commits = reader.client.list_pull_request_commits(
+        reader.repository, int(number), max_pages=MAX_PAGES, installation_id=reader.installation
+    )
+    if any(commit.sha == head for commit in commits):
         return head
     raise UnverifiedCommit("the head is not a commit of the pull request")
-
-
-def _own(item: Mapping[str, Any], app_id: str) -> bool:
-    """Whether a check run was created by this App."""
-    app = item.get("app")
-    return isinstance(app, Mapping) and str(app.get("id", "")) == app_id
 
 
 def find_check_run(reader: GitHubReader, sha: str, name: str, external_id: str | None) -> tuple[int, str] | None:
@@ -270,18 +230,21 @@ def find_check_run(reader: GitHubReader, sha: str, name: str, external_id: str |
 
     Answers its id and status.
     """
-    listed = reader.pages(
-        f"/commits/{sha}/check-runs",
-        {"check_name": name, "filter": "all", "app_id": reader.app_id},
-        key="check_runs",
+    listed = reader.client.list_check_runs(
+        reader.repository,
+        sha,
+        check_name=name,
+        app_id=reader.app_id,
+        latest=False,
+        max_pages=MAX_PAGES,
+        installation_id=reader.installation,
     )
     found = [
-        (int(item["id"]), str(item.get("status", "")))
+        (item.id, item.status)
         for item in listed
-        if isinstance(item, Mapping)
-        and _own(item, reader.app_id)
-        and item.get("name") == name
-        and (external_id is None or item.get("external_id") == external_id)
+        if str(item.app_id or "") == reader.app_id
+        and item.name == name
+        and (external_id is None or item.external_id == external_id)
     ]
     return max(found) if found else None
 
@@ -467,20 +430,14 @@ def comment_body(
 
 def upsert_comment(reader: GitHubReader, number: int, body: str) -> None:
     """Edit this App's marked comment on the pull request, or post it."""
-    comments = reader.pages(f"/issues/{number}/comments")
-    marked = [
-        item
-        for item in comments
-        if isinstance(item, Mapping)
-        and COMMENT_MARKER in str(item.get("body", ""))
-        and str((item.get("user") or {}).get("type", "")) == "Bot"
-    ]
+    comments = reader.client.list_issue_comments(
+        reader.repository, number, max_pages=MAX_PAGES, installation_id=reader.installation
+    )
+    marked = [item for item in comments if COMMENT_MARKER in item.body and item.user_type == "Bot"]
     if marked:
-        oldest = min(marked, key=lambda item: int(item["id"]))
-        if oldest.get("body") != body:
-            reader.client.update_issue_comment(
-                reader.repository, int(oldest["id"]), body, installation_id=reader.installation
-            )
+        oldest = min(marked, key=lambda item: item.id)
+        if oldest.body != body:
+            reader.client.update_issue_comment(reader.repository, oldest.id, body, installation_id=reader.installation)
     else:
         reader.client.create_issue_comment(reader.repository, number, body, installation_id=reader.installation)
 
@@ -494,10 +451,10 @@ def record_message(reader: GitHubReader, run: Mapping[str, Any], sha: str, *, se
     if (run.get("vcs") or {}).get("commit_message"):
         return
     try:
-        commit = reader.get(f"/commits/{sha}")
-    except GitHubError:
+        commit = reader.client.get_commit(reader.repository, sha, installation_id=reader.installation)
+    except (GitHubError, ValueError):
         return
-    message = str(((commit or {}).get("commit") or {}).get("message") or "").strip()
+    message = commit.message.strip()
     if message:
         service.record_commit_message(str(run["run_id"]), message, settings=settings)
 
@@ -512,22 +469,20 @@ def record_pull_request(reader: GitHubReader, run: Mapping[str, Any], sha: str, 
     if str(run.get("source")) != SOURCE_PUSH or (run.get("vcs") or {}).get("pull_request"):
         return
     try:
-        listed = reader.get(f"/commits/{sha}/pulls")
-    except GitHubError:
+        listed = reader.client.list_commit_pull_requests(
+            reader.repository, sha, max_pages=1, installation_id=reader.installation
+        )
+    except (GitHubError, ValueError):
         return
-    pulls = (
-        [item for item in listed if isinstance(item, Mapping) and item.get("number")]
-        if isinstance(listed, list)
-        else []
-    )
+    pulls = [item for item in listed if item.number]
     if not pulls:
         return
     chosen = next(
-        (item for item in pulls if item.get("merge_commit_sha") == sha and item.get("merged_at")),
-        next((item for item in pulls if item.get("merged_at")), pulls[0]),
+        (item for item in pulls if item.merge_commit_sha == sha and item.merged_at),
+        next((item for item in pulls if item.merged_at), pulls[0]),
     )
-    number = int(chosen["number"])
-    url = str(chosen.get("html_url") or f"https://github.com/{reader.repository}/pull/{number}")
+    number = chosen.number
+    url = chosen.html_url or f"https://github.com/{reader.repository}/pull/{number}"
     service.record_pull_request(str(run["run_id"]), number, url, settings=settings)
 
 
@@ -642,7 +597,7 @@ def app_reader(repository: str, settings: Settings) -> Iterator[GitHubReader | N
         return
     with http_client() as http:
         client = GitHubAppClient.from_settings(app, client=http)
-        yield GitHubReader(client, http, repository, str(app.app_id))
+        yield GitHubReader(client, repository, str(app.app_id))
 
 
 def report_upload(
