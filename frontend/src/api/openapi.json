@@ -4883,7 +4883,7 @@
     },
     "/api/auth/logout-all": {
       "post": {
-        "description": "Revoke every session for the caller and clear the refresh cookie.",
+        "description": "Revoke every session and device login for the caller and clear the refresh cookie.",
         "operationId": "logout_all_api_auth_logout_all_post",
         "responses": {
           "200": {
