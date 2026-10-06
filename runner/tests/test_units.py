@@ -21,6 +21,7 @@ from app.install import InstallError, ReleaseUrls, release_urls
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
 from app.main import redact_outputs
 from app.models import (
+    ApiCredentials,
     BackendConfig,
     Bundle,
     Changes,
@@ -721,3 +722,21 @@ def test_the_registry_token_is_a_sensitive_value(run_role_arn: str) -> None:
     )
     assert "wpk_abcdefghijkl" in bundle.sensitive_values()
     assert bundle.init_environment() == {"TF_TOKEN_terraform_webbpulse_com": "wpk_abcdefghijkl"}
+
+
+def test_the_api_token_and_gate_value_are_sensitive_values(run_role_arn: str) -> None:
+    """The redactor holds the run's API token and the gate value; the host is not a secret."""
+    bundle = Bundle.model_validate(
+        bundle_payload(run_role_arn)
+        | {"api": {"host": "https://api.example.test", "token": "wpk_apitokenabcdef", "origin_verify": "gate-abcdef"}}
+    )
+    values = bundle.sensitive_values()
+    assert "wpk_apitokenabcdef" in values
+    assert "gate-abcdef" in values
+    assert "https://api.example.test" not in values
+
+
+def test_the_api_environment_leaves_out_an_absent_gate_value() -> None:
+    """Without the access gate the provider gets only the host and the token."""
+    credentials = ApiCredentials(host="https://api.example.test", token="wpk_x")
+    assert credentials.environment() == {"WEBBPULSE_TF_HOST": "https://api.example.test", "WEBBPULSE_TF_TOKEN": "wpk_x"}

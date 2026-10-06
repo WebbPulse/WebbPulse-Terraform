@@ -94,6 +94,10 @@ class Settings(BaseServiceSettings):
     template carries no custom resource and the link needs the account id."""
     API_BASE_URL: str = ""
     """The API's public origin, which the App's webhook URL is built on."""
+    ORIGIN_VERIFY_PARAMETER: str = ""
+    """The access gate's SSM SecureString holding the `x-origin-verify` value, set on the
+    runs function only. A run API token travels with it so the WebbPulse provider gets past
+    the gate. Unset, the bundle carries no gate value."""
     APP_SECRETS_ARN: str = ""
     """The one JSON app secret every runtime key is read from.
 

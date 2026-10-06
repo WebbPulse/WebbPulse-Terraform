@@ -314,7 +314,11 @@ def _run_phase(
         bundle.environment_variables,
         bundle.backend.region,
         engine_directory,
-        {**credentials.environment(), **identity_files.environment()},
+        {
+            **credentials.environment(),
+            **identity_files.environment(),
+            **(bundle.api.environment() if bundle.api else {}),
+        },
         run_phase=env.phase,
     )
     refresher = CredentialRefresher(

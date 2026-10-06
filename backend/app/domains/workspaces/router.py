@@ -13,9 +13,12 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from webbpulse.identity.claims import AuthorizerClaims
+from webbpulse.identity.scopes import FORBIDDEN_ERROR_CODE, missing_scopes
 from webbpulse.integrations.github import GitHubError, GitHubRateLimited
+from webbpulse.messages import forbidden
 
 from ...common.core.auth import (
+    ADMIN,
     CONFIGS_READ,
     CONFIGS_WRITE,
     STATE_DOWNLOAD,
@@ -71,6 +74,9 @@ WORKSPACE_DELETE_EVENT = "workspaces.workspace.delete"
 
 RUN_ROLE_FIELDS = ("run_role_arn", "pending_run_role_arn")
 """The PATCH fields that change which AWS role a workspace's runs assume, and so need a step-up."""
+
+RUN_API_TOKEN_FIELD = "run_api_token_scopes"
+"""The PATCH field that grants a workspace's runs control plane API scopes, admin and step-up only."""
 
 router = APIRouter()
 
@@ -259,18 +265,33 @@ def update_workspace(
 
     Changing either run role field is the workspace's AWS connection, so a person has to
     have signed in within the step-up window; resending the stored value is not a change.
+
+    Changing `run_api_token_scopes` hands every later run of this workspace a key on
+    this API, so it takes `admin` as well as the step-up.
     """
     changes = payload.model_dump(exclude_unset=True)
     try:
-        if any(field in changes for field in RUN_ROLE_FIELDS):
+        if any(field in changes for field in (*RUN_ROLE_FIELDS, RUN_API_TOKEN_FIELD)):
             existing = service.get_workspace(workspace_id)
-            if any(field in changes and changes[field] != existing.get(field) for field in RUN_ROLE_FIELDS):
+            if _changes(changes, existing, RUN_API_TOKEN_FIELD):
+                if missing_scopes(current, (ADMIN,)):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={"message": forbidden(), "error_code": FORBIDDEN_ERROR_CODE},
+                    )
+                ensure_recent_auth(current)
+            if any(_changes(changes, existing, field) for field in RUN_ROLE_FIELDS):
                 ensure_recent_auth(current)
         with _connect_errors():
             updated = service.update_workspace(workspace_id, changes)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
     return service.render_workspace(updated)
+
+
+def _changes(changes: dict[str, Any], existing: dict[str, Any], field: str) -> bool:
+    """Whether the edit carries `field` with a value other than the stored one, a null on an unset field being none."""
+    return field in changes and (changes[field] or None) != (existing.get(field) or None)
 
 
 @router.get(

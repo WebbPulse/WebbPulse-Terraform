@@ -352,6 +352,20 @@ class RegistryCredentials(BaseModel):
     """Other registry hosts mapped to this plane's `modules.v1` URL, answered with the same token."""
 
 
+class ApiCredentials(BaseModel):
+    """The run's control plane API key, which the runner sets as `WEBBPULSE_TF_TOKEN` for the provider."""
+
+    host: str
+    """The API origin, for `WEBBPULSE_TF_HOST`."""
+    token: str
+    """A `wpk_` key whose scopes are the workspace's live grant, for this run's current phase."""
+    expires_at: str
+    scopes: list[str]
+    """The grant it was minted under, which later narrowing can only reduce."""
+    origin_verify: Optional[str] = None
+    """The access gate's header value, for `WEBBPULSE_TF_ORIGIN_VERIFY`, where there is a gate."""
+
+
 class GcpWorkloadIdentity(BaseModel):
     """A phase's Google identity token and what the runner needs to hand it to the provider."""
 
@@ -448,6 +462,8 @@ class RunBundle(BaseModel):
     host is configured."""
     workload_identity: Optional[WorkloadIdentity] = None
     """Google and Azure identity tokens for this phase, absent unless the workspace asks for them."""
+    api: Optional[ApiCredentials] = None
+    """The run's control plane API token, absent unless an admin granted the workspace's runs scopes."""
 
 
 class PhaseResult(BaseModel):
