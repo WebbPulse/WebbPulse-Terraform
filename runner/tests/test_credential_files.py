@@ -132,7 +132,6 @@ def test_the_engine_environment_carries_no_other_credential_source() -> None:
         base,
         {"PROVIDER_TOKEN": "p"} | TASK_CREDENTIAL_ENVIRONMENT | static,
         "us-west-2",
-        Path("/work"),
         {
             "AWS_CONFIG_FILE": "/aws/config",
             "AWS_SHARED_CREDENTIALS_FILE": "/aws/credentials",
@@ -252,7 +251,6 @@ def test_terraform_sends_state_requests_with_the_state_keys_under_the_workspace_
             {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path)},
             {"TF_PLUGIN_CACHE_DIR": str(tmp_path / "plugins"), "AWS_ACCESS_KEY_ID": "ASIAWORKSPACEVAR0001"},
             "us-west-2",
-            directory,
             files.environment(),
             run_phase="plan",
         )

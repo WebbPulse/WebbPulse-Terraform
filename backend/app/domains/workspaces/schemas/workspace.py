@@ -194,6 +194,9 @@ class WorkspaceBase(BaseModel):
     plan_assume_role_arns: list[str] = Field(default_factory=list, max_length=PLAN_ASSUME_ROLE_ARNS_MAX)
     """Exact role ARNs a plan session may assume beside its read only access, such as
     Route 53 reader roles. An apply is not limited by this list."""
+    auto_apply: bool = False
+    """Whether a successful plan with changes applies without a confirmation, like HCP
+    Terraform's `auto-apply`. Plan only and pull request runs never apply. Admin only."""
 
 
 class WorkspaceCreate(WorkspaceBase):
@@ -288,6 +291,8 @@ class WorkspaceUpdate(BaseModel):
     """Replace the roles a plan may assume. Null or an empty list leaves none."""
     run_api_token_scopes: Optional[list[RunApiTokenScope]] = Field(default=None, max_length=12)
     """Grant each run a short lived API token with these scopes. Admin and step-up only; null or empty revokes."""
+    auto_apply: Optional[bool] = None
+    """Apply successful plans without a confirmation. Admin only, and audited."""
 
     @field_validator("working_directory")
     @classmethod

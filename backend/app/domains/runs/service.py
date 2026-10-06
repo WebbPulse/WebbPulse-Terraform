@@ -79,6 +79,16 @@ DISCARDABLE_STATUSES: Final = frozenset({"planned", "awaiting_confirmation"})
 """A discard drops a plan that was never applied. Earlier than this there is no
 plan to drop and a cancel is the right verb; later the apply already ran."""
 
+AUTO_APPLY_ACTOR: Final = {"kind": "system", "id": "auto-apply", "display_name": "Auto-apply"}
+"""Who an auto-applied run's confirmation is recorded as: the control plane, never a person."""
+
+AUTO_APPLY_EVENT: Final = "runs.run.auto_applied"
+"""The log event an auto-apply confirmation is recorded under."""
+
+AUTO_APPLY_SOURCES: Final = frozenset({"api", "vcs_push"})
+"""The sources whose runs may auto-apply. A pull request plan and a Quick setup
+verification are plan only by nature and never apply."""
+
 RUN_TOKEN_TTL: Final = timedelta(hours=4)
 """Just past the apply timeout of two hours plus the plan's thirty minutes, so a
 token never expires underneath a run that is still legitimately working."""
@@ -111,6 +121,7 @@ rather than failing the call that was meant to fail the run."""
 LOG_CONTENT_TYPE: Final = "text/plain"
 MAX_LOG_BYTES: Final = 50_000_000
 MAX_OUTPUTS_BYTES: Final = 10_000_000
+WORKDIR_CONTENT_TYPE: Final = "application/gzip"
 """A phase transcript is text, so fifty megabytes is far past any real run and
 still small enough that a signed URL cannot be used to park a large object."""
 
@@ -163,6 +174,11 @@ def state_key(workspace_id: str) -> str:
 def plan_key(run_id: str) -> str:
     """The binary plan key for one run."""
     return f"runs/{run_id}/plan.tfplan"
+
+
+def workdir_key(run_id: str) -> str:
+    """The planned working directory archive for one run, which its apply restores."""
+    return f"runs/{run_id}/workdir.tar.gz"
 
 
 def plan_json_key(run_id: str) -> str:
@@ -399,13 +415,18 @@ def create_run(
     blocking = active_run(workspace_id, settings=resolved)
     run_id = run_id or f"{RUN_ID_PREFIX}{new_ulid()}"
     timestamp = now_iso()
+    plan_only = role_check or bool(payload.get("plan_only", False))
     item: dict[str, Any] = {
         "run_id": run_id,
         "workspace_id": workspace_id,
         "config_version_id": config_version_id,
         "collection": RUNS_COLLECTION,
         "status": "pending",
-        "plan_only": role_check or bool(payload.get("plan_only", False)),
+        "plan_only": plan_only,
+        "auto_apply": bool(workspace.get("auto_apply", False))
+        and not plan_only
+        and not role_check
+        and source in AUTO_APPLY_SOURCES,
         "is_destroy": not role_check and bool(payload.get("is_destroy", False)),
         "message": str(payload.get("message", "")),
         "run_role_arn": role_arn,
@@ -678,6 +699,86 @@ def confirm_run(
         output=json.dumps({"run_id": run_id, "confirmed": True}),
     )
     return updated
+
+
+def auto_apply_eligible(run: Mapping[str, Any], *, settings: Settings | None = None) -> bool:
+    """Whether the control plane may confirm this run itself.
+
+    The run must have been created to auto-apply, which already excludes plan only,
+    pull request and role check runs, must still be one of those sources and not
+    plan only, and must be waiting on a confirmation, which an errored plan never
+    reaches. The workspace must still have auto-apply on, so turning it off stops a
+    run that is planning now from applying.
+    """
+    if not bool(run.get("auto_apply", False)):
+        return False
+    if bool(run.get("plan_only", False)) or bool(run.get("run_role_check", False)):
+        return False
+    if str(run.get("source", "api")) not in AUTO_APPLY_SOURCES:
+        return False
+    if str(run.get("status", "")) not in CONFIRMABLE_STATUSES:
+        return False
+    try:
+        workspace = workspace_reads.get_workspace(str(run["workspace_id"]), settings=settings or get_settings())
+    except workspace_reads.WorkspaceNotFound:
+        return False
+    return bool(workspace.get("auto_apply", False))
+
+
+def auto_confirm_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any] | None:
+    """Confirm a run as the system when its workspace auto-applies, or leave it for a person.
+
+    Called once the confirmation task token has landed, since there is nothing to
+    confirm before. The decision names `AUTO_APPLY_ACTOR`, and the confirmation is
+    logged under `runs.run.auto_applied`.
+
+    A run that is not eligible is returned untouched as `None`. If Step Functions
+    refuses the confirmation, the run goes back to awaiting a person with its token
+    and with `auto_apply` cleared, so it shows as held rather than applying.
+    """
+    resolved = settings or get_settings()
+    run = get_run(run_id, consistent=True, settings=resolved)
+    if not auto_apply_eligible(run, settings=resolved):
+        if bool(run.get("auto_apply", False)) and str(run.get("status", "")) in CONFIRMABLE_STATUSES:
+            _update_run(
+                run_id,
+                {"auto_apply": False},
+                settings=resolved,
+                expected_statuses=frozenset(CONFIRMABLE_STATUSES),
+            )
+        return None
+    token = str(run.get("confirm_task_token", ""))
+    try:
+        confirmed = confirm_run(run_id, actor=AUTO_APPLY_ACTOR, settings=resolved)
+    except RunNotConfirmable:
+        return None
+    except Exception:
+        _log.exception(
+            "Could not auto-apply a run, leaving it for a person.",
+            extra={"event": "runs.run.auto_apply_failed", "run_id": run_id},
+        )
+        _update_run(
+            run_id,
+            {
+                "status": "awaiting_confirmation",
+                "confirm_task_token": token,
+                "auto_apply": False,
+                "decision": None,
+            },
+            settings=resolved,
+            expected_statuses=frozenset({"applying"}),
+        )
+        return None
+    _log.info(
+        "Auto-applied a run.",
+        extra={
+            "event": AUTO_APPLY_EVENT,
+            "run_id": run_id,
+            "workspace_id": str(run.get("workspace_id", "")),
+            "actor": AUTO_APPLY_ACTOR["id"],
+        },
+    )
+    return confirmed
 
 
 def cancel_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
@@ -1557,31 +1658,54 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "terraform_variables": variables["terraform"],
         "hcl_variables": variables["hcl"],
         "environment_variables": variables["env"],
-        "artifacts": _artifacts(run_id, settings=resolved),
+        "artifacts": _artifacts(run_id, phase, settings=resolved),
         "registry": registry_credentials.issue(run, settings=resolved),
         "api": api_credentials.issue(run, workspace, settings=resolved),
         "workload_identity": identity,
     }
 
 
-def _artifacts(run_id: str, *, settings: Settings) -> dict[str, str]:
+def _artifacts(run_id: str, phase: Phase, *, settings: Settings) -> dict[str, str | None]:
     """Presigned URLs the runner reads from, for one run.
 
     Only the read direction is minted with the bundle. An upload's URL signs the
     exact `Content-Length` the client will send, and that is unknown until the
     artifact exists, so each upload is requested separately by `artifact_upload`.
+
+    An apply also gets the working directory its plan archived, so it applies the
+    saved plan where the plan left installed modules and generated files, as HCP
+    Terraform does. A plan from a runner that predates the archive left none, and
+    that apply reads the configuration as before.
     """
     from webbpulse.storage import presigned_get
 
-    return {
-        "plan_get_url": presigned_get(
+    def url(key: str) -> str:
+        return presigned_get(
             settings.ARTIFACTS_BUCKET,
-            plan_key(run_id),
+            key,
             ARTIFACT_URL_TTL,
             region_name=settings.AWS_REGION_NAME,
             endpoint_url=settings.s3_endpoint_url,
-        ).url,
+        ).url
+
+    workdir = workdir_key(run_id)
+    return {
+        "plan_get_url": url(plan_key(run_id)),
+        "workdir_get_url": url(workdir) if phase == "apply" and _artifact_exists(workdir, settings) else None,
     }
+
+
+def _artifact_exists(key: str, settings: Settings) -> bool:
+    """Whether the artifacts bucket holds `key`."""
+    from botocore.exceptions import ClientError
+
+    try:
+        _s3(settings).head_object(Bucket=settings.ARTIFACTS_BUCKET, Key=key)
+    except ClientError as error:
+        if str(error.response.get("Error", {}).get("Code", "")) in {"NoSuchKey", "404", "NotFound"}:
+            return False
+        raise
+    return True
 
 
 def artifact_upload(
@@ -1606,7 +1730,7 @@ def artifact_upload(
         RunNotFound: No such run.
         ArtifactTooLarge: `size_bytes` is above the artifact's ceiling.
         ValueError: `artifact` is not a kind this run uploads, including
-            `outputs_json` outside the apply phase.
+            `outputs_json` outside the apply phase and `workdir` outside the plan.
     """
     from webbpulse.storage import presigned_put
 
@@ -1622,6 +1746,8 @@ def artifact_upload(
         key, content_type, ceiling = log_key(run_id, phase), LOG_CONTENT_TYPE, MAX_LOG_BYTES
     elif artifact == "outputs_json" and phase == "apply":
         key, content_type, ceiling = outputs_key(run_id), PLAN_JSON_CONTENT_TYPE, MAX_OUTPUTS_BYTES
+    elif artifact == "workdir" and phase == "plan":
+        key, content_type, ceiling = workdir_key(run_id), WORKDIR_CONTENT_TYPE, MAX_PLAN_BYTES
     else:
         raise ValueError(f"{artifact} is not an artifact this run uploads")
 
@@ -1704,6 +1830,9 @@ def render_run(item: dict[str, Any]) -> dict[str, Any]:
 __all__ = [
     "ACTIVE_STATUSES",
     "ARTIFACT_URL_TTL",
+    "AUTO_APPLY_ACTOR",
+    "AUTO_APPLY_EVENT",
+    "AUTO_APPLY_SOURCES",
     "CAUSE_MAX_LENGTH",
     "COMMIT_MESSAGE_MAX_LENGTH",
     "CONFIRMABLE_STATUSES",
@@ -1728,6 +1857,8 @@ __all__ = [
     "TERMINAL_STATUSES",
     "active_run",
     "artifact_upload",
+    "auto_apply_eligible",
+    "auto_confirm_run",
     "cancel_run",
     "confirm_run",
     "decision",

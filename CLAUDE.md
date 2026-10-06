@@ -551,7 +551,9 @@ Step Functions starts the runner with `runTask.waitForTaskToken`. It exchanges
 its task identity for the run token (`app/identity.py`), failing the phase if
 the exchange is refused (no `RUN_TOKEN` override is read), then fetches the
 bundle, which carries the vended run role keys (`aws_credentials`) and state keys
-(`backend.credentials`), unpacks the config tarball, writes the S3 backend
+(`backend.credentials`), unpacks the config tarball in the fixed
+`<tmp>/webbpulse-run/config` (with `TF_DATA_DIR=.terraform`, so `path.module` and
+`filename` arguments never change between runs), writes the S3 backend
 override (`workspace_key_prefix = "workspaces/<id>/env"`) and the auto loaded
 tfvars files, gives the providers the run role keys (`webbpulse-run`, set as
 `AWS_PROFILE`) and the S3 backend the state keys (`webbpulse-state`), both as
@@ -561,7 +563,11 @@ minutes before expiry from the credentials route, and the SDK rereads them, so
 phases outlive the one hour chained-role cap; static `AWS_*` keys are stripped from
 the engine's environment since they would win and never rotate. It runs the engine (`terraform` or
 `tofu`, from the bundle), streams redacted output to CloudWatch Logs, uploads its
-artifacts to presigned URLs and reports through `POST /runs/{id}/phase-result`
+artifacts to presigned URLs (a plan with changes that is not plan only also uploads
+its working directory as `workdir`, without provider binaries, the backend record,
+the plan or the runner's tfvars and override; the apply bundle's
+`artifacts.workdir_get_url` restores it in place of the config, so installed modules
+and plan generated files such as `archive_file` zips are there, as on HCP Terraform) and reports through `POST /runs/{id}/phase-result`
 (an `error_name` for a failure). The runner holds no Step Functions permission:
 `phase_tasks.report` resolves the task token from the exchanged task's own ECS
 overrides (`runner_task_id`) and sends the success or failure, and the task stop

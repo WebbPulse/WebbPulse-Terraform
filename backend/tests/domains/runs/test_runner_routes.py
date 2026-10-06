@@ -235,7 +235,60 @@ def test_the_bundle_carries_only_the_read_direction(runner_client, created_run):
     """
     artifacts = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()["artifacts"]
     assert artifacts["plan_get_url"].startswith("https://")
-    assert set(artifacts) == {"plan_get_url"}
+    assert set(artifacts) == {"plan_get_url", "workdir_get_url"}
+    assert artifacts["workdir_get_url"] is None
+
+
+def test_an_apply_bundle_carries_the_planned_working_directory(auth_client, runner_client, awaiting_confirmation):
+    """The apply restores the working directory its plan archived, and a plan never
+    reads one, so only an applying run whose plan left the archive is given its URL."""
+    import boto3
+
+    from tests.conftest import ARTIFACTS_BUCKET, REGION
+
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    missing = runner_client.get(f"{BASE}/{run_id}/bundle").json()["artifacts"]
+    assert missing["workdir_get_url"] is None
+
+    boto3.client("s3", region_name=REGION).put_object(
+        Bucket=ARTIFACTS_BUCKET, Key=runs_service.workdir_key(run_id), Body=b"workdir"
+    )
+    applying = runner_client.get(f"{BASE}/{run_id}/bundle").json()["artifacts"]
+    assert f"runs/{run_id}/workdir.tar.gz" in applying["workdir_get_url"]
+
+
+def test_a_plan_bundle_never_carries_a_working_directory(runner_client, created_run):
+    """A plan builds its working directory, even when an earlier archive is in the bucket."""
+    import boto3
+
+    from tests.conftest import ARTIFACTS_BUCKET, REGION
+
+    run_id = created_run["run_id"]
+    boto3.client("s3", region_name=REGION).put_object(
+        Bucket=ARTIFACTS_BUCKET, Key=runs_service.workdir_key(run_id), Body=b"workdir"
+    )
+    planning = runner_client.get(f"{BASE}/{run_id}/bundle").json()["artifacts"]
+    assert planning["workdir_get_url"] is None
+
+
+def test_the_workdir_upload_is_a_plan_artifact(auth_client, runner_client, created_run, awaiting_confirmation):
+    """Only a planning run may write the working directory archive, so an apply cannot
+    replace what a later apply of the same run would restore."""
+    body = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/artifact-uploads",
+        json={"artifact": "workdir", "size_bytes": 64},
+    ).json()
+    assert f"runs/{created_run['run_id']}/workdir.tar.gz" in body["url"]
+    assert body["headers"]["Content-Type"] == "application/gzip"
+
+    run_id = awaiting_confirmation["run_id"]
+    auth_client.post(f"{BASE}/{run_id}/confirm")
+    refused = runner_client.post(
+        f"{BASE}/{run_id}/artifact-uploads",
+        json={"artifact": "workdir", "size_bytes": 64},
+    )
+    assert refused.status_code == 422
 
 
 def test_an_artifact_upload_is_signed_for_the_declared_size(runner_client, created_run):
@@ -313,7 +366,7 @@ def test_the_outputs_upload_is_an_apply_artifact(auth_client, runner_client, cre
 
 @pytest.mark.parametrize(
     ("artifact", "size_bytes"),
-    [("plan", 500_000_001), ("plan_json", 500_000_001), ("log", 50_000_001)],
+    [("plan", 500_000_001), ("plan_json", 500_000_001), ("log", 50_000_001), ("workdir", 500_000_001)],
 )
 def test_an_upload_above_the_ceiling_is_413(runner_client, created_run, artifact, size_bytes):
     """A size past the artifact's ceiling is refused rather than signed.

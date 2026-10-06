@@ -10,6 +10,7 @@ import {
   ErrorNotice,
   Field,
   INPUT_CLASS,
+  useIsAdmin,
 } from '../../../components';
 import { useWorkspace } from '../../workspaceContext';
 import { EngineFields } from '../EngineFields';
@@ -49,9 +50,12 @@ function SettingsForm({
   const [workingDirectory, setWorkingDirectory] = useState(
     workspace.working_directory ?? ''
   );
+  const [autoApply, setAutoApply] = useState(workspace.auto_apply ?? false);
   const [saved, setSaved] = useState(false);
+  const isAdmin = useIsAdmin();
 
   useEffect(() => {
+    setAutoApply(workspace.auto_apply ?? false);
     setDescription(workspace.description ?? '');
     setEngine({
       engine: engineOf(workspace),
@@ -67,6 +71,9 @@ function SettingsForm({
         engine: engine.engine,
         engine_version: engine.version.trim().replace(/^v/, ''),
         working_directory: workingDirectory,
+        ...(autoApply === (workspace.auto_apply ?? false)
+          ? {}
+          : { auto_apply: autoApply }),
       }),
     queryKey
   );
@@ -143,6 +150,31 @@ function SettingsForm({
           />
         )}
       </Field>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium text-text-strong">
+          Auto-apply
+        </legend>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            aria-label="Auto-apply API, CLI and VCS runs"
+            checked={autoApply}
+            disabled={!isAdmin}
+            onChange={(event) => {
+              setAutoApply(event.target.checked);
+            }}
+            className="mt-0.5 accent-accent"
+          />
+          <span>
+            <span className="text-text">Auto-apply API, CLI and VCS runs</span>
+            <span className="block text-xs text-text-muted">
+              A successful plan with changes applies without a confirmation.
+              Plan-only and pull request runs never apply.
+              {isAdmin ? '' : ' Only an admin can change this.'}
+            </span>
+          </span>
+        </label>
+      </fieldset>
       <ErrorNotice error={error} />
       <div className="flex items-center gap-3">
         <Button

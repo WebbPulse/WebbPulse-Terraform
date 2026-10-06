@@ -88,7 +88,10 @@ class RunDecisionRequest(BaseModel):
 
 
 class RunDecision(BaseModel):
-    """Who confirmed or discarded a run's plan, when, and the comment they left."""
+    """Who confirmed or discarded a run's plan, when, and the comment they left.
+
+    An auto-applied run's confirmation names the `system` actor `auto-apply`.
+    """
 
     action: DecisionAction
     at: str
@@ -146,6 +149,10 @@ class Run(BaseModel):
     message: str = ""
     run_role_check: bool = False
     """Whether this run verifies a staged role rather than running as the current one."""
+    auto_apply: bool = False
+    """Whether a plan with changes is confirmed by the control plane rather than a person,
+    taken from the workspace's `auto_apply` at create. Never set on a plan only, pull
+    request or role check run."""
     run_role_arn: Optional[str] = None
     """The role this run was created with, and for a role check the role it assumes."""
     plan_role_arn: Optional[str] = None
@@ -338,6 +345,8 @@ class Artifacts(BaseModel):
     """
 
     plan_get_url: str
+    workdir_get_url: str | None = None
+    """The working directory the plan archived, in an apply phase bundle only."""
 
 
 class RegistryCredentials(BaseModel):
@@ -394,7 +403,7 @@ class WorkloadIdentity(BaseModel):
     azure: Optional[AzureWorkloadIdentity] = None
 
 
-ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json"]
+ArtifactKind = Literal["plan", "plan_json", "log", "outputs_json", "workdir"]
 """The objects a phase uploads: the binary plan, its JSON rendering, the
 redacted transcript and, after an apply, the outputs with sensitive values
 dropped."""
