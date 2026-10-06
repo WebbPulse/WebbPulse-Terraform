@@ -3162,15 +3162,15 @@ wheels = [
 
 [[package]]
 name = "webbpulse"
-version = "0.71.2"
+version = "0.72.0"
 source = { registry = "https://webbpulse-432410731887.d.codeartifact.us-west-2.amazonaws.com/pypi/python/simple/" }
 dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
 ]
-sdist = { url = "https://webbpulse-432410731887.d.codeartifact.us-west-2.amazonaws.com/pypi/python/simple/webbpulse/0.71.2/webbpulse-0.71.2.tar.gz", hash = "sha512:57385ae9bc5a3071d371340e7db584e95609823f51d0501daf2523445b734ee7ecb3fd7c9cd0395bc6db70dc5def1a52b45ca345679e170a02d475d5f7711af0", size = 501207, upload-time = "2026-10-06T06:00:59.117Z" }
+sdist = { url = "https://webbpulse-432410731887.d.codeartifact.us-west-2.amazonaws.com/pypi/python/simple/webbpulse/0.72.0/webbpulse-0.72.0.tar.gz", hash = "sha512:3633549aafec9a904685b29a2ffa4fc8acc4f72a18433da7bb60626e8a7e52d7c27d681f32702743779b536c92475a86c8dc506ba1a8220e450fa31c6db9e3e3", size = 505073, upload-time = "2026-10-06T07:19:44.142Z" }
 wheels = [
-    { url = "https://webbpulse-432410731887.d.codeartifact.us-west-2.amazonaws.com/pypi/python/simple/webbpulse/0.71.2/webbpulse-0.71.2-py3-none-any.whl", hash = "sha512:778e78e3c2a895183d5abdc76945edc13afd600729e1169a958566b46940ec0728ff48c83ee3dde2d4cc2e129721908abc8fa1fc9ce15a25fb9c22bce23011b3", size = 550755, upload-time = "2026-10-06T06:00:58.834Z" },
+    { url = "https://webbpulse-432410731887.d.codeartifact.us-west-2.amazonaws.com/pypi/python/simple/webbpulse/0.72.0/webbpulse-0.72.0-py3-none-any.whl", hash = "sha512:6407ae02e085acbf2dfbd34bfde49579be882461d9a7e7295e66005aca659b60f4459abb7f14bde6a847a7495c303b967296da16b425c6be0462e3926f7663fc", size = 554151, upload-time = "2026-10-06T07:19:43.818Z" },
 ]
 
 [package.optional-dependencies]
@@ -3289,7 +3289,7 @@ dev = [
     { name = "ruff", specifier = ">=0.16.6" },
     { name = "webbpulse", extras = ["testing"], specifier = ">=0.62.0", index = "https://webbpulse-432410731887.d.codeartifact.us-west-2.amazonaws.com/pypi/python/simple/" },
 ]
-e2e = [{ name = "webbpulse", extras = ["e2e", "tf"], specifier = ">=0.71.1", index = "https://webbpulse-432410731887.d.codeartifact.us-west-2.amazonaws.com/pypi/python/simple/" }]
+e2e = [{ name = "webbpulse", extras = ["e2e", "tf"], specifier = ">=0.72.0", index = "https://webbpulse-432410731887.d.codeartifact.us-west-2.amazonaws.com/pypi/python/simple/" }]
 
 [[package]]
 name = "websockets"

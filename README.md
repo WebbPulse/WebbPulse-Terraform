@@ -132,7 +132,17 @@ uses `lambda`.
 | `POST /runs/{run_id}/phase-result` | run token |
 
 `runs:apply` exists so confirming an apply can be granted separately from
-creating or cancelling a run.
+creating or cancelling a run. Applying from the CLI is ordinary, as with an HCP
+user token: a default `wp-tf login` session carries read and write on workspaces,
+variables, configs, runs and the registry plus `runs:apply` (`wp-tf`'s
+`STANDARD_SCOPES`), and the key `terraform login` leaves carries `runs:apply` too.
+Both are limited by the person's own scopes. `state:download` and `admin` are
+granted only when named. A run's API token never gets `runs:apply`.
+
+A browser session confirms only within 15 minutes of a login, and otherwise gets
+the step-up prompt. A `wp-tf login` session and a key confirm on their scopes
+alone: the device approval already needed a login within 10 minutes and the session
+ends 12 hours after it, and a key has no login to age.
 
 `DELETE /workspaces/{workspace_id}` follows HCP Terraform's safe delete. It is a
 409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current state tracks any
