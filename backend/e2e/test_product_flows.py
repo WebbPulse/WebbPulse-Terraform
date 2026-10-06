@@ -282,6 +282,29 @@ class TestRunLifecycle:
         for gone in (run_id, destroy_id):
             assert api.get(f"/api/v1/runs/{gone}").status_code == 404, f"run {gone} outlived its workspace"
 
+    def test_auto_apply_confirms_without_a_person(
+        self, api: Any, workspace: dict[str, Any], step_up_again: Callable[[], Any]
+    ) -> None:
+        """With auto-apply on, a run and its destroy both apply with no confirmation from anyone.
+
+        The decision on each names the system's auto-apply actor rather than the login, and
+        the destroy leaves the workspace managing nothing so teardown's safe delete passes.
+        """
+        workspace_id = workspace["workspace_id"]
+        turned_on = step_up_again().patch(f"/api/v1/workspaces/{workspace_id}", json={"auto_apply": True})
+        assert turned_on.status_code == 200, turned_on.text[:400]
+        assert turned_on.json()["auto_apply"] is True
+
+        config_version_id = _upload(api, workspace_id)
+        for is_destroy in (False, True):
+            run_id = _create_run(api, workspace_id, config_version_id, plan_only=False, is_destroy=is_destroy)
+            applied = _wait_for(api, run_id, RUN_TERMINAL, PLAN_TIMEOUT_SECONDS + APPLY_TIMEOUT_SECONDS)
+            _require_status(applied, APPLY_SUCCESS, "auto-applied destroy" if is_destroy else "auto-applied run")
+            assert applied["auto_apply"] is True, _describe(applied)
+            decision = applied.get("decision") or {}
+            assert decision.get("action") == "confirmed", _describe(applied)
+            assert (decision.get("actor") or {}).get("id") == "auto-apply", decision
+
     def test_plan_only_run_finishes_without_applying(self, api: Any, workspace: dict[str, Any]) -> None:
         """A plan-only run reaches a terminal planned status and never applies."""
         workspace_id = workspace["workspace_id"]

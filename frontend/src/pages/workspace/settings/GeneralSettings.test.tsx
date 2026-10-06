@@ -1,0 +1,100 @@
+import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { AuthClient } from '@webbpulse/auth';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Route, Routes } from 'react-router-dom';
+
+import { Layout } from '../../../components/Layout';
+import { aWorkspace } from '../../../test-helpers/fixtures';
+import {
+  jsonResponse,
+  renderWithAuth,
+  signedInAuthClient,
+  stubAuthClient,
+} from '../../../test-helpers/renderWithAuth';
+import {
+  apiClientModuleMock,
+  apiMock,
+  resetApiMock,
+} from '../../../test-helpers/apiMock';
+
+vi.mock('../../../api/client', () => apiClientModuleMock());
+
+const { workspaceRoutes } = await import('../../workspaceRoutes');
+
+const WORKSPACE_ID = 'ws-01J000000000000000000000';
+const TOGGLE = 'Auto-apply API, CLI and VCS runs';
+
+/** An auth client whose user is an admin. */
+function adminClient(): AuthClient<unknown> {
+  return stubAuthClient({
+    fetch: () =>
+      Promise.resolve(
+        jsonResponse({ access_token: 'test-token', expires_in: 3600 })
+      ),
+    user: { email: 'admin@webbpulse.com', is_admin: true },
+  });
+}
+
+/** Mounts the general settings page inside the shell. */
+function renderPage(client: AuthClient<unknown> = adminClient()): void {
+  renderWithAuth(
+    <Routes>
+      <Route element={<Layout />}>{workspaceRoutes()}</Route>
+    </Routes>,
+    client,
+    [`/workspaces/${WORKSPACE_ID}/settings/general`]
+  );
+}
+
+describe('GeneralSettings auto-apply', () => {
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+    apiMock.listConfigVersions.mockResolvedValue({ items: [] });
+    apiMock.listRuns.mockResolvedValue({ items: [] });
+    apiMock.updateWorkspace.mockResolvedValue(aWorkspace({ auto_apply: true }));
+  });
+
+  it('lets an admin turn it on', async () => {
+    renderPage();
+
+    const toggle = await screen.findByRole('checkbox', { name: TOGGLE });
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save settings' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      expect.objectContaining({ auto_apply: true })
+    );
+  });
+
+  it('leaves it out of a save that did not change it', async () => {
+    renderPage();
+
+    await screen.findByRole('checkbox', { name: TOGGLE });
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save settings' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledTimes(1);
+    expect(apiMock.updateWorkspace.mock.calls[0]?.[1]).not.toHaveProperty(
+      'auto_apply'
+    );
+  });
+
+  it('is read only for someone who is not an admin', async () => {
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace({ auto_apply: true }));
+    renderPage(signedInAuthClient());
+
+    const toggle = await screen.findByRole('checkbox', { name: TOGGLE });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
+    expect(
+      screen.getByText(/Only an admin can change this\./)
+    ).toBeInTheDocument();
+  });
+});

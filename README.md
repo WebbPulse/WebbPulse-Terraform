@@ -246,6 +246,16 @@ mapping runs with a batch size of one and reports batch item failures, so a
 malformed or unusable message parks on the dead letter queue rather than losing a
 token nobody else holds.
 
+A workspace with `auto_apply` on (HCP's auto-apply, off by default) is confirmed by
+the system when the token lands. A run snapshots the setting at create, only for an
+`api` or `vcs_push` run that is not plan only, and the consumer reads the workspace
+again before confirming, so turning it off holds a run already planned. The
+decision's actor is `{"kind": "system", "id": "auto-apply"}` and the confirm logs
+`runs.run.auto_applied`; a refused `SendTaskSuccess` puts the token back for a
+person. Changing the setting takes `admin`, turning it on also the step-up, and is
+logged as `workspaces.workspace.auto_apply`. A held auto-apply run reports its
+GitHub check `in_progress` rather than `action_required`.
+
 ## Runner
 
 A linux/arm64 image on Fargate, one task per phase, launched into the public

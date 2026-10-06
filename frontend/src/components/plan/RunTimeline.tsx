@@ -115,6 +115,9 @@ export function RunTimeline({
   );
 }
 
+/** The system actor the control plane confirms an auto-applied run as. */
+const AUTO_APPLY_ACTOR_ID = 'auto-apply';
+
 /** Who confirmed or discarded the plan, when, and the comment they left. */
 function DecisionNote({
   decision,
@@ -131,13 +134,24 @@ function DecisionNote({
         ? actor.display_name
         : actor.id;
   const comment = decision.comment ?? '';
+  const autoApplied =
+    decision.action === 'confirmed' &&
+    actor?.kind === 'system' &&
+    actor.id === AUTO_APPLY_ACTOR_ID;
   return (
     <div data-testid="run-decision" className="mt-1 space-y-1 text-xs">
-      <p className="text-text-muted">
-        {decision.action === 'confirmed' ? 'Confirmed' : 'Discarded'} by{' '}
-        <span className="font-medium text-text">{who}</span>{' '}
-        <RelativeTime iso={decision.at} />
-      </p>
+      {autoApplied ? (
+        <p className="text-text-muted">
+          <span className="font-medium text-text">Auto-applied</span>{' '}
+          <RelativeTime iso={decision.at} />
+        </p>
+      ) : (
+        <p className="text-text-muted">
+          {decision.action === 'confirmed' ? 'Confirmed' : 'Discarded'} by{' '}
+          <span className="font-medium text-text">{who}</span>{' '}
+          <RelativeTime iso={decision.at} />
+        </p>
+      )}
       {comment === '' ? null : (
         <p
           data-testid="run-decision-comment"

@@ -20,7 +20,7 @@ export interface StepUpBoundaryProps {
  * Mounts the step-up gate for the whole signed-in app.
  *
  * Sensitive actions (API keys, deleting a workspace, its AWS connection and
- * sensitive variables, confirming a run, GitHub App settings and the module
+ * sensitive variables, confirming a run, turning on auto-apply, GitHub App settings and the module
  * registry) need a sign-in from the last few minutes. When the server refuses
  * one with `STEP_UP_REQUIRED`, the call is parked, this prompt asks for the
  * password or a passkey, and the call is sent once more. Cancelling rejects the call, so the
