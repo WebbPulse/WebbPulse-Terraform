@@ -79,6 +79,16 @@ DISCARDABLE_STATUSES: Final = frozenset({"planned", "awaiting_confirmation"})
 """A discard drops a plan that was never applied. Earlier than this there is no
 plan to drop and a cancel is the right verb; later the apply already ran."""
 
+AUTO_APPLY_ACTOR: Final = {"kind": "system", "id": "auto-apply", "display_name": "Auto-apply"}
+"""Who an auto-applied run's confirmation is recorded as: the control plane, never a person."""
+
+AUTO_APPLY_EVENT: Final = "runs.run.auto_applied"
+"""The log event an auto-apply confirmation is recorded under."""
+
+AUTO_APPLY_SOURCES: Final = frozenset({"api", "vcs_push"})
+"""The sources whose runs may auto-apply. A pull request plan and a Quick setup
+verification are plan only by nature and never apply."""
+
 RUN_TOKEN_TTL: Final = timedelta(hours=4)
 """Just past the apply timeout of two hours plus the plan's thirty minutes, so a
 token never expires underneath a run that is still legitimately working."""
@@ -399,13 +409,18 @@ def create_run(
     blocking = active_run(workspace_id, settings=resolved)
     run_id = run_id or f"{RUN_ID_PREFIX}{new_ulid()}"
     timestamp = now_iso()
+    plan_only = role_check or bool(payload.get("plan_only", False))
     item: dict[str, Any] = {
         "run_id": run_id,
         "workspace_id": workspace_id,
         "config_version_id": config_version_id,
         "collection": RUNS_COLLECTION,
         "status": "pending",
-        "plan_only": role_check or bool(payload.get("plan_only", False)),
+        "plan_only": plan_only,
+        "auto_apply": bool(workspace.get("auto_apply", False))
+        and not plan_only
+        and not role_check
+        and source in AUTO_APPLY_SOURCES,
         "is_destroy": not role_check and bool(payload.get("is_destroy", False)),
         "message": str(payload.get("message", "")),
         "run_role_arn": role_arn,
@@ -678,6 +693,86 @@ def confirm_run(
         output=json.dumps({"run_id": run_id, "confirmed": True}),
     )
     return updated
+
+
+def auto_apply_eligible(run: Mapping[str, Any], *, settings: Settings | None = None) -> bool:
+    """Whether the control plane may confirm this run itself.
+
+    The run must have been created to auto-apply, which already excludes plan only,
+    pull request and role check runs, must still be one of those sources and not
+    plan only, and must be waiting on a confirmation, which an errored plan never
+    reaches. The workspace must still have auto-apply on, so turning it off stops a
+    run that is planning now from applying.
+    """
+    if not bool(run.get("auto_apply", False)):
+        return False
+    if bool(run.get("plan_only", False)) or bool(run.get("run_role_check", False)):
+        return False
+    if str(run.get("source", "api")) not in AUTO_APPLY_SOURCES:
+        return False
+    if str(run.get("status", "")) not in CONFIRMABLE_STATUSES:
+        return False
+    try:
+        workspace = workspace_reads.get_workspace(str(run["workspace_id"]), settings=settings or get_settings())
+    except workspace_reads.WorkspaceNotFound:
+        return False
+    return bool(workspace.get("auto_apply", False))
+
+
+def auto_confirm_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any] | None:
+    """Confirm a run as the system when its workspace auto-applies, or leave it for a person.
+
+    Called once the confirmation task token has landed, since there is nothing to
+    confirm before. The decision names `AUTO_APPLY_ACTOR`, and the confirmation is
+    logged under `runs.run.auto_applied`.
+
+    A run that is not eligible is returned untouched as `None`. If Step Functions
+    refuses the confirmation, the run goes back to awaiting a person with its token
+    and with `auto_apply` cleared, so it shows as held rather than applying.
+    """
+    resolved = settings or get_settings()
+    run = get_run(run_id, consistent=True, settings=resolved)
+    if not auto_apply_eligible(run, settings=resolved):
+        if bool(run.get("auto_apply", False)) and str(run.get("status", "")) in CONFIRMABLE_STATUSES:
+            _update_run(
+                run_id,
+                {"auto_apply": False},
+                settings=resolved,
+                expected_statuses=frozenset(CONFIRMABLE_STATUSES),
+            )
+        return None
+    token = str(run.get("confirm_task_token", ""))
+    try:
+        confirmed = confirm_run(run_id, actor=AUTO_APPLY_ACTOR, settings=resolved)
+    except RunNotConfirmable:
+        return None
+    except Exception:
+        _log.exception(
+            "Could not auto-apply a run, leaving it for a person.",
+            extra={"event": "runs.run.auto_apply_failed", "run_id": run_id},
+        )
+        _update_run(
+            run_id,
+            {
+                "status": "awaiting_confirmation",
+                "confirm_task_token": token,
+                "auto_apply": False,
+                "decision": None,
+            },
+            settings=resolved,
+            expected_statuses=frozenset({"applying"}),
+        )
+        return None
+    _log.info(
+        "Auto-applied a run.",
+        extra={
+            "event": AUTO_APPLY_EVENT,
+            "run_id": run_id,
+            "workspace_id": str(run.get("workspace_id", "")),
+            "actor": AUTO_APPLY_ACTOR["id"],
+        },
+    )
+    return confirmed
 
 
 def cancel_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
@@ -1704,6 +1799,9 @@ def render_run(item: dict[str, Any]) -> dict[str, Any]:
 __all__ = [
     "ACTIVE_STATUSES",
     "ARTIFACT_URL_TTL",
+    "AUTO_APPLY_ACTOR",
+    "AUTO_APPLY_EVENT",
+    "AUTO_APPLY_SOURCES",
     "CAUSE_MAX_LENGTH",
     "COMMIT_MESSAGE_MAX_LENGTH",
     "CONFIRMABLE_STATUSES",
@@ -1728,6 +1826,8 @@ __all__ = [
     "TERMINAL_STATUSES",
     "active_run",
     "artifact_upload",
+    "auto_apply_eligible",
+    "auto_confirm_run",
     "cancel_run",
     "confirm_run",
     "decision",

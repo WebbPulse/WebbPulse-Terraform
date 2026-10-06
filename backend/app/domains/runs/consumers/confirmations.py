@@ -11,6 +11,10 @@ size of one and `ReportBatchItemFailures`, so a raise returns that one message t
 the queue and, once its receives are exhausted, parks it on the dead letter queue
 rather than dropping the token silently.
 
+Landing the token is also the moment a run on an auto-apply workspace is confirmed:
+`service.auto_confirm_run` confirms it as the system, so the state machine needs no
+separate path and a run that is not eligible simply waits for a person.
+
 The route itself lives in `dispatch`, which owns the adapter's single pass-through
 path and hands this module the records whose `kind` names it.
 """
@@ -79,11 +83,12 @@ def parse_body(record: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None) -> None:
-    """Store one confirmation's task token against its run.
+    """Store one confirmation's task token against its run, then auto-apply it if it may.
 
     The write is conditional on the run still awaiting a confirmation, so a token
     cannot land on a run that was cancelled, discarded or already confirmed while
-    the message sat on the queue.
+    the message sat on the queue. The auto-apply never raises past its own fallback,
+    so a stored token is never retried into the dead letter queue by it.
 
     Raises:
         MalformedConfirmation: The body is not a usable confirmation.
@@ -101,6 +106,13 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
         "Stored a run's confirmation task token.",
         extra={"event": "runs.confirmation.stored", "run_id": run_id},
     )
+    try:
+        service.auto_confirm_run(run_id, settings=settings)
+    except Exception:
+        _log.exception(
+            "Could not decide whether to auto-apply a run, leaving it for a person.",
+            extra={"event": "runs.run.auto_apply_failed", "run_id": run_id},
+        )
 
 
 __all__ = [

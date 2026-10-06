@@ -2432,6 +2432,11 @@
               }
             ]
           },
+          "auto_apply": {
+            "default": false,
+            "title": "Auto Apply",
+            "type": "boolean"
+          },
           "changes": {
             "anyOf": [
               {
@@ -2882,6 +2887,11 @@
               }
             ]
           },
+          "auto_apply": {
+            "default": false,
+            "title": "Auto Apply",
+            "type": "boolean"
+          },
           "changes": {
             "anyOf": [
               {
@@ -3075,7 +3085,7 @@
         "type": "object"
       },
       "RunDecision": {
-        "description": "Who confirmed or discarded a run's plan, when, and the comment they left.",
+        "description": "Who confirmed or discarded a run's plan, when, and the comment they left.\n\nAn auto-applied run's confirmation names the `system` actor `auto-apply`.",
         "properties": {
           "action": {
             "enum": [
@@ -4163,6 +4173,11 @@
       "Workspace": {
         "description": "A stored workspace, with everything the run role setup needs.",
         "properties": {
+          "auto_apply": {
+            "default": false,
+            "title": "Auto Apply",
+            "type": "boolean"
+          },
           "aws_connection": {
             "anyOf": [
               {
@@ -4384,6 +4399,11 @@
       "WorkspaceCreate": {
         "description": "A new workspace. The name is unique across the environment.",
         "properties": {
+          "auto_apply": {
+            "default": false,
+            "title": "Auto Apply",
+            "type": "boolean"
+          },
           "description": {
             "default": "",
             "title": "Description",
@@ -4522,6 +4542,17 @@
       "WorkspaceUpdate": {
         "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so it is refused by\nomission rather than by a check.\n\nThe model separates \"absent\" from \"explicitly null\" by leaving every field\nunset by default and reading the body with `model_dump(exclude_unset=True)`,\nso a key only reaches the service when the request actually carried it. A null\non one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service\nturns into a DynamoDB REMOVE.",
         "properties": {
+          "auto_apply": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Apply"
+          },
           "description": {
             "anyOf": [
               {
@@ -7673,7 +7704,7 @@
         ]
       },
       "post": {
-        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.\n\nA `vcs_repo` is resolved through the environment's GitHub App: the id, the\ninstallation and the canonical name are recorded, and `tracked_branch` defaults to\nthe repository's default branch. A repository the App is not installed on is a 422\ncarrying `VCS_REPO_NOT_INSTALLED`.",
+        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.\n\nA `vcs_repo` is resolved through the environment's GitHub App: the id, the\ninstallation and the canonical name are recorded, and `tracked_branch` defaults to\nthe repository's default branch. A repository the App is not installed on is a 422\ncarrying `VCS_REPO_NOT_INSTALLED`.\n\nCreating a workspace with `auto_apply` on lets anyone who can start a run apply\nit, so it takes `admin` and the step-up, as turning it on later does.",
         "operationId": "create_workspace_api_v1_workspaces_post",
         "requestBody": {
           "content": {
@@ -7808,7 +7839,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging either run role field is the workspace's AWS connection, so a person has to\nhave signed in within the step-up window; resending the stored value is not a change.\n\nChanging `run_api_token_scopes` hands every later run of this workspace a key on\nthis API, so it takes `admin` as well as the step-up.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging either run role field is the workspace's AWS connection, so a person has to\nhave signed in within the step-up window; resending the stored value is not a change.\n\nChanging `run_api_token_scopes` hands every later run of this workspace a key on\nthis API, so it takes `admin` as well as the step-up.\n\nChanging `auto_apply` turns `runs:write` into the power to apply, so it takes\n`admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also\ntakes the step-up, since it stands in for the step-up gated confirmation.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {

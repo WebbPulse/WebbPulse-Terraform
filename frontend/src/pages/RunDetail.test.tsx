@@ -498,6 +498,30 @@ describe('RunDetail', () => {
     ).toHaveTextContent('Reviewed with the team.');
   });
 
+  it('names auto-apply rather than a person when the system confirmed', async () => {
+    apiMock.getRun.mockResolvedValue(
+      aRun('applying', {
+        auto_apply: true,
+        decision: {
+          action: 'confirmed',
+          at: '2026-09-17T00:05:00Z',
+          actor: {
+            kind: 'system',
+            id: 'auto-apply',
+            display_name: 'Auto-apply',
+          },
+          comment: null,
+        },
+      })
+    );
+
+    renderRun();
+
+    const note = await screen.findByTestId('run-decision');
+    expect(note).toHaveTextContent('Auto-applied');
+    expect(note).not.toHaveTextContent('Confirmed by');
+  });
+
   it('shows a discard without a comment', async () => {
     apiMock.getRun.mockResolvedValue(
       aRun('discarded', {

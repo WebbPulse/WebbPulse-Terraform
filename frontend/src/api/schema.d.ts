@@ -1226,6 +1226,9 @@ export interface paths {
          *     installation and the canonical name are recorded, and `tracked_branch` defaults to
          *     the repository's default branch. A repository the App is not installed on is a 422
          *     carrying `VCS_REPO_NOT_INSTALLED`.
+         *
+         *     Creating a workspace with `auto_apply` on lets anyone who can start a run apply
+         *     it, so it takes `admin` and the step-up, as turning it on later does.
          */
         post: operations["create_workspace_api_v1_workspaces_post"];
         delete?: never;
@@ -1281,6 +1284,10 @@ export interface paths {
          *
          *     Changing `run_api_token_scopes` hands every later run of this workspace a key on
          *     this API, so it takes `admin` as well as the step-up.
+         *
+         *     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
+         *     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
+         *     takes the step-up, since it stands in for the step-up gated confirmation.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -2557,6 +2564,11 @@ export interface components {
         Run: {
             actor?: components["schemas"]["RunActor"] | null;
             apply_changes?: components["schemas"]["RunChanges"] | null;
+            /**
+             * Auto Apply
+             * @default false
+             */
+            auto_apply?: boolean;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
@@ -2755,6 +2767,11 @@ export interface components {
         RunCreated: {
             actor?: components["schemas"]["RunActor"] | null;
             apply_changes?: components["schemas"]["RunChanges"] | null;
+            /**
+             * Auto Apply
+             * @default false
+             */
+            auto_apply?: boolean;
             changes?: components["schemas"]["RunChanges"] | null;
             /** Config Version Id */
             config_version_id: string;
@@ -2814,6 +2831,8 @@ export interface components {
         /**
          * RunDecision
          * @description Who confirmed or discarded a run's plan, when, and the comment they left.
+         *
+         *     An auto-applied run's confirmation names the `system` actor `auto-apply`.
          */
         RunDecision: {
             /**
@@ -3327,6 +3346,11 @@ export interface components {
          * @description A stored workspace, with everything the run role setup needs.
          */
         Workspace: {
+            /**
+             * Auto Apply
+             * @default false
+             */
+            auto_apply?: boolean;
             aws_connection?: components["schemas"]["AwsConnection"] | null;
             /** Created At */
             created_at: string;
@@ -3401,6 +3425,11 @@ export interface components {
          */
         WorkspaceCreate: {
             /**
+             * Auto Apply
+             * @default false
+             */
+            auto_apply?: boolean;
+            /**
              * Description
              * @default
              */
@@ -3466,6 +3495,8 @@ export interface components {
          *     turns into a DynamoDB REMOVE.
          */
         WorkspaceUpdate: {
+            /** Auto Apply */
+            auto_apply?: boolean | null;
             /** Description */
             description?: string | null;
             /** Engine */

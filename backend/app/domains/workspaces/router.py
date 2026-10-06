@@ -78,6 +78,12 @@ RUN_ROLE_FIELDS = ("run_role_arn", "pending_run_role_arn")
 RUN_API_TOKEN_FIELD = "run_api_token_scopes"
 """The PATCH field that grants a workspace's runs control plane API scopes, admin and step-up only."""
 
+AUTO_APPLY_FIELD = "auto_apply"
+"""The field that lets a plan apply without a confirmation, admin only."""
+
+AUTO_APPLY_EVENT = "workspaces.workspace.auto_apply"
+"""The log event a change to a workspace's auto-apply is recorded under, naming who and the new value."""
+
 router = APIRouter()
 
 WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
@@ -204,7 +210,10 @@ def list_workspaces() -> dict[str, Any]:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
-def create_workspace(payload: WorkspaceCreate) -> dict[str, Any]:
+def create_workspace(
+    payload: WorkspaceCreate,
+    current: AuthorizerClaims = Depends(auth_claims),
+) -> dict[str, Any]:
     """Create a workspace. The name has to be free.
 
     The run role is optional here on purpose: its trust policy names the workspace
@@ -216,15 +225,24 @@ def create_workspace(payload: WorkspaceCreate) -> dict[str, Any]:
     installation and the canonical name are recorded, and `tracked_branch` defaults to
     the repository's default branch. A repository the App is not installed on is a 422
     carrying `VCS_REPO_NOT_INSTALLED`.
+
+    Creating a workspace with `auto_apply` on lets anyone who can start a run apply
+    it, so it takes `admin` and the step-up, as turning it on later does.
     """
+    if payload.auto_apply:
+        _require_admin(current)
+        ensure_recent_auth(current)
     try:
         with _connect_errors():
-            return service.render_workspace(service.create_workspace(payload.model_dump()))
+            created = service.create_workspace(payload.model_dump())
     except service.WorkspaceNameTaken as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A workspace named '{error}' already exists.",
         ) from error
+    if payload.auto_apply:
+        record_auto_apply_change(current, workspace_id=str(created["workspace_id"]), previous=False, value=True)
+    return service.render_workspace(created)
 
 
 @router.get(
@@ -268,25 +286,67 @@ def update_workspace(
 
     Changing `run_api_token_scopes` hands every later run of this workspace a key on
     this API, so it takes `admin` as well as the step-up.
+
+    Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
+    `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
+    takes the step-up, since it stands in for the step-up gated confirmation.
     """
     changes = payload.model_dump(exclude_unset=True)
+    auto_apply_from: Optional[bool] = None
     try:
-        if any(field in changes for field in (*RUN_ROLE_FIELDS, RUN_API_TOKEN_FIELD)):
+        if any(field in changes for field in (*RUN_ROLE_FIELDS, RUN_API_TOKEN_FIELD, AUTO_APPLY_FIELD)):
             existing = service.get_workspace(workspace_id)
             if _changes(changes, existing, RUN_API_TOKEN_FIELD):
-                if missing_scopes(current, (ADMIN,)):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail={"message": forbidden(), "error_code": FORBIDDEN_ERROR_CODE},
-                    )
+                _require_admin(current)
                 ensure_recent_auth(current)
             if any(_changes(changes, existing, field) for field in RUN_ROLE_FIELDS):
                 ensure_recent_auth(current)
+            if AUTO_APPLY_FIELD in changes and bool(changes[AUTO_APPLY_FIELD]) != bool(existing.get(AUTO_APPLY_FIELD)):
+                _require_admin(current)
+                if changes[AUTO_APPLY_FIELD]:
+                    ensure_recent_auth(current)
+                auto_apply_from = bool(existing.get(AUTO_APPLY_FIELD))
         with _connect_errors():
             updated = service.update_workspace(workspace_id, changes)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
+    if auto_apply_from is not None:
+        record_auto_apply_change(
+            current,
+            workspace_id=workspace_id,
+            previous=auto_apply_from,
+            value=bool(updated.get(AUTO_APPLY_FIELD)),
+        )
     return service.render_workspace(updated)
+
+
+def _require_admin(current: AuthorizerClaims) -> None:
+    """Refuse a caller without `admin` with the shared 403 envelope."""
+    if missing_scopes(current, (ADMIN,)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"message": forbidden(), "error_code": FORBIDDEN_ERROR_CODE},
+        )
+
+
+def record_auto_apply_change(
+    current: AuthorizerClaims,
+    *,
+    workspace_id: str,
+    previous: bool,
+    value: bool,
+) -> None:
+    """Record who turned a workspace's auto-apply on or off, after the write landed."""
+    _log.info(
+        "Changed a workspace's auto-apply.",
+        extra={
+            "event": AUTO_APPLY_EVENT,
+            "workspace_id": workspace_id,
+            "subject": str(current.get("sub", "") or "") or None,
+            "previous": previous,
+            "auto_apply": value,
+        },
+    )
 
 
 def _changes(changes: dict[str, Any], existing: dict[str, Any], field: str) -> bool:

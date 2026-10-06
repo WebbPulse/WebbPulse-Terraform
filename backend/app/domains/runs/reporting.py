@@ -92,6 +92,9 @@ TITLES: Final = {
     "cancelled": "Run cancelled",
     "discarded": "Run discarded",
 }
+AUTO_APPLY_TITLE: Final = "Planned, auto-applying"
+"""What a run on an auto-apply workspace shows between its plan and its apply, which
+is no wait for a person and so is not held as `action_required`."""
 CONCLUSIONS: Final[dict[str, CheckRunConclusion]] = {
     "applied": "success",
     "planned_and_finished": "success",
@@ -124,7 +127,8 @@ def check_state(run: Mapping[str, Any]) -> CheckState:
 
     A push run held for confirmation completes as `action_required`: GitHub offers no
     waiting state a check can rest in indefinitely, and that conclusion is what makes
-    the commit show a person is needed rather than a pass or a failure.
+    the commit show a person is needed rather than a pass or a failure. A run that
+    will auto-apply stays in progress instead, since nobody is needed.
     """
     status = str(run.get("status", ""))
     title = TITLES.get(status, status or "Run")
@@ -132,6 +136,8 @@ def check_state(run: Mapping[str, Any]) -> CheckState:
         return CheckState("queued", None, title)
     if status in ACTIVE:
         return CheckState("in_progress", None, title)
+    if status == "awaiting_confirmation" and bool(run.get("auto_apply", False)):
+        return CheckState("in_progress", None, AUTO_APPLY_TITLE)
     if status == "awaiting_confirmation":
         return CheckState("completed", "action_required", title)
     conclusion = CONCLUSIONS.get(status)
