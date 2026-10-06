@@ -8,6 +8,9 @@ agent arrives with a `wpk_` key, which `claims_or_api_key` verifies against the
 identity `api-keys` table and renders as the same claims object, so a route
 guarded by `require_scopes` cannot tell the two apart.
 
+A person may also arrive with a `wp-tf login` device token, which is accepted only
+while its grant is live, checked through `device_grant_liveness`.
+
 The runner arrives with a run token, which is a `wpk_` key the runs domain mints
 per run with the `runner` scope and an expiry. It is not interchangeable with an
 agent key: `require_run_token` additionally checks the key is bound to the run in
@@ -24,6 +27,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from starlette.responses import Response
+from webbpulse.identity import DeviceGrantLiveness, dynamo_device_grant_stores
 from webbpulse.identity.api_keys import ApiKeyRecord, ApiKeyStore, DynamoApiKeyStore, verify
 from webbpulse.identity.claims import AuthorizerClaims
 from webbpulse.identity.scopes import bearer_credential, claims_or_api_key, require_recent_auth, require_scopes
@@ -160,6 +164,36 @@ def key_owner_scopes(record: ApiKeyRecord) -> tuple[str, ...]:
     return tuple(scope_claim_for_roles([ADMIN_ROLE] if user.is_admin else []).split())
 
 
+_DEVICE_LIVENESS: dict[str, DeviceGrantLiveness] = {}
+
+
+def device_grant_liveness(settings: Settings | None = None) -> DeviceGrantLiveness | None:
+    """The cached device grant liveness check, or None while device login is off.
+
+    One instance per table prefix lives for the process, so its few seconds of
+    cache span requests. None makes `claims_or_api_key` refuse every device token,
+    which is the right answer where the device grant is not enabled.
+    """
+    resolved = settings or get_settings()
+    if not resolved.IDENTITY_DEVICE_GRANT_ENABLED:
+        return None
+    prefix = identity_table_prefix(resolved)
+    liveness = _DEVICE_LIVENESS.get(prefix)
+    if liveness is None:
+        stores = dynamo_device_grant_stores(
+            prefix,
+            region_name=resolved.AWS_REGION_NAME or None,
+            endpoint_url=resolved.dynamodb_endpoint_url,
+        )
+        liveness = _DEVICE_LIVENESS.setdefault(prefix, DeviceGrantLiveness(stores.grants))
+    return liveness
+
+
+def reset_device_grant_liveness() -> None:
+    """Drop the cached liveness checks, for a suite that swaps the tables underneath them."""
+    _DEVICE_LIVENESS.clear()
+
+
 def _claims_dependency() -> Any:
     """The claims dependency accepting a verified JWT or a `wpk_` agent key.
 
@@ -172,7 +206,9 @@ def _claims_dependency() -> Any:
 
     async def dependency(request: Request) -> AuthorizerClaims:
         """Return this request's verified claims, or raise a 401."""
-        inner = claims_or_api_key(store=api_key_store(), live_scopes=key_owner_scopes)
+        inner = claims_or_api_key(
+            store=api_key_store(), live_scopes=key_owner_scopes, device_grants=device_grant_liveness()
+        )
         result: AuthorizerClaims = await inner(request)
         return result
 
@@ -326,7 +362,9 @@ __all__ = [
     "api_key_store",
     "claims",
     "ensure_recent_auth",
+    "device_grant_liveness",
     "key_owner_scopes",
+    "reset_device_grant_liveness",
     "recent_auth",
     "require_run_token",
     "revoke_run_key",

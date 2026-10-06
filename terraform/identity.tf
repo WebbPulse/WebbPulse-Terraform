@@ -8,6 +8,41 @@ locals {
   identity_oauth_redirect_uris = jsonencode(["${local.identity_issuer}/oauth/callback"])
 
   identity_webauthn_origins = jsonencode(["https://${local.host}"])
+
+  identity_device_audience = "${local.identity_issuer}/device"
+
+  identity_device_scopes = [
+    "workspaces:read",
+    "workspaces:write",
+    "variables:read",
+    "variables:write",
+    "configs:read",
+    "configs:write",
+    "runs:read",
+    "runs:write",
+    "runs:apply",
+    "state:download",
+    "registry:read",
+    "registry:write",
+    "admin",
+  ]
+
+  identity_device_explicit_scopes = ["runs:apply", "state:download", "admin"]
+
+  identity_device_environment = var.device_login_enabled ? {
+    IDENTITY_DEVICE_GRANT_ENABLED    = "true"
+    IDENTITY_DEVICE_CLIENTS          = jsonencode({ "wp-tf" = "wp-tf CLI" })
+    IDENTITY_DEVICE_SCOPES_SUPPORTED = jsonencode(local.identity_device_scopes)
+    IDENTITY_DEVICE_EXPLICIT_SCOPES  = jsonencode(local.identity_device_explicit_scopes)
+    IDENTITY_DEVICE_AUDIENCE         = local.identity_device_audience
+    IDENTITY_DEVICE_LOGIN_URL        = "https://${local.host}/sign-in"
+  } : {}
+}
+
+variable "device_login_enabled" {
+  description = "Whether `wp-tf login` can sign a person in through the OAuth device grant. On in every environment."
+  type        = bool
+  default     = true
 }
 
 variable "identity_rp_name" {
@@ -109,6 +144,8 @@ module "identity" {
   table_policy_actions = local.dynamodb_write_actions
 
   additional_table_grants = local.identity_additional_table_grants
+
+  device_grant_enabled = var.device_login_enabled
 }
 
 locals {
@@ -129,6 +166,12 @@ locals {
       role_name = module.lambda_domain["registry"].role_id
       tables    = ["api-keys"]
       actions   = concat(local.dynamodb_read_actions, ["dynamodb:UpdateItem"])
+    }
+    } : {}, var.device_login_enabled ? {
+    for name in setsubtract(keys(local.lambda_domains), ["workspaces"]) : "${name}-device-grants" => {
+      role_name = module.lambda_domain[name].role_id
+      tables    = ["device-grants"]
+      actions   = local.dynamodb_read_actions
     }
   } : {}) : {}
 }

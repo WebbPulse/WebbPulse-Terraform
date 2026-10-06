@@ -197,6 +197,15 @@ locals {
         require_identity_jwt = true
       }
     } : {},
+    var.device_login_enabled ? {
+      "POST /api/auth/device/code"                = { integration = "workspaces" }
+      "POST /api/auth/device/token"               = { integration = "workspaces" }
+      "POST /api/auth/device/revoke"              = { integration = "workspaces" }
+      "GET /api/auth/device"                      = { integration = "workspaces" }
+      "POST /api/auth/device/approve"             = { integration = "workspaces" }
+      "GET /api/auth/device/grants"               = { integration = "workspaces" }
+      "DELETE /api/auth/device/grants/{grant_id}" = { integration = "workspaces" }
+    } : {},
     local.ephemeral_users_enabled ? {
       "POST /api/auth/e2e/users" = {
         integration          = "workspaces"

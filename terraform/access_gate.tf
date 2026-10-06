@@ -21,6 +21,7 @@ module "access_gate" {
   identity_jwt = local.identity_jwt_gate_enforced ? {
     issuer           = local.identity_issuer
     audience         = local.identity_audience
+    audiences        = var.device_login_enabled ? [local.identity_audience, local.identity_device_audience] : null
     api_key_prefixes = [local.api_key_prefix]
   } : null
 

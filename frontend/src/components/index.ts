@@ -54,6 +54,7 @@ export {
 } from './plan';
 export {
   RequireAuth,
+  useDeviceHandOff,
   RequireGuest,
   type RequireAuthProps,
 } from './RequireAuth';
