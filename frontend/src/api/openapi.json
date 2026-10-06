@@ -7232,7 +7232,7 @@
     },
     "/api/v1/runs/{run_id}/confirm": {
       "post": {
-        "description": "Apply a planned run. Needs `runs:apply`, not `runs:write`, and a person's recent login.\n\nThe body is optional; its comment is kept on the run with the confirming actor.",
+        "description": "Apply a planned run. Needs `runs:apply`, not `runs:write`, and a recent login in a browser.\n\nThe body is optional; its comment is kept on the run with the confirming actor.",
         "operationId": "confirm_run_api_v1_runs__run_id__confirm_post",
         "parameters": [
           {

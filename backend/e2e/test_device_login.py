@@ -4,8 +4,8 @@ The CLI half posts to `/api/auth/device/code` and polls `/api/auth/device/token`
 `httpx` and the gate header, exactly as `wp-tf login` does. The browser half is the run's
 signed-in user, stepped up so the sign-in is fresh, opening the approval page with its bearer
 and posting the signed form back with the issuer's `Origin`, as the page's own form would.
-The device access token then reads the API, drives a `wp-tf plan`, and stops working once its
-grant is revoked. Every grant is revoked on teardown, whatever the outcome. Skipped outside
+The device access token then reads the API, drives a `wp-tf apply` and its destroy, and stops
+working once its grant is revoked. Every grant is revoked on teardown, whatever the outcome. Skipped outside
 staging, since a grant is written. No code, token or signature is ever printed.
 """
 
@@ -35,7 +35,7 @@ DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 TIMEOUT_SECONDS = 30
 POLL_LIMIT_SECONDS = 60
 LIVENESS_WAIT_SECONDS = 7
-WP_TF_PLAN_TIMEOUT_SECONDS = 900
+WP_TF_APPLY_TIMEOUT_SECONDS = 1500
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "first-run"
 
 pytestmark = [
@@ -156,7 +156,9 @@ def test_a_device_token_reads_the_api_until_revoked(
 ) -> None:
     """An approved device login reads the API, is listed for its user, and stops once revoked."""
     session = device_login()
-    assert "runs:apply" not in session.scope.split(), "an explicit scope was granted by default"
+    granted = session.scope.split()
+    assert "runs:apply" in granted, "a default device login cannot apply"
+    assert not {"state:download", "admin"} & set(granted), "an explicit scope was granted by default"
     device = api.with_token(session.access_token)
     workspaces = device.get("/api/v1/workspaces")
     assert workspaces.status_code == 200, f"a device token reading workspaces answered {workspaces.status_code}"
@@ -223,39 +225,54 @@ def _wp_tf() -> list[str]:
     return [str(script)]
 
 
-def test_wp_tf_plans_with_a_device_token(
+def _run_wp_tf(env: Mapping[str, str], *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run one `wp-tf` command against the staging host, never raising on its exit code."""
+    return subprocess.run(
+        [*_wp_tf(), "--host", REGISTRY_HOST, *arguments],
+        env=dict(env),
+        capture_output=True,
+        text=True,
+        timeout=WP_TF_APPLY_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
+def test_wp_tf_applies_with_a_device_token(
     device_login: Callable[[], DeviceSession],
     workspace: dict[str, Any],
     gate_headers: Mapping[str, str],
     api: Any,
     tmp_path: Path,
 ) -> None:
-    """`wp-tf plan` streams a plan-only run on a device token and cannot confirm it."""
+    """`wp-tf apply` on a default device login plans, confirms as the person and applies.
+
+    The destroy that follows leaves the workspace managing nothing, so teardown's safe
+    delete passes.
+    """
     session = device_login()
     env = {key: value for key, value in os.environ.items() if not key.startswith(("WP_TF_", "TF_TOKEN_"))}
     env["HOME"] = str(tmp_path)
     env["WP_TF_TOKEN"] = session.access_token
     workspace_id = str(workspace["workspace_id"])
-    completed = subprocess.run(
-        [*_wp_tf(), "--host", REGISTRY_HOST, "plan", str(EXAMPLE), "-w", workspace_id, "-m", "e2e device login"],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=WP_TF_PLAN_TIMEOUT_SECONDS,
-        check=False,
-    )
-    output = completed.stdout + completed.stderr
-    assert session.access_token not in output, "wp-tf printed the token"
     gate = next(iter(gate_headers.values()), "")
-    assert not gate or gate not in output, "wp-tf printed the gate value"
-    assert completed.returncode == 0, f"wp-tf plan exited {completed.returncode}: {completed.stderr[-1500:]}"
-    found = re.search(r"run (run-[0-9A-Z]+) ", completed.stderr)
-    assert found, f"wp-tf named no run: {completed.stderr[-400:]}"
-    run_id = found.group(1)
 
-    run = api.get(f"/api/v1/runs/{run_id}")
-    assert run.status_code == 200, run.text[:400]
-    assert run.json()["status"] == "planned_and_finished", run.text[:400]
+    for extra in ((), ("--destroy",)):
+        completed = _run_wp_tf(
+            env, "apply", str(EXAMPLE), "-w", workspace_id, "-m", "e2e device apply", "--auto-approve", *extra
+        )
+        output = completed.stdout + completed.stderr
+        assert session.access_token not in output, "wp-tf printed the token"
+        assert not gate or gate not in output, "wp-tf printed the gate value"
+        assert completed.returncode == 0, (
+            f"wp-tf apply {extra} exited {completed.returncode}: {completed.stderr[-1500:]}"
+        )
+        found = re.search(r"run (run-[0-9A-Z]+) ", completed.stderr)
+        assert found, f"wp-tf named no run: {completed.stderr[-400:]}"
 
-    confirm = api.with_token(session.access_token).post(f"/api/v1/runs/{run_id}/confirm")
-    assert confirm.status_code == 403, f"a device token confirming a run answered {confirm.status_code}"
+        run = api.get(f"/api/v1/runs/{found.group(1)}")
+        assert run.status_code == 200, run.text[:400]
+        body = run.json()
+        assert body["status"] == "applied", run.text[:400]
+        decision = body.get("decision") or {}
+        assert decision.get("action") == "confirmed", decision
+        assert (decision.get("actor") or {}).get("id") not in (None, "", "auto-apply"), decision

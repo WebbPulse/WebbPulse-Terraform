@@ -85,7 +85,7 @@ def test_login_mints_a_scoped_ninety_day_key(app, client):
     login = next(key for key in keys if key["name"] == terraform_login.KEY_NAME)
     assert WORKSPACES_READ in login["scopes"]
     assert REGISTRY_READ in login["scopes"]
-    assert RUNS_APPLY not in login["scopes"]
+    assert RUNS_APPLY in login["scopes"]
     assert STATE_DOWNLOAD not in login["scopes"]
 
     listed = client.get("/api/v1/workspaces", headers={"Authorization": f"Bearer {body['access_token']}"})
@@ -207,3 +207,16 @@ def test_an_unknown_code_and_a_malformed_body_are_refused(client):
     )
     assert response.status_code == 400
     assert client.post("/v1/oauth/token", content=b"a" * 9000).json()["error"] == "invalid_request"
+
+
+def test_a_login_key_applies_on_an_old_login(app, client, awaiting_confirmation):
+    """`terraform login` leaves a key that confirms an apply whenever, as an HCP user token does."""
+    seed_user(USER_ID)
+    with TestClient(app, headers=person_headers(user_id=USER_ID, auth_age=0)) as fresh:
+        response = fresh.post("/api/v1/oauth/authorizations", json=request_body())
+    code = parse_qs(urlsplit(response.json()["redirect_url"]).query)["code"][0]
+    token = exchange(client, code).json()["access_token"]
+
+    run_id = awaiting_confirmation["run_id"]
+    confirmed = client.post(f"/api/v1/runs/{run_id}/confirm", headers={"Authorization": f"Bearer {token}"})
+    assert confirmed.status_code == 200, confirmed.text
