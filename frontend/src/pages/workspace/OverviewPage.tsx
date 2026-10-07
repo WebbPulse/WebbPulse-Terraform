@@ -26,7 +26,7 @@ import {
 import { useWorkspace } from '../workspaceContext';
 import { SetupChecklist } from './SetupChecklist';
 import { WorkspaceReadme } from './WorkspaceReadme';
-import { latestUploadedVersion } from './setup';
+import { readmeVersion } from './readme';
 
 /** The overview page. */
 export function OverviewPage(): React.ReactElement {
@@ -56,7 +56,7 @@ export function OverviewPage(): React.ReactElement {
           keys={keys}
         />
       ) : null}
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-6">
           <section aria-labelledby="latest-run" className="space-y-3">
             <div className="flex items-baseline justify-between gap-3">
@@ -98,9 +98,7 @@ export function OverviewPage(): React.ReactElement {
         <WorkspaceFacts
           workspace={workspace}
           runRoleCheck={runRoleCheck}
-          latestVersion={
-            latestUploadedVersion(versions)?.config_version_id ?? null
-          }
+          latestVersion={readmeVersion(versions)?.config_version_id ?? null}
         />
       </div>
     </div>
