@@ -279,10 +279,7 @@ export function Layout(): React.ReactElement {
           <header className="sticky top-0 z-30 border-b border-line bg-bg/90 backdrop-blur md:hidden">
             <div className="flex h-12 items-center justify-between gap-3 px-4">
               <Wordmark short />
-              <nav aria-label="Primary" className="flex items-center gap-1">
-                {sections.map((section) => (
-                  <RailLink key={section.to} {...section} compact />
-                ))}
+              <div className="flex items-center gap-1">
                 <ThemeToggle />
                 <Button
                   variant="ghost"
@@ -293,17 +290,26 @@ export function Layout(): React.ReactElement {
                 >
                   Sign out
                 </Button>
-              </nav>
+              </div>
             </div>
-            {workspaceId === null ? null : (
-              <div className="border-t border-line px-2 py-1">
+            <div className="border-t border-line px-2 py-1">
+              {workspaceId === null ? (
+                <nav
+                  aria-label="Primary"
+                  className="flex items-center gap-1 overflow-x-auto"
+                >
+                  {sections.map((section) => (
+                    <RailLink key={section.to} {...section} compact />
+                  ))}
+                </nav>
+              ) : (
                 <WorkspaceNav
                   workspaceId={workspaceId}
                   name={workspaceName}
                   compact
                 />
-              </div>
-            )}
+              )}
+            </div>
           </header>
           <main
             id="main"
