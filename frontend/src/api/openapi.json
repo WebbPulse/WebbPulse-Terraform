@@ -1219,6 +1219,79 @@
         "title": "InstallationList",
         "type": "object"
       },
+      "LatestRun": {
+        "description": "The newest run on a workspace, as the workspace list shows it.",
+        "properties": {
+          "changed_at": {
+            "title": "Changed At",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "is_destroy": {
+            "default": false,
+            "title": "Is Destroy",
+            "type": "boolean"
+          },
+          "plan_only": {
+            "default": false,
+            "title": "Plan Only",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "planning",
+              "planned",
+              "awaiting_confirmation",
+              "applying",
+              "applied",
+              "planned_and_finished",
+              "errored",
+              "cancelled",
+              "discarded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "created_at",
+          "changed_at"
+        ],
+        "title": "LatestRun",
+        "type": "object"
+      },
       "LogEvent": {
         "description": "One line from the runner's log stream.",
         "properties": {
@@ -4789,7 +4862,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/Workspace"
+              "$ref": "#/components/schemas/WorkspaceListItem"
             },
             "title": "Items",
             "type": "array"
@@ -4799,6 +4872,247 @@
           "items"
         ],
         "title": "WorkspaceList",
+        "type": "object"
+      },
+      "WorkspaceListItem": {
+        "description": "A workspace as the list returns it, with its newest run.",
+        "properties": {
+          "auto_apply": {
+            "default": false,
+            "title": "Auto Apply",
+            "type": "boolean"
+          },
+          "aws_connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AwsConnection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "engine": {
+            "default": "terraform",
+            "enum": [
+              "terraform",
+              "tofu"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "engine_version": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Engine Version",
+            "type": "string"
+          },
+          "file_triggers_enabled": {
+            "default": true,
+            "title": "File Triggers Enabled",
+            "type": "boolean"
+          },
+          "latest_change_at": {
+            "title": "Latest Change At",
+            "type": "string"
+          },
+          "latest_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LatestRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "pending_run_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Run Role Arn"
+          },
+          "plan_assume_role_arns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Plan Assume Role Arns",
+            "type": "array"
+          },
+          "plan_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Role Arn"
+          },
+          "run_api_token_scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Run Api Token Scopes",
+            "type": "array"
+          },
+          "run_role_account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Account Id"
+          },
+          "run_role_arn": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Arn"
+          },
+          "run_role_checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Role Checked At"
+          },
+          "run_role_reconnect_required": {
+            "default": false,
+            "title": "Run Role Reconnect Required",
+            "type": "boolean"
+          },
+          "run_role_setup": {
+            "$ref": "#/components/schemas/RunRoleSetup"
+          },
+          "speculative_plans": {
+            "default": true,
+            "title": "Speculative Plans",
+            "type": "boolean"
+          },
+          "tracked_branch": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracked Branch"
+          },
+          "trigger_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Trigger Patterns",
+            "type": "array"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "vcs_installation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Installation Id"
+          },
+          "vcs_repo": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repo"
+          },
+          "vcs_repository_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcs Repository Id"
+          },
+          "working_directory": {
+            "default": "",
+            "title": "Working Directory",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "engine_version",
+          "workspace_id",
+          "name",
+          "created_at",
+          "run_role_setup",
+          "latest_change_at"
+        ],
+        "title": "WorkspaceListItem",
         "type": "object"
       },
       "WorkspaceUpdate": {
@@ -7937,7 +8251,7 @@
     },
     "/api/v1/workspaces": {
       "get": {
-        "description": "Every workspace in this environment, each with its run role setup.",
+        "description": "Every workspace in this environment, each with its run role setup and newest run.",
         "operationId": "list_workspaces_api_v1_workspaces_get",
         "responses": {
           "200": {

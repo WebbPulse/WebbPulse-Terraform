@@ -2,7 +2,11 @@ import { screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
-import { aFreshWorkspace, aWorkspace } from '../test-helpers/fixtures';
+import {
+  aFreshWorkspace,
+  aListedWorkspace,
+  aWorkspace,
+} from '../test-helpers/fixtures';
 import {
   renderWithAuth,
   signedInAuthClient,
@@ -12,6 +16,8 @@ import {
   apiMock,
   resetApiMock,
 } from '../test-helpers/apiMock';
+import type { LatestRun } from '../api';
+import { formatDateTime } from '../components';
 
 vi.mock('../api/client', () => apiClientModuleMock());
 
@@ -37,8 +43,12 @@ describe('Workspaces', () => {
   it('shows each row the same check the workspace header reads, without writing', async () => {
     apiMock.listWorkspaces.mockResolvedValue({
       items: [
-        aWorkspace({ run_role_account_id: null, run_role_checked_at: null }),
-        aFreshWorkspace({ workspace_id: 'ws-2', name: 'organization' }),
+        aListedWorkspace(
+          aWorkspace({ run_role_account_id: null, run_role_checked_at: null })
+        ),
+        aListedWorkspace(
+          aFreshWorkspace({ workspace_id: 'ws-2', name: 'organization' })
+        ),
       ],
     });
     apiMock.readRunRoleCheck.mockResolvedValue({
@@ -65,13 +75,17 @@ describe('Workspaces', () => {
   it('renders the workspaces the API returned, each linking to its detail', async () => {
     apiMock.listWorkspaces.mockResolvedValue({
       items: [
-        aWorkspace(),
-        aFreshWorkspace({ workspace_id: 'ws-2', name: 'organization' }),
-        aFreshWorkspace({
-          workspace_id: 'ws-3',
-          name: 'network',
-          run_role_arn: aWorkspace().run_role_arn,
-        }),
+        aListedWorkspace(),
+        aListedWorkspace(
+          aFreshWorkspace({ workspace_id: 'ws-2', name: 'organization' })
+        ),
+        aListedWorkspace(
+          aFreshWorkspace({
+            workspace_id: 'ws-3',
+            name: 'network',
+            run_role_arn: aWorkspace().run_role_arn,
+          })
+        ),
       ],
     });
 
@@ -87,6 +101,56 @@ describe('Workspaces', () => {
     expect(screen.getByText('123456789012')).toBeInTheDocument();
     expect(screen.getByText('Not connected')).toBeInTheDocument();
     expect(screen.getByText('Not verified')).toBeInTheDocument();
+  });
+
+  it('shows the newest run as the latest change, with its status linking to the run', async () => {
+    const settled = aWorkspace({ updated_at: '2026-09-17T01:00:00Z' });
+    const latestRun: LatestRun = {
+      run_id: 'run-01J000000000000000000009',
+      status: 'awaiting_confirmation',
+      created_at: '2026-09-18T00:00:00Z',
+      updated_at: '2026-09-18T00:02:00Z',
+      changed_at: '2026-09-18T00:02:00Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue({
+      items: [
+        aListedWorkspace(settled, {
+          latest_run: latestRun,
+          latest_change_at: latestRun.changed_at,
+        }),
+      ],
+    });
+
+    renderList();
+
+    const status = await screen.findByRole('link', {
+      name: 'Latest run: Needs confirmation',
+    });
+    expect(status).toHaveAttribute(
+      'href',
+      '/workspaces/ws-01J000000000000000000000/runs/run-01J000000000000000000009'
+    );
+    expect(
+      screen.getByTitle(formatDateTime('2026-09-18T00:02:00Z'))
+    ).toHaveAttribute('datetime', '2026-09-18T00:02:00Z');
+    expect(
+      screen.queryByTitle(formatDateTime('2026-09-17T01:00:00Z'))
+    ).not.toBeInTheDocument();
+  });
+
+  it('says a workspace that never ran has no runs and falls back to its own change', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({
+      items: [
+        aListedWorkspace(aWorkspace({ updated_at: '2026-09-17T01:00:00Z' })),
+      ],
+    });
+
+    renderList();
+
+    expect(await screen.findByText('No runs yet')).toBeInTheDocument();
+    expect(
+      screen.getByTitle(formatDateTime('2026-09-17T01:00:00Z'))
+    ).toHaveAttribute('datetime', '2026-09-17T01:00:00Z');
   });
 
   it('says so once when there are no workspaces', async () => {

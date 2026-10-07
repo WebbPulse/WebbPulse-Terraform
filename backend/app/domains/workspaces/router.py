@@ -200,8 +200,8 @@ def _connect_errors() -> Iterator[None]:
     dependencies=[Depends(scopes(WORKSPACES_READ))],
 )
 def list_workspaces() -> dict[str, Any]:
-    """Every workspace in this environment, each with its run role setup."""
-    return {"items": [service.render_workspace(item) for item in service.list_workspaces()]}
+    """Every workspace in this environment, each with its run role setup and newest run."""
+    return {"items": service.list_workspace_items()}
 
 
 @router.post(

@@ -89,6 +89,12 @@ export type WorkspaceUpdate = Schemas['WorkspaceUpdate'];
 /** Every workspace, newest last by id. */
 export type WorkspaceList = Schemas['WorkspaceList'];
 
+/** A workspace as the list returns it, with its newest run and latest change. */
+export type WorkspaceListItem = Schemas['WorkspaceListItem'];
+
+/** The newest run on a workspace, as the workspace list carries it. */
+export type LatestRun = Schemas['LatestRun'];
+
 /** Whether a variable is passed to Terraform or to the process environment. */
 export type VariableCategory = Schemas['Variable']['category'];
 

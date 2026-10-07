@@ -1,24 +1,54 @@
-"""A workspace's runs, as its delete sees them: still going, or finished and removable.
+"""A workspace's runs, as its delete and the workspace list see them.
 
-The runs domain owns every other read and write on the runs table. The two
-functions here are the workspaces domain's whole reach into it, and the terminal
-status set lives here so the runs domain reads the same one and the two cannot
-disagree on what is finished.
+The runs domain owns every other read and write on the runs table. The functions
+here are the workspaces domain's whole reach into it: whether a workspace still has
+a run going, removing its finished runs, and each workspace's latest run for the
+list. The terminal status set lives here so the runs domain reads the same one and
+the two cannot disagree on what is finished.
 """
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed
 
 from ..composition.settings import Settings, get_settings
 from ..db import repositories
-from ..db.tables import RUNS_BY_WORKSPACE_INDEX, SEMAPHORE_RUN_ID
+from ..db.tables import RUNS_BY_RECENCY_INDEX, RUNS_BY_WORKSPACE_INDEX, RUNS_COLLECTION, SEMAPHORE_RUN_ID
+
+RunStatus = Literal[
+    "pending",
+    "planning",
+    "planned",
+    "awaiting_confirmation",
+    "applying",
+    "applied",
+    "planned_and_finished",
+    "errored",
+    "cancelled",
+    "discarded",
+]
+"""Every state a run can hold, as the contract fixes them. Here so the workspace list
+and the runs domain share one set."""
 
 TERMINAL_RUN_STATUSES: Final = frozenset({"applied", "planned_and_finished", "errored", "cancelled", "discarded"})
 """The run statuses that mean a run is finished and holds nothing open."""
+
+
+LATEST_RUN_FIELDS: Final = (
+    "run_id",
+    "status",
+    "created_at",
+    "updated_at",
+    "finished_at",
+    "plan_only",
+    "is_destroy",
+)
+"""The run fields the workspace list carries for each workspace's latest run."""
+
+_ULID_LENGTH: Final = 26
 
 
 class RunStillActive(Exception):
@@ -90,3 +120,48 @@ def delete_workspace_runs(workspace_id: str, *, settings: Settings | None = None
             raise RunStillActive(run_id, str(current.get("status", ""))) from error
         deleted += 1
     return deleted
+
+
+def _ulid_part(identifier: str) -> str:
+    """The ULID an id ends in, or the empty string when it does not end in one."""
+    tail = identifier.rsplit("-", 1)[-1]
+    return tail.upper() if len(tail) == _ULID_LENGTH else ""
+
+
+def latest_run_summary(run: dict[str, Any]) -> dict[str, Any]:
+    """The part of a run row the workspace list shows, with `changed_at` its latest timestamp."""
+    summary = {field: run[field] for field in LATEST_RUN_FIELDS if run.get(field) is not None}
+    summary["changed_at"] = str(run.get("updated_at") or run.get("finished_at") or run.get("created_at") or "")
+    return summary
+
+
+def latest_runs(workspace_ids: list[str], *, settings: Settings | None = None) -> dict[str, dict[str, Any]]:
+    """Each named workspace's newest run, from one newest first walk of `by_recency`.
+
+    One paginated read for the whole list rather than a query per workspace. The walk
+    stops once every workspace has its run, or once it reaches runs older than every
+    workspace still missing one: run and workspace ids are ULIDs and a run is created
+    after its workspace, so nothing older can belong to them. A workspace that never
+    ran is absent from the result.
+    """
+    resolved = settings or get_settings()
+    missing = {workspace_id: _ulid_part(workspace_id) for workspace_id in workspace_ids}
+    found: dict[str, dict[str, Any]] = {}
+    if not missing:
+        return found
+    for item in repositories.runs(resolved).iter_query(
+        Key("collection").eq(RUNS_COLLECTION),
+        index_name=RUNS_BY_RECENCY_INDEX,
+        ascending=False,
+    ):
+        run_id = str(item.get("run_id", ""))
+        workspace_id = str(item.get("workspace_id", ""))
+        if run_id and run_id != SEMAPHORE_RUN_ID and workspace_id in missing:
+            found[workspace_id] = item
+            del missing[workspace_id]
+        if not missing:
+            break
+        run_ulid = _ulid_part(run_id)
+        if run_ulid and all(created and run_ulid < created for created in missing.values()):
+            break
+    return found

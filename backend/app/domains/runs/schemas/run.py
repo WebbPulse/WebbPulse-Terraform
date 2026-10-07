@@ -6,19 +6,7 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-RunStatus = Literal[
-    "pending",
-    "planning",
-    "planned",
-    "awaiting_confirmation",
-    "applying",
-    "applied",
-    "planned_and_finished",
-    "errored",
-    "cancelled",
-    "discarded",
-]
-"""Every state a run can hold, as the contract fixes them."""
+from ....common.runs.workspace_runs import RunStatus
 
 Phase = Literal["plan", "apply"]
 """Which half of a run a task, a log stream or a phase result belongs to."""

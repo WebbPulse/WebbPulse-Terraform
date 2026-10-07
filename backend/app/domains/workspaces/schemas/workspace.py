@@ -10,6 +10,7 @@ from typing import Any, Final, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ....common.core.auth import RUN_API_TOKEN_SCOPES
+from ....common.runs.workspace_runs import RunStatus
 
 Engine = Literal["terraform", "tofu"]
 """Which binary runs this workspace. The runner image bundles both."""
@@ -433,10 +434,34 @@ class Workspace(WorkspaceBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LatestRun(BaseModel):
+    """The newest run on a workspace, as the workspace list shows it."""
+
+    run_id: str
+    status: RunStatus
+    created_at: str
+    updated_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    changed_at: str
+    """The run's latest timestamp: its last update, else its finish, else its creation."""
+    plan_only: bool = False
+    is_destroy: bool = False
+
+
+class WorkspaceListItem(Workspace):
+    """A workspace as the list returns it, with its newest run."""
+
+    latest_run: Optional[LatestRun] = None
+    """The newest run by creation, or `None` for a workspace that never ran."""
+    latest_change_at: str
+    """When the workspace last changed: its newest run's `changed_at`, or for a workspace
+    that never ran its own `updated_at`, else its `created_at`. What "Latest change" shows."""
+
+
 class WorkspaceList(BaseModel):
     """Every workspace, newest last by id, which is a ULID and so time ordered."""
 
-    items: list[Workspace]
+    items: list[WorkspaceListItem]
 
 
 RunRoleCheckStatus = Literal["connected", "failed", "unverified"]
