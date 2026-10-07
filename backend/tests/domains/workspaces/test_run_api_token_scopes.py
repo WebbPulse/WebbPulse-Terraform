@@ -115,7 +115,10 @@ def test_a_non_admin_may_resend_the_stored_grant(app, auth_client, workspace):
     assert response.status_code == 200, response.text
 
 
-@pytest.mark.parametrize("scope", ["admin", "runner", "runner:registry", "runs:apply", "runs:write", "state:download", "state:write"])
+@pytest.mark.parametrize(
+    "scope",
+    ["admin", "runner", "runner:registry", "runs:apply", "runs:write", "state:download", "state:write"],
+)
 def test_only_the_six_run_api_scopes_can_be_granted(auth_client, workspace, scope):
     """Never admin, runner, apply or state."""
     response = auth_client.patch(_path(workspace), json={"run_api_token_scopes": [scope]})
