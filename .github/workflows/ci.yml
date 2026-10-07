@@ -23,7 +23,6 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       runner: ${{ steps.filter.outputs.runner }}
-      ops-cutover: ${{ steps.filter.outputs.ops-cutover }}
       terraform: ${{ steps.filter.outputs.terraform }}
       api-contract: ${{ steps.filter.outputs.api-contract }}
     steps:
@@ -45,9 +44,6 @@ jobs:
               - '.github/workflows/ci.yml'
             runner:
               - 'runner/**'
-              - '.github/workflows/ci.yml'
-            ops-cutover:
-              - 'ops/cutover/**'
               - '.github/workflows/ci.yml'
             terraform:
               - 'terraform/**'
@@ -262,25 +258,6 @@ jobs:
       coverage-source: app
       pytest-args: ""
 
-  ops-cutover:
-    name: Cutover tooling
-    needs: changes
-    if: needs.changes.outputs.ops-cutover == 'true'
-    permissions:
-      contents: read
-      id-token: write
-    uses: WebbPulse/.github/.github/workflows/python-ci.yml@v3
-    with:
-      python-version: "3.13"
-      working-directory: ops/cutover
-      install-command: >-
-        uv lock --check &&
-        uv sync --locked
-      ruff-target: "cutover tests"
-      typecheck-command: uv run pyright
-      coverage-source: cutover
-      pytest-args: ""
-
   runner-image:
     name: Image build for linux/arm64
     needs: changes
@@ -388,7 +365,6 @@ jobs:
       - api-contract
       - runner
       - runner-image
-      - ops-cutover
       - terraform-fmt
       - terraform-validate
     if: always()

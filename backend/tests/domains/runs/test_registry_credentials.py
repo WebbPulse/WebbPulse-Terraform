@@ -37,30 +37,6 @@ def test_the_bundle_carries_a_registry_credential_for_the_spa_host(frontend, run
     assert registry["expires_at"]
 
 
-@pytest.fixture
-def api_origin(monkeypatch):
-    """A deployment whose API origin is `api.terraform.example.test`."""
-    monkeypatch.setenv("API_BASE_URL", "https://api.terraform.example.test/")
-
-
-@pytest.fixture
-def no_api_origin(monkeypatch):
-    """A deployment with no API origin configured."""
-    monkeypatch.setenv("API_BASE_URL", "")
-
-
-def test_the_bundle_maps_app_terraform_io_to_this_registry(frontend, api_origin, runner_client, created_run):
-    """Module lookups for `app.terraform.io` go to this plane's `modules.v1` endpoint."""
-    registry = _bundle(runner_client, created_run["run_id"])["registry"]
-
-    assert registry["module_hosts"] == {"app.terraform.io": "https://api.terraform.example.test/v1/modules/"}
-
-
-def test_no_api_origin_maps_no_host(frontend, no_api_origin, runner_client, created_run):
-    """Without an API origin the credential covers the SPA host alone."""
-    assert _bundle(runner_client, created_run["run_id"])["registry"]["module_hosts"] == {}
-
-
 def test_no_registry_host_means_no_credential(runner_client, created_run):
     """A deployment with no SPA origin mints nothing."""
     assert _bundle(runner_client, created_run["run_id"])["registry"] is None

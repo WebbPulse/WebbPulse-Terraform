@@ -80,8 +80,10 @@ on and deletion protection in production.
 
 The `runs` table also holds the concurrency semaphore as a single item with
 `run_id` of `run-semaphore`, whose `holders` string set the state machine adds to
-and removes from. `var.run_concurrency_cap`, default 2, is the size it is
-condition checked against.
+and removes from. `var.run_concurrency_cap`, default 25, is the size it is
+condition checked against. It is an abuse limit, not a queue: 25 one vCPU runner
+tasks sit under the 30 vCPU Fargate On-Demand quota in both accounts. Runs on one
+workspace stay serial whatever the cap.
 
 The `workspaces` domain owns `workspaces`, `variables`, `config-versions` and
 `users`, and reads `runs`; the `runs` domain owns `runs` and `vcs-uploads` and

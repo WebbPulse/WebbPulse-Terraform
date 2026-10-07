@@ -1,6 +1,6 @@
 /**
- * The approve page `terraform login` opens, like the token page
- * `terraform login app.terraform.io` opens.
+ * The approve page `terraform login` opens, like the token page HCP Terraform's
+ * `terraform login` opens.
  *
  * Terraform CLI sends the browser here with its PKCE challenge and a loopback
  * redirect. Approving asks the API for a code, behind the step-up prompt since it

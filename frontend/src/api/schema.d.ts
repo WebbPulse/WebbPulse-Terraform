@@ -2522,10 +2522,6 @@ export interface components {
             expires_at: string;
             /** Hosts */
             hosts: string[];
-            /** Module Hosts */
-            module_hosts?: {
-                [key: string]: string;
-            };
             /** Token */
             token: string;
         };

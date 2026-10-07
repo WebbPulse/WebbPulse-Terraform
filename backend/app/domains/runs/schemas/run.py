@@ -357,8 +357,6 @@ class RegistryCredentials(BaseModel):
     token: str
     """A `wpk_` key scoped `runner:registry`, for this run, for one hour."""
     expires_at: str
-    module_hosts: dict[str, str] = Field(default_factory=dict)
-    """Other registry hosts mapped to this plane's `modules.v1` URL, answered with the same token."""
 
 
 class ApiCredentials(BaseModel):
