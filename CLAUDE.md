@@ -451,7 +451,20 @@ from the CLI (the create answers 422), and workspaces carry no tags, so only `wo
 *` (`workspaces/locks.py`), so a CLI lock and a run's engine exclude each other through one
 object and `locked` reads it. A CLI lock names its subject in `WebbPulseLockedBy`; unlock by
 anyone else answers go-tfe's "is locked by User", an engine lock "is locked by Run", and
-force-unlock is refused only while a run is going. The design and the slices are on TF-44.
+force-unlock is refused only while a run is going.
+
+State versions and outputs (`workspaces/tfe_state.py`, `tfe_state_router.py`) are the S3
+versions of the runner's `terraform.tfstate`, with no second history: a state version id is
+`sv-<workspace ULID><S3 VersionId>` and an output id `wsout-` plus URL safe base64 of
+`[workspace, version, name]`, so neither needs a lookup table. Reads need `state:download`;
+the download is a 307 to the same 60 second presigned GET as `/api/v1`, recorded first, and
+the outputs list withholds sensitive values that `GET state-version-outputs/{id}` returns.
+`POST workspaces/{id}/state-versions` (`state:write`) takes inline base64 state only; a
+create without `state` answers the 422 wording go-tfe retries inline on. The caller must
+hold the CLI lock, the md5, serial and lineage must match the bytes, and without `force` the
+lineage must be the current one and the serial must not go backwards (an equal serial only
+for identical bytes). The write is SSE-KMS under the state key. The design and the slices
+are on TF-44.
 
 A run's configuration arrives through `POST /api/v2/workspaces/{id}/configuration-versions`
 (`configs:write`), which writes the same config version row as `/api/v1` and answers an

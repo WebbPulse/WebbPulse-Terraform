@@ -95,13 +95,14 @@ def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
     """
     from app.domains.workspaces.terraform_login_router import token_router
     from app.domains.workspaces.tfe_router import router as tfe_router
+    from app.domains.workspaces.tfe_state_router import router as tfe_state_router
 
     if not settings.IDENTITY_ISSUER:
-        return [token_router, tfe_router]
+        return [token_router, tfe_router, tfe_state_router]
 
     from app.common.identity.package_glue import build_router
 
-    return [build_router(settings), token_router, tfe_router]
+    return [build_router(settings), token_router, tfe_router, tfe_state_router]
 
 
 def _runs_routers() -> "list[APIRouter]":
