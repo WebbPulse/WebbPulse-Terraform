@@ -1028,7 +1028,7 @@ export interface paths {
         put?: never;
         /**
          * Confirm Run
-         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`, and a recent login in a browser.
+         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`, and no step-up.
          *
          *     The body is optional; its comment is kept on the run with the confirming actor.
          */
@@ -1287,7 +1287,7 @@ export interface paths {
          *
          *     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
          *     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
-         *     takes the step-up, since it stands in for the step-up gated confirmation.
+         *     takes the step-up, since it hands every later run's confirmation to the system.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;

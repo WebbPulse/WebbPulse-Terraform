@@ -289,7 +289,7 @@ def update_workspace(
 
     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
-    takes the step-up, since it stands in for the step-up gated confirmation.
+    takes the step-up, since it hands every later run's confirmation to the system.
     """
     changes = payload.model_dump(exclude_unset=True)
     auto_apply_from: Optional[bool] = None

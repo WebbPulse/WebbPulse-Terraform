@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TerraformApi, describeError } from '../api';
 import {
@@ -10,8 +10,10 @@ import {
   stubAuthenticator,
 } from '../test-helpers/renderWithAuth';
 import {
+  STEP_UP_FACTOR_KEY,
   StepUpBoundary,
   confirmationWindow,
+  rememberedFactor,
   stepUpErrorMessage,
 } from './StepUpBoundary';
 
@@ -37,7 +39,10 @@ function stepUpRequired(): Response {
   );
 }
 
-/** A fake backend: the key route refuses until the password is confirmed. */
+/** The authenticator code the fake backend accepts. */
+const GOOD_CODE = '123456';
+
+/** A fake backend: the key route refuses until a password, code or passkey is confirmed. */
 function backend(correctPassword: string): {
   fetch: typeof globalThis.fetch;
   calls: string[];
@@ -67,9 +72,14 @@ function backend(correctPassword: string): {
       const raw = typeof init?.body === 'string' ? init.body : '{}';
       const body = JSON.parse(raw) as {
         password?: string;
+        code?: string;
         credential?: unknown;
       };
-      if (body.credential === undefined && body.password !== correctPassword) {
+      const accepted =
+        body.credential !== undefined ||
+        (body.password !== undefined && body.password === correctPassword) ||
+        (body.code !== undefined && body.code === GOOD_CODE);
+      if (!accepted) {
         return Promise.resolve(
           jsonResponse(
             {
@@ -171,8 +181,22 @@ describe('stepUpErrorMessage', () => {
   });
 });
 
+beforeEach(() => {
+  globalThis.localStorage.clear();
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('rememberedFactor', () => {
+  it('defaults to the authenticator and remembers a password', () => {
+    expect(rememberedFactor()).toBe('code');
+    globalThis.localStorage.setItem(STEP_UP_FACTOR_KEY, 'password');
+    expect(rememberedFactor()).toBe('password');
+    globalThis.localStorage.setItem(STEP_UP_FACTOR_KEY, 'junk');
+    expect(rememberedFactor()).toBe('code');
+  });
 });
 
 describe('StepUpBoundary', () => {
@@ -219,6 +243,7 @@ describe('StepUpBoundary', () => {
     });
     expect(dialog).toHaveTextContent('15 minutes');
 
+    await user.click(screen.getByRole('tab', { name: 'Password' }));
     await user.type(screen.getByLabelText('Password'), 'hunter22');
     await user.click(screen.getByRole('button', { name: 'Confirm password' }));
 
@@ -236,7 +261,8 @@ describe('StepUpBoundary', () => {
     mount('hunter22');
 
     await user.click(screen.getByRole('button', { name: 'Mint' }));
-    await user.type(await screen.findByLabelText('Password'), 'wrong');
+    await user.click(await screen.findByRole('tab', { name: 'Password' }));
+    await user.type(screen.getByLabelText('Password'), 'wrong');
     await user.click(screen.getByRole('button', { name: 'Confirm password' }));
 
     expect(await screen.findByRole('alert')).toBeInTheDocument();
@@ -262,5 +288,54 @@ describe('StepUpBoundary', () => {
     expect(
       calls.filter((call) => call === 'POST /api/v1/api-keys')
     ).toHaveLength(1);
+  });
+
+  it('confirms with an authenticator code in place and replays the call once', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount('hunter22');
+
+    await user.click(screen.getByRole('button', { name: 'Mint' }));
+    await screen.findByRole('dialog', { name: 'Confirm it is you' });
+    expect(
+      screen.getByRole('tab', { name: 'Authenticator code' })
+    ).toHaveAttribute('aria-selected', 'true');
+
+    await user.type(screen.getByLabelText('Authenticator code'), GOOD_CODE);
+    await user.click(screen.getByRole('button', { name: 'Confirm code' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('outcome')).toHaveTextContent('minted');
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(
+      calls.filter((call) => call === 'POST /api/v1/api-keys')
+    ).toHaveLength(2);
+    expect(globalThis.localStorage.getItem(STEP_UP_FACTOR_KEY)).toBe('code');
+  });
+
+  it('keeps the prompt open on a wrong code', async () => {
+    const user = userEvent.setup();
+    mount('hunter22');
+
+    await user.click(screen.getByRole('button', { name: 'Mint' }));
+    await user.type(
+      await screen.findByLabelText('Authenticator code'),
+      '000000'
+    );
+    await user.click(screen.getByRole('button', { name: 'Confirm code' }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByLabelText('Authenticator code')).toHaveValue('');
+    expect(screen.getByTestId('outcome')).toHaveTextContent('');
+  });
+
+  it('opens on the password for a browser that last confirmed with one', async () => {
+    globalThis.localStorage.setItem(STEP_UP_FACTOR_KEY, 'password');
+    const user = userEvent.setup();
+    mount('hunter22');
+
+    await user.click(screen.getByRole('button', { name: 'Mint' }));
+    await screen.findByRole('dialog', { name: 'Confirm it is you' });
+    expect(screen.getByLabelText('Password')).toBeInTheDocument();
   });
 });
