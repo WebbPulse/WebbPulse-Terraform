@@ -104,6 +104,8 @@ locals {
     "GET /api/v2/organizations/{organization}/workspaces/{workspace_name}" = { integration = "workspaces", authorization_type = "NONE" }
     "GET /api/v2/workspaces/{workspace_id}"                                = { integration = "workspaces", authorization_type = "NONE" }
     "GET /api/v2/workspaces/{workspace_id}/all-vars"                       = { integration = "workspaces", authorization_type = "NONE" }
+    "POST /api/v2/workspaces/{workspace_id}/configuration-versions"        = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/configuration-versions/{config_version_id}"               = { integration = "workspaces", authorization_type = "NONE" }
   }
 
   product_routes = merge(

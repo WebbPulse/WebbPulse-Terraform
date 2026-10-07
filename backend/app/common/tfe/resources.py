@@ -208,3 +208,39 @@ def variable_resource(rendered: Mapping[str, Any]) -> dict[str, Any]:
         },
         relationships={"configurable": linkage("workspaces", workspace_id)},
     )
+
+
+CONFIG_ERROR_MESSAGES: Final[Mapping[str, str]] = {
+    "too_large": "The configuration upload is larger than the 250 MB limit, so it was discarded.",
+}
+"""Each stored `upload_error` and the message the CLI shows for it."""
+
+
+def configuration_version_resource(item: Mapping[str, Any], *, upload_url: str | None = None) -> dict[str, Any]:
+    """One stored config version as HCP's `configuration-versions` resource.
+
+    The row's two statuses are HCP's `pending` and `uploaded`; a row the reconcile
+    refused carries `upload_error` and renders `errored` with its message, which is
+    what stops the cloud backend's upload poll. `upload-url` is only on the create
+    answer, since the presigned PUT is never stored.
+    """
+    error = item.get("upload_error")
+    status = "errored" if error else str(item.get("status") or "pending")
+    attributes: dict[str, Any] = {
+        "auto-queue-runs": bool(item.get("auto_queue_runs", False)),
+        "error": str(error) if error else None,
+        "error-message": CONFIG_ERROR_MESSAGES.get(str(error), str(error)) if error else None,
+        "source": "github" if item.get("source") == "vcs" else "tfe-api",
+        "speculative": bool(item.get("speculative", False)),
+        "provisional": False,
+        "status": status,
+        "upload-url": upload_url,
+    }
+    config_version_id = str(item["config_version_id"])
+    return resource(
+        "configuration-versions",
+        config_version_id,
+        attributes,
+        relationships={"ingress-attributes": linkage("ingress-attributes", None)},
+        links={"self": f"/api/v2/configuration-versions/{config_version_id}"},
+    )
