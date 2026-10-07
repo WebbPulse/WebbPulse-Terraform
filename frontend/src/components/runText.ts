@@ -12,6 +12,11 @@ export function changeSummary(run: Run): string {
   return `+${String(add)} ~${String(change)} -${String(destroy)}`;
 }
 
+/** Whether a newer commit of the same pull request replaced this plan. */
+export function isSuperseded(run: Pick<Run, 'superseded_by'>): boolean {
+  return run.superseded_by !== undefined && run.superseded_by !== null;
+}
+
 /** The page a run opens on. */
 export function runPath(run: Pick<Run, 'run_id' | 'workspace_id'>): string {
   return `/workspaces/${run.workspace_id}/runs/${run.run_id}`;

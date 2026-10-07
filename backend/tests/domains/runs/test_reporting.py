@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -495,14 +496,18 @@ def test_an_unreadable_stream_record_is_dropped(settings):
 
 
 def test_the_stream_reports_queued_before_planning(pr_ready, settings):
-    """An insert read back as `planning` still shows queued first, from its own image."""
+    """An insert read back as `planning` still shows queued first on its check, from its own image.
+
+    The comment lists every run of the pull request from the table, so it shows the
+    newer state the table already holds.
+    """
     run = store_run(settings, "run-1", "ws-1", "pending", source="vcs_pr")
     set_status(settings, "run-1", "planning")
     planning = {**run, "status": "planning"}
     reports.handle_record(stream_record(run, event="INSERT"), settings=settings)
     [own] = pr_ready.named("webbpulse-terraform/network")
     assert own["status"] == "queued"
-    assert "Run queued" in pr_ready.comments[7][0]["body"]
+    assert "Planning" in pr_ready.comments[7][0]["body"]
 
     reports.handle_record(stream_record(planning, run), settings=settings)
     [own] = pr_ready.named("webbpulse-terraform/network")
@@ -520,6 +525,200 @@ def test_the_comment_and_aggregate_use_the_reported_state_not_a_lagging_index(pr
     assert "Planned and finished" in pr_ready.comments[7][0]["body"]
     [overall] = pr_ready.named("webbpulse-terraform")
     assert overall["conclusion"] == "success"
+
+
+SECOND_MERGE_SHA = "f" * 40
+
+
+def store_second(settings: Any, run_id: str, workspace_id: str, status: str, **fields: Any) -> dict[str, Any]:
+    """A pull request run on a second pushed commit, `OTHER_SHA`, merged as `SECOND_MERGE_SHA`."""
+    run = store_run(settings, run_id, workspace_id, status, source="vcs_pr", head_sha=OTHER_SHA, **fields)
+    vcs = dict(run["vcs"]) | {"sha": SECOND_MERGE_SHA}
+    set_status(settings, run_id, status, vcs=vcs)
+    return run | {"vcs": vcs}
+
+
+def push_second(github: FakeGitHub) -> None:
+    """The pull request moves on to `OTHER_SHA`, keeping `HEAD_SHA` as one of its commits."""
+    github.parents[SECOND_MERGE_SHA] = [BASE_SHA, OTHER_SHA]
+    github.pull_heads[7] = OTHER_SHA
+    github.pull_commits[7] = [HEAD_SHA, OTHER_SHA]
+
+
+def heading(body: str) -> str:
+    """The comment's heading line."""
+    return next(line for line in body.splitlines() if line.startswith("### "))
+
+
+def test_two_quick_pushes_keep_one_current_comment(pr_ready, settings):
+    """The first commit's runs finish after the second commit's comment exists.
+
+    The comment stays on the newer commit, the older commit's runs move into the
+    collapsed section and show finished there, and nothing settled shows queued
+    or planning.
+    """
+    bind(settings, "ws-2", "compute")
+    first = [
+        store_run(settings, "run-1", "ws-1", "pending", source="vcs_pr"),
+        store_run(settings, "run-2", "ws-2", "pending", source="vcs_pr"),
+    ]
+    for run in first:
+        reports.handle_record(stream_record(run, event="INSERT"), settings=settings)
+    [comment] = pr_ready.comments[7]
+    assert heading(comment["body"]) == f"### WebbPulse Terraform runs for {HEAD_SHA[:7]}"
+
+    push_second(pr_ready)
+    second = [
+        store_second(settings, "run-3", "ws-1", "pending"),
+        store_second(settings, "run-4", "ws-2", "pending"),
+    ]
+    for run in second:
+        reports.handle_record(stream_record(run, event="INSERT"), settings=settings)
+    [comment] = pr_ready.comments[7]
+    assert heading(comment["body"]) == f"### WebbPulse Terraform runs for {OTHER_SHA[:7]}"
+
+    for run in first:
+        set_status(settings, run["run_id"], "planned_and_finished", changes={"add": 1, "change": 0, "destroy": 0})
+        finished = {**run, "status": "planned_and_finished", "changes": {"add": 1, "change": 0, "destroy": 0}}
+        reports.handle_record(stream_record(finished, run), settings=settings)
+
+    [comment] = pr_ready.comments[7]
+    body = comment["body"]
+    assert heading(body) == f"### WebbPulse Terraform runs for {OTHER_SHA[:7]}"
+    current, earlier = body.split("<details>")
+    assert current.count("Run queued") == 2
+    assert "<summary>Earlier commits (1)</summary>" in earlier
+    assert f"#### {HEAD_SHA[:7]}" in earlier
+    assert earlier.count("Planned and finished") == 2
+    assert "Run queued" not in earlier and "Planning" not in earlier
+    assert [method for method, path in pr_ready.writes() if "/issues/" in path][0] == "POST"
+    assert [method for method, path in pr_ready.writes() if "/issues/" in path].count("POST") == 1
+
+
+def test_a_late_report_with_a_stale_image_never_regresses_the_comment(pr_ready, settings):
+    """A report carrying an older image than the table shows the table's newer state."""
+    run = store_run(settings, "run-1", "ws-1", "pending", source="vcs_pr")
+    set_status(settings, "run-1", "planned_and_finished", changes={"add": 0, "change": 0, "destroy": 0})
+    assert reporting.report_run("run-1", image=run, settings=settings) is True
+    body = pr_ready.comments[7][0]["body"]
+    assert "Planned and finished" in body
+    assert "Run queued" not in body
+
+
+def test_racing_duplicates_are_folded_into_the_oldest_comment(pr_ready, settings):
+    """Two marked comments left by an earlier race: the oldest is kept current, the other points at it."""
+    stale = f"{reporting.COMMENT_MARKER}\n### WebbPulse Terraform runs for {HEAD_SHA[:7]}\n\n| network | Planning |"
+    pr_ready.comments[7] = [
+        {"id": 10, "body": stale, "user": {"type": "Bot"}, "html_url": "https://github.com/c/10"},
+        {"id": 11, "body": stale, "user": {"type": "Bot"}, "html_url": "https://github.com/c/11"},
+    ]
+    store_run(settings, "run-1", "ws-1", "planned_and_finished", source="vcs_pr")
+    assert reporting.report_run("run-1", settings=settings) is True
+    kept, duplicate = pr_ready.comments[7]
+    assert "Planned and finished" in kept["body"]
+    assert duplicate["body"].startswith(reporting.COMMENT_MARKER)
+    assert "https://github.com/c/10" in duplicate["body"]
+    assert "Planning" not in duplicate["body"]
+    assert [method for method, path in pr_ready.writes() if "/issues/" in path] == ["PATCH", "PATCH"]
+
+
+def claim(settings: Any, claimed_at: int) -> None:
+    """A creation claim on pull request 7, as another report would leave it."""
+    repositories.runs(settings).put(
+        {"run_id": f"{reporting.COMMENT_CLAIM_PREFIX}{REPO.lower()}#7", "claimed_at": claimed_at}
+    )
+
+
+def test_a_report_that_loses_the_claim_edits_the_winners_comment(pr_ready, settings, monkeypatch):
+    """Only the claim holder posts; the other waits for its comment and brings it up to date."""
+    claim(settings, int(time.time()))
+
+    def winner_posts(seconds: float) -> None:
+        """The claim holder's comment appears while this report waits."""
+        if 7 not in pr_ready.comments:
+            body = f"{reporting.COMMENT_MARKER}\nold"
+            pr_ready.comments[7] = [{"id": 20, "body": body, "user": {"type": "Bot"}, "html_url": "https://x"}]
+
+    monkeypatch.setattr(reporting, "pause", winner_posts)
+    store_run(settings, "run-1", "ws-1", "planning", source="vcs_pr")
+    assert reporting.report_run("run-1", settings=settings) is True
+    [comment] = pr_ready.comments[7]
+    assert "Planning" in comment["body"]
+    assert [method for method, path in pr_ready.writes() if "/issues/" in path] == ["PATCH"]
+
+
+def test_a_report_that_loses_the_claim_and_sees_no_comment_posts_nothing(pr_ready, settings, monkeypatch):
+    """The claim holder's own report carries the run, so the loser gives up rather than posting a second."""
+    claim(settings, int(time.time()))
+    waits: list[float] = []
+    monkeypatch.setattr(reporting, "pause", waits.append)
+    store_run(settings, "run-1", "ws-1", "planning", source="vcs_pr")
+    assert reporting.report_run("run-1", settings=settings) is True
+    assert 7 not in pr_ready.comments or pr_ready.comments[7] == []
+    assert sum(waits) == reporting.COMMENT_WAIT_SECONDS
+
+
+def test_a_stale_claim_is_taken_over(pr_ready, settings):
+    """A claim whose report died before posting does not block the comment for good."""
+    claim(settings, int(time.time()) - reporting.COMMENT_CLAIM_SECONDS - 5)
+    store_run(settings, "run-1", "ws-1", "planning", source="vcs_pr")
+    assert reporting.report_run("run-1", settings=settings) is True
+    [comment] = pr_ready.comments[7]
+    assert "Planning" in comment["body"]
+
+
+def test_a_superseded_plan_is_marked_in_its_check_and_the_comment(pr_ready, settings):
+    """A plan a newer commit cancelled says so, and a finished one carries the newer commit."""
+    bind(settings, "ws-2", "compute")
+    push_second(pr_ready)
+    by = {"run_id": "run-3", "sha": OTHER_SHA}
+    store_run(settings, "run-1", "ws-1", "cancelled", source="vcs_pr", superseded_by=by)
+    store_run(
+        settings,
+        "run-2",
+        "ws-2",
+        "planned_and_finished",
+        source="vcs_pr",
+        superseded_by={"run_id": "run-4", "sha": OTHER_SHA},
+    )
+    store_second(settings, "run-3", "ws-1", "planning")
+    assert reporting.report_run("run-1", settings=settings) is True
+    [own] = pr_ready.named("webbpulse-terraform/network")
+    assert (own["head_sha"], own["conclusion"]) == (HEAD_SHA, "cancelled")
+    assert own["output"]["title"] == reporting.SUPERSEDED_TITLE
+    body = pr_ready.comments[7][0]["body"]
+    assert heading(body) == f"### WebbPulse Terraform runs for {OTHER_SHA[:7]}"
+    _, earlier = body.split("<details>")
+    assert earlier.count(f"(superseded by {OTHER_SHA[:7]})") == 2
+
+
+def test_the_stream_reports_a_run_newly_marked_superseded(pr_ready, settings):
+    """The mark leaves the status alone, but the comment has to show it."""
+    run = store_run(settings, "run-1", "ws-1", "planned_and_finished", source="vcs_pr")
+    marked = {**run, "superseded_by": {"run_id": "run-3", "sha": OTHER_SHA}}
+    assert reports.reportable_image(stream_record(marked, run)) is not None
+    assert reports.reportable_image(stream_record(marked, marked)) is None
+
+
+def test_earlier_commits_are_collapsed_newest_first_and_capped(settings):
+    """Each earlier commit gets its own table under one collapsed section, the oldest beyond the cap left out."""
+    runs = [
+        {
+            "run_id": f"run-{index:02d}",
+            "workspace_id": "ws-1",
+            "workspace_name": "network",
+            "status": "planned_and_finished",
+            "vcs": {"head_sha": f"{index:02d}" * 20},
+        }
+        for index in range(reporting.EARLIER_COMMITS_SHOWN + 3)
+    ]
+    head = runs[-1]["vcs"]["head_sha"]
+    body = reporting.comment_body(runs, reporting.head_commit(runs), settings)
+    assert heading(body) == f"### WebbPulse Terraform runs for {head[:7]}"
+    shown = re.findall(r"^#### (\w+)$", body, flags=re.MULTILINE)
+    assert shown == [(f"{index:02d}" * 20)[:7] for index in range(len(runs) - 2, 1, -1)]
+    assert f"Earlier commits ({len(runs) - 1})" in body
+    assert "2 older commits are not shown." in body
 
 
 def test_with_current_keeps_a_newer_sibling_and_adds_a_missing_run():

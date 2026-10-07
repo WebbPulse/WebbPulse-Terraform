@@ -12,6 +12,7 @@ import {
   StateBadge,
   Tabs,
   changeSummary,
+  isSuperseded,
   runPath,
   runTitle,
 } from '../../components';
@@ -20,9 +21,13 @@ import { useWorkspace } from '../workspaceContext';
 /** The filter tabs above the list. */
 type Filter = 'all' | RunGroup;
 
-/** The run shown on top: the one moving, or the newest when none is. */
+/**
+ * The run shown on top: the one moving, or the newest when none is. A plan a
+ * newer commit superseded is never the current run.
+ */
 function currentRun(runs: readonly Run[]): Run | null {
-  return runs.find((run) => isActive(run.status)) ?? runs[0] ?? null;
+  const live = runs.filter((run) => !isSuperseded(run));
+  return live.find((run) => isActive(run.status)) ?? live[0] ?? null;
 }
 
 /** The runs page. */

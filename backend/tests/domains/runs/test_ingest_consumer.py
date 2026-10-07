@@ -440,6 +440,86 @@ def test_a_pull_request_supersedes_only_its_own_number(settings, bind, state_mac
     assert runs_service.get_run(newer, settings=settings)["status"] == "pending"
 
 
+NEWER_HEAD = "9" * 40
+
+
+def test_a_newer_commit_cancels_and_marks_a_pull_request_plan_mid_plan(settings, bind, state_machine):
+    """HCP Terraform's behaviour: an outdated commit's plan still planning is cancelled and marked."""
+    bind()
+    older = deliver(upload(settings, pr_claims(6, run_id="1"), tarball()), settings)[0]
+    assert runs_service.get_run(older, settings=settings)["status"] == "planning"
+    newer = deliver(upload(settings, pr_claims(6, run_id="2", sha="f" * 40), tarball(), sha=NEWER_HEAD), settings)[0]
+    run = runs_service.get_run(older, settings=settings)
+    assert run["status"] == "cancelled"
+    assert run["superseded_by"] == {"run_id": newer, "sha": NEWER_HEAD}
+    assert runs_service.get_run(newer, settings=settings)["status"] in ("pending", "planning")
+    assert "superseded_by" not in runs_service.get_run(newer, settings=settings)
+
+
+def test_a_newer_commit_marks_a_finished_pull_request_plan_and_leaves_its_status(settings, bind, state_machine):
+    """A plan that already finished keeps its result and only gains the marker."""
+    bind()
+    older = deliver(upload(settings, pr_claims(6, run_id="1"), tarball()), settings)[0]
+    repositories.runs(settings).update(
+        {"run_id": older},
+        update_expression="SET #s = :s",
+        expression_names={"#s": "status"},
+        expression_values={":s": "planned_and_finished"},
+    )
+    newer = deliver(upload(settings, pr_claims(6, run_id="2", sha="f" * 40), tarball(), sha=NEWER_HEAD), settings)[0]
+    run = runs_service.get_run(older, settings=settings)
+    assert run["status"] == "planned_and_finished"
+    assert run["superseded_by"] == {"run_id": newer, "sha": NEWER_HEAD}
+
+
+def test_the_first_newer_commit_to_mark_a_plan_stands(settings, bind, state_machine):
+    """A third commit marks only the second commit's plan, not the first again."""
+    bind()
+    first = deliver(upload(settings, pr_claims(6, run_id="1"), tarball()), settings)[0]
+    second = deliver(upload(settings, pr_claims(6, run_id="2", sha="f" * 40), tarball(), sha=NEWER_HEAD), settings)[0]
+    third = deliver(upload(settings, pr_claims(6, run_id="3", sha="e" * 40), tarball(), sha="8" * 40), settings)[0]
+    assert runs_service.get_run(first, settings=settings)["superseded_by"]["run_id"] == second
+    assert runs_service.get_run(second, settings=settings)["superseded_by"]["run_id"] == third
+
+
+def test_one_workspace_never_supersedes_another(settings, bind, state_machine):
+    """A newer commit that runs on one workspace leaves the other workspace's plan running and unmarked."""
+    one = bind("one", working_directory="stacks/one")
+    two = bind("two", working_directory="stacks/two")
+    both = tarball("stacks/one/main.tf\nstacks/two/main.tf\n")
+    deliver(upload(settings, pr_claims(6, run_id="1"), both), settings)
+    [older_one] = runs_on(one, settings)
+    [older_two] = runs_on(two, settings)
+    [newer] = deliver(
+        upload(settings, pr_claims(6, run_id="2", sha="f" * 40), tarball("stacks/one/main.tf\n"), sha=NEWER_HEAD),
+        settings,
+    )
+    assert runs_service.get_run(newer, settings=settings)["workspace_id"] == one["workspace_id"]
+    marked = runs_service.get_run(older_one["run_id"], settings=settings)
+    assert (marked["status"], marked["superseded_by"]["run_id"]) == ("cancelled", newer)
+    untouched = runs_service.get_run(older_two["run_id"], settings=settings)
+    assert untouched["status"] == older_two["status"]
+    assert "superseded_by" not in untouched
+
+
+def test_push_runs_are_never_marked_superseded(settings, bind, state_machine):
+    """Tracked branch runs keep the push rules, and a pull request never touches them."""
+    bind()
+    push = deliver(upload(settings, claims(run_id="1"), tarball()), settings)[0]
+    repositories.runs(settings).update(
+        {"run_id": push},
+        update_expression="SET #s = :s",
+        expression_names={"#s": "status"},
+        expression_values={":s": "awaiting_confirmation"},
+    )
+    deliver(upload(settings, pr_claims(6, run_id="2"), tarball()), settings)
+    held = runs_service.get_run(push, settings=settings)
+    assert held["status"] == "awaiting_confirmation"
+    assert "superseded_by" not in held
+    deliver(upload(settings, claims(run_id="3", sha="d" * 40), tarball()), settings)
+    assert "superseded_by" not in runs_service.get_run(push, settings=settings)
+
+
 def test_a_push_does_not_supersede_an_api_run(settings, bind, auth_client, state_machine):
     """Only runs from the same source are replaced."""
     workspace = bind()

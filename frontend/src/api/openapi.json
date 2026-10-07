@@ -2776,6 +2776,16 @@
             "title": "Status",
             "type": "string"
           },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunSupersededBy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updated_at": {
             "anyOf": [
               {
@@ -3230,6 +3240,16 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunSupersededBy"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "updated_at": {
             "anyOf": [
@@ -3688,6 +3708,25 @@
           "role_name"
         ],
         "title": "RunRoleSetup",
+        "type": "object"
+      },
+      "RunSupersededBy": {
+        "description": "The newer run on the same pull request and workspace that replaced a plan only run.",
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "sha"
+        ],
+        "title": "RunSupersededBy",
         "type": "object"
       },
       "RunVcs": {

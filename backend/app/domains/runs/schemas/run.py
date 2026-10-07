@@ -67,6 +67,14 @@ class RunVcs(BaseModel):
     GitHub App when the run is first reported. `None` for a direct push."""
 
 
+class RunSupersededBy(BaseModel):
+    """The newer run on the same pull request and workspace that replaced a plan only run."""
+
+    run_id: str
+    sha: str
+    """The head commit of the newer run."""
+
+
 class RunActor(BaseModel):
     """Who triggered a run, snapshotted from the creating request's claims."""
 
@@ -179,6 +187,9 @@ class Run(BaseModel):
     """The commit a VCS run came from. `None` on an API run."""
     decision: Optional[RunDecision] = None
     """The confirmation or discard of the plan, `None` until someone decides."""
+    superseded_by: Optional[RunSupersededBy] = None
+    """For a pull request plan, the newer run a later commit of the same pull request
+    started on this workspace. `None` while this run is the newest."""
 
     model_config = ConfigDict(from_attributes=True)
 
