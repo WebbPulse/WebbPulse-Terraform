@@ -10,6 +10,7 @@ import { RunsPage } from './workspace/RunsPage';
 import { VariablesPage } from './workspace/VariablesPage';
 import { DeletionSettings } from './workspace/settings/DeletionSettings';
 import { GeneralSettings } from './workspace/settings/GeneralSettings';
+import { NotificationsSettings } from './workspace/settings/NotificationsSettings';
 import { RunRoleSettings } from './workspace/settings/RunRoleSettings';
 import { VersionControlSettings } from './workspace/settings/VersionControlSettings';
 
@@ -28,6 +29,10 @@ export function workspaceRoutes(): React.ReactElement {
       <Route
         path="settings/version-control"
         element={<VersionControlSettings />}
+      />
+      <Route
+        path="settings/notifications"
+        element={<NotificationsSettings />}
       />
       <Route path="settings/deletion" element={<DeletionSettings />} />
     </Route>
