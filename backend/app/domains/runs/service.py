@@ -85,6 +85,9 @@ AUTO_APPLY_ACTOR: Final = {"kind": "system", "id": "auto-apply", "display_name":
 AUTO_APPLY_EVENT: Final = "runs.run.auto_applied"
 """The log event an auto-apply confirmation is recorded under."""
 
+AUTO_APPLY_OVERRIDE_ATTRIBUTE: Final = "auto_apply_override"
+"""Set on a run whose creator chose `auto_apply` itself, so the workspace setting no longer decides."""
+
 AUTO_APPLY_SOURCES: Final = frozenset({"api", "vcs_push"})
 """The sources whose runs may auto-apply. A pull request plan and a Quick setup
 verification are plan only by nature and never apply."""
@@ -425,7 +428,7 @@ def create_run(
         "collection": RUNS_COLLECTION,
         "status": "pending",
         "plan_only": plan_only,
-        "auto_apply": bool(workspace.get("auto_apply", False))
+        "auto_apply": _requested_auto_apply(payload, workspace)
         and not plan_only
         and not role_check
         and source in AUTO_APPLY_SOURCES,
@@ -446,6 +449,8 @@ def create_run(
     item.update(run_options.stored(options, workspace_id=workspace_id, run_id=run_id, settings=resolved))
     if role_check:
         item["run_role_check"] = True
+    if not role_check and isinstance(payload.get("auto_apply"), bool):
+        item[AUTO_APPLY_OVERRIDE_ATTRIBUTE] = True
     if vcs is not None:
         item["vcs"] = {key: value for key, value in vcs.items() if value is not None}
     if actor is not None:
@@ -458,6 +463,19 @@ def create_run(
     if blocking is not None:
         return item
     return start_run(run_id, settings=resolved)
+
+
+def _requested_auto_apply(payload: Mapping[str, Any], workspace: Mapping[str, Any]) -> bool:
+    """Whether the run asks to apply on its own: the payload's own choice, else the workspace's.
+
+    The cloud block sends `auto-apply` with every run, true for `-auto-approve`, and
+    on HCP that choice overrides the workspace, so a prompted `terraform apply` on an
+    auto-apply workspace still waits for its answer.
+    """
+    requested = payload.get("auto_apply")
+    if isinstance(requested, bool):
+        return requested
+    return bool(workspace.get("auto_apply", False))
 
 
 def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
@@ -711,7 +729,8 @@ def auto_apply_eligible(run: Mapping[str, Any], *, settings: Settings | None = N
     pull request and role check runs, must still be one of those sources and not
     plan only, and must be waiting on a confirmation, which an errored plan never
     reaches. The workspace must still have auto-apply on, so turning it off stops a
-    run that is planning now from applying.
+    run that is planning now from applying, unless the run's creator chose
+    auto-apply itself, as `terraform apply -auto-approve` does.
     """
     if not bool(run.get("auto_apply", False)):
         return False
@@ -721,6 +740,8 @@ def auto_apply_eligible(run: Mapping[str, Any], *, settings: Settings | None = N
         return False
     if str(run.get("status", "")) not in CONFIRMABLE_STATUSES:
         return False
+    if bool(run.get(AUTO_APPLY_OVERRIDE_ATTRIBUTE, False)):
+        return True
     try:
         workspace = workspace_reads.get_workspace(str(run["workspace_id"]), settings=settings or get_settings())
     except workspace_reads.WorkspaceNotFound:

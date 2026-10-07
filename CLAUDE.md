@@ -474,6 +474,19 @@ carries `max_bytes` (250 MB) instead, and `GET /api/v2/configuration-versions/{i
 (`configs:read`), which the CLI polls, reconciles it: `uploaded` once the object lands, or
 `errored` with `upload_error` set and the object deleted when it is over the ceiling.
 
+Remote plans and applies are the runs function's `tfe_router` over the runs service
+(`runs/tfe_runs.py` renders them). `POST /api/v2/runs` (`runs:write`) is plan only on a
+speculative config version, maps `target-addrs`, `replace-addrs`, `refresh`, `refresh-only`
+and `variables` to the run options, refuses `save-plan`, and takes `auto-apply` (the CLI's
+`-auto-approve`, which needs `runs:apply`) as a per run override of the workspace setting.
+Plans and applies have no rows: `plan-<ulid>` and `apply-<ulid>` are derived from the run,
+and a plan reads `running` until the run holds its confirmation token, or the CLI would find
+nothing to confirm. `actions/apply` (`runs:apply`), `discard` and `cancel` call the service.
+Log URLs are absolute and bare, since go-tfe fetches them without a bearer: the path carries a
+12 hour HMAC keyed by `derive_key("tfe-log-read")`, and the body is STX, the CloudWatch lines
+(the S3 transcript once the phase is over) and ETX once done, windowed by `offset` and
+`limit`. Apply logs start with three filler lines because the CLI skips three.
+
 `wp-tf login` is the agent path, with no long-lived key. It runs the OAuth device
 grant from the identity package (`device_grant_enabled`, client `wp-tf`) at
 `<api>/api/auth/device/*`: the approval page sends a signed-out or stale (over ten

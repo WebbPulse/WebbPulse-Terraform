@@ -117,6 +117,22 @@ locals {
     "GET /api/v2/state-version-outputs/{output_id}"                        = { integration = "workspaces", authorization_type = "NONE" }
   }
 
+  tfe_runs_routes = contains(keys(local.lambda_domains), "runs") ? {
+    "POST /api/v2/runs"                                   = { integration = "runs", authorization_type = "NONE" }
+    "GET /api/v2/runs/{run_id}"                           = { integration = "runs", authorization_type = "NONE" }
+    "GET /api/v2/runs/{run_id}/run-events"                = { integration = "runs", authorization_type = "NONE" }
+    "POST /api/v2/runs/{run_id}/actions/apply"            = { integration = "runs", authorization_type = "NONE" }
+    "POST /api/v2/runs/{run_id}/actions/discard"          = { integration = "runs", authorization_type = "NONE" }
+    "POST /api/v2/runs/{run_id}/actions/cancel"           = { integration = "runs", authorization_type = "NONE" }
+    "GET /api/v2/workspaces/{workspace_id}/runs"          = { integration = "runs", authorization_type = "NONE" }
+    "GET /api/v2/plans/{plan_id}"                         = { integration = "runs", authorization_type = "NONE" }
+    "GET /api/v2/plans/{plan_id}/logs/{token}"            = { integration = "runs", authorization_type = "NONE" }
+    "GET /api/v2/applies/{apply_id}"                      = { integration = "runs", authorization_type = "NONE" }
+    "GET /api/v2/applies/{apply_id}/logs/{token}"         = { integration = "runs", authorization_type = "NONE" }
+    "GET /api/v2/organizations/{organization}/runs/queue" = { integration = "runs", authorization_type = "NONE" }
+    "GET /api/v2/organizations/{organization}/capacity"   = { integration = "runs", authorization_type = "NONE" }
+  } : {}
+
   product_routes = merge(
     { for key, route in local.workspaces_routes : key => merge(route, { require_identity_jwt = true }) },
     {
@@ -133,6 +149,7 @@ locals {
     },
     local.terraform_login_routes,
     local.tfe_routes,
+    local.tfe_runs_routes,
   )
 
   auth_anonymous_routes = {

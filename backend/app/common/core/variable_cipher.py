@@ -65,6 +65,24 @@ def cipher(settings: Settings | None = None) -> SecretMasterKeyCipher:
     return SecretMasterKeyCipher(_master_key(resolved))
 
 
+def derive_key(purpose: str, settings: Settings | None = None) -> bytes:
+    """A 32 byte key for one named purpose, derived by HKDF-SHA256 from the master key.
+
+    For a MAC rather than a seal, such as the signed `tfe.v2` log URLs. The purpose is
+    the HKDF info, so no derived key equals another or any sealing key.
+
+    Raises:
+        MasterKeyUnavailable: No usable master key is configured.
+    """
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    master = _master_key(settings or get_settings())
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=f"webbpulse-terraform/{purpose}".encode()).derive(
+        master
+    )
+
+
 def _context_subject(workspace_id: str, key: str) -> str:
     """The `user_id` half of the encryption context, here a workspace and a key.
 
@@ -109,6 +127,7 @@ __all__ = [
     "EnvelopeDecryptionFailed",
     "MasterKeyUnavailable",
     "cipher",
+    "derive_key",
     "open_sealed",
     "seal",
 ]
