@@ -109,6 +109,12 @@ locals {
     "POST /api/v2/workspaces/{workspace_id}/actions/lock"                  = { integration = "workspaces", authorization_type = "NONE" }
     "POST /api/v2/workspaces/{workspace_id}/actions/unlock"                = { integration = "workspaces", authorization_type = "NONE" }
     "POST /api/v2/workspaces/{workspace_id}/actions/force-unlock"          = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/workspaces/{workspace_id}/current-state-version"          = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/workspaces/{workspace_id}/current-state-version-outputs"  = { integration = "workspaces", authorization_type = "NONE" }
+    "POST /api/v2/workspaces/{workspace_id}/state-versions"                = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/state-versions/{state_version_id}"                        = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/state-versions/{state_version_id}/download"               = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/state-version-outputs/{output_id}"                        = { integration = "workspaces", authorization_type = "NONE" }
   }
 
   product_routes = merge(
