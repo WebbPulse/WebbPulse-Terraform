@@ -93,17 +93,18 @@ describe('ProjectDetail', () => {
   it('filters the project workspaces by name', async () => {
     renderProject();
 
-    await screen.findByRole('link', { name: 'cmp-prod' });
+    await screen.findByLabelText('Filter workspaces by name');
+    const list = screen.getByRole('region', { name: 'Workspaces' });
     await userEvent.type(
       screen.getByLabelText('Filter workspaces by name'),
       'stag'
     );
 
     expect(
-      screen.queryByRole('link', { name: 'cmp-prod' })
+      within(list).queryByRole('link', { name: 'cmp-prod' })
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: 'cmp-staging' })
+      within(list).getByRole('link', { name: 'cmp-staging' })
     ).toBeInTheDocument();
   });
 
