@@ -87,9 +87,7 @@ def _seal(value: str, *, purpose: str, workspace_id: str, notification_id: str, 
     return sealed.as_item()
 
 
-def _open(
-    stored: Any, *, purpose: str, workspace_id: str, notification_id: str, settings: Settings
-) -> str:
+def _open(stored: Any, *, purpose: str, workspace_id: str, notification_id: str, settings: Settings) -> str:
     """Open one sealed secret, raising `EnvelopeDecryptionFailed` when it does not authenticate."""
     sealed = SealedSecret.from_item(stored) if isinstance(stored, Mapping) else None
     if sealed is None:

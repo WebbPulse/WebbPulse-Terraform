@@ -239,9 +239,7 @@ def verify_notification_configuration(
             detail="Too many test deliveries for this configuration. Try again in a minute.",
             headers={"Retry-After": str(max(1, int(decision.reset_after)))},
         )
-    return store.render({**configuration, "last_delivery": delivery.verify(configuration, workspace)})[
-        "last_delivery"
-    ]
+    return store.render({**configuration, "last_delivery": delivery.verify(configuration, workspace)})["last_delivery"]
 
 
 __all__ = ["router"]

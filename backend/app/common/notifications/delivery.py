@@ -123,9 +123,7 @@ def run_notification(
     )
 
 
-def verification_notification(
-    configuration: Mapping[str, Any], workspace: Mapping[str, Any]
-) -> payloads.Notification:
+def verification_notification(configuration: Mapping[str, Any], workspace: Mapping[str, Any]) -> payloads.Notification:
     """The test delivery HCP's verify action sends: no run, trigger `verification`."""
     return payloads.Notification(
         configuration_id=str(configuration["notification_id"]),

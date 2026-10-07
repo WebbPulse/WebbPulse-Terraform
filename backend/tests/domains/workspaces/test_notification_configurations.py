@@ -214,9 +214,7 @@ def test_the_per_workspace_limit_is_409(auth_client, workspace, monkeypatch):
     monkeypatch.setattr(store, "MAX_CONFIGURATIONS_PER_WORKSPACE", 1)
     _create(auth_client, workspace)
 
-    response = auth_client.post(
-        _path(workspace), json={"name": "y", "destination_type": "slack", "url": SLACK_URL}
-    )
+    response = auth_client.post(_path(workspace), json={"name": "y", "destination_type": "slack", "url": SLACK_URL})
 
     assert response.status_code == 409
 
@@ -226,9 +224,7 @@ def test_reading_needs_only_read_scope_and_changing_needs_write(scoped_client, a
     _create(auth_client, workspace)
     with scoped_client("workspaces:read") as reader:
         assert reader.get(_path(workspace)).status_code == 200
-        refused = reader.post(
-            _path(workspace), json={"name": "x", "destination_type": "slack", "url": SLACK_URL}
-        )
+        refused = reader.post(_path(workspace), json={"name": "x", "destination_type": "slack", "url": SLACK_URL})
     assert refused.status_code == 403
 
 
