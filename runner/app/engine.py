@@ -237,11 +237,15 @@ class EngineRunner:
         exit_code, _ = self.run(["init", "-input=false"], extra_environment=extra_environment)
         return exit_code
 
-    def plan(self, *, destroy: bool = False) -> int:
-        """Produce a plan file, a destroy plan when `destroy`, returning the detailed exit code."""
+    def plan(self, *, destroy: bool = False, options: Sequence[str] = ()) -> int:
+        """Produce a plan file, a destroy plan when `destroy`, returning the detailed exit code.
+
+        `options` are the run's own plan flags, from `plan_options`.
+        """
         arguments = ["plan", "-input=false", "-lock-timeout=120s", f"-out={PLAN_FILE}", "-detailed-exitcode"]
         if destroy:
             arguments.append("-destroy")
+        arguments.extend(options)
         exit_code, _ = self.run(arguments)
         return exit_code
 
@@ -257,6 +261,30 @@ class EngineRunner:
     def output_json(self) -> tuple[int, str]:
         """Read the root module outputs as JSON, captured rather than logged."""
         return self.run(["output", "-json"], capture=True)
+
+
+def plan_options(
+    *,
+    target_addrs: Sequence[str] = (),
+    replace_addrs: Sequence[str] = (),
+    refresh: bool = True,
+    refresh_only: bool = False,
+    var_file: str | None = None,
+) -> list[str]:
+    """The plan flags a run asked for, as the cloud backend passes them to an HCP run.
+
+    Each address is one argument, so nothing in it is ever split or read by a shell.
+    """
+    options: list[str] = []
+    if refresh_only:
+        options.append("-refresh-only")
+    if not refresh:
+        options.append("-refresh=false")
+    options.extend(f"-target={address}" for address in target_addrs)
+    options.extend(f"-replace={address}" for address in replace_addrs)
+    if var_file:
+        options.append(f"-var-file={var_file}")
+    return options
 
 
 TASK_CREDENTIAL_KEYS: frozenset[str] = frozenset(

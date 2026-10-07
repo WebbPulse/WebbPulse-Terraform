@@ -32,8 +32,8 @@ from ...common.core.auth import (
 )
 from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
-from ...common.workspaces import run_role_check
-from . import hcl, quick_setup, service, state_versions
+from ...common.workspaces import hcl, run_role_check
+from . import quick_setup, service, state_versions
 from .schemas.workspace import (
     ConfigVersionCreate,
     ConfigVersionDetail,

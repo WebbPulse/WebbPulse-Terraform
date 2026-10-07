@@ -42,7 +42,7 @@ from ...common.db.tables import (
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
-from . import api_credentials, registry_credentials, vending
+from . import api_credentials, registry_credentials, run_options, vending
 from .schemas.run import Phase
 
 _log = logging.getLogger(__name__)
@@ -392,13 +392,15 @@ def create_run(
         PendingRunRoleMissing: A run role check on a workspace with no staged role.
         ConfigVersionNotFound: No such config version on that workspace.
         ConfigVersionNotReady: The tarball was never uploaded.
+        InvalidRunOptions: A target, replacement, refresh flag or run variable is malformed.
     """
     resolved = settings or get_settings()
     workspace_id = str(payload["workspace_id"])
     config_version_id = str(payload["config_version_id"])
 
-    workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
     role_check = bool(payload.get("run_role_check", False))
+    options = {} if role_check else run_options.parse(payload)
+    workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
     role_arn = str(workspace.get("pending_run_role_arn" if role_check else "run_role_arn", "") or "")
     if not role_arn and role_check:
         raise PendingRunRoleMissing(workspace_id)
@@ -441,6 +443,7 @@ def create_run(
     )
     if plan_role_arn:
         item["plan_role_arn"] = plan_role_arn
+    item.update(run_options.stored(options, workspace_id=workspace_id, run_id=run_id, settings=resolved))
     if role_check:
         item["run_role_check"] = True
     if vcs is not None:
@@ -1562,6 +1565,7 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         "aws_credentials": provider.as_dict(),
         "backend_credentials": state.as_dict(),
         "workload_identity": identity,
+        **run_options.bundle_fields(run, settings=resolved),
     }
 
 
@@ -1857,6 +1861,7 @@ def render_run(item: dict[str, Any]) -> dict[str, Any]:
         "run_token_hash",
         registry_credentials.HASH_ATTRIBUTE,
         api_credentials.HASH_ATTRIBUTE,
+        run_options.SEALED_ATTRIBUTE,
         "collection",
     }
     return {field: value for field, value in item.items() if field not in hidden}

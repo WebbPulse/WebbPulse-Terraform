@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domains.workspaces import hcl
+from app.common.workspaces import hcl
 
 VALID: list[str] = [
     "1",
