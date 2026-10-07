@@ -1565,7 +1565,6 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         "aws_credentials": provider.as_dict(),
         "backend_credentials": state.as_dict(),
         "workload_identity": identity,
-        **run_options.bundle_fields(run, settings=resolved),
     }
 
 
@@ -1681,6 +1680,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "registry": registry_credentials.issue(run, settings=resolved),
         "api": api_credentials.issue(run, workspace, settings=resolved),
         "workload_identity": identity,
+        **run_options.bundle_fields(run, settings=resolved),
     }
 
 
