@@ -112,6 +112,15 @@ export type ConfigVersionStatus = Schemas['ConfigVersion']['status'];
 /** A configuration version as the API returns it. */
 export type ConfigVersion = Schemas['ConfigVersion'];
 
+/** The commit a VCS configuration version was ingested from. */
+export type ConfigVersionVcs = Schemas['ConfigVersionVcs'];
+
+/** The README a configuration version carries for its working directory. */
+export type ConfigReadme = Schemas['ConfigReadme'];
+
+/** One configuration version with its README, as the single read returns it. */
+export type ConfigVersionDetail = Schemas['ConfigVersionDetail'];
+
 /** The body that creates a configuration version. */
 export type ConfigVersionCreate = Schemas['ConfigVersionCreate'];
 

@@ -586,6 +586,18 @@ class ConfigVersionCreate(BaseModel):
     `Content-Length` and S3 enforces at the header."""
 
 
+class ConfigVersionVcs(BaseModel):
+    """The commit a VCS config version was ingested from."""
+
+    repo: str
+    """The repository's `owner/name` on GitHub."""
+    sha: str
+    """The commit the tarball holds: a push's commit, or a pull request's merge commit."""
+    branch: Optional[str] = None
+    pr_number: Optional[int] = None
+    """Set when the config version came from a pull request, so it ran plan only."""
+
+
 class ConfigVersion(BaseModel):
     """A stored config version."""
 
@@ -594,8 +606,26 @@ class ConfigVersion(BaseModel):
     key: str
     status: Literal["pending", "uploaded"]
     size_bytes: int
+    source: Literal["api", "vcs"] = "api"
+    vcs: Optional[ConfigVersionVcs] = None
     created_at: str
     updated_at: Optional[str] = None
+
+
+class ConfigReadme(BaseModel):
+    """The README a config version carries for its workspace's working directory."""
+
+    path: str
+    """Where the file sits in the tarball, which for a VCS upload is the repository."""
+    content: str
+    """The Markdown source, cut on a line break when the file was too long to store."""
+    truncated: bool = False
+
+
+class ConfigVersionDetail(ConfigVersion):
+    """One config version with its README, which only the single read returns."""
+
+    readme: Optional[ConfigReadme] = None
 
 
 class ConfigVersionUpload(BaseModel):

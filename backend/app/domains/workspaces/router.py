@@ -35,8 +35,8 @@ from ...common.core.variable_cipher import MasterKeyUnavailable
 from ...common.workspaces import run_role_check
 from . import hcl, quick_setup, service, state_versions
 from .schemas.workspace import (
-    ConfigVersion,
     ConfigVersionCreate,
+    ConfigVersionDetail,
     ConfigVersionList,
     ConfigVersionUpload,
     RunRoleCheck,
@@ -623,16 +623,16 @@ def list_config_versions(workspace_id: str = WorkspaceId) -> dict[str, Any]:
 
 @router.get(
     "/workspaces/{workspace_id}/config-versions/{config_version_id}",
-    response_model=ConfigVersion,
+    response_model=ConfigVersionDetail,
     dependencies=[Depends(scopes(CONFIGS_READ))],
 )
 def get_config_version(
     workspace_id: str = WorkspaceId,
     config_version_id: str = ConfigVersionId,
 ) -> dict[str, Any]:
-    """One config version by id."""
+    """One config version by id, with the README its workspace's overview shows."""
     try:
-        return service.get_config_version(workspace_id, config_version_id)
+        return service.get_config_version_detail(workspace_id, config_version_id)
     except service.ConfigVersionNotFound as error:
         raise _not_found("No such config version.") from error
 

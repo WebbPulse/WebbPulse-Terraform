@@ -21,8 +21,8 @@ import type {
   ApiKeyCreate,
   ApiKeyCreated,
   ApiKeyList,
-  ConfigVersion,
   ConfigVersionCreate,
+  ConfigVersionDetail,
   ConfigVersionList,
   ConfigVersionUpload,
   GitHubAppStatus,
@@ -386,13 +386,13 @@ export class TerraformApi {
     return response.data;
   }
 
-  /** Reads one configuration version. */
+  /** Reads one configuration version, with the README the overview shows. */
   async getConfigVersion(
     workspaceId: string,
     configVersionId: string,
     options: RequestOptions = {}
-  ): Promise<ConfigVersion> {
-    const response = await this.client.get<ConfigVersion>(
+  ): Promise<ConfigVersionDetail> {
+    const response = await this.client.get<ConfigVersionDetail>(
       `/workspaces/${encodeURIComponent(workspaceId)}/config-versions/${encodeURIComponent(configVersionId)}`,
       options
     );

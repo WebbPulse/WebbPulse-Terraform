@@ -1325,7 +1325,7 @@ export interface paths {
         };
         /**
          * Get Config Version
-         * @description One config version by id.
+         * @description One config version by id, with the README its workspace's overview shows.
          */
         get: operations["get_config_version_api_v1_workspaces__workspace_id__config_versions__config_version_id__get"];
         put?: never;
@@ -1775,6 +1775,21 @@ export interface components {
             region: string;
         };
         /**
+         * ConfigReadme
+         * @description The README a config version carries for its workspace's working directory.
+         */
+        ConfigReadme: {
+            /** Content */
+            content: string;
+            /** Path */
+            path: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated?: boolean;
+        };
+        /**
          * ConfigVersion
          * @description A stored config version.
          */
@@ -1788,12 +1803,19 @@ export interface components {
             /** Size Bytes */
             size_bytes: number;
             /**
+             * Source
+             * @default api
+             * @enum {string}
+             */
+            source?: "api" | "vcs";
+            /**
              * Status
              * @enum {string}
              */
             status: "pending" | "uploaded";
             /** Updated At */
             updated_at?: string | null;
+            vcs?: components["schemas"]["ConfigVersionVcs"] | null;
             /** Workspace Id */
             workspace_id: string;
         };
@@ -1807,6 +1829,37 @@ export interface components {
              * @default 50000000
              */
             size_bytes?: number;
+        };
+        /**
+         * ConfigVersionDetail
+         * @description One config version with its README, which only the single read returns.
+         */
+        ConfigVersionDetail: {
+            /** Config Version Id */
+            config_version_id: string;
+            /** Created At */
+            created_at: string;
+            /** Key */
+            key: string;
+            readme?: components["schemas"]["ConfigReadme"] | null;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Source
+             * @default api
+             * @enum {string}
+             */
+            source?: "api" | "vcs";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "uploaded";
+            /** Updated At */
+            updated_at?: string | null;
+            vcs?: components["schemas"]["ConfigVersionVcs"] | null;
+            /** Workspace Id */
+            workspace_id: string;
         };
         /**
          * ConfigVersionList
@@ -1833,6 +1886,20 @@ export interface components {
             };
             /** Upload Url */
             upload_url: string;
+        };
+        /**
+         * ConfigVersionVcs
+         * @description The commit a VCS config version was ingested from.
+         */
+        ConfigVersionVcs: {
+            /** Branch */
+            branch?: string | null;
+            /** Pr Number */
+            pr_number?: number | null;
+            /** Repo */
+            repo: string;
+            /** Sha */
+            sha: string;
         };
         /**
          * ErrorResponse
@@ -6207,7 +6274,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConfigVersion"];
+                    "application/json": components["schemas"]["ConfigVersionDetail"];
                 };
             };
             /** @description Request validation failed. */
