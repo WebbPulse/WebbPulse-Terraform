@@ -1305,7 +1305,7 @@ def _plan_action(actions: list[Any]) -> str:
     normalised = [str(action) for action in actions]
     if tuple(normalised) in _REPLACE_ACTIONS:
         return "replace"
-    if len(normalised) == 1 and normalised[0] in {"create", "update", "delete", "read", "no-op"}:
+    if len(normalised) == 1 and normalised[0] in {"create", "update", "delete", "read", "forget", "no-op"}:
         return normalised[0]
     return "no-op"
 
@@ -1347,6 +1347,8 @@ def _resource_change(raw: dict[str, Any]) -> dict[str, Any]:
         "replace_paths": list(change.get("replace_paths") or []),
         "before_sensitive": before_sensitive,
         "after_sensitive": after_sensitive,
+        "importing": isinstance(change.get("importing"), dict),
+        "previous_address": str(raw.get("previous_address") or ""),
     }
 
 
@@ -1365,6 +1367,15 @@ def _output_change(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         "after_unknown": bool(raw.get("after_unknown", False)),
         "sensitive": sensitive,
     }
+
+
+def _is_unchanged(entry: dict[str, Any]) -> bool:
+    """Whether a projected entry does nothing at all, so a large plan may drop it.
+
+    An import or a move arrives as a `no-op` action but still changes what the
+    state tracks, so it is never dropped.
+    """
+    return entry["action"] == "no-op" and not entry["importing"] and not entry["previous_address"]
 
 
 def summarise_plan(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
@@ -1389,8 +1400,11 @@ def summarise_plan(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
             add += 1
             destroy += 1
 
+    unchanged_omitted = 0
     if len(resource_changes) > NO_OP_KEPT_BELOW:
-        resource_changes = [entry for entry in resource_changes if entry["action"] != "no-op"]
+        kept = [entry for entry in resource_changes if not _is_unchanged(entry)]
+        unchanged_omitted = len(resource_changes) - len(kept)
+        resource_changes = kept
 
     raw_outputs = plan.get("output_changes") or {}
     output_changes = [_output_change(str(name), raw) for name, raw in raw_outputs.items() if isinstance(raw, dict)]
@@ -1403,6 +1417,7 @@ def summarise_plan(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
         "resource_changes": resource_changes,
         "output_changes": output_changes,
         "has_changes": bool(add or change or destroy or changed_outputs),
+        "unchanged_omitted": unchanged_omitted,
     }
 
 

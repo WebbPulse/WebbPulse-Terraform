@@ -56,11 +56,34 @@ export function planHasChanges(plan: RunPlan): boolean {
   return plan.has_changes === true;
 }
 
+/**
+ * Whether a resource entry changes anything.
+ *
+ * An import or a move arrives as a `no-op` action, yet it changes what the state
+ * tracks, so it counts as a change as Terraform's own plan output lists it.
+ */
+export function isResourceChanged(entry: PlanResourceChange): boolean {
+  return (
+    entry.action !== 'no-op' ||
+    entry.importing === true ||
+    (entry.previous_address ?? '') !== ''
+  );
+}
+
 /** The entries a plan actually changes, dropping the unchanged ones. */
 export function changedResources(plan: RunPlan): PlanResourceChange[] {
-  return (plan.resource_changes ?? []).filter(
-    (entry) => entry.action !== 'no-op'
-  );
+  return (plan.resource_changes ?? []).filter(isResourceChanged);
+}
+
+/**
+ * How many resources the plan leaves untouched, counting those a large plan
+ * left out of the payload.
+ */
+export function unchangedResourceCount(plan: RunPlan): number {
+  const listed = (plan.resource_changes ?? []).filter(
+    (entry) => !isResourceChanged(entry)
+  ).length;
+  return listed + (plan.unchanged_omitted ?? 0);
 }
 
 /** The outputs a plan actually changes, dropping the unchanged ones. */
@@ -77,6 +100,7 @@ const ACTION_LABELS: Record<PlanAction, string> = {
   delete: 'Destroy',
   replace: 'Replace',
   read: 'Read',
+  forget: 'Forget',
   'no-op': 'No changes',
 };
 
@@ -92,6 +116,7 @@ const ACTION_SYMBOLS: Record<PlanAction, string> = {
   delete: '-',
   replace: '-/+',
   read: '<=',
+  forget: '.',
   'no-op': '',
 };
 

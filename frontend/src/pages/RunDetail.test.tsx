@@ -15,10 +15,13 @@ import {
 } from '../test-helpers/apiMock';
 import type { Run, RunState } from '../api';
 
+import type * as RunPlanModule from '../api/runPlan';
+
 vi.mock('../api/client', () => apiClientModuleMock());
 
 const fetchRunPlan = vi.fn();
-vi.mock('../api/runPlan', () => ({
+vi.mock('../api/runPlan', async (importOriginal) => ({
+  ...(await importOriginal<typeof RunPlanModule>()),
   fetchRunPlan: (...args: unknown[]) =>
     (fetchRunPlan as (...a: unknown[]) => unknown)(...args),
 }));

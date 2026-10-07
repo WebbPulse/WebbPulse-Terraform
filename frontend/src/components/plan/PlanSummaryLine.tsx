@@ -1,6 +1,6 @@
 /** The counted sentence above a plan's resource list. */
 
-import type { RunPlan } from '../../api/runPlan';
+import type { PlanResourceChange, RunPlan } from '../../api/runPlan';
 
 /** Props for {@link PlanSummaryLine}. */
 export interface PlanSummaryLineProps {
@@ -8,11 +8,12 @@ export interface PlanSummaryLineProps {
   className?: string;
 }
 
-/** How many resources the plan replaces, which the counts fold into change. */
-function replaceCount(plan: PlanSummaryLineProps['plan']): number {
-  return (plan.resource_changes ?? []).filter(
-    (change) => change.action === 'replace'
-  ).length;
+/** How many listed resources match `predicate`. */
+function countWhere(
+  plan: PlanSummaryLineProps['plan'],
+  predicate: (change: PlanResourceChange) => boolean
+): number {
+  return (plan.resource_changes ?? []).filter(predicate).length;
 }
 
 /**
@@ -20,13 +21,22 @@ function replaceCount(plan: PlanSummaryLineProps['plan']): number {
  *
  * Replacements are counted separately beside the three the engine reports,
  * because a replacement destroys and recreates and reading it as a change
- * understates what the apply will do.
+ * understates what the apply will do. Imports, moves and forgets are counted
+ * when present, as Terraform's own summary does, since they change the state
+ * without adding, changing or destroying anything.
  */
 export function PlanSummaryLine({
   plan,
   className = '',
 }: PlanSummaryLineProps): React.ReactElement {
-  if (!plan.has_changes) {
+  const replaces = countWhere(plan, (change) => change.action === 'replace');
+  const imports = countWhere(plan, (change) => change.importing === true);
+  const moves = countWhere(
+    plan,
+    (change) => (change.previous_address ?? '') !== ''
+  );
+  const forgets = countWhere(plan, (change) => change.action === 'forget');
+  if (!plan.has_changes && imports + moves + forgets === 0) {
     return (
       <p
         data-testid="plan-summary-line"
@@ -36,7 +46,6 @@ export function PlanSummaryLine({
       </p>
     );
   }
-  const replaces = replaceCount(plan);
   return (
     <p
       data-testid="plan-summary-line"
@@ -59,6 +68,30 @@ export function PlanSummaryLine({
           word="to replace"
           className="text-replace"
           testId="plan-replace-count"
+        />
+      )}
+      {imports === 0 ? null : (
+        <Count
+          value={imports}
+          word="to import"
+          className="text-read"
+          testId="plan-import-count"
+        />
+      )}
+      {moves === 0 ? null : (
+        <Count
+          value={moves}
+          word="to move"
+          className="text-read"
+          testId="plan-move-count"
+        />
+      )}
+      {forgets === 0 ? null : (
+        <Count
+          value={forgets}
+          word="to forget"
+          className="text-text-strong"
+          testId="plan-forget-count"
         />
       )}
     </p>

@@ -2336,7 +2336,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "create" | "update" | "delete" | "replace" | "read" | "no-op";
+            action: "create" | "update" | "delete" | "replace" | "read" | "forget" | "no-op";
             /** After */
             after?: unknown;
             /**
@@ -2370,7 +2370,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "create" | "update" | "delete" | "replace" | "read" | "no-op";
+            action: "create" | "update" | "delete" | "replace" | "read" | "forget" | "no-op";
             /**
              * Action Reason
              * @default
@@ -2395,6 +2395,11 @@ export interface components {
                 [key: string]: unknown;
             } | boolean | null;
             /**
+             * Importing
+             * @default false
+             */
+            importing?: boolean;
+            /**
              * Mode
              * @enum {string}
              */
@@ -2406,6 +2411,11 @@ export interface components {
             module_address?: string;
             /** Name */
             name: string;
+            /**
+             * Previous Address
+             * @default
+             */
+            previous_address?: string;
             /**
              * Provider Name
              * @default
@@ -2896,6 +2906,11 @@ export interface components {
              * @default
              */
             terraform_version?: string;
+            /**
+             * Unchanged Omitted
+             * @default 0
+             */
+            unchanged_omitted?: number;
         };
         /**
          * RunPullRequest
