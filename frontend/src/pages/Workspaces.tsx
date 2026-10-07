@@ -153,7 +153,7 @@ function WorkspaceListing({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
           <NameSearch value={search} onChange={onSearch} />
           <SortSelect value={sort} onChange={onSort} />
           <SegmentedControl

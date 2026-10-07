@@ -130,7 +130,7 @@ export function Projects(): React.ReactElement {
             <Table label="Projects">
               <thead>
                 <tr>
-                  <Th>Project</Th>
+                  <Th className="w-1/3">Project</Th>
                   <Th>Workspaces and their latest runs</Th>
                 </tr>
               </thead>
@@ -161,7 +161,7 @@ function ProjectRow({
 }): React.ReactElement {
   return (
     <Tr>
-      <Td className="align-top">
+      <Td className="w-1/3 align-top">
         <Link
           to={`/projects/${project.project_id}`}
           className="font-medium text-text-strong hover:text-accent hover:underline"
@@ -174,7 +174,7 @@ function ProjectRow({
             : `${String(project.workspace_count ?? 0)} workspaces`}
         </p>
         {(project.description ?? '') === '' ? null : (
-          <p className="max-w-xs truncate text-xs text-text-faint">
+          <p className="line-clamp-2 text-xs text-text-faint">
             {project.description}
           </p>
         )}

@@ -125,8 +125,7 @@ def list_projects(*, settings: Settings | None = None) -> list[dict[str, Any]]:
     )
     counts = _workspace_counts(resolved)
     return [
-        render_project(item, workspace_count=counts[str(item["project_id"])])
-        for item in (_default_project(), *stored)
+        render_project(item, workspace_count=counts[str(item["project_id"])]) for item in (_default_project(), *stored)
     ]
 
 
