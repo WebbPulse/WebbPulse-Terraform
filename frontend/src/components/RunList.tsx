@@ -42,7 +42,9 @@ export function RunList({
     return <EmptyState title="No runs yet." hint={emptyHint} />;
   }
   const supersededCount = runs.filter(isSuperseded).length;
-  const shown = showSuperseded ? runs : runs.filter((run) => !isSuperseded(run));
+  const shown = showSuperseded
+    ? runs
+    : runs.filter((run) => !isSuperseded(run));
   return (
     <div className="space-y-2">
       {supersededCount === 0 ? null : (

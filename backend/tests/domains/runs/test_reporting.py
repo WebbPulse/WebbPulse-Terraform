@@ -635,7 +635,7 @@ def test_a_report_that_loses_the_claim_edits_the_winners_comment(pr_ready, setti
 
     def winner_posts(seconds: float) -> None:
         """The claim holder's comment appears while this report waits."""
-        if 7 not in pr_ready.comments:
+        if not pr_ready.comments.get(7):
             body = f"{reporting.COMMENT_MARKER}\nold"
             pr_ready.comments[7] = [{"id": 20, "body": body, "user": {"type": "Bot"}, "html_url": "https://x"}]
 
