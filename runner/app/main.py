@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Callable, cast
 import boto3
 import httpx
 
-from app import cli_config, engine, identity, install, isolation, workspace
+from app import engine, identity, install, isolation, workspace
 from app.api import ApiError, RunnerApi, build_client
 from app.credential_files import CredentialFiles
 from app.heartbeat import Heartbeat
@@ -320,12 +320,6 @@ def _run_phase(
     credentials.write(bundle.aws_credentials, bundle.backend.credentials)
     identity_files = WorkloadIdentityFiles(directory / "identity", group=group)
     identity_files.write(bundle.workload_identity)
-    try:
-        cli_environment = cli_config.write(
-            directory / "cli", bundle.registry.module_hosts if bundle.registry else {}, group
-        )
-    except cli_config.CliConfigError as error:
-        raise PhaseFailure("CliConfigInvalid", str(error)) from error
     environment = engine.build_environment(
         dict(os.environ),
         bundle.environment_variables,
@@ -357,7 +351,7 @@ def _run_phase(
             engine_directory,
             environment,
             user,
-            init_environment={**bundle.init_environment(), **cli_environment},
+            init_environment=bundle.init_environment(),
         )
 
 
