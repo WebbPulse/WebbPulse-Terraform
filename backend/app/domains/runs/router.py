@@ -22,10 +22,10 @@ from ...common.core.auth import (
     RUNS_READ,
     RUNS_WRITE,
     RunnerRoute,
+    apply_gate,
     claims,
     require_run_token,
     scopes,
-    sudo,
     unauthenticated,
 )
 from ...common.workspaces import reads as workspace_reads
@@ -205,14 +205,14 @@ def get_run(run_id: str = RunId) -> dict[str, Any]:
 @router.post(
     "/runs/{run_id}/confirm",
     response_model=Run,
-    dependencies=[Depends(sudo(RUNS_APPLY))],
+    dependencies=[Depends(apply_gate(RUNS_APPLY))],
 )
 def confirm_run(
     run_id: str = RunId,
     payload: Optional[RunDecisionRequest] = Body(default=None),
     current: AuthorizerClaims = Depends(claims),
 ) -> dict[str, Any]:
-    """Apply a planned run. Needs `runs:apply`, not `runs:write`, and a person's recent login.
+    """Apply a planned run. Needs `runs:apply`, not `runs:write`, and a recent login in a browser.
 
     The body is optional; its comment is kept on the run with the confirming actor.
     """

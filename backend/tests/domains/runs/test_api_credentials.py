@@ -193,3 +193,15 @@ def test_an_unreadable_gate_header_is_left_out(missing_gate, granted, runner_cli
     api = _bundle(runner_client, granted["run_id"])["api"]
     assert api["token"].startswith("wpk_")
     assert api["origin_verify"] is None
+
+
+def test_the_widest_grant_still_cannot_apply(app, auth_client, api_origin, created_run, runner_client):
+    """No grant reaches `runs:apply`, so a run's token can never confirm its own apply."""
+    from app.common.core.auth import RUN_API_TOKEN_SCOPES
+
+    _grant(auth_client, created_run, list(RUN_API_TOKEN_SCOPES))
+    run_id = created_run["run_id"]
+    token = _bundle(runner_client, run_id)["api"]["token"]
+
+    with _as(app, token) as client:
+        assert client.post(f"{BASE}/{run_id}/confirm").status_code == 403

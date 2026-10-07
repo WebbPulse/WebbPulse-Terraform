@@ -161,7 +161,7 @@ resource "aws_lambda_function" "oidc_issuer" {
 }
 
 module "oidc_certificate" {
-  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/acm-certificate"
+  source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/acm-certificate"
   version = "~> 2.33"
 
   providers = {
@@ -179,7 +179,7 @@ module "oidc_certificate" {
 module "oidc_api" {
   count = local.oidc_issuer_count
 
-  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/http-api"
+  source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/http-api"
   version = "~> 2.33"
 
   name        = "${local.prefix}-oidc"

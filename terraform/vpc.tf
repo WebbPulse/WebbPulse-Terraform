@@ -1,5 +1,5 @@
 module "vpc" {
-  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/vpc-public"
+  source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/vpc-public"
   version = "~> 2.33"
 
   name         = "${local.prefix}-runner"

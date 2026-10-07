@@ -176,7 +176,7 @@ def test_wp_tf_plans_with_the_login_key(
     api: Any,
     tmp_path: Path,
 ) -> None:
-    """`wp-tf plan` reads the key `terraform login` stored, streams a plan-only run, and cannot confirm it.
+    """`wp-tf plan` reads the key `terraform login` stored and streams a plan-only run, which has nothing to confirm.
 
     The key is written to a throwaway `credentials.tfrc.json` under a temporary HOME, the
     way `terraform login` leaves it, so the CLI is exercised exactly as a workstation runs
@@ -232,4 +232,4 @@ def test_wp_tf_plans_with_the_login_key(
         headers={"Authorization": f"Bearer {token}", **gate_headers},
         timeout=TIMEOUT_SECONDS,
     )
-    assert confirm.status_code == 403, f"a login key confirming a run answered {confirm.status_code}"
+    assert confirm.status_code == 409, f"a login key confirming a plan-only run answered {confirm.status_code}"

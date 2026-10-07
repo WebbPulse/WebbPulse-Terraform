@@ -50,7 +50,7 @@ locals {
 }
 
 module "identity" {
-  source  = "app.terraform.io/WebbPulse/platform-modules/aws//modules/identity"
+  source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/identity"
   version = "~> 2.33"
 
   name_prefix        = local.prefix

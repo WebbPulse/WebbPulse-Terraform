@@ -12,16 +12,21 @@ terraform init -backend=false      # module and provider download, no state
 terraform validate
 ```
 
-Runs happen in HCP Terraform, never locally: workspace `ws-xVqd4ioXLARZhGd4`
-on branch `staging` and `ws-u8uD1PZ54bphMXFU` on `main`, working directory
-`terraform`, auto-apply off. AWS credentials come from the workspace's dynamic
-provider credentials, so a local `terraform plan` has no way to authenticate.
+Runs happen on the plane itself: workspace `ws-01M3KGVRSDRW9741ADKER2B7YG`
+(`WebbPulse-Terraform-staging`) on branch `staging`, auto-apply on, and
+`ws-01M3KGVX29VCFSR9NSPKB0ST6Q` (`WebbPulse-Terraform`) on `main`, applies held
+for confirmation, working directory `terraform`. The runner writes the S3
+backend and vends the run role, so a plain local `terraform plan` has no
+backend or credentials.
+
+If the plane cannot run its own fix, `ops/break-glass/break_glass.py` plans and
+applies this root locally against the same state object (see Break-glass).
 
 ## Layout
 
 | File | What it holds |
 | --- | --- |
-| `versions.tf` | Terraform and provider constraints, the `cloud {}` block |
+| `versions.tf` | Terraform and provider constraints |
 | `providers.tf` | The default provider, `us_east_1` for the CloudFront cert, `dns` and `parent_dns` assume-role aliases |
 | `variables.tf`, `locals.tf`, `data.tf` | Inputs, the derived names, the caller identity |
 | `dynamodb.tf` | The tables: workspaces, runs, variables, config-versions, users, github, registry, and vcs-uploads, whose ingest records expire through TTL |
@@ -70,7 +75,7 @@ it.
 | 2 | `sha-<head sha>` | The two functions, their integrations, routes and permissions, the runs SQS event source and the identity role policies |
 | after | unchanged | `deploy-backend` owns the image. Each push deploys by digest through `UpdateFunctionCode` |
 
-Set `bootstrap_image_tag` by hand as a workspace variable on the HCP workspace,
+Set `bootstrap_image_tag` by hand as a workspace variable on the plane workspace,
 not through the factory. It must be `sha-` followed by a full 40 character
 commit sha, which is the tag the image build pushes.
 
@@ -159,3 +164,30 @@ Everything else takes its default or comes from `env/<environment>.tfvars`.
 | `adopt_spans_log_group` | `false` until the first span is written, then `true`; see Transaction Search |
 | `e2e_run_role_workspace_ids` | Staging only, in `env/staging.tfvars`: durable workspace ids the e2e run role trusts besides the suite's `e2e-` named workspaces |
 | `example_workspace_id` | The `ws-` id of the example workspace. Non-empty creates the example run role for the first end to end run; empty, the default, creates nothing. See `examples/first-run/README.md` |
+
+## Break-glass
+
+The plane applies its own infrastructure, so a bad apply can take down the
+thing that would apply the fix. `ops/break-glass/break_glass.py` runs this root
+from a checkout against the plane's S3 state key for the workspace, with no
+call to the plane's API or registry:
+
+```bash
+granted sso login   # WebbPulse-Terraform-*, WebbPulse-Management AdministratorAccess
+python3 ops/break-glass/break_glass.py plan staging --engine-bin /path/to/terraform
+python3 ops/break-glass/break_glass.py apply production --engine-bin /path/to/terraform
+```
+
+- The engine must be exactly the version in the state; the script refuses
+  otherwise. Verify a downloaded binary against `runner/versions.env`'s key.
+- State is read as `WebbPulse-Terraform-Production/AdministratorAccess`,
+  providers run as the environment's AdministratorAccess profile, and the
+  `dns`/`parent_dns` aliases as `WebbPulse-Management/AdministratorAccess`,
+  because the Route 53 roles trust only the plane's run role.
+- Variables come from the plane's variables table; a workspace with a
+  sensitive variable is refused. Platform-modules come from GitHub at the
+  newest v2 tag.
+- `plan` uses `-lock=false` and writes nothing. `apply` takes the S3 lock,
+  saves a plan and applies it only after `yes`. Expected noise: the zip
+  Lambdas (`oidc_issuer`, the gate's `login`) show `source_code_hash` changes
+  because the archive is rebuilt locally.

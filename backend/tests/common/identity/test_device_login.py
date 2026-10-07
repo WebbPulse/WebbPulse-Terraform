@@ -23,7 +23,7 @@ from app.common.core import auth
 from app.common.core.auth import ALL_SCOPES
 from app.common.db.identity_tables import identity_table_prefix
 from app.common.identity.package_glue import build_identity_settings, consent_theme
-from tests.conftest import seed_user
+from tests.conftest import person_headers, seed_user
 
 USER_ID = "user-device"
 GRANT_ID = "grant-1"
@@ -69,7 +69,7 @@ def put_grant(*, revoked: bool = False, expires_in: int = 3600) -> None:
     )
 
 
-def device_headers(*, sid: str = GRANT_ID) -> dict[str, str]:
+def device_headers(*, sid: str = GRANT_ID, auth_age: int = 0) -> dict[str, str]:
     """The request context a device login token produces behind the gateway authorizer."""
     claims = {
         "sub": USER_ID,
@@ -77,7 +77,7 @@ def device_headers(*, sid: str = GRANT_ID) -> dict[str, str]:
         "roles": "[]",
         "grant": "device",
         "sid": sid,
-        "auth_time": str(int(time.time())),
+        "auth_time": str(int(time.time()) - auth_age),
     }
     return {REQUEST_CONTEXT_HEADER: json.dumps({"authorizer": {"jwt": {"claims": claims}}})}
 
@@ -148,7 +148,7 @@ def test_device_login_facts_come_from_code_not_the_environment(
     assert identity.device_grant_enabled
     assert identity.device_clients == {"wp-tf": "wp-tf CLI"}
     assert identity.device_scopes_supported == list(ALL_SCOPES)
-    assert identity.device_explicit_scopes == ["runs:apply", "state:download", "admin"]
+    assert identity.device_explicit_scopes == ["state:download", "admin"]
     assert identity.device_login_url == "https://terraform.example.test/sign-in"
     assert identity.device_audience == ""
     assert identity.webauthn_origins == ["https://terraform.example.test"]
@@ -181,3 +181,63 @@ def test_the_device_routes_mount_and_start_a_login(monkeypatch: pytest.MonkeyPat
     assert body["user_code"]
     assert body["verification_uri"].endswith("/api/auth/device")
     assert refused.status_code >= 400
+
+
+WP_TF_STANDARD_SCOPES = (
+    "workspaces:read",
+    "workspaces:write",
+    "variables:read",
+    "variables:write",
+    "configs:read",
+    "configs:write",
+    "runs:read",
+    "runs:write",
+    "runs:apply",
+    "registry:read",
+    "registry:write",
+)
+"""`STANDARD_SCOPES` in `webbpulse.tf.cli`, which `wp-tf login --add-scope` builds on."""
+
+
+def test_a_default_device_login_gets_the_wp_tf_standard_scopes(
+    monkeypatch: pytest.MonkeyPatch, identity_environment: None
+) -> None:
+    del identity_environment
+    for key, value in DEVICE_ENVIRONMENT.items():
+        monkeypatch.setenv(key, value)
+    settings_module.reset_settings_cache()
+    identity = build_identity_settings(settings_module.get_settings())
+    settings_module.reset_settings_cache()
+    explicit = set(identity.device_explicit_scopes)
+    default = [scope for scope in identity.device_scopes_supported if scope not in explicit]
+    assert sorted(default) == sorted(WP_TF_STANDARD_SCOPES)
+
+
+def test_a_device_session_applies_on_an_old_login(device_enabled: None, app, awaiting_confirmation) -> None:
+    """The device approval was the step-up, so an hour later the session still confirms."""
+    seed_user(USER_ID)
+    put_grant()
+    run_id = awaiting_confirmation["run_id"]
+    with TestClient(app) as client:
+        response = client.post(f"/api/v1/runs/{run_id}/confirm", headers=device_headers(auth_age=3600))
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"]["actor"]["id"] == USER_ID
+
+
+def test_a_browser_session_on_an_old_login_steps_up_to_apply(app, awaiting_confirmation) -> None:
+    """A browser session is not a device login, so the step-up still guards its apply."""
+    seed_user(USER_ID)
+    run_id = awaiting_confirmation["run_id"]
+    with TestClient(app, headers=person_headers(user_id=USER_ID, auth_age=3600)) as client:
+        response = client.post(f"/api/v1/runs/{run_id}/confirm")
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "STEP_UP_REQUIRED"
+
+
+def test_a_revoked_device_session_cannot_apply(device_enabled: None, app, awaiting_confirmation) -> None:
+    seed_user(USER_ID)
+    put_grant(revoked=True)
+    run_id = awaiting_confirmation["run_id"]
+    with TestClient(app) as client:
+        response = client.post(f"/api/v1/runs/{run_id}/confirm", headers=device_headers())
+    assert response.status_code == 401
