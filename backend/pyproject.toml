@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-e2e = ["webbpulse[e2e,tf]>=0.71.1"]
+e2e = ["webbpulse[e2e,tf]>=0.72.0"]
 dev = [
   "webbpulse[testing]>=0.62.0",
   "moto[dynamodb,s3,secretsmanager,stepfunctions,logs]>=5.2.3",

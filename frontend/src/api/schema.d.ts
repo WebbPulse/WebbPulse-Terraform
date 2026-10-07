@@ -1028,7 +1028,7 @@ export interface paths {
         put?: never;
         /**
          * Confirm Run
-         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`, and a person's recent login.
+         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`, and a recent login in a browser.
          *
          *     The body is optional; its comment is kept on the run with the confirming actor.
          */

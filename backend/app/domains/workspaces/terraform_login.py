@@ -39,6 +39,7 @@ from ...common.core.auth import (
     CONFIGS_WRITE,
     REGISTRY_READ,
     RUN_TOKEN_TENANT,
+    RUNS_APPLY,
     RUNS_READ,
     RUNS_WRITE,
     VARIABLES_READ,
@@ -80,13 +81,14 @@ LOGIN_SCOPES: Final = (
     CONFIGS_WRITE,
     RUNS_READ,
     RUNS_WRITE,
+    RUNS_APPLY,
     REGISTRY_READ,
 )
-"""What a login key may carry: reading, the registry, and starting runs.
+"""What a login key may carry: reading, the registry, starting runs and applying them.
 
-Never `runs:apply`, `state:download` or an admin or write scope beyond starting a
-run, which stay behind an explicitly minted key, so a token sitting in a CLI
-credentials file can plan but not change infrastructure or read raw state.
+Applying from the CLI is ordinary, as it is with an HCP user token, so `runs:apply` is
+included and the person's own scopes still limit it. Never `state:download` or an admin
+or write scope beyond runs, which stay behind an explicitly minted key.
 """
 
 
