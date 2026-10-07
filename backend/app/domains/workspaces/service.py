@@ -10,6 +10,7 @@ query is what makes the ordinary case a clean 409.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Final
 
 from boto3.dynamodb.conditions import Attr, Key
@@ -29,6 +30,7 @@ from ...common.runs.workspace_runs import (
     workspace_run_ids,
 )
 from ...common.workspaces import aws_connect, cleanup, reads
+from ...common.workspaces import readme as config_readme
 from ...common.workspaces import vcs as workspace_vcs
 from ...common.workspaces.reads import (
     CONFIG_VERSION_ID_PREFIX,
@@ -47,6 +49,8 @@ from ...common.workspaces.reads import (
 from . import hcl, state_versions, vcs_connect
 from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
 from .vcs_connect import RepositoryNotInstalled
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "CONFIG_VERSION_ID_PREFIX",
@@ -604,6 +608,52 @@ def get_config_version(
         persist=_uploaded_writer(resolved) if persist else None,
         settings=resolved,
     )
+
+
+def get_config_version_detail(
+    workspace_id: str,
+    config_version_id: str,
+    *,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """One config version with its README, reading the README once if nothing has.
+
+    A VCS config version gets its README at ingest. An API upload has no ingest
+    step, since nothing tells the control plane when its PUT lands, so the first
+    view of an uploaded one streams the tarball and stores the result on the row,
+    found or not. Every later view reads the row alone. A tarball that cannot be
+    read, expired say, is reported as no README and not marked, so nothing is
+    stored that a later read could not confirm.
+    """
+    resolved = settings or get_settings()
+    item = get_config_version(workspace_id, config_version_id, settings=resolved)
+    if item.get("readme_scanned") or str(item.get("status")) != "uploaded":
+        return item
+    workspace = get_workspace(workspace_id, settings=resolved)
+    try:
+        found = config_readme.read_config_readme(
+            resolved.ARTIFACTS_BUCKET,
+            str(item["key"]),
+            str(workspace.get("working_directory", "") or ""),
+            settings=resolved,
+        )
+    except Exception:  # noqa: BLE001
+        _log.warning(
+            "Could not read the README from a config tarball.",
+            extra={"event": "workspaces.config_readme.failed", "config_version_id": config_version_id},
+        )
+        return item
+    fields = config_readme.readme_fields(found)
+    names = {f"#f{index}": name for index, name in enumerate(fields)}
+    values = {f":f{index}": value for index, value in enumerate(fields.values())}
+    repositories.config_versions(resolved).update(
+        {"config_version_id": config_version_id},
+        update_expression="SET " + ", ".join(f"#f{index} = :f{index}" for index in range(len(fields))),
+        expression_names=names,
+        expression_values=values,
+        condition=Attr("config_version_id").exists(),
+    )
+    return {**item, **fields}
 
 
 def list_config_versions(

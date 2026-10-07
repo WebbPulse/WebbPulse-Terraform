@@ -579,6 +579,30 @@
         "title": "BackendConfig",
         "type": "object"
       },
+      "ConfigReadme": {
+        "description": "The README a config version carries for its workspace's working directory.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "title": "ConfigReadme",
+        "type": "object"
+      },
       "ConfigVersion": {
         "description": "A stored config version.",
         "properties": {
@@ -598,6 +622,15 @@
             "title": "Size Bytes",
             "type": "integer"
           },
+          "source": {
+            "default": "api",
+            "enum": [
+              "api",
+              "vcs"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
           "status": {
             "enum": [
               "pending",
@@ -616,6 +649,16 @@
               }
             ],
             "title": "Updated At"
+          },
+          "vcs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigVersionVcs"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "workspace_id": {
             "title": "Workspace Id",
@@ -645,6 +688,89 @@
           }
         },
         "title": "ConfigVersionCreate",
+        "type": "object"
+      },
+      "ConfigVersionDetail": {
+        "description": "One config version with its README, which only the single read returns.",
+        "properties": {
+          "config_version_id": {
+            "title": "Config Version Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "readme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigReadme"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "source": {
+            "default": "api",
+            "enum": [
+              "api",
+              "vcs"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "uploaded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "vcs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigVersionVcs"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "config_version_id",
+          "workspace_id",
+          "key",
+          "status",
+          "size_bytes",
+          "created_at"
+        ],
+        "title": "ConfigVersionDetail",
         "type": "object"
       },
       "ConfigVersionList": {
@@ -693,6 +819,47 @@
           "expires_in"
         ],
         "title": "ConfigVersionUpload",
+        "type": "object"
+      },
+      "ConfigVersionVcs": {
+        "description": "The commit a VCS config version was ingested from.",
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "sha"
+        ],
+        "title": "ConfigVersionVcs",
         "type": "object"
       },
       "ErrorResponse": {
@@ -8018,7 +8185,7 @@
     },
     "/api/v1/workspaces/{workspace_id}/config-versions/{config_version_id}": {
       "get": {
-        "description": "One config version by id.",
+        "description": "One config version by id, with the README its workspace's overview shows.",
         "operationId": "get_config_version_api_v1_workspaces__workspace_id__config_versions__config_version_id__get",
         "parameters": [
           {
@@ -8051,7 +8218,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConfigVersion"
+                  "$ref": "#/components/schemas/ConfigVersionDetail"
                 }
               }
             },

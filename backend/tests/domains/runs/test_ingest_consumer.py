@@ -525,3 +525,46 @@ def test_the_default_trigger_pattern():
     assert ingest.trigger_patterns({"working_directory": "./stacks/app/"}) == ["stacks/app/**"]
     assert ingest.trigger_patterns({"working_directory": ""}) == ["**"]
     assert ingest.trigger_patterns({"trigger_patterns": ["x/*"], "working_directory": "y"}) == ["x/*"]
+
+
+def test_the_config_version_carries_the_readme_and_the_commit(settings, bind, state_machine):
+    """The README is read once at ingest, so the overview never opens the tarball."""
+    bind("app", working_directory="stacks/app")
+    data = tarball("stacks/app/main.tf\n", {"README.md": "# Root\n", "stacks/app/README.md": "# App\n"})
+    [run_id] = deliver(upload(settings, claims(), data), settings)
+    run = runs_service.get_run(run_id, settings=settings)
+    row = repositories.config_versions(settings).get({"config_version_id": run["config_version_id"]}) or {}
+    assert row["readme_scanned"] is True
+    assert row["readme"]["path"] == "stacks/app/README.md"
+    assert row["readme"]["content"] == "# App\n"
+    assert row["vcs"]["repo"] == REPO
+    assert row["vcs"]["sha"] == HEAD_SHA
+    assert row["vcs"]["branch"] == "main"
+    assert row["vcs"]["pr_number"] is None
+
+
+def test_a_pull_request_config_version_records_its_number(settings, bind, state_machine):
+    """A speculative config version is marked so the overview can pass over it."""
+    bind()
+    [run_id] = deliver(upload(settings, pr_claims(), tarball()), settings)
+    run = runs_service.get_run(run_id, settings=settings)
+    row = repositories.config_versions(settings).get({"config_version_id": run["config_version_id"]}) or {}
+    assert row["vcs"]["pr_number"] == run["vcs"]["pr_number"]
+    assert row["readme_scanned"] is True
+    assert "readme" not in row
+
+
+def test_a_readme_read_failure_does_not_hold_up_the_run(settings, bind, state_machine, monkeypatch):
+    """The README is best effort: the run starts and the row is left for a later read."""
+    from app.common.workspaces import readme
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(readme, "read_config_readme", fail)
+    bind()
+    [run_id] = deliver(upload(settings, claims(), tarball()), settings)
+    run = runs_service.get_run(run_id, settings=settings)
+    row = repositories.config_versions(settings).get({"config_version_id": run["config_version_id"]}) or {}
+    assert row["status"] == "uploaded"
+    assert "readme_scanned" not in row

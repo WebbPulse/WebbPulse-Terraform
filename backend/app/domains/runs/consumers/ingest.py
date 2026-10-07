@@ -37,6 +37,7 @@ from webbpulse.dynamodb import ConditionFailed
 from ....common.composition.settings import Settings, get_settings
 from ....common.db import repositories
 from ....common.db.tables import RUNS_BY_WORKSPACE_INDEX
+from ....common.workspaces import readme as workspace_readme
 from ....common.workspaces import reads as workspace_reads
 from ....common.workspaces import vcs as workspace_vcs
 from .. import reporting, service
@@ -210,8 +211,27 @@ def _skip(workspace: Mapping[str, Any], reason: str) -> dict[str, str]:
     }
 
 
+def _readme(upload: Mapping[str, Any], working_directory: str, *, settings: Settings) -> dict[str, Any]:
+    """The README row attributes for this upload, read once at ingest.
+
+    Best effort: a README that cannot be read is left for the workspaces function to
+    read on first view, so it never holds up a run.
+    """
+    try:
+        found = workspace_readme.read_config_readme(
+            settings.ARTIFACTS_BUCKET, str(upload["key"]), working_directory, settings=settings
+        )
+    except Exception:  # noqa: BLE001
+        _log.warning(
+            "Could not read the README from an ingested tarball.",
+            extra={"event": "runs.ingest.readme_failed", "upload_id": upload.get("upload_id")},
+        )
+        return {}
+    return workspace_readme.readme_fields(found)
+
+
 def _ensure_config_version(
-    workspace_id: str,
+    workspace: Mapping[str, Any],
     config_version_id: str,
     upload: Mapping[str, Any],
     *,
@@ -220,8 +240,11 @@ def _ensure_config_version(
     """Copy the tarball to the workspace's config key and record it `uploaded`.
 
     The row is written after the copy, so an `uploaded` row always has its object,
-    and an existing row means both are already done.
+    and an existing row means both are already done. The row also carries the
+    commit it came from and the README for the workspace's working directory, so
+    the overview shows it without reopening the tarball or calling GitHub.
     """
+    workspace_id = str(workspace["workspace_id"])
     table = repositories.config_versions(settings)
     if table.get({"config_version_id": config_version_id}, consistent=True):
         return
@@ -242,6 +265,13 @@ def _ensure_config_version(
         "source": "vcs",
         "upload_id": str(upload["upload_id"]),
         "created_at": str(upload["created_at"]),
+        "vcs": {
+            "repo": str(upload["repo"]),
+            "sha": str(upload["sha"]),
+            "branch": upload.get("branch") or None,
+            "pr_number": int(upload["pr_number"]) if upload.get("pr_number") else None,
+        },
+        **_readme(upload, str(workspace.get("working_directory", "") or ""), settings=settings),
     }
     try:
         table.put(item, condition=Attr("config_version_id").not_exists())
@@ -328,7 +358,7 @@ def _run_for_workspace(
         _resume(run_id, settings=settings)
         return run_id
 
-    _ensure_config_version(workspace_id, config_version_id, upload, settings=settings)
+    _ensure_config_version(workspace, config_version_id, upload, settings=settings)
     if not _supersede(workspace_id, run_id, source, upload, settings=settings):
         _log.info(
             "Skipped an upload a newer one already superseded.",

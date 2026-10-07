@@ -23,6 +23,7 @@ export {
   shortRunId,
 } from './format';
 export { Layout, Mark } from './Layout';
+export { Markdown, type MarkdownProps, type UrlResolver } from './Markdown';
 export { PageHeader, type Crumb, type PageHeaderProps } from './PageHeader';
 export {
   actionGlyph,

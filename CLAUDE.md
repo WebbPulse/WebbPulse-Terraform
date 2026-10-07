@@ -475,7 +475,11 @@ against `.webbpulse/changed-paths.txt` (empty patterns mean
 filter. It copies the tarball to a config version and creates a run sourced `vcs_push` (normal) or
 `vcs_pr` (plan only) with a `vcs` block and a `vcs` actor. The config version and
 run ids are derived from the upload and the workspace, so a redelivered message or
-a second S3 event for the same object creates nothing new. A newer upload from the
+a second S3 event for the same object creates nothing new. The config version row
+also keeps the commit (`vcs`) and the README for the workspace's working directory,
+falling back to the root (`app/common/workspaces/readme.py`, 64 KB, `readme_scanned`);
+an API upload's README is read once on its first `GET .../config-versions/{id}`, so the
+overview reads a row and never the tarball or GitHub. A newer upload from the
 same source cancels that source's pending runs and discards one awaiting
 confirmation; a late older upload starts nothing. A workspace with no run role is
 skipped.

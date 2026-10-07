@@ -247,3 +247,97 @@ def test_reconcile_without_persist_leaves_an_absent_object_pending(auth_client, 
 
     assert reconciled["status"] == "pending"
     assert _stored_status(version["config_version_id"]) == "pending"
+
+
+def _put_tarball(key: str, files: dict[str, str]) -> None:
+    """Land a gzipped tarball holding `files` at `key`."""
+    import io
+    import tarfile
+
+    import boto3
+
+    from tests.conftest import ARTIFACTS_BUCKET, REGION
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, body in files.items():
+            data = body.encode()
+            info = tarfile.TarInfo(f"./{name}")
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    boto3.client("s3", region_name=REGION).put_object(
+        Bucket=ARTIFACTS_BUCKET, Key=key, Body=buffer.getvalue(), ContentType="application/gzip"
+    )
+
+
+def _stored(config_version_id: str) -> dict:
+    """The raw config version row."""
+    from app.common.db import repositories
+
+    return (
+        repositories.config_versions(workspaces_service.get_settings()).get({"config_version_id": config_version_id})
+        or {}
+    )
+
+
+def test_get_reads_an_uploaded_versions_readme_once(auth_client, workspace, monkeypatch):
+    """An API upload's README is read on its first view and stored on the row."""
+    from app.common.workspaces import readme
+
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    _put_tarball(version["key"], {"main.tf": "", "README.md": "# Network\n"})
+
+    body = auth_client.get(configs_url(workspace_id, version["config_version_id"])).json()
+    assert body["readme"] == {"path": "README.md", "content": "# Network\n", "truncated": False}
+    assert body["source"] == "api"
+    assert body["vcs"] is None
+    assert _stored(version["config_version_id"])["readme_scanned"] is True
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("the tarball was streamed again")
+
+    monkeypatch.setattr(readme, "read_config_readme", refuse)
+    again = auth_client.get(configs_url(workspace_id, version["config_version_id"])).json()
+    assert again["readme"]["content"] == "# Network\n"
+
+
+def test_get_follows_the_working_directory(auth_client, workspace):
+    """The README beside the workspace's working directory wins over the root's."""
+    workspace_id = workspace["workspace_id"]
+    auth_client.patch(f"{BASE}/{workspace_id}", json={"working_directory": "stacks/app"})
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    _put_tarball(version["key"], {"README.md": "# Root\n", "stacks/app/README.md": "# App\n"})
+
+    body = auth_client.get(configs_url(workspace_id, version["config_version_id"])).json()
+    assert body["readme"]["path"] == "stacks/app/README.md"
+
+
+def test_get_with_no_readme_marks_the_scan(auth_client, workspace):
+    """A tarball with no README answers null and is not streamed on the next view."""
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    _put_tarball(version["key"], {"main.tf": ""})
+
+    body = auth_client.get(configs_url(workspace_id, version["config_version_id"])).json()
+    assert body["readme"] is None
+    assert _stored(version["config_version_id"])["readme_scanned"] is True
+
+
+def test_get_leaves_an_unreadable_tarball_unmarked(auth_client, workspace, uploaded_config_version):
+    """A tarball that is not in the bucket is no README, and nothing is stored."""
+    response = auth_client.get(configs_url(workspace["workspace_id"], uploaded_config_version["config_version_id"]))
+    assert response.status_code == 200, response.text
+    assert response.json()["readme"] is None
+    assert "readme_scanned" not in _stored(uploaded_config_version["config_version_id"])
+
+
+def test_the_list_carries_no_readme(auth_client, workspace):
+    """READMEs travel only on the single read, so the list stays small."""
+    workspace_id = workspace["workspace_id"]
+    version = auth_client.post(configs_url(workspace_id), json={"size_bytes": 1024}).json()["config_version"]
+    _put_tarball(version["key"], {"README.md": "# Network\n"})
+    auth_client.get(configs_url(workspace_id, version["config_version_id"]))
+
+    [item] = auth_client.get(configs_url(workspace_id)).json()["items"]
+    assert "readme" not in item

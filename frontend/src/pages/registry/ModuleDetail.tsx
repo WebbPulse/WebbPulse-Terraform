@@ -42,8 +42,8 @@ import {
   Tr,
   formatBytes,
   useIsAdmin,
+  Markdown,
 } from '../../components';
-import { Markdown } from './Markdown';
 import {
   InputsTable,
   OutputsTable,
