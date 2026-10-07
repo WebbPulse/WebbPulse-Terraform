@@ -17,6 +17,7 @@ USERS: Final = "users"
 GITHUB: Final = "github"
 VCS_UPLOADS: Final = "vcs-uploads"
 REGISTRY: Final = "registry"
+NOTIFICATION_CONFIGURATIONS: Final = "notification-configurations"
 
 WORKSPACES_BY_NAME_INDEX: Final = "by_name"
 """The GSI enforcing one workspace per name, and resolving a name to a workspace."""
@@ -187,13 +188,34 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
             {"AttributeName": "sk", "AttributeType": "S"},
         ],
     },
+    NOTIFICATION_CONFIGURATIONS: {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+            {"AttributeName": "workspace_id", "KeyType": "HASH"},
+            {"AttributeName": "notification_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "workspace_id", "AttributeType": "S"},
+            {"AttributeName": "notification_id", "AttributeType": "S"},
+        ],
+    },
 }
 
 GITHUB_TTL_ATTRIBUTE: Final = "expires_at"
 """The GitHub table's TTL attribute. Terraform enables it; a read checks it too,
 because DynamoDB deletes expired rows up to days late."""
 
-ALL_TABLES: Final = (WORKSPACES, RUNS, VARIABLES, CONFIG_VERSIONS, USERS, GITHUB, VCS_UPLOADS, REGISTRY)
+ALL_TABLES: Final = (
+    WORKSPACES,
+    RUNS,
+    VARIABLES,
+    CONFIG_VERSIONS,
+    USERS,
+    GITHUB,
+    VCS_UPLOADS,
+    REGISTRY,
+    NOTIFICATION_CONFIGURATIONS,
+)
 """Every logical table, in creation order. The suite and the local script walk it."""
 
 

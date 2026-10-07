@@ -92,6 +92,15 @@ locals {
       ]
     }
 
+    "notification-configurations" = {
+      hash_key  = "workspace_id"
+      range_key = "notification_id"
+      attributes = [
+        { name = "workspace_id", type = "S" },
+        { name = "notification_id", type = "S" },
+      ]
+    }
+
     "rate-limits" = {
       hash_key = "pk"
       attributes = [

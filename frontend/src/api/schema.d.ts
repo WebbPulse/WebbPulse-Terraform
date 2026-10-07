@@ -1336,6 +1336,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{workspace_id}/notification-configurations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Notification Configurations
+         * @description Every notification configuration on one workspace, with its last delivery.
+         */
+        get: operations["list_notification_configurations_api_v1_workspaces__workspace_id__notification_configurations_get"];
+        put?: never;
+        /**
+         * Create Notification Configuration
+         * @description Add a notification configuration.
+         *
+         *     `slack` takes an incoming webhook URL on `hooks.slack.com`, `discord` a channel
+         *     webhook URL on `discord.com`, and `generic` any HTTPS URL, which receives HCP
+         *     Terraform's version 1 payload signed with `token` in `X-TFE-Notification-Signature`.
+         *     A workspace holds at most 50.
+         */
+        post: operations["create_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Notification Configuration
+         * @description One notification configuration, with its last delivery.
+         */
+        get: operations["get_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Notification Configuration
+         * @description Delete a notification configuration.
+         */
+        delete: operations["delete_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Notification Configuration
+         * @description Edit, enable or disable a notification configuration. An absent field is unchanged.
+         */
+        patch: operations["update_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}/actions/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Notification Configuration
+         * @description Send a test delivery now, as HCP's Send test does, and return its outcome.
+         *
+         *     The delivery carries the trigger `verification` and no run. It is sent even when
+         *     the configuration is disabled. A receiver's refusal is reported in the body with
+         *     a 200, since the request itself succeeded; 20 a minute per configuration.
+         */
+        post: operations["verify_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__actions_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{workspace_id}/run-role/check": {
         parameters: {
             query?: never;
@@ -2354,6 +2435,114 @@ export interface components {
             /** Vcs Repo */
             vcs_repo?: string | null;
             version: components["schemas"]["ModuleVersion"];
+        };
+        /**
+         * NotificationConfiguration
+         * @description A stored configuration as the API renders it, with the URL masked.
+         */
+        NotificationConfiguration: {
+            /** Created At */
+            created_at: string;
+            /**
+             * Destination Type
+             * @enum {string}
+             */
+            destination_type: "slack" | "discord" | "generic";
+            /** Enabled */
+            enabled: boolean;
+            /** Has Token */
+            has_token: boolean;
+            /** Id */
+            id: string;
+            last_delivery?: components["schemas"]["NotificationDelivery"] | null;
+            /** Name */
+            name: string;
+            /** Triggers */
+            triggers: ("run:created" | "run:planning" | "run:needs_attention" | "run:applying" | "run:completed" | "run:errored")[];
+            /** Updated At */
+            updated_at: string;
+            /** Url Masked */
+            url_masked: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
+         * NotificationConfigurationCreate
+         * @description A new notification configuration.
+         */
+        NotificationConfigurationCreate: {
+            /**
+             * Destination Type
+             * @enum {string}
+             */
+            destination_type: "slack" | "discord" | "generic";
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled?: boolean;
+            /** Name */
+            name: string;
+            /** Token */
+            token?: string | null;
+            /** Triggers */
+            triggers?: ("run:created" | "run:planning" | "run:needs_attention" | "run:applying" | "run:completed" | "run:errored")[];
+            /**
+             * Url
+             * Format: password
+             */
+            url: string;
+        };
+        /**
+         * NotificationConfigurationList
+         * @description Every notification configuration on one workspace.
+         */
+        NotificationConfigurationList: {
+            /** Items */
+            items: components["schemas"]["NotificationConfiguration"][];
+        };
+        /**
+         * NotificationConfigurationUpdate
+         * @description A partial edit. An absent field is unchanged; a null or empty `token` clears it.
+         */
+        NotificationConfigurationUpdate: {
+            /** Destination Type */
+            destination_type?: ("slack" | "discord" | "generic") | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Name */
+            name?: string | null;
+            /** Token */
+            token?: string | null;
+            /** Triggers */
+            triggers?: ("run:created" | "run:planning" | "run:needs_attention" | "run:applying" | "run:completed" | "run:errored")[] | null;
+            /** Url */
+            url?: string | null;
+        };
+        /**
+         * NotificationDelivery
+         * @description The outcome of a configuration's newest delivery attempt.
+         */
+        NotificationDelivery: {
+            /** Attempted At */
+            attempted_at: string;
+            /** Attempts */
+            attempts: number;
+            /** Error */
+            error?: string | null;
+            /** Response Excerpt */
+            response_excerpt?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "failed" | "retrying";
+            /** Status Code */
+            status_code?: number | null;
+            /** Trigger */
+            trigger: string;
         };
         /**
          * PendingRunRoleCheck
@@ -6426,6 +6615,202 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigVersionDetail"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_notification_configurations_api_v1_workspaces__workspace_id__notification_configurations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationConfigurationList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationConfigurationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationConfiguration"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationConfiguration"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationConfigurationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationConfiguration"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    verify_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__actions_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationDelivery"];
                 };
             };
             /** @description Request validation failed. */

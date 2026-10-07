@@ -23,6 +23,7 @@ from ...common.db.tables import (
     CONFIG_VERSIONS_BY_WORKSPACE_INDEX,
     WORKSPACES_BY_NAME_INDEX,
 )
+from ...common.notifications import store as notification_store
 from ...common.runs.workspace_runs import (
     RunStillActive,
     delete_workspace_runs,
@@ -409,9 +410,9 @@ def delete_workspace(workspace_id: str, *, force: bool = False, settings: Settin
     The object purge (run artifacts, config tarballs, and every state version, delete
     marker and lock under the workspace's state prefix) is queued first, while the run
     ids are still readable, and waits for the workspace row to be gone. The rows then
-    go runs, config versions and variables first and the workspace row last, so a
-    failure part way leaves the workspace in place with its state intact and a retry
-    finishes the job. With no cleanup queue configured the purge runs inline at the end.
+    go runs, config versions, variables and notification configurations first and the
+    workspace row last, so a failure part way leaves the workspace in place with its
+    state intact and a retry finishes the job. With no cleanup queue configured the purge runs inline at the end.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
@@ -437,6 +438,7 @@ def delete_workspace(workspace_id: str, *, force: bool = False, settings: Settin
     ]
     if keys:
         variables_repository.delete_many(keys)
+    notification_store.delete_workspace_configurations(workspace_id, settings=resolved)
     repositories.workspaces(resolved).delete({"workspace_id": workspace_id})
     if not queued:
         cleanup.purge(workspace_id, run_ids, settings=resolved)

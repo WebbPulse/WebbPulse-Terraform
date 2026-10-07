@@ -10,8 +10,9 @@ Routing is on the body's `kind`, the field the state machine already stamps on a
 confirmation and the EventBridge rule's input transformer stamps on a task stop. An
 unknown or missing kind raises, so an unrecognised message parks on its queue's dead
 letter queue rather than being silently acknowledged. A record from the runs table's
-stream has no body at all, and goes by its `eventSource` to the reports consumer and
-the endings consumer both.
+stream has no body at all, and goes by its `eventSource` to the reports consumer, the
+endings consumer and then the notifications consumer, which never raises, so an endings
+retry is the only thing that can repeat a notification.
 A CloudFormation custom resource request arrives raw from the AWS connect topic,
 with no `kind` either, and goes to the connect consumer by its shape.
 
@@ -32,7 +33,7 @@ from webbpulse.events import batch_item_failures, event_records, record_id, regi
 
 from ....common.composition.settings import Settings
 from ....common.workspaces import cleanup
-from . import aws_connect, confirmations, endings, ingest, reports, task_failures, webhooks
+from . import aws_connect, confirmations, endings, ingest, notifications, reports, task_failures, webhooks
 
 _log = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ HANDLERS: dict[str, Handler] = {
     ingest.INGEST_KIND: lambda record, settings: _ingest(record, settings),
     cleanup.CLEANUP_KIND: lambda record, settings: cleanup.handle_record(record, settings=settings),
     webhooks.KIND: lambda record, settings: _webhook(record, settings),
+    notifications.KIND: lambda record, settings: notifications.handle_message(record, settings=settings),
 }
 """Each `kind` this function consumes, against the consumer that owns it."""
 
@@ -100,6 +102,7 @@ def route_record(record: Mapping[str, Any], *, settings: Settings | None = None)
     if reports.is_stream_record(record):
         reports.handle_record(record, settings=settings)
         endings.handle_record(record, settings=settings)
+        notifications.handle_record(record, settings=settings)
         return
     if aws_connect.is_connect_request(record):
         aws_connect.handle_record(record, settings=settings)

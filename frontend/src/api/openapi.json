@@ -2006,6 +2006,349 @@
         "title": "ModuleVersionDetail",
         "type": "object"
       },
+      "NotificationConfiguration": {
+        "description": "A stored configuration as the API renders it, with the URL masked.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "destination_type": {
+            "enum": [
+              "slack",
+              "discord",
+              "generic"
+            ],
+            "title": "Destination Type",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "has_token": {
+            "title": "Has Token",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_delivery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NotificationDelivery"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "triggers": {
+            "items": {
+              "enum": [
+                "run:created",
+                "run:planning",
+                "run:needs_attention",
+                "run:applying",
+                "run:completed",
+                "run:errored"
+              ],
+              "type": "string"
+            },
+            "title": "Triggers",
+            "type": "array"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "url_masked": {
+            "title": "Url Masked",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "destination_type",
+          "enabled",
+          "triggers",
+          "url_masked",
+          "has_token",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "NotificationConfiguration",
+        "type": "object"
+      },
+      "NotificationConfigurationCreate": {
+        "additionalProperties": false,
+        "description": "A new notification configuration.",
+        "properties": {
+          "destination_type": {
+            "enum": [
+              "slack",
+              "discord",
+              "generic"
+            ],
+            "title": "Destination Type",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "triggers": {
+            "items": {
+              "enum": [
+                "run:created",
+                "run:planning",
+                "run:needs_attention",
+                "run:applying",
+                "run:completed",
+                "run:errored"
+              ],
+              "type": "string"
+            },
+            "title": "Triggers",
+            "type": "array"
+          },
+          "url": {
+            "format": "password",
+            "title": "Url",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "name",
+          "destination_type",
+          "url"
+        ],
+        "title": "NotificationConfigurationCreate",
+        "type": "object"
+      },
+      "NotificationConfigurationList": {
+        "description": "Every notification configuration on one workspace.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationConfiguration"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "NotificationConfigurationList",
+        "type": "object"
+      },
+      "NotificationConfigurationUpdate": {
+        "additionalProperties": false,
+        "description": "A partial edit. An absent field is unchanged; a null or empty `token` clears it.",
+        "properties": {
+          "destination_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "slack",
+                  "discord",
+                  "generic"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Type"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "triggers": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "run:created",
+                    "run:planning",
+                    "run:needs_attention",
+                    "run:applying",
+                    "run:completed",
+                    "run:errored"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggers"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "NotificationConfigurationUpdate",
+        "type": "object"
+      },
+      "NotificationDelivery": {
+        "description": "The outcome of a configuration's newest delivery attempt.",
+        "properties": {
+          "attempted_at": {
+            "title": "Attempted At",
+            "type": "string"
+          },
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "response_excerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Excerpt"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "retrying"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "trigger",
+          "attempts",
+          "attempted_at"
+        ],
+        "title": "NotificationDelivery",
+        "type": "object"
+      },
       "PendingRunRoleCheck": {
         "description": "What the runner's record says about the role waiting to replace the current one.",
         "properties": {
@@ -8623,6 +8966,337 @@
           }
         },
         "summary": "Get Config Version",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/notification-configurations": {
+      "get": {
+        "description": "Every notification configuration on one workspace, with its last delivery.",
+        "operationId": "list_notification_configurations_api_v1_workspaces__workspace_id__notification_configurations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfigurationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Notification Configurations",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "description": "Add a notification configuration.\n\n`slack` takes an incoming webhook URL on `hooks.slack.com`, `discord` a channel\nwebhook URL on `discord.com`, and `generic` any HTTPS URL, which receives HCP\nTerraform's version 1 payload signed with `token` in `X-TFE-Notification-Signature`.\nA workspace holds at most 50.",
+        "operationId": "create_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationConfigurationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Create Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}": {
+      "delete": {
+        "description": "Delete a notification configuration.",
+        "operationId": "delete_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^nc-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Delete Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "get": {
+        "description": "One notification configuration, with its last delivery.",
+        "operationId": "get_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^nc-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "patch": {
+        "description": "Edit, enable or disable a notification configuration. An absent field is unchanged.",
+        "operationId": "update_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^nc-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationConfigurationUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Update Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}/actions/verify": {
+      "post": {
+        "description": "Send a test delivery now, as HCP's Send test does, and return its outcome.\n\nThe delivery carries the trigger `verification` and no run. It is sent even when\nthe configuration is disabled. A receiver's refusal is reported in the body with\na 200, since the request itself succeeded; 20 a minute per configuration.",
+        "operationId": "verify_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__actions_verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^nc-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDelivery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Verify Notification Configuration",
         "tags": [
           "workspaces"
         ]
