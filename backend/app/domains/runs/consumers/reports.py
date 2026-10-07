@@ -9,7 +9,8 @@ The report is built from the record's new image, the run as that write left it. 
 stream delivers one item's records in order, so reporting each image in turn shows
 every transition, including a `pending` that a fresh read would already see as
 `planning`. A record whose status did not move is dropped, since every other field a
-run carries is either reported with its status or not reported at all.
+run carries is either reported with its status or not reported at all, except the
+mark a newer commit leaves on a finished pull request plan, which the comment shows.
 
 This consumer never raises. Reporting is a side effect of a run and must not hold up
 the stream shard, so a fault is logged by `reporting.report_run` and the record is
@@ -39,6 +40,11 @@ def is_stream_record(record: Mapping[str, Any]) -> bool:
     return record.get("eventSource") == STREAM_EVENT_SOURCE
 
 
+def _newly_superseded(old: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
+    """Whether this write marked the run superseded, which the pull request comment shows."""
+    return bool(new.get("superseded_by")) and not old.get("superseded_by")
+
+
 def reportable_image(record: Mapping[str, Any]) -> dict[str, Any] | None:
     """The run image a stream record should be reported with, or `None` to drop it."""
     if record.get("eventName") not in ("INSERT", "MODIFY"):
@@ -47,7 +53,7 @@ def reportable_image(record: Mapping[str, Any]) -> dict[str, Any] | None:
     if str(new.get("source", "")) not in VCS_SOURCES or not new.get("run_id"):
         return None
     old = deserialize_image(record, "OldImage")
-    if old and str(old.get("status", "")) == str(new.get("status", "")):
+    if old and str(old.get("status", "")) == str(new.get("status", "")) and not _newly_superseded(old, new):
         return None
     return dict(new)
 

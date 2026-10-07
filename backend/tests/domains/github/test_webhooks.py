@@ -107,7 +107,7 @@ def pull_request(action: str = "opened", head_repository: int = REPOSITORY_ID) -
             "base": {"sha": BEFORE, "ref": "main", "repo": {"id": REPOSITORY_ID}},
             "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
-        "repository": {"id": REPOSITORY_ID, "full_name": REPO},
+        "repository": {"id": REPOSITORY_ID, "full_name": REPO, "default_branch": "staging"},
         "installation": {"id": INSTALLATION_ID},
         "sender": {"login": "octocat"},
     }
@@ -177,6 +177,7 @@ def test_a_signed_pull_request_is_queued_against_its_merge_ref(client, queue):
     assert message["pr_number"] == 7
     assert message["head_sha"] == SHA
     assert message["base_branch"] == "main"
+    assert message["default_branch"] == "staging"
 
 
 def test_a_ping_is_answered_and_not_queued(client, queue):

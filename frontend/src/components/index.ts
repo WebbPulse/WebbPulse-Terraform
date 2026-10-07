@@ -70,6 +70,7 @@ export {
   changeSummary,
   commitHeadline,
   isDestroyRun,
+  isSuperseded,
   runKind,
   runPath,
   runSource,

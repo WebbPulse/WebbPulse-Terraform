@@ -1,5 +1,6 @@
 /** The run list, shared by the runs page and a workspace's runs page. */
 
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { runGroup, type Run } from '../api';
@@ -10,6 +11,7 @@ import { DestroyBadge } from './DestroyBadge';
 import {
   changeSummary,
   isDestroyRun,
+  isSuperseded,
   runKind,
   runPath,
   runTitle,
@@ -26,15 +28,58 @@ export interface RunListProps {
   emptyHint?: string;
 }
 
-/** A list of runs, or a sentence when there are none. */
+/**
+ * A list of runs, or a sentence when there are none. Pull request plans a newer
+ * commit replaced are hidden until asked for, and shown dimmed.
+ */
 export function RunList({
   runs,
   workspaceNames,
   emptyHint = 'Start one from a configuration version on a workspace.',
 }: RunListProps): React.ReactElement {
+  const [showSuperseded, setShowSuperseded] = useState(false);
   if (runs.length === 0) {
     return <EmptyState title="No runs yet." hint={emptyHint} />;
   }
+  const supersededCount = runs.filter(isSuperseded).length;
+  const shown = showSuperseded
+    ? runs
+    : runs.filter((run) => !isSuperseded(run));
+  return (
+    <div className="space-y-2">
+      {supersededCount === 0 ? null : (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            aria-pressed={showSuperseded}
+            onClick={() => {
+              setShowSuperseded((value) => !value);
+            }}
+            className="rounded-md px-2 py-1 text-xs text-text-faint hover:bg-raised hover:text-text-strong focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+          >
+            {`${showSuperseded ? 'Hide' : 'Show'} superseded runs (${String(supersededCount)})`}
+          </button>
+        </div>
+      )}
+      {shown.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm text-text-faint">
+          Every run here was superseded by a newer commit.
+        </p>
+      ) : (
+        <RunRows runs={shown} workspaceNames={workspaceNames} />
+      )}
+    </div>
+  );
+}
+
+/** The rows of {@link RunList}. */
+function RunRows({
+  runs,
+  workspaceNames,
+}: {
+  runs: readonly Run[];
+  workspaceNames: ReadonlyMap<string, string> | undefined;
+}): React.ReactElement {
   return (
     <ul
       aria-label="Runs"
@@ -42,16 +87,18 @@ export function RunList({
     >
       {runs.map((run) => {
         const needsAction = runGroup(run) === 'attention';
+        const superseded = run.superseded_by ?? null;
         return (
           <li
             key={run.run_id}
             data-run-id={run.run_id}
             data-needs-action={needsAction}
+            data-superseded={superseded !== null}
             className={`relative flex flex-wrap items-center gap-x-4 gap-y-2 border-l-2 px-4 py-3 ${
               needsAction
                 ? 'border-l-warning bg-warning-soft/30'
                 : 'border-l-transparent hover:bg-raised/60'
-            }`}
+            } ${superseded === null ? '' : 'opacity-60'}`}
           >
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
@@ -88,6 +135,23 @@ export function RunList({
                 )}
                 <span aria-hidden="true">|</span>
                 <ChangeCounts run={run} />
+                {superseded === null ? null : (
+                  <>
+                    <span aria-hidden="true">|</span>
+                    <Link
+                      to={runPath({
+                        run_id: superseded.run_id,
+                        workspace_id: run.workspace_id,
+                      })}
+                      className="relative z-10 hover:text-accent hover:underline"
+                    >
+                      superseded by{' '}
+                      <span className="font-mono">
+                        {superseded.sha.slice(0, 7)}
+                      </span>
+                    </Link>
+                  </>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-3">

@@ -4,8 +4,12 @@ Every VCS run gets a check run named `webbpulse-terraform/<workspace>` on its co
 created when the run first appears and updated on each status change. One aggregate
 check, `webbpulse-terraform`, sums up every bound workspace's run for that commit, and
 a pull request gets one comment, found again by a hidden marker and edited in place.
+The comment leads with the newest commit's runs and keeps every earlier commit's
+runs in a collapsed section, each read from the table rather than an index, so a run
+that finished shows finished wherever it is listed. Creating the comment is claimed
+first, so concurrent reports cannot post two.
 
-Nothing is stored for any of it. The check runs are found through GitHub by name and
+Apart from that claim, nothing is stored for any of it. The check runs are found through GitHub by name and
 by `external_id`, which is the run id, and the comment by its marker, so a report can
 be retried or replayed from any point and lands on the same objects. The one thing
 reporting writes back is what the upload does not carry and the run pages show: the
@@ -37,13 +41,15 @@ Every read and write goes through `webbpulse.integrations.github.GitHubAppClient
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Final
 
 import httpx
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr, Key
+from webbpulse.dynamodb import ConditionFailed
 from webbpulse.integrations.github import (
     CheckRunConclusion,
     CheckRunOutput,
@@ -51,6 +57,7 @@ from webbpulse.integrations.github import (
     GitHubAppClient,
     GitHubError,
     GitHubNotConfigured,
+    IssueComment,
 )
 
 from ...common.composition.settings import Settings, get_settings
@@ -78,6 +85,16 @@ PAGE_SIZE: Final = 100
 MAX_PAGES: Final = 5
 RUN_SCAN_LIMIT: Final = 50
 """How many of a workspace's newest runs are looked through for the one on a commit."""
+EARLIER_COMMITS_SHOWN: Final = 10
+"""How many earlier commits of a pull request the comment lists under its head commit."""
+COMMENT_CLAIM_PREFIX: Final = "pr-comment#"
+"""The runs table key prefix of the row a report claims before creating a pull request comment."""
+COMMENT_CLAIM_SECONDS: Final = 30
+COMMENT_WAIT_SECONDS: Final = 5.0
+COMMENT_POLL_SECONDS: Final = 1.0
+COMMENT_ROUNDS: Final = 3
+"""How many times one report reads the runs and writes the comment before leaving it to the next."""
+SUPERSEDED_TITLE: Final = "Superseded by a newer commit"
 
 ACTIVE: Final = frozenset({"planning", "planned", "applying"})
 TITLES: Final = {
@@ -140,6 +157,8 @@ def check_state(run: Mapping[str, Any]) -> CheckState:
         return CheckState("in_progress", None, AUTO_APPLY_TITLE)
     if status == "awaiting_confirmation":
         return CheckState("completed", "action_required", title)
+    if status == "cancelled" and superseded_sha(run):
+        return CheckState("completed", "cancelled", SUPERSEDED_TITLE)
     conclusion = CONCLUSIONS.get(status)
     if conclusion is None:
         return CheckState("in_progress", None, title)
@@ -409,11 +428,28 @@ def aggregate_state(runs: Iterable[Mapping[str, Any]], skipped: Iterable[Mapping
     return CheckState("completed", "neutral", "Runs finished")
 
 
+def commit_of(run: Mapping[str, Any]) -> str:
+    """The commit a run is shown under: a pull request's head, or the signed commit."""
+    vcs = run.get("vcs") or {}
+    return str(vcs.get("head_sha") or vcs.get("sha") or "")
+
+
+def superseded_sha(run: Mapping[str, Any]) -> str:
+    """The commit of the newer run that superseded this one, or an empty string."""
+    superseded = run.get("superseded_by")
+    if not isinstance(superseded, Mapping):
+        return ""
+    return str(superseded.get("sha", ""))
+
+
 def _row(run: Mapping[str, Any], settings: Settings) -> str:
     """One Markdown table row for a run."""
     title = TITLES.get(str(run.get("status")), str(run.get("status")))
     url = run_url(settings, run)
     shown = f"[{title}]({url})" if url else title
+    by = superseded_sha(run)
+    if by:
+        shown = f"{shown} (superseded by {by[:7]})"
     return f"| {run['workspace_name']} | {shown} | {counts_line(run)} |"
 
 
@@ -425,27 +461,226 @@ def runs_table(runs: Iterable[Mapping[str, Any]], settings: Settings, skipped: I
     return "\n".join(lines)
 
 
+def _newest_per_workspace(runs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The newest run of each workspace, ordered by workspace name."""
+    newest: dict[str, dict[str, Any]] = {}
+    for run in sorted(runs, key=lambda item: str(item["run_id"])):
+        newest[str(run.get("workspace_id", ""))] = dict(run)
+    return sorted(newest.values(), key=lambda item: str(item.get("workspace_name", "")))
+
+
+def head_commit(runs: Iterable[Mapping[str, Any]]) -> str:
+    """The commit of the newest run, which is the one the comment leads with."""
+    ordered = sorted(runs, key=lambda item: str(item["run_id"]))
+    return commit_of(ordered[-1]) if ordered else ""
+
+
 def comment_body(
-    runs: list[dict[str, Any]], head: str, settings: Settings, skipped: Iterable[Mapping[str, Any]] = ()
+    runs: list[dict[str, Any]], head: str, settings: Settings, skipped: Iterable[Mapping[str, Any]] | None = None
 ) -> str:
-    """The pull request comment: the marker, a heading and the table."""
-    return "\n".join(
-        [COMMENT_MARKER, f"### WebbPulse Terraform runs for {head[:7]}", "", runs_table(runs, settings, skipped), ""]
-    )
+    """The pull request comment: the marker, the head commit's runs, then earlier commits collapsed.
+
+    `runs` is every run of the pull request. The head commit's table holds the
+    newest run per workspace on that commit, and the skips those runs carry unless
+    `skipped` is given. Every earlier commit gets its own table, newest commit
+    first, inside one collapsed section, so a late report for an older commit
+    updates its row there and never retitles the comment.
+    """
+    current = _newest_per_workspace(run for run in runs if commit_of(run) == head)
+    shown_skips = skipped_workspaces(current) if skipped is None else list(skipped)
+    lines = [
+        COMMENT_MARKER,
+        f"### WebbPulse Terraform runs for {head[:7]}",
+        "",
+        runs_table(current, settings, shown_skips),
+    ]
+    earlier: dict[str, list[dict[str, Any]]] = {}
+    for run in runs:
+        commit = commit_of(run)
+        if commit != head:
+            earlier.setdefault(commit, []).append(run)
+    if earlier:
+        ordered = sorted(earlier.items(), key=lambda pair: max(str(run["run_id"]) for run in pair[1]), reverse=True)
+        lines += ["", f"<details><summary>Earlier commits ({len(ordered)})</summary>"]
+        for commit, group in ordered[:EARLIER_COMMITS_SHOWN]:
+            lines += ["", f"#### {commit[:7]}", "", runs_table(_newest_per_workspace(group), settings)]
+        if len(ordered) > EARLIER_COMMITS_SHOWN:
+            lines += ["", f"{len(ordered) - EARLIER_COMMITS_SHOWN} older commits are not shown."]
+        lines += ["", "</details>"]
+    lines.append("")
+    return "\n".join(lines)
 
 
-def upsert_comment(reader: GitHubReader, number: int, body: str) -> None:
-    """Edit this App's marked comment on the pull request, or post it."""
+def duplicate_body(canonical: IssueComment) -> str:
+    """What a duplicate marked comment is rewritten to, pointing at the one kept current."""
+    link = f"[this comment]({canonical.html_url})"
+    return f"{COMMENT_MARKER}\nThe WebbPulse Terraform runs for this pull request are reported in {link}.\n"
+
+
+def pause(seconds: float) -> None:
+    """Wait between looks for a comment another report is creating. The seam the tests replace."""
+    time.sleep(seconds)
+
+
+def claim_comment(repository: str, number: int, *, settings: Settings) -> bool:
+    """Claim the right to create the pull request's comment. Returns whether this report won.
+
+    Reports for different runs run concurrently, and two that both find no comment
+    would each post one. The claim is a conditional write on a row of the runs
+    table that carries no workspace, source or status, so no index and no stream
+    consumer sees it. A claim older than `COMMENT_CLAIM_SECONDS` can be taken
+    again, so a report that died before posting does not block the comment.
+    """
+    now = int(time.time())
+    try:
+        repositories.runs(settings).put(
+            {"run_id": f"{COMMENT_CLAIM_PREFIX}{repository.lower()}#{number}", "claimed_at": now},
+            condition=Attr("run_id").not_exists() | Attr("claimed_at").lt(now - COMMENT_CLAIM_SECONDS),
+        )
+    except ConditionFailed:
+        return False
+    return True
+
+
+def marked_comments(reader: GitHubReader, number: int) -> list[IssueComment]:
+    """This App's marked comments on the pull request, oldest first."""
     comments = reader.client.list_issue_comments(
         reader.repository, number, max_pages=MAX_PAGES, installation_id=reader.installation
     )
-    marked = [item for item in comments if COMMENT_MARKER in item.body and item.user_type == "Bot"]
-    if marked:
-        oldest = min(marked, key=lambda item: item.id)
-        if oldest.body != body:
-            reader.client.update_issue_comment(reader.repository, oldest.id, body, installation_id=reader.installation)
-    else:
-        reader.client.create_issue_comment(reader.repository, number, body, installation_id=reader.installation)
+    return sorted(
+        (item for item in comments if COMMENT_MARKER in item.body and item.user_type == "Bot"), key=lambda item: item.id
+    )
+
+
+def await_comment(reader: GitHubReader, number: int) -> list[IssueComment]:
+    """The marked comments, once the report holding the claim has posted one, or empty."""
+    waited = 0.0
+    while waited < COMMENT_WAIT_SECONDS:
+        pause(COMMENT_POLL_SECONDS)
+        waited += COMMENT_POLL_SECONDS
+        marked = marked_comments(reader, number)
+        if marked:
+            return marked
+    return []
+
+
+def upsert_comment(reader: GitHubReader, number: int, body: str, *, settings: Settings) -> bool:
+    """Edit this App's marked comment on the pull request, or post it. Returns whether anything was written.
+
+    The oldest marked comment is the one kept current. A newer one, left by two
+    reports that raced before the claim existed, is rewritten to point at it.
+    """
+    marked = marked_comments(reader, number)
+    if not marked:
+        if claim_comment(reader.repository, number, settings=settings):
+            reader.client.create_issue_comment(reader.repository, number, body, installation_id=reader.installation)
+            return True
+        marked = await_comment(reader, number)
+        if not marked:
+            _log.info(
+                "Another report is creating the pull request comment.",
+                extra={"event": "runs.report.comment_pending", "pr_number": number},
+            )
+            return False
+    canonical, *duplicates = marked
+    wrote = False
+    if canonical.body != body:
+        reader.client.update_issue_comment(reader.repository, canonical.id, body, installation_id=reader.installation)
+        wrote = True
+    stub = duplicate_body(canonical)
+    for duplicate in duplicates:
+        if duplicate.body != stub:
+            reader.client.update_issue_comment(
+                reader.repository, duplicate.id, stub, installation_id=reader.installation
+            )
+    return wrote
+
+
+STATUS_RANK: Final = {
+    "pending": 0,
+    "planning": 1,
+    "planned": 2,
+    "awaiting_confirmation": 3,
+    "applying": 4,
+}
+"""How far along a status is. Every terminal status ranks above all of these."""
+
+
+def status_rank(run: Mapping[str, Any]) -> int:
+    """The rank of a run's status, terminal statuses highest."""
+    return STATUS_RANK.get(str(run.get("status", "")), len(STATUS_RANK))
+
+
+def pull_request_runs(
+    run: Mapping[str, Any], *, settings: Settings, workspace_name: str | None = None
+) -> list[dict[str, Any]]:
+    """Every recent run of the pull request on the bound workspaces, read consistently.
+
+    The `by_workspace` index only finds the runs and trails the table, so each one
+    is read again from the table itself. A run in hand that is further along than
+    its row, or missing from the index, is merged in, so a report never shows a
+    run behind the state it is reporting. Each run gets its workspace's `name` as
+    `workspace_name`.
+    """
+    vcs = run.get("vcs") or {}
+    repository_id = str(vcs.get("repository_id", ""))
+    number = int(vcs["pr_number"])
+    names: dict[str, str] = {}
+    table = repositories.runs(settings)
+    for workspace in workspace_vcs.bound_workspaces(str(vcs.get("repo", "")), repository_id, settings=settings):
+        name = str(workspace.get("name", workspace["workspace_id"]))
+        for index, item in enumerate(
+            table.iter_query(
+                Key("workspace_id").eq(str(workspace["workspace_id"])),
+                index_name=RUNS_BY_WORKSPACE_INDEX,
+                ascending=False,
+            )
+        ):
+            if index >= RUN_SCAN_LIMIT:
+                break
+            other = item.get("vcs") or {}
+            if (
+                item.get("run_id")
+                and str(item.get("source")) == SOURCE_PR
+                and str(other.get("repository_id", "")) == repository_id
+                and other.get("pr_number") is not None
+                and int(other["pr_number"]) == number
+            ):
+                names[str(item["run_id"])] = name
+    fresh = table.get_many(list(names), key_attribute="run_id", consistent=True) if names else {}
+    found = {run_id: dict(item) | {"workspace_name": names[run_id]} for run_id, item in fresh.items()}
+    run_id = str(run.get("run_id", ""))
+    if run_id and run.get("workspace_id"):
+        current = found.get(run_id)
+        if current is None:
+            found[run_id] = dict(run) | {"workspace_name": workspace_name or str(run["workspace_id"])}
+        elif status_rank(run) > status_rank(current):
+            found[run_id] = current | dict(run) | {"workspace_name": current["workspace_name"]}
+    return sorted(found.values(), key=lambda item: str(item["run_id"]))
+
+
+def publish_comment(
+    reader: GitHubReader,
+    run: Mapping[str, Any],
+    *,
+    settings: Settings,
+    workspace_name: str | None = None,
+    head: str | None = None,
+    skipped: list[dict[str, str]] | None = None,
+) -> None:
+    """Bring the pull request comment up to date with every run of the pull request.
+
+    Reports for different runs race, so one can overwrite a newer body with an
+    older one. Each report reads the runs again after its own write and writes
+    once more if the body moved, so the last report to write leaves the comment
+    matching the table.
+    """
+    number = int((run.get("vcs") or {})["pr_number"])
+    for _ in range(COMMENT_ROUNDS):
+        runs = pull_request_runs(run, settings=settings, workspace_name=workspace_name)
+        body = comment_body(runs, head or head_commit(runs), settings, skipped)
+        if not upsert_comment(reader, number, body, settings=settings):
+            return
 
 
 def record_message(reader: GitHubReader, run: Mapping[str, Any], sha: str, *, settings: Settings) -> None:
@@ -532,9 +767,7 @@ def publish(reader: GitHubReader, run: Mapping[str, Any], *, settings: Settings)
     )
 
     if str(run.get("source")) == SOURCE_PR:
-        number = int((run.get("vcs") or {})["pr_number"])
-        latest = with_current(sibling_runs(run, by_pull_request=True, settings=settings), run, workspace_name)
-        upsert_comment(reader, number, comment_body(latest, sha, settings, skipped_workspaces(latest)))
+        publish_comment(reader, run, settings=settings, workspace_name=workspace_name)
     return sha
 
 
@@ -589,7 +822,7 @@ def publish_upload(
         external_id=None,
     )
     if skipped and run["source"] == SOURCE_PR:
-        upsert_comment(reader, int(run["vcs"]["pr_number"]), comment_body([], sha, settings, skipped))
+        publish_comment(reader, run, settings=settings, head=sha, skipped=skipped)
     return sha
 
 
@@ -687,8 +920,13 @@ __all__ = [
     "counts_line",
     "http_client",
     "app_reader",
+    "comment_body",
+    "commit_of",
+    "head_commit",
     "publish",
+    "publish_comment",
     "publish_upload",
+    "pull_request_runs",
     "record_message",
     "record_pull_request",
     "retire_check_run",

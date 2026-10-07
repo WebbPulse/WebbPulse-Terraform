@@ -1825,6 +1825,26 @@ def record_pull_request(run_id: str, number: int, url: str, *, settings: Setting
         return
 
 
+def mark_superseded(run_id: str, by_run_id: str, by_sha: str, *, settings: Settings | None = None) -> bool:
+    """Record on a pull request plan the newer run that replaced it. Returns whether it was marked.
+
+    The first newer run to mark it stands. The status is untouched, so the stream
+    record this write makes is dropped by the reports consumer.
+    """
+    resolved = settings or get_settings()
+    try:
+        _runs(resolved).update(
+            {"run_id": run_id},
+            update_expression="SET #superseded = :by",
+            expression_values={":by": {"run_id": by_run_id, "sha": by_sha}},
+            expression_names={"#superseded": "superseded_by"},
+            condition=Attr("run_id").exists() & Attr("superseded_by").not_exists(),
+        )
+    except ConditionFailed:
+        return False
+    return True
+
+
 def render_run(item: dict[str, Any]) -> dict[str, Any]:
     """Strip the stored-only fields a run row carries.
 
@@ -1877,6 +1897,7 @@ __all__ = [
     "cancel_run",
     "confirm_run",
     "decision",
+    "mark_superseded",
     "record_commit_message",
     "record_pull_request",
     "create_run",

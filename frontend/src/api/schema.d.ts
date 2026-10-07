@@ -2694,6 +2694,7 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
+            superseded_by?: components["schemas"]["RunSupersededBy"] | null;
             /** Updated At */
             updated_at?: string | null;
             vcs?: components["schemas"]["RunVcs"] | null;
@@ -2897,6 +2898,7 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
+            superseded_by?: components["schemas"]["RunSupersededBy"] | null;
             /** Updated At */
             updated_at?: string | null;
             vcs?: components["schemas"]["RunVcs"] | null;
@@ -3095,6 +3097,16 @@ export interface components {
             principal_arns?: string[];
             /** Role Name */
             role_name: string;
+        };
+        /**
+         * RunSupersededBy
+         * @description The newer run on the same pull request and workspace that replaced a plan only run.
+         */
+        RunSupersededBy: {
+            /** Run Id */
+            run_id: string;
+            /** Sha */
+            sha: string;
         };
         /**
          * RunVcs

@@ -66,6 +66,9 @@ BAD_RUN_ROLE_REASON = "The workspace's run role is not an IAM role ARN, so the r
 
 SUPERSEDE_CANCEL_STATUSES = frozenset({"pending"})
 SUPERSEDE_DISCARD_STATUSES = frozenset({"awaiting_confirmation"})
+SUPERSEDE_PLAN_CANCEL_STATUSES = frozenset({"pending", "planning"})
+"""A pull request plan an outdated commit started is cancelled while queued or planning,
+as HCP Terraform cancels plan only runs triggered by outdated commits."""
 
 
 class MalformedIngest(Exception):
@@ -187,8 +190,20 @@ def _eligible(workspace: Mapping[str, Any], upload: Mapping[str, Any]) -> bool:
         tracked = workspace.get("tracked_branch")
         return bool(tracked) and str(tracked) == str(upload.get("branch", ""))
     if upload["event"] == PULL_REQUEST_EVENT:
-        return bool(workspace.get("speculative_plans", True))
+        return bool(workspace.get("speculative_plans", True)) and targets_base(workspace, upload)
     return False
+
+
+def targets_base(workspace: Mapping[str, Any], upload: Mapping[str, Any]) -> bool:
+    """Whether a pull request upload's base branch is the branch the workspace tracks.
+
+    A workspace with no tracked branch tracks the repository's default branch. An
+    upload that names no base branch, or a workspace whose branch cannot be told,
+    keeps planning, so an older record never loses its plans.
+    """
+    base = str(upload.get("base_branch") or "")
+    target = str(workspace.get("tracked_branch") or upload.get("default_branch") or "")
+    return not base or not target or base == target
 
 
 def skip_reason(workspace: Mapping[str, Any]) -> Optional[str]:
@@ -292,12 +307,44 @@ def _same_source(run: Mapping[str, Any], source: str, upload: Mapping[str, Any])
     return str(vcs.get("branch", "")) == str(upload.get("branch", ""))
 
 
+def _supersede_plan(run: Mapping[str, Any], run_id: str, upload: Mapping[str, Any], *, settings: Settings) -> None:
+    """Mark an older pull request plan superseded by `run_id`, cancelling it if still queued or planning.
+
+    Only plan only runs are touched, so an apply or a held run is never ended here.
+    """
+    if not bool(run.get("plan_only", False)):
+        return
+    other = str(run["run_id"])
+    head = str(upload.get("head_sha") or upload["sha"])
+    marked = service.mark_superseded(other, run_id, head, settings=settings)
+    status = str(run.get("status", ""))
+    cancelled = False
+    if status in SUPERSEDE_PLAN_CANCEL_STATUSES:
+        try:
+            service.cancel_run(other, settings=settings)
+            cancelled = True
+        except (service.RunNotFound, service.RunNotCancellable):
+            pass
+    if marked or cancelled:
+        _log.info(
+            "Superseded an older pull request plan.",
+            extra={
+                "event": "runs.ingest.plan_superseded",
+                "run_id": other,
+                "by": run_id,
+                "status": status,
+                "cancelled": cancelled,
+            },
+        )
+
+
 def _supersede(workspace_id: str, run_id: str, source: str, upload: Mapping[str, Any], *, settings: Settings) -> bool:
     """End the older runs this upload replaces. Returns False when a newer one exists.
 
-    An older pending run is cancelled and an older run awaiting confirmation is
-    discarded. A run that already moved on is left alone, and one that a
-    concurrent path ended first is not an error.
+    An older pull request plan is marked superseded and cancelled while queued or
+    planning. Otherwise an older pending run is cancelled and an older run awaiting
+    confirmation is discarded. A run that already moved on is left alone, and one
+    that a concurrent path ended first is not an error.
     """
     runs = repositories.runs(settings)
     for run in runs.iter_query(Key("workspace_id").eq(workspace_id), index_name=RUNS_BY_WORKSPACE_INDEX):
@@ -306,6 +353,9 @@ def _supersede(workspace_id: str, run_id: str, source: str, upload: Mapping[str,
             continue
         if other > run_id:
             return False
+        if source == SOURCE_PR:
+            _supersede_plan(run, run_id, upload, settings=settings)
+            continue
         status = str(run.get("status", ""))
         try:
             if status in SUPERSEDE_CANCEL_STATUSES:
@@ -509,5 +559,6 @@ __all__ = [
     "paths_match",
     "read_changed_paths",
     "skip_reason",
+    "targets_base",
     "trigger_patterns",
 ]
