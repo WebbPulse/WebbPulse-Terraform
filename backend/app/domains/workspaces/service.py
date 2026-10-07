@@ -50,8 +50,8 @@ from ...common.workspaces.reads import (
     list_variables,
     resolved_variables,
 )
-from . import state_versions, vcs_connect
 from . import projects as project_store
+from . import state_versions, vcs_connect
 from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
 from .vcs_connect import RepositoryNotInstalled
 
