@@ -2767,11 +2767,38 @@ export interface components {
             phase: "plan" | "apply";
             /** Plan Only */
             plan_only: boolean;
+            /**
+             * Refresh
+             * @default true
+             */
+            refresh?: boolean;
+            /**
+             * Refresh Only
+             * @default false
+             */
+            refresh_only?: boolean;
             registry?: components["schemas"]["RegistryCredentials"] | null;
+            /**
+             * Replace Addrs
+             * @default []
+             */
+            replace_addrs?: string[];
             /** Run Id */
             run_id: string;
             /** Run Role Arn */
             run_role_arn: string;
+            /**
+             * Run Variables
+             * @default {}
+             */
+            run_variables?: {
+                [key: string]: string;
+            };
+            /**
+             * Target Addrs
+             * @default []
+             */
+            target_addrs?: string[];
             /** Terraform Variables */
             terraform_variables: {
                 [key: string]: string;

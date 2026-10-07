@@ -2929,6 +2929,16 @@
             "title": "Plan Only",
             "type": "boolean"
           },
+          "refresh": {
+            "default": true,
+            "title": "Refresh",
+            "type": "boolean"
+          },
+          "refresh_only": {
+            "default": false,
+            "title": "Refresh Only",
+            "type": "boolean"
+          },
           "registry": {
             "anyOf": [
               {
@@ -2939,6 +2949,14 @@
               }
             ]
           },
+          "replace_addrs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Replace Addrs",
+            "type": "array"
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"
@@ -2946,6 +2964,22 @@
           "run_role_arn": {
             "title": "Run Role Arn",
             "type": "string"
+          },
+          "run_variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Run Variables",
+            "type": "object"
+          },
+          "target_addrs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Addrs",
+            "type": "array"
           },
           "terraform_variables": {
             "additionalProperties": {
