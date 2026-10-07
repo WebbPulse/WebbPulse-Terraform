@@ -4,7 +4,7 @@ Terraform CLI opens `/oauth/authorize` on the SPA with its PKCE challenge and a
 loopback redirect, a signed-in person approves there, and the SPA asks the API for a
 code. The CLI then exchanges the code at `/v1/oauth/token` and stores the access
 token, an ordinary `wpk_` key named "terraform login", in `credentials.tfrc.json`.
-That is the same outcome as `terraform login app.terraform.io`, which also leaves a
+That is the same outcome as HCP Terraform's own `terraform login`, which also leaves a
 user API token behind.
 
 The code rides the identity module's `authorization-codes` table and the package's
