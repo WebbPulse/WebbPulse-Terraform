@@ -190,8 +190,20 @@ def _eligible(workspace: Mapping[str, Any], upload: Mapping[str, Any]) -> bool:
         tracked = workspace.get("tracked_branch")
         return bool(tracked) and str(tracked) == str(upload.get("branch", ""))
     if upload["event"] == PULL_REQUEST_EVENT:
-        return bool(workspace.get("speculative_plans", True))
+        return bool(workspace.get("speculative_plans", True)) and targets_base(workspace, upload)
     return False
+
+
+def targets_base(workspace: Mapping[str, Any], upload: Mapping[str, Any]) -> bool:
+    """Whether a pull request upload's base branch is the branch the workspace tracks.
+
+    A workspace with no tracked branch tracks the repository's default branch. An
+    upload that names no base branch, or a workspace whose branch cannot be told,
+    keeps planning, so an older record never loses its plans.
+    """
+    base = str(upload.get("base_branch") or "")
+    target = str(workspace.get("tracked_branch") or upload.get("default_branch") or "")
+    return not base or not target or base == target
 
 
 def skip_reason(workspace: Mapping[str, Any]) -> Optional[str]:
@@ -547,5 +559,6 @@ __all__ = [
     "paths_match",
     "read_changed_paths",
     "skip_reason",
+    "targets_base",
     "trigger_patterns",
 ]

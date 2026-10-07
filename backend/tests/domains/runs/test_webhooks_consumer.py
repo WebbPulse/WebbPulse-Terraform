@@ -328,6 +328,20 @@ def test_a_pull_request_waits_for_its_merge_commit(settings, bind, github, state
     assert runs_service.get_run(run_id, settings=settings)["source"] == "vcs_pr"
 
 
+def test_a_pull_request_into_staging_never_plans_a_workspace_tracking_main(settings, bind, github, reported):
+    """A pull request into a branch no bound workspace tracks is reported as needing no runs."""
+    bind("prod", tracked_branch="main")
+    fake = github()
+    fake.pulls = [{"state": "open", "head": {"sha": HEAD_SHA}, "mergeable": True, "merge_commit_sha": MERGE_SHA}]
+    fake.files = [{"filename": "main.tf"}]
+    upload_id = consumed(pr_message() | {"base_branch": "staging", "default_branch": "main"}, settings)
+    record = repositories.vcs_uploads(settings).get({"upload_id": upload_id}) or {}
+    assert record["base_branch"] == "staging"
+    assert record["report_only"] is True
+    assert reported == [(upload_id, [])]
+    assert fake.tarball_fetches() == 0
+
+
 def test_a_pull_request_still_computing_is_retried(settings, bind, github):
     """A merge state that never settles raises, so SQS delivers the message again."""
     bind()

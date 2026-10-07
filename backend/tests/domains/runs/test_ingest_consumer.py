@@ -188,6 +188,53 @@ def test_speculative_plans_off_ignores_pull_requests(settings, bind, state_machi
     assert deliver(upload(settings, pr_claims(3), tarball()), settings) == []
 
 
+def upload_into(settings, base: str, data: bytes, *, default: str | None = "main") -> dict:
+    """Write a pull request into `base` from the webhook bridge and return the event body."""
+    item = record_for(pr_claims(5), data, head_sha=HEAD_SHA, base_sha=BASE_SHA)
+    item["base_branch"] = base
+    if default:
+        item["default_branch"] = default
+    repositories.vcs_uploads(settings).put(item)
+    boto3.client("s3", region_name="us-west-2").put_object(Bucket=settings.ARTIFACTS_BUCKET, Key=item["key"], Body=data)
+    return {"kind": ingest.INGEST_KIND, "bucket": settings.ARTIFACTS_BUCKET, "key": item["key"], "size": len(data)}
+
+
+def test_a_pull_request_plans_only_the_workspaces_tracking_its_base(settings, bind, state_machine):
+    """A pull request into `staging` plans the staging workspace and leaves the one tracking `main` alone."""
+    prod = bind("prod", tracked_branch="main")
+    staging = bind("prod-staging", tracked_branch="staging")
+    [run_id] = deliver(upload_into(settings, "staging", tarball()), settings)
+    assert runs_service.get_run(run_id, settings=settings)["workspace_id"] == staging["workspace_id"]
+    assert runs_on(prod, settings) == []
+
+
+def test_a_promotion_into_main_plans_only_the_main_workspaces(settings, bind, state_machine):
+    """A pull request into `main` plans the workspace tracking `main` and not the staging one."""
+    prod = bind("prod", tracked_branch="main")
+    staging = bind("prod-staging", tracked_branch="staging")
+    [run_id] = deliver(upload_into(settings, "main", tarball()), settings)
+    assert runs_service.get_run(run_id, settings=settings)["workspace_id"] == prod["workspace_id"]
+    assert runs_on(staging, settings) == []
+
+
+@pytest.mark.parametrize(
+    ("tracked", "base", "default", "plans"),
+    [
+        ("main", "main", "main", True),
+        ("main", "staging", "main", False),
+        (None, "main", "main", True),
+        (None, "staging", "main", False),
+        (None, "staging", None, True),
+        ("main", None, "main", True),
+    ],
+    ids=["tracked", "other-base", "default", "default-other-base", "unknown-default", "no-base"],
+)
+def test_a_workspace_with_no_tracked_branch_targets_the_default_branch(tracked, base, default, plans):
+    """The tracked branch, else the default branch, must be the base; an unknown side keeps planning."""
+    upload_record = {"event": "pull_request", "base_branch": base, "default_branch": default}
+    assert ingest.targets_base({"tracked_branch": tracked}, upload_record) is plans
+
+
 def test_the_default_pattern_is_the_working_directory(settings, bind, state_machine):
     """Empty patterns mean everything under `working_directory`."""
     inside = bind("inside", working_directory="stacks/app")
