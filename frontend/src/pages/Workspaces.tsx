@@ -1,46 +1,68 @@
-/** The workspaces list, with the way to create one. */
+/** The workspaces list, sortable, searchable and grouped by project, with the way to create one. */
 
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
-  accountStatus,
-  accountStatusLabel,
   api,
-  runStateLabel,
-  type Workspace,
+  type Project,
+  type ProjectList,
   type WorkspaceList,
   type WorkspaceListItem,
+  type WorkspaceSort,
 } from '../api';
 import {
   EmptyState,
   ErrorNotice,
-  INPUT_CLASS,
   buttonClass,
   PageHeader,
-  RelativeTime,
-  runPath,
+  SegmentedControl,
   Spinner,
-  StateBadge,
-  Table,
-  Td,
-  Th,
-  Tr,
 } from '../components';
-import { useRunRoleCheck } from './useRunRoleCheck';
+import { NameSearch, SortSelect, WorkspaceRows } from './workspaceListing';
+import {
+  DEFAULT_WORKSPACE_SORT,
+  groupByProject,
+  matchingName,
+  readSort,
+  withParam,
+} from './workspaceListingRules';
+
 /** The refetch key the list reads and the create form invalidates. */
 export const WORKSPACES_KEY = 'workspaces';
+
+/** The refetch key the project list reads and the project forms invalidate. */
+export const PROJECTS_KEY = 'projects';
+
+type Grouping = 'none' | 'project';
 
 /** The workspaces list. */
 export function Workspaces(): React.ReactElement {
   const auth = useQueryAuth();
-  const [filter, setFilter] = useState('');
+  const [params, setParams] = useSearchParams();
+  const sort = readSort(params.get('sort'));
+  const search = params.get('q') ?? '';
+  const grouping: Grouping =
+    params.get('group') === 'project' ? 'project' : 'none';
   const query = usePolledQuery<WorkspaceList>(
-    ({ signal }) => api.listWorkspaces({ signal }),
-    { intervalMs: 30_000, queryKey: WORKSPACES_KEY, auth }
+    ({ signal }) => api.listWorkspaces({ signal }, { sort }),
+    { intervalMs: 30_000, queryKey: [WORKSPACES_KEY, sort], auth }
   );
+  const projects = usePolledQuery<ProjectList>(
+    ({ signal }) => api.listProjects({ signal }),
+    {
+      intervalMs: 60_000,
+      queryKey: PROJECTS_KEY,
+      auth,
+      enabled: grouping === 'project',
+    }
+  );
+  const update = (key: string, value: string, fallback = ''): void => {
+    setParams((current) => withParam(current, key, value, fallback), {
+      replace: true,
+    });
+  };
 
   return (
     <div className="space-y-5">
@@ -53,37 +75,66 @@ export function Workspaces(): React.ReactElement {
           ) : null
         }
         actions={
-          <Link to="/workspaces/new" className={buttonClass('primary')}>
-            New workspace
-          </Link>
+          <>
+            <Link to="/projects" className={buttonClass('secondary')}>
+              Projects
+            </Link>
+            <Link to="/workspaces/new" className={buttonClass('primary')}>
+              New workspace
+            </Link>
+          </>
         }
       />
       <ErrorNotice error={query.error} />
+      {grouping === 'project' ? <ErrorNotice error={projects.error} /> : null}
       {query.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-text-faint">
           <Spinner label="Loading workspaces" className="size-4" />
           Loading workspaces
         </div>
       ) : (
-        <WorkspaceTable
+        <WorkspaceListing
           workspaces={query.data?.items ?? []}
-          filter={filter}
-          onFilter={setFilter}
+          projects={
+            grouping === 'project' ? (projects.data?.items ?? null) : null
+          }
+          grouping={grouping}
+          search={search}
+          sort={sort}
+          onSearch={(value) => {
+            update('q', value);
+          }}
+          onSort={(value) => {
+            update('sort', value, DEFAULT_WORKSPACE_SORT);
+          }}
+          onGroup={(value) => {
+            update('group', value, 'none');
+          }}
         />
       )}
     </div>
   );
 }
 
-/** The table of workspaces behind a name filter, or an invitation to create the first one. */
-function WorkspaceTable({
+/** The controls over the list, then the list flat or by project, or an invitation to create the first one. */
+function WorkspaceListing({
   workspaces,
-  filter,
-  onFilter,
+  projects,
+  grouping,
+  search,
+  sort,
+  onSearch,
+  onSort,
+  onGroup,
 }: {
   workspaces: WorkspaceListItem[];
-  filter: string;
-  onFilter: (value: string) => void;
+  projects: readonly Project[] | null;
+  grouping: Grouping;
+  search: string;
+  sort: WorkspaceSort;
+  onSearch: (value: string) => void;
+  onSort: (value: WorkspaceSort) => void;
+  onGroup: (value: Grouping) => void;
 }): React.ReactElement {
   if (workspaces.length === 0) {
     return (
@@ -98,26 +149,23 @@ function WorkspaceTable({
       />
     );
   }
-  const needle = filter.trim().toLowerCase();
-  const shown =
-    needle === ''
-      ? workspaces
-      : workspaces.filter((workspace) =>
-          workspace.name.toLowerCase().includes(needle)
-        );
+  const shown = matchingName(workspaces, search);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <input
-          type="search"
-          aria-label="Filter workspaces by name"
-          placeholder="Filter workspaces by name"
-          value={filter}
-          onChange={(event) => {
-            onFilter(event.target.value);
-          }}
-          className={`${INPUT_CLASS} max-w-xs`}
-        />
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+          <NameSearch value={search} onChange={onSearch} />
+          <SortSelect value={sort} onChange={onSort} />
+          <SegmentedControl
+            label="Group workspaces"
+            value={grouping}
+            onChange={onGroup}
+            segments={[
+              { id: 'none', label: 'All' },
+              { id: 'project', label: 'By project' },
+            ]}
+          />
+        </div>
         <span className="text-xs text-text-faint">
           {shown.length} of {workspaces.length}
         </span>
@@ -126,136 +174,74 @@ function WorkspaceTable({
         <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm text-text-faint">
           No workspaces match that name.
         </p>
+      ) : grouping === 'project' ? (
+        projects === null ? (
+          <div className="flex items-center gap-2 text-sm text-text-faint">
+            <Spinner label="Loading projects" className="size-4" />
+            Loading projects
+          </div>
+        ) : (
+          <ProjectGroups
+            workspaces={shown}
+            projects={projects}
+            searching={search.trim() !== ''}
+          />
+        )
       ) : (
-        <Table label="Workspaces">
-          <thead>
-            <tr>
-              <Th>Workspace name</Th>
-              <Th>Run status</Th>
-              <Th>Engine</Th>
-              <Th>AWS account</Th>
-              <Th>Latest change</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((workspace) => (
-              <Tr key={workspace.workspace_id}>
-                <Td>
-                  <Link
-                    to={`/workspaces/${workspace.workspace_id}`}
-                    className="font-medium text-text-strong hover:text-accent hover:underline"
-                  >
-                    {workspace.name}
-                  </Link>
-                  {(workspace.description ?? '') === '' ? null : (
-                    <p className="max-w-md truncate text-xs text-text-faint">
-                      {workspace.description}
-                    </p>
-                  )}
-                </Td>
-                <Td>
-                  <RunStatusCell workspace={workspace} />
-                </Td>
-                <Td className="text-text-muted">
-                  {workspace.engine ?? 'terraform'}{' '}
-                  <span className="font-mono text-xs">
-                    {workspace.engine_version}
-                  </span>
-                </Td>
-                <Td>
-                  <ConnectionCell workspace={workspace} />
-                </Td>
-                <Td className="text-xs whitespace-nowrap text-text-faint">
-                  <RelativeTime iso={workspace.latest_change_at} />
-                </Td>
-              </Tr>
-            ))}
-          </tbody>
-        </Table>
+        <WorkspaceRows workspaces={shown} />
       )}
     </div>
   );
 }
 
-/**
- * The newest run's state as a badge linking to that run, as HCP Terraform's
- * list shows it, or the words for a workspace that never ran.
- */
-function RunStatusCell({
-  workspace,
+/** The list grouped by project, each project with its workspaces and their latest runs. */
+function ProjectGroups({
+  workspaces,
+  projects,
+  searching,
 }: {
-  workspace: WorkspaceListItem;
+  workspaces: readonly WorkspaceListItem[];
+  projects: readonly Project[];
+  searching: boolean;
 }): React.ReactElement {
-  const run = workspace.latest_run;
-  if (run === null || run === undefined) {
-    return (
-      <span
-        data-testid="workspace-row-run-status"
-        className="text-xs text-text-faint"
-      >
-        No runs yet
-      </span>
-    );
-  }
-  return (
-    <Link
-      to={runPath({
-        run_id: run.run_id,
-        workspace_id: workspace.workspace_id,
-      })}
-      data-testid="workspace-row-run-status"
-      aria-label={`Latest run: ${runStateLabel(run.status)}`}
-      className="inline-flex rounded-full"
-    >
-      <StateBadge
-        state={run.status}
-        className="transition-opacity hover:opacity-80"
-      />
-    </Link>
+  const groups = groupByProject(workspaces, projects).filter(
+    (group) => !searching || group.workspaces.length > 0
   );
-}
-
-/**
- * The account id with a green dot, or the words for a missing connection.
- *
- * Each row with a role reads the same check the workspace header does, so the
- * list never disagrees with the page it links to.
- */
-function ConnectionCell({
-  workspace,
-}: {
-  workspace: Workspace;
-}): React.ReactElement {
-  const check = useRunRoleCheck(workspace);
-  const status = accountStatus(workspace, check);
-  if (status.state === 'connected') {
-    return (
-      <span
-        data-testid="workspace-row-account"
-        data-connection={status.state}
-        className="inline-flex items-center gap-2 font-mono text-xs text-text"
-      >
-        <span
-          aria-hidden="true"
-          className="inline-block size-2 rounded-full bg-success"
-        />
-        {accountStatusLabel(status)}
-      </span>
-    );
-  }
   return (
-    <span
-      data-testid="workspace-row-account"
-      data-connection={status.state}
-      className="inline-flex items-center gap-2 text-xs text-text-faint"
-    >
-      <span
-        aria-hidden="true"
-        className={`inline-block size-2 rounded-full ${
-          status.state === 'failed' ? 'bg-danger' : 'bg-surface-400'
-        }`}
-      />
-      {accountStatusLabel(status)}
-    </span>
+    <div className="space-y-6">
+      {groups.map((group) => (
+        <section
+          key={group.project_id}
+          aria-label={`Project ${group.name}`}
+          className="space-y-2"
+        >
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-sm font-semibold text-text-strong">
+              <Link
+                to={`/projects/${group.project_id}`}
+                className="hover:text-accent hover:underline"
+              >
+                {group.name}
+              </Link>
+            </h2>
+            <span className="text-xs text-text-faint">
+              {group.workspaces.length === 1
+                ? '1 workspace'
+                : `${String(group.workspaces.length)} workspaces`}
+            </span>
+          </div>
+          {group.workspaces.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-line px-4 py-4 text-center text-sm text-text-faint">
+              No workspaces in this project yet.
+            </p>
+          ) : (
+            <WorkspaceRows
+              workspaces={group.workspaces}
+              label={`Workspaces in ${group.name}`}
+            />
+          )}
+        </section>
+      ))}
+    </div>
   );
 }

@@ -1,4 +1,5 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
@@ -24,14 +25,14 @@ vi.mock('../api/client', () => apiClientModuleMock());
 const { Workspaces } = await import('./Workspaces');
 
 /** Mounts the list with a detail route beside it, so navigation can be seen. */
-function renderList(): void {
+function renderList(entry = '/workspaces'): void {
   renderWithAuth(
     <Routes>
       <Route path="/workspaces" element={<Workspaces />} />
       <Route path="/workspaces/:workspaceId" element={<p>Detail page</p>} />
     </Routes>,
     signedInAuthClient(),
-    ['/workspaces']
+    [entry]
   );
 }
 
@@ -199,5 +200,108 @@ describe('Workspaces', () => {
       'href',
       '/workspaces/new'
     );
+  });
+
+  it('asks the API for the sort the address holds and starts on name', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({ items: [aListedWorkspace()] });
+
+    renderList('/workspaces?sort=-latest_run');
+
+    expect(await screen.findByLabelText('Sort workspaces')).toHaveValue(
+      '-latest_run'
+    );
+    expect(apiMock.listWorkspaces).toHaveBeenCalledWith(expect.anything(), {
+      sort: '-latest_run',
+    });
+  });
+
+  it('changes the sort through the control and asks the API again', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({ items: [aListedWorkspace()] });
+    renderList();
+
+    const select = await screen.findByLabelText('Sort workspaces');
+    expect(select).toHaveValue('name');
+    await userEvent.selectOptions(select, 'status');
+
+    expect(apiMock.listWorkspaces).toHaveBeenLastCalledWith(expect.anything(), {
+      sort: 'status',
+    });
+  });
+
+  it('filters by the search the address holds', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({
+      items: [
+        aListedWorkspace(),
+        aListedWorkspace(
+          aFreshWorkspace({ workspace_id: 'ws-2', name: 'organization' })
+        ),
+      ],
+    });
+
+    renderList('/workspaces?q=org');
+
+    expect(
+      await screen.findByRole('link', { name: 'organization' })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'platform' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('1 of 2', { exact: false })).toBeInTheDocument();
+  });
+
+  it('groups the workspaces by project, the default first, keeping the order inside each', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({
+      items: [
+        aListedWorkspace(
+          aFreshWorkspace({
+            workspace_id: 'ws-2',
+            name: 'cmp-prod',
+            project_id: 'prj-01J000000000000000000001',
+          })
+        ),
+        aListedWorkspace(),
+        aListedWorkspace(
+          aFreshWorkspace({
+            workspace_id: 'ws-3',
+            name: 'cmp-staging',
+            project_id: 'prj-01J000000000000000000001',
+          })
+        ),
+      ],
+    });
+    apiMock.listProjects.mockResolvedValue({
+      items: [
+        {
+          project_id: 'prj-default',
+          name: 'Default Project',
+          is_default: true,
+          workspace_count: 1,
+        },
+        {
+          project_id: 'prj-01J000000000000000000001',
+          name: 'CarModPicker',
+          is_default: false,
+          workspace_count: 2,
+        },
+      ],
+    });
+
+    renderList('/workspaces?group=project');
+
+    const carModPicker = await screen.findByRole('region', {
+      name: 'Project CarModPicker',
+    });
+    const names = within(carModPicker)
+      .getAllByRole('link')
+      .map((link) => link.textContent);
+    expect(names).toEqual(['CarModPicker', 'cmp-prod', 'cmp-staging']);
+    expect(
+      within(
+        screen.getByRole('region', { name: 'Project Default Project' })
+      ).getByRole('link', { name: 'platform' })
+    ).toBeInTheDocument();
+    expect(
+      within(carModPicker).getByRole('link', { name: 'CarModPicker' })
+    ).toHaveAttribute('href', '/projects/prj-01J000000000000000000001');
   });
 });

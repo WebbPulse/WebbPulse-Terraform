@@ -60,6 +60,7 @@ os.environ.update(
         "USERS_TABLE": f"{TABLE_PREFIX}-users",
         "GITHUB_TABLE": f"{TABLE_PREFIX}-github",
         "REGISTRY_TABLE": f"{TABLE_PREFIX}-registry",
+        "PROJECTS_TABLE": f"{TABLE_PREFIX}-projects",
         "STATE_BUCKET": STATE_BUCKET,
         "STATE_KMS_KEY_ARN": STATE_KMS_KEY_ARN,
         "ARTIFACTS_BUCKET": ARTIFACTS_BUCKET,

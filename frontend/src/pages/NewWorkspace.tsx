@@ -6,10 +6,10 @@
  */
 
 import { useId, useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutationWithRefetch } from '@webbpulse/api-client/react';
 
-import { api, type WorkspaceCreate } from '../api';
+import { api, DEFAULT_PROJECT_ID, type WorkspaceCreate } from '../api';
 import {
   Button,
   ErrorNotice,
@@ -19,6 +19,7 @@ import {
   buttonClass,
   useIsAdmin,
 } from '../components';
+import { ProjectPicker } from './ProjectPicker';
 import { WORKSPACES_KEY } from './Workspaces';
 import {
   NAME_MAX_LENGTH,
@@ -68,6 +69,10 @@ export function NewWorkspace(): React.ReactElement {
   const [name, setName] = useState('');
   const [nameEdited, setNameEdited] = useState(false);
   const [description, setDescription] = useState('');
+  const [params] = useSearchParams();
+  const [projectId, setProjectId] = useState(
+    params.get('project') ?? DEFAULT_PROJECT_ID
+  );
   const [engine, setEngine] = useState<EngineChoice>({
     engine: 'terraform',
     version: defaultEngineVersion('terraform'),
@@ -114,6 +119,9 @@ export function NewWorkspace(): React.ReactElement {
     };
     if (description.trim() !== '') {
       base.description = description.trim();
+    }
+    if (projectId !== DEFAULT_PROJECT_ID) {
+      base.project_id = projectId;
     }
     try {
       const created = await mutate(
@@ -173,6 +181,8 @@ export function NewWorkspace(): React.ReactElement {
           }}
           description={description}
           onDescription={setDescription}
+          projectId={projectId}
+          onProject={setProjectId}
           engine={engine}
           onEngine={setEngine}
           vcs={vcs}
@@ -426,6 +436,8 @@ interface SettingsStepProps {
   onName: (value: string) => void;
   description: string;
   onDescription: (value: string) => void;
+  projectId: string;
+  onProject: (value: string) => void;
   engine: EngineChoice;
   onEngine: (value: EngineChoice) => void;
   vcs: VcsSettings;
@@ -447,6 +459,8 @@ function SettingsStep({
   onName,
   description,
   onDescription,
+  projectId,
+  onProject,
   engine,
   onEngine,
   vcs,
@@ -558,6 +572,7 @@ function SettingsStep({
             />
           )}
         </Field>
+        <ProjectPicker value={projectId} onChange={onProject} />
         <div className="rounded-lg border border-line bg-panel">
           <button
             type="button"

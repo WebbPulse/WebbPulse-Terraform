@@ -98,3 +98,36 @@ describe('GeneralSettings auto-apply', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('GeneralSettings project', () => {
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+    apiMock.listConfigVersions.mockResolvedValue({ items: [] });
+    apiMock.listRuns.mockResolvedValue({ items: [] });
+    apiMock.listProjects.mockResolvedValue({
+      items: [
+        { project_id: 'prj-default', name: 'Default Project' },
+        { project_id: 'prj-01J000000000000000000001', name: 'Platform' },
+      ],
+    });
+    apiMock.updateWorkspace.mockResolvedValue(
+      aWorkspace({ project_id: 'prj-01J000000000000000000001' })
+    );
+  });
+
+  it('moves the workspace to another project and nothing else', async () => {
+    renderPage();
+
+    const picker = await screen.findByRole('combobox', { name: 'Project' });
+    expect(picker).toHaveValue('prj-default');
+    await userEvent.selectOptions(picker, 'prj-01J000000000000000000001');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Move workspace' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(WORKSPACE_ID, {
+      project_id: 'prj-01J000000000000000000001',
+    });
+  });
+});

@@ -15,6 +15,7 @@ from .tables import (
     CONFIG_VERSIONS,
     GITHUB,
     NOTIFICATION_CONFIGURATIONS,
+    PROJECTS,
     REGISTRY,
     RUNS,
     USERS,
@@ -111,6 +112,12 @@ def notification_configurations(settings: Settings | None = None) -> Repository:
     )
 
 
+def projects(settings: Settings | None = None) -> Repository:
+    """The projects table."""
+    resolved = settings or get_settings()
+    return _repository(PROJECTS, _name(resolved.PROJECTS_TABLE, PROJECTS, resolved), resolved)
+
+
 def physical_names(settings: Settings | None = None) -> dict[str, str]:
     """Every logical table paired with the physical name this environment uses."""
     resolved = settings or get_settings()
@@ -126,4 +133,5 @@ def physical_names(settings: Settings | None = None) -> dict[str, str]:
         NOTIFICATION_CONFIGURATIONS: _name(
             resolved.NOTIFICATION_CONFIGURATIONS_TABLE, NOTIFICATION_CONFIGURATIONS, resolved
         ),
+        PROJECTS: _name(resolved.PROJECTS_TABLE, PROJECTS, resolved),
     }

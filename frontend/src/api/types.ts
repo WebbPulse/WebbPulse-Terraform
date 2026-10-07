@@ -267,6 +267,29 @@ export type PlanMode = Schemas['PlanResourceChange']['mode'];
 /** The error envelope every failing route renders. */
 export type ErrorResponse = Schemas['ErrorResponse'];
 
+/** A project, the group workspaces are organised into. */
+export type Project = Schemas['Project'];
+
+/** Every project, the default first. */
+export type ProjectList = Schemas['ProjectList'];
+
+/** The body that creates a project. */
+export type ProjectCreate = Schemas['ProjectCreate'];
+
+/** A partial project edit. */
+export type ProjectUpdate = Schemas['ProjectUpdate'];
+
+/** The project every workspace is in until it is moved, which is never stored. */
+export const DEFAULT_PROJECT_ID = 'prj-default';
+
+/** The query the workspace list accepts: a project, a name search and a sort. */
+export type WorkspaceListQuery = NonNullable<
+  paths['/api/v1/workspaces']['get']['parameters']['query']
+>;
+
+/** The orders the workspace list can return. */
+export type WorkspaceSort = NonNullable<WorkspaceListQuery['sort']>;
+
 /** The query the runs list accepts, so a caller cannot invent a filter. */
 export type RunListQuery = NonNullable<
   paths['/api/v1/runs']['get']['parameters']['query']
