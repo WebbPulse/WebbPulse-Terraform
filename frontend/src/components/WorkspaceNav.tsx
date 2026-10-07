@@ -73,7 +73,7 @@ export function WorkspaceNav({
       <Link
         to={back.to}
         className={`flex items-center gap-1 rounded-md text-xs text-text-muted hover:text-text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-          compact ? 'px-2 py-1' : 'px-2.5 py-1.5'
+          compact ? 'shrink-0 px-2 py-1 whitespace-nowrap' : 'px-2.5 py-1.5'
         }`}
       >
         <svg viewBox="0 0 16 16" className="size-3" fill="none" aria-hidden>

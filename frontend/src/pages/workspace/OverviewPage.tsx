@@ -26,7 +26,7 @@ import {
 import { useWorkspace } from '../workspaceContext';
 import { SetupChecklist } from './SetupChecklist';
 import { WorkspaceReadme } from './WorkspaceReadme';
-import { latestUploadedVersion } from './setup';
+import { readmeVersion } from './readme';
 
 /** The overview page. */
 export function OverviewPage(): React.ReactElement {
@@ -98,9 +98,7 @@ export function OverviewPage(): React.ReactElement {
         <WorkspaceFacts
           workspace={workspace}
           runRoleCheck={runRoleCheck}
-          latestVersion={
-            latestUploadedVersion(versions)?.config_version_id ?? null
-          }
+          latestVersion={readmeVersion(versions)?.config_version_id ?? null}
         />
       </div>
     </div>
