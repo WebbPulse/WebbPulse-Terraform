@@ -12,6 +12,7 @@ import json
 from urllib.parse import parse_qs, urlparse
 
 import boto3
+import pytest
 
 from app.common.core.auth import STATE_DOWNLOAD, STATE_WRITE, WORKSPACES_READ
 from app.domains.workspaces import tfe_state
@@ -21,6 +22,15 @@ from tests.conftest import REGION, STATE_BUCKET
 API = "/api/v2"
 JSON_API = "application/vnd.api+json"
 LINEAGE = "6b3b3c3e-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _versioned_state_bucket(aws_environment) -> None:
+    """Turn on object versioning for the state bucket, as the stack does, since every id names a version."""
+    boto3.client("s3", region_name=REGION).put_bucket_versioning(
+        Bucket=STATE_BUCKET,
+        VersioningConfiguration={"Status": "Enabled"},
+    )
 
 
 def _state(serial: int, *, lineage: str = LINEAGE, outputs: dict | None = None) -> bytes:

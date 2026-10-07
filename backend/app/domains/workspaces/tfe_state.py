@@ -185,9 +185,7 @@ def _value_type(value: Any) -> str:
     return "null"
 
 
-def outputs(
-    workspace_id: str, version_id: str, *, settings: Settings | None = None
-) -> list[dict[str, Any]]:
+def outputs(workspace_id: str, version_id: str, *, settings: Settings | None = None) -> list[dict[str, Any]]:
     """Every root output of one state version: id, name, sensitive, type, detailed type and value.
 
     The detailed type is the cty type the state recorded, which is what lets the CLI
