@@ -15,7 +15,7 @@ import pytest
 
 from app import install, workspace
 from app.api import ApiError, RunnerApi
-from app.engine import build_environment, parse_apply_changes, parse_changes
+from app.engine import build_environment, parse_apply_changes, parse_changes, plan_options
 from app.install import SIGNING_KEYS as PINNED_SIGNING_KEYS
 from app.install import InstallError, ReleaseUrls, release_urls
 from app.logs import REDACTED, CloudWatchLogSink, Redactor
@@ -613,6 +613,71 @@ def test_bundle_sensitive_values_cover_hcl_variables(run_role_arn: str) -> None:
 
     redactor = Redactor(bundle.sensitive_values())
     assert SECRET_TFVAR not in redactor.scrub(f'subnets = ["{SECRET_TFVAR}"]')
+
+
+def test_plan_options_carry_the_runs_flags_one_argument_each() -> None:
+    """Targets, replacements and refresh choices become the engine's own plan flags."""
+    assert plan_options() == []
+    options = plan_options(
+        target_addrs=["null_resource.a", 'module.m["k"].terraform_data.b'],
+        replace_addrs=["terraform_data.c"],
+        refresh=False,
+        refresh_only=True,
+        var_file=workspace.RUN_TFVARS_FILENAME,
+    )
+    assert options == [
+        "-refresh-only",
+        "-refresh=false",
+        "-target=null_resource.a",
+        '-target=module.m["k"].terraform_data.b',
+        "-replace=terraform_data.c",
+        f"-var-file={workspace.RUN_TFVARS_FILENAME}",
+    ]
+
+
+def test_run_tfvars_are_not_loaded_automatically(tmp_path: Path) -> None:
+    """The run's file is named by `-var-file`, so it must not also be an `.auto.tfvars` file."""
+    path = workspace.write_run_tfvars(tmp_path, {"size": "3", "names": '["a"]'})
+    assert path is not None
+    assert path.name == workspace.RUN_TFVARS_FILENAME
+    assert not path.name.endswith(".auto.tfvars")
+    body = path.read_text()
+    assert "size = (\n3\n)" in body
+    assert 'names = (\n["a"]\n)' in body
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert workspace.write_run_tfvars(tmp_path / "none", {}) is None
+    with pytest.raises(workspace.ConfigError, match="valid HCL identifier"):
+        workspace.write_run_tfvars(tmp_path, {"bad name": "1"})
+
+
+def test_prepare_writes_the_run_variables(tmp_path: Path, run_role_arn: str, config_tarball: bytes) -> None:
+    """A bundle carrying run variables gets the run tfvars file beside the others."""
+    archive = tmp_path / "config.tar.gz"
+    archive.write_bytes(config_tarball)
+    bundle = Bundle.model_validate(bundle_payload(run_role_arn) | {"run_variables": {"size": "3"}})
+    root = tmp_path / "config"
+    root.mkdir()
+
+    target = workspace.prepare(root, bundle, archive)
+
+    assert "size = (\n3\n)" in (target / workspace.RUN_TFVARS_FILENAME).read_text()
+
+
+def test_bundle_sensitive_values_cover_run_variables(run_role_arn: str) -> None:
+    """A run variable may carry a secret, so its expression and literals are redacted."""
+    payload = bundle_payload(run_role_arn) | {"run_variables": {"token": f'"{SECRET_TFVAR}"'}}
+    redactor = Redactor(Bundle.model_validate(payload).sensitive_values())
+    assert SECRET_TFVAR not in redactor.scrub(f'token = "{SECRET_TFVAR}"')
+
+
+def test_a_bundle_without_run_options_keeps_the_defaults(run_role_arn: str) -> None:
+    """A control plane that predates the run options plans exactly as before."""
+    bundle = Bundle.model_validate(bundle_payload(run_role_arn))
+    assert bundle.target_addrs == []
+    assert bundle.replace_addrs == []
+    assert bundle.refresh is True
+    assert bundle.refresh_only is False
+    assert bundle.run_variables == {}
 
 
 def test_a_sensitive_hcl_member_is_masked_when_printed_alone(run_role_arn: str) -> None:

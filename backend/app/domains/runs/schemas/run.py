@@ -489,6 +489,16 @@ class RunBundle(BaseModel):
     """Google and Azure identity tokens for this phase, absent unless the workspace asks for them."""
     api: Optional[ApiCredentials] = None
     """The run's control plane API token, absent unless an admin granted the workspace's runs scopes."""
+    target_addrs: list[str] = []
+    """`-target` addresses the plan is limited to."""
+    replace_addrs: list[str] = []
+    """`-replace` addresses the plan replaces."""
+    refresh: bool = True
+    """False for `-refresh=false`."""
+    refresh_only: bool = False
+    """True for `-refresh-only`."""
+    run_variables: dict[str, str] = {}
+    """`-var` values set on this run, HCL expressions the runner writes to a tfvars file."""
 
 
 class PhaseResult(BaseModel):

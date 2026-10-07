@@ -170,7 +170,7 @@ native `zz_webbpulse.auto.tfvars` as `key = (<value>)` rather than into the JSON
 tfvars file, so the engine parses it. That is the only way a `list` or `map`
 typed input variable can be given a value. It is refused on an `env` variable,
 whose value is a string to the process with nothing to parse it. The value is
-checked at write time by `app/domains/workspaces/hcl.py` without adding an HCL
+checked at write time by `app/common/workspaces/hcl.py` without adding an HCL
 parser dependency. The check is also the injection boundary: its scanner mirrors
 the engine's string, heredoc, comment and interpolation rules, so a value whose
 brackets balance outside them cannot close the wrapping parenthesis and add an

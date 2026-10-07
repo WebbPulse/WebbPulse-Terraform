@@ -29,7 +29,7 @@ from ...common.runs.workspace_runs import (
     require_no_active_run,
     workspace_run_ids,
 )
-from ...common.workspaces import aws_connect, cleanup, reads
+from ...common.workspaces import aws_connect, cleanup, hcl, reads
 from ...common.workspaces import readme as config_readme
 from ...common.workspaces import vcs as workspace_vcs
 from ...common.workspaces.reads import (
@@ -46,7 +46,7 @@ from ...common.workspaces.reads import (
     list_variables,
     resolved_variables,
 )
-from . import hcl, state_versions, vcs_connect
+from . import state_versions, vcs_connect
 from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
 from .vcs_connect import RepositoryNotInstalled
 
