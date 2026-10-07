@@ -26,6 +26,8 @@ from ...common.db.tables import (
 from ...common.runs.workspace_runs import (
     RunStillActive,
     delete_workspace_runs,
+    latest_run_summary,
+    latest_runs,
     require_no_active_run,
     workspace_run_ids,
 )
@@ -230,6 +232,25 @@ def list_workspaces(*, settings: Settings | None = None) -> list[dict[str, Any]]
     resolved = settings or get_settings()
     items = list(repositories.workspaces(resolved).iter_scan())
     return sorted(items, key=lambda item: str(item.get("workspace_id", "")))
+
+
+def list_workspace_items(*, settings: Settings | None = None) -> list[dict[str, Any]]:
+    """Every workspace rendered for the list, each with its newest run and latest change.
+
+    The newest runs come from one walk of the runs table for the whole list, never a
+    read per workspace.
+    """
+    resolved = settings or get_settings()
+    items = list_workspaces(settings=resolved)
+    runs = latest_runs([str(item["workspace_id"]) for item in items], settings=resolved)
+    rendered: list[dict[str, Any]] = []
+    for item in items:
+        run = runs.get(str(item["workspace_id"]))
+        latest = None if run is None else latest_run_summary(run)
+        changed_at = latest["changed_at"] if latest else str(item.get("updated_at") or item.get("created_at") or "")
+        extra: dict[str, Any] = {"latest_run": latest, "latest_change_at": changed_at}
+        rendered.append(render_workspace(item, settings=resolved) | extra)
+    return rendered
 
 
 def _stage_run_role(changes: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:

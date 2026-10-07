@@ -2,7 +2,7 @@ import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { aRun, aWorkspace } from '../test-helpers/fixtures';
+import { aListedWorkspace, aRun } from '../test-helpers/fixtures';
 import {
   renderWithAuth,
   signedInAuthClient,
@@ -20,7 +20,7 @@ const { Runs } = await import('./Runs');
 describe('Runs', () => {
   beforeEach(() => {
     resetApiMock();
-    apiMock.listWorkspaces.mockResolvedValue({ items: [aWorkspace()] });
+    apiMock.listWorkspaces.mockResolvedValue({ items: [aListedWorkspace()] });
   });
 
   it('lists every run with its state and plan counts', async () => {

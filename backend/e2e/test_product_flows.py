@@ -314,6 +314,27 @@ class TestRunLifecycle:
         finished = _wait_for(api, run_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
         _require_status(finished, ("planned", "planned_and_finished"), "plan-only run")
 
+    def test_workspace_list_shows_the_run_newer_than_a_settings_change(
+        self, api: Any, workspace: dict[str, Any]
+    ) -> None:
+        """A run after a settings edit is the workspace's latest run and its latest change."""
+        workspace_id = workspace["workspace_id"]
+        patched = api.patch(f"/api/v1/workspaces/{workspace_id}", json={"description": "e2e latest run"})
+        assert patched.status_code == 200, patched.text[:400]
+        config_version_id = _upload(api, workspace_id)
+        run_id = _create_run(api, workspace_id, config_version_id, plan_only=True)
+        finished = _wait_for(api, run_id, PLAN_TERMINAL, PLAN_TIMEOUT_SECONDS)
+
+        listed = api.get("/api/v1/workspaces")
+        assert listed.status_code == 200, listed.text[:400]
+        items = {str(item["workspace_id"]): item for item in listed.json()["items"]}
+        item = items[workspace_id]
+
+        assert item["latest_run"]["run_id"] == run_id, item["latest_run"]
+        assert item["latest_run"]["status"] == finished["status"], _describe(finished)
+        assert item["latest_change_at"] >= item["latest_run"]["created_at"]
+        assert item["latest_change_at"] > patched.json()["updated_at"]
+
     def test_discard_ends_a_planned_run(self, api: Any, workspace: dict[str, Any]) -> None:
         """A run waiting on a confirmation can be discarded instead of applied."""
         workspace_id = workspace["workspace_id"]

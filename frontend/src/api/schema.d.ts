@@ -1209,7 +1209,7 @@ export interface paths {
         };
         /**
          * List Workspaces
-         * @description Every workspace in this environment, each with its run role setup.
+         * @description Every workspace in this environment, each with its run role setup and newest run.
          */
         get: operations["list_workspaces_api_v1_workspaces_get"];
         put?: never;
@@ -2044,6 +2044,37 @@ export interface components {
         InstallationList: {
             /** Items */
             items: components["schemas"]["Installation"][];
+        };
+        /**
+         * LatestRun
+         * @description The newest run on a workspace, as the workspace list shows it.
+         */
+        LatestRun: {
+            /** Changed At */
+            changed_at: string;
+            /** Created At */
+            created_at: string;
+            /** Finished At */
+            finished_at?: string | null;
+            /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
+            /**
+             * Plan Only
+             * @default false
+             */
+            plan_only?: boolean;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
+            /** Updated At */
+            updated_at?: string | null;
         };
         /**
          * LogEvent
@@ -3597,7 +3628,88 @@ export interface components {
          */
         WorkspaceList: {
             /** Items */
-            items: components["schemas"]["Workspace"][];
+            items: components["schemas"]["WorkspaceListItem"][];
+        };
+        /**
+         * WorkspaceListItem
+         * @description A workspace as the list returns it, with its newest run.
+         */
+        WorkspaceListItem: {
+            /**
+             * Auto Apply
+             * @default false
+             */
+            auto_apply?: boolean;
+            aws_connection?: components["schemas"]["AwsConnection"] | null;
+            /** Created At */
+            created_at: string;
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /**
+             * Engine
+             * @default terraform
+             * @enum {string}
+             */
+            engine?: "terraform" | "tofu";
+            /** Engine Version */
+            engine_version: string;
+            /**
+             * File Triggers Enabled
+             * @default true
+             */
+            file_triggers_enabled?: boolean;
+            /** Latest Change At */
+            latest_change_at: string;
+            latest_run?: components["schemas"]["LatestRun"] | null;
+            /** Name */
+            name: string;
+            /** Pending Run Role Arn */
+            pending_run_role_arn?: string | null;
+            /** Plan Assume Role Arns */
+            plan_assume_role_arns?: string[];
+            /** Plan Role Arn */
+            plan_role_arn?: string | null;
+            /** Run Api Token Scopes */
+            run_api_token_scopes?: string[];
+            /** Run Role Account Id */
+            run_role_account_id?: string | null;
+            /** Run Role Arn */
+            run_role_arn?: string | null;
+            /** Run Role Checked At */
+            run_role_checked_at?: string | null;
+            /**
+             * Run Role Reconnect Required
+             * @default false
+             */
+            run_role_reconnect_required?: boolean;
+            run_role_setup: components["schemas"]["RunRoleSetup"];
+            /**
+             * Speculative Plans
+             * @default true
+             */
+            speculative_plans?: boolean;
+            /** Tracked Branch */
+            tracked_branch?: string | null;
+            /** Trigger Patterns */
+            trigger_patterns?: string[];
+            /** Updated At */
+            updated_at?: string | null;
+            /** Vcs Installation Id */
+            vcs_installation_id?: string | null;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
+            /** Vcs Repository Id */
+            vcs_repository_id?: string | null;
+            /**
+             * Working Directory
+             * @default
+             */
+            working_directory?: string;
+            /** Workspace Id */
+            workspace_id: string;
         };
         /**
          * WorkspaceUpdate
