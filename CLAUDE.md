@@ -161,8 +161,9 @@ environments, or the `lambda` mode authorizer where the gate is off) passes thro
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
 runner routes, `POST /github/webhooks` (a webhook signature), the registry protocol
-under `/v1/modules` and `/v1/providers` (a `wpk_` key only), `POST /v1/oauth/token`
-(a PKCE code) and the anonymous identity documents do not.
+under `/v1/modules` and `/v1/providers` (a `wpk_` key only), the `tfe.v2` API under
+`/api/v2` (a `wpk_` key only), `POST /v1/oauth/token` (a PKCE code) and the anonymous
+identity documents do not.
 The scopes are `workspaces:{read,write}`, `variables:{read,write}`,
 `configs:{read,write}`, `runs:{read,write,apply}`, `state:download` and
 `registry:{read,write}`. A key's stored scopes are intersected per request with
@@ -435,6 +436,17 @@ the identity module's `authorization-codes` table, and the CLI exchanges it at `
 /v1/oauth/token` for a `wpk_` key named `terraform login`, valid 90 days, carrying the
 read, config and plan scopes the person holds (`terraform_login.LOGIN_SCOPES`), never
 `runs:apply` or `state:download`.
+
+### Cloud block (`tfe.v2`)
+
+`tfe.v2` in the discovery document points `cloud { hostname = "<SPA host>" organization =
+"WebbPulse" }` at `<api host>/api/v2/`, which speaks HCP's JSON:API as go-tfe decodes it,
+authenticated by the `terraform login` key. `app/common/tfe` holds the shared shapes
+(`jsonapi.JsonApiRoute` renders every refusal as a JSON:API `errors` document) and the
+workspace resource, whose `permissions` are the caller's scopes; each domain serves its own
+routes from a `tfe_router`. The only organization is `WebbPulse`, a workspace is never created
+from the CLI (the create answers 422), and workspaces carry no tags, so only `workspaces { name
+= ... }` selects one. The design and the slices are on TF-44.
 
 `wp-tf login` is the agent path, with no long-lived key. It runs the OAuth device
 grant from the identity package (`device_grant_enabled`, client `wp-tf`) at

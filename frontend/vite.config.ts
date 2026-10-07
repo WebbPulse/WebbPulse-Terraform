@@ -4,8 +4,9 @@ import tailwindcss from '@tailwindcss/vite';
 
 /**
  * Emits the Terraform service discovery document: the module and provider
- * registries on the API host, and `login.v1`, whose relative `authz` Terraform
- * resolves against this host's approve page. Skipped with no API base URL.
+ * registries and the `tfe.v2` API a `cloud {}` block drives, all on the API
+ * host, and `login.v1`, whose relative `authz` Terraform resolves against this
+ * host's approve page. Skipped with no API base URL.
  */
 function terraformDiscovery(apiBaseUrl: string | undefined): Plugin {
   return {
@@ -27,6 +28,7 @@ function terraformDiscovery(apiBaseUrl: string | undefined): Plugin {
           },
           'modules.v1': `${origin}/v1/modules/`,
           'providers.v1': `${origin}/v1/providers/`,
+          'tfe.v2': `${origin}/api/v2/`,
         })}\n`,
       });
     },

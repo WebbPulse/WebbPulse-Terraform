@@ -79,27 +79,29 @@ def _workspaces_routers() -> "list[APIRouter]":
 
 
 def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
-    """The shared package's identity router and `terraform login`'s token route.
+    """The identity router, `terraform login`'s token route and the `tfe.v2` reads.
 
-    Both carry their own paths: the token route is `/v1/oauth/token`, beside the
-    registry protocols, because service discovery names it. Identity is served by
+    Each carries its own paths: the token route is `/v1/oauth/token`, beside the
+    registry protocols, because service discovery names it, and the `tfe.v2`
+    routes sit under `/api/v2`, where discovery points the `cloud {}` block. Identity is served by
     the workspaces function rather than a domain of its own, so the glue mounts
     here. It takes no prefix; a prefix would double every path to
     `/api/auth/api/auth/...`.
 
-    Only the token route when `IDENTITY_ISSUER` is unset, so a deployment without
+    No identity router when `IDENTITY_ISSUER` is unset, so a deployment without
     an issuer builds none of the glue's AWS clients. The imports are inside the
     body for the same reason every loader's is: the runs image must never reach
     these modules.
     """
     from app.domains.workspaces.terraform_login_router import token_router
+    from app.domains.workspaces.tfe_router import router as tfe_router
 
     if not settings.IDENTITY_ISSUER:
-        return [token_router]
+        return [token_router, tfe_router]
 
     from app.common.identity.package_glue import build_router
 
-    return [build_router(settings), token_router]
+    return [build_router(settings), token_router, tfe_router]
 
 
 def _runs_routers() -> "list[APIRouter]":
