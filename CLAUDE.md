@@ -487,6 +487,11 @@ Log URLs are absolute and bare, since go-tfe fetches them without a bearer: the 
 (the S3 transcript once the phase is over) and ETX once done, windowed by `offset` and
 `limit`. Apply logs start with three filler lines because the CLI skips three.
 
+`backend/e2e/test_cloud_block.py` proves the whole surface on staging with the real CLI and
+a key carrying the `terraform login` scopes: remote apply, `-target`, `-replace`,
+`-destroy`, outputs, `state list/show/mv/rm`, `import` and `force-unlock`, on
+`terraform_data` only.
+
 `wp-tf login` is the agent path, with no long-lived key. It runs the OAuth device
 grant from the identity package (`device_grant_enabled`, client `wp-tf`) at
 `<api>/api/auth/device/*`: the approval page sends a signed-out or stale (over ten
