@@ -33,6 +33,7 @@ from ...common.core.auth import (
 from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
 from ...common.workspaces import hcl, run_role_check
+from ...common.workspaces.projects import PROJECT_ID_PATTERN
 from . import quick_setup, service, state_versions
 from .schemas.workspace import (
     ConfigVersionCreate,
@@ -65,6 +66,9 @@ WORKSPACE_HAS_ACTIVE_RUN_CODE = "WORKSPACE_HAS_ACTIVE_RUN"
 
 VCS_REPO_NOT_INSTALLED_CODE = "VCS_REPO_NOT_INSTALLED"
 """The stable code a connect refuses with when the GitHub App cannot see the repository."""
+
+PROJECT_NOT_FOUND_CODE = "PROJECT_NOT_FOUND"
+"""The stable code a create or move refuses with when the named project does not exist."""
 
 GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
 """The stable code a connect fails with when GitHub could not answer."""
@@ -144,6 +148,14 @@ def _not_found(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
 
 
+def _project_not_found() -> HTTPException:
+    """The 422 a create or move into a project that does not exist raises."""
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"message": "No such project.", "error_code": PROJECT_NOT_FOUND_CODE},
+    )
+
+
 def _run_role_missing() -> HTTPException:
     """The 400 both run role check routes raise when no ARN is configured."""
     return HTTPException(
@@ -199,9 +211,34 @@ def _connect_errors() -> Iterator[None]:
     response_model=WorkspaceList,
     dependencies=[Depends(scopes(WORKSPACES_READ))],
 )
-def list_workspaces() -> dict[str, Any]:
-    """Every workspace in this environment, each with its run role setup and newest run."""
-    return {"items": service.list_workspace_items()}
+def list_workspaces(
+    project_id: Optional[str] = Query(
+        default=None,
+        max_length=64,
+        pattern=PROJECT_ID_PATTERN,
+        description="Only the workspaces in this project. `prj-default` is the default project.",
+    ),
+    search: Optional[str] = Query(
+        default=None,
+        max_length=90,
+        description="Only the workspaces whose name contains this, ignoring case.",
+    ),
+    sort: Optional[service.WorkspaceSort] = Query(
+        default=None,
+        description=(
+            "`name` or `-name`, `-latest_run` (newest run first, never run last), `-updated_at` "
+            "(latest change first), `-created_at`, or `status` (runs that need attention first). "
+            "Without it the list is oldest first."
+        ),
+    ),
+) -> dict[str, Any]:
+    """Workspaces in this environment, each with its run role setup and newest run.
+
+    The filters and the sort compose, so a project's workspaces can be searched and
+    ordered in one request. A `project_id` naming a project that holds nothing, or none
+    at all, is an empty list.
+    """
+    return {"items": service.list_workspace_items(project_id=project_id, search=search or None, sort=sort)}
 
 
 @router.post(
@@ -224,7 +261,8 @@ def create_workspace(
     A `vcs_repo` is resolved through the environment's GitHub App: the id, the
     installation and the canonical name are recorded, and `tracked_branch` defaults to
     the repository's default branch. A repository the App is not installed on is a 422
-    carrying `VCS_REPO_NOT_INSTALLED`.
+    carrying `VCS_REPO_NOT_INSTALLED`, as is a `project_id` naming no project, carrying
+    `PROJECT_NOT_FOUND`.
 
     Creating a workspace with `auto_apply` on lets anyone who can start a run apply
     it, so it takes `admin` and the step-up, as turning it on later does.
@@ -240,6 +278,8 @@ def create_workspace(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A workspace named '{error}' already exists.",
         ) from error
+    except service.ProjectNotFound as error:
+        raise _project_not_found() from error
     if payload.auto_apply:
         record_auto_apply_change(current, workspace_id=str(created["workspace_id"]), previous=False, value=True)
     return service.render_workspace(created)
@@ -310,6 +350,8 @@ def update_workspace(
             updated = service.update_workspace(workspace_id, changes)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
+    except service.ProjectNotFound as error:
+        raise _project_not_found() from error
     if auto_apply_from is not None:
         record_auto_apply_change(
             current,

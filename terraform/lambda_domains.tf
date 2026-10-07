@@ -3,7 +3,7 @@ locals {
     workspaces = {
       memory            = 512
       timeout           = local.lambda_domain_timeout
-      tables            = ["workspaces", "variables", "config-versions", "users", "rate-limits", "notification-configurations"]
+      tables            = ["workspaces", "projects", "variables", "config-versions", "users", "rate-limits", "notification-configurations"]
       read_tables       = ["runs"]
       buckets           = true
       own_image_tag     = false

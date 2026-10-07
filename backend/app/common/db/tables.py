@@ -18,6 +18,7 @@ GITHUB: Final = "github"
 VCS_UPLOADS: Final = "vcs-uploads"
 REGISTRY: Final = "registry"
 NOTIFICATION_CONFIGURATIONS: Final = "notification-configurations"
+PROJECTS: Final = "projects"
 
 WORKSPACES_BY_NAME_INDEX: Final = "by_name"
 """The GSI enforcing one workspace per name, and resolving a name to a workspace."""
@@ -31,6 +32,9 @@ rename leaves unchanged."""
 
 VCS_UPLOADS_TTL_ATTRIBUTE: Final = "expires_at"
 """The epoch seconds attribute DynamoDB expires an ingest record on."""
+
+PROJECTS_BY_NAME_INDEX: Final = "by_name"
+"""The GSI enforcing one project per name, compared without case through `name_key`."""
 
 RUNS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 """The GSI listing one workspace's runs, newest last by `created_at`."""
@@ -177,6 +181,21 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
         "KeySchema": [{"AttributeName": "upload_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [{"AttributeName": "upload_id", "AttributeType": "S"}],
     },
+    PROJECTS: {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [{"AttributeName": "project_id", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "project_id", "AttributeType": "S"},
+            {"AttributeName": "name_key", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": PROJECTS_BY_NAME_INDEX,
+                "KeySchema": [{"AttributeName": "name_key", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+            }
+        ],
+    },
     REGISTRY: {
         "BillingMode": "PAY_PER_REQUEST",
         "KeySchema": [
@@ -215,6 +234,7 @@ ALL_TABLES: Final = (
     VCS_UPLOADS,
     REGISTRY,
     NOTIFICATION_CONFIGURATIONS,
+    PROJECTS,
 )
 """Every logical table, in creation order. The suite and the local script walk it."""
 

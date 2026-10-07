@@ -15,6 +15,17 @@ locals {
       ]
     }
 
+    projects = {
+      hash_key = "project_id"
+      attributes = [
+        { name = "project_id", type = "S" },
+        { name = "name_key", type = "S" },
+      ]
+      global_secondary_indexes = [
+        { name = "by_name", hash_key = "name_key", projection_type = "ALL" },
+      ]
+    }
+
     runs = {
       hash_key = "run_id"
       attributes = [

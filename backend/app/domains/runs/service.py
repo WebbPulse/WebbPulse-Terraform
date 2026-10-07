@@ -42,6 +42,7 @@ from ...common.db.tables import (
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
+from ...common.workspaces.projects import project_workspace_ids
 from . import api_credentials, registry_credentials, run_options, vending
 from .schemas.run import Phase
 
@@ -633,6 +634,31 @@ def list_runs(workspace_id: str, *, settings: Settings | None = None) -> list[di
         )
         if _is_run_row(item)
     ]
+
+
+def list_project_runs(
+    project_id: str,
+    *,
+    limit: int = DEFAULT_RUN_PAGE_SIZE,
+    settings: Settings | None = None,
+) -> list[dict[str, Any]]:
+    """The newest runs across one project's workspaces, newest first, at most `limit`.
+
+    One bounded read per workspace in the project, merged by creation. A project
+    that holds nothing, or does not exist, has no runs.
+    """
+    resolved = settings or get_settings()
+    merged: list[dict[str, Any]] = []
+    for workspace_id in project_workspace_ids(project_id, settings=resolved):
+        page = _runs(resolved).query(
+            Key("workspace_id").eq(workspace_id),
+            index_name=RUNS_BY_WORKSPACE_INDEX,
+            limit=limit + 1,
+            ascending=False,
+        )
+        merged.extend(dict(item) for item in page.items if _is_run_row(item))
+    merged.sort(key=lambda item: (str(item.get("created_at", "")), str(item.get("run_id", ""))), reverse=True)
+    return merged[:limit]
 
 
 def list_all_runs(

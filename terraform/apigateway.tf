@@ -47,6 +47,14 @@ locals {
       "POST /api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}/actions/verify" = { integration = "workspaces" }
     },
     {
+      "GET /api/v1/projects"  = { integration = "workspaces" }
+      "POST /api/v1/projects" = { integration = "workspaces" }
+    },
+    {
+      for method in ["GET", "PATCH", "DELETE"] :
+      "${method} /api/v1/projects/{project_id}" => { integration = "workspaces" }
+    },
+    {
       "POST /api/v1/api-keys"            = { integration = "workspaces" }
       "GET /api/v1/api-keys"             = { integration = "workspaces" }
       "DELETE /api/v1/api-keys/{key_id}" = { integration = "workspaces" }

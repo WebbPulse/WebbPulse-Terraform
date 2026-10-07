@@ -11,7 +11,7 @@ query is what makes the ordinary case a clean 409.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Final
+from typing import Any, Callable, Final, Literal
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, new_ulid, now_iso
@@ -33,6 +33,7 @@ from ...common.runs.workspace_runs import (
     workspace_run_ids,
 )
 from ...common.workspaces import aws_connect, cleanup, hcl, reads
+from ...common.workspaces.projects import DEFAULT_PROJECT_ID, project_of
 from ...common.workspaces import readme as config_readme
 from ...common.workspaces import vcs as workspace_vcs
 from ...common.workspaces.reads import (
@@ -49,6 +50,7 @@ from ...common.workspaces.reads import (
     list_variables,
     resolved_variables,
 )
+from . import projects as project_store
 from . import state_versions, vcs_connect
 from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
 from .vcs_connect import RepositoryNotInstalled
@@ -60,6 +62,7 @@ __all__ = [
     "WORKSPACE_ID_PREFIX",
     "ConfigVersionNotFound",
     "HclNotAllowed",
+    "ProjectNotFound",
     "RepositoryNotInstalled",
     "RunRoleMissing",
     "RunStillActive",
@@ -100,6 +103,30 @@ class WorkspaceNameTaken(Exception):
     """Another workspace already holds this name."""
 
 
+ProjectNotFound = project_store.ProjectNotFound
+"""A create or move named a project that does not exist."""
+
+WorkspaceSort = Literal["name", "-name", "-latest_run", "-updated_at", "-created_at", "status"]
+"""The orders the workspace list can return, a leading `-` meaning newest or last first.
+
+`-updated_at` is "last updated", the `latest_change_at` the list shows. `status` puts the
+runs that need someone first: waiting on a confirmation, then errored, then still going,
+then settled, and workspaces that never ran last."""
+
+_STATUS_ATTENTION: Final = {
+    "awaiting_confirmation": 0,
+    "planned": 0,
+    "errored": 1,
+    "pending": 2,
+    "planning": 2,
+    "applying": 2,
+}
+"""How urgently a latest run status needs someone, lower first. Any other status is settled."""
+
+_SETTLED_RANK: Final = 3
+_NEVER_RAN_RANK: Final = 4
+
+
 class HclNotAllowed(Exception):
     """An `env` variable was marked HCL, which has no meaning.
 
@@ -137,6 +164,7 @@ def render_workspace(item: dict[str, Any], *, settings: Settings | None = None) 
     workspace_id = str(item["workspace_id"])
     rendered = {key: value for key, value in item.items() if key not in _PRIVATE_WORKSPACE_FIELDS}
     return rendered | {
+        "project_id": project_of(item),
         "run_role_setup": run_role_setup(workspace_id, settings=resolved),
         "run_role_reconnect_required": aws_connect.reconnect_required(item),
     }
@@ -173,13 +201,16 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
     """Store a new workspace, refusing a name another workspace holds.
 
     A `vcs_repo` is resolved through the GitHub App before anything is written, so a
-    repository the App cannot see is refused with `RepositoryNotInstalled`.
+    repository the App cannot see is refused with `RepositoryNotInstalled`, and a
+    `project_id` that names no project with `ProjectNotFound`.
     """
     resolved = settings or get_settings()
     repository = repositories.workspaces(resolved)
     name = str(payload["name"])
     if find_by_name(name, settings=resolved) is not None:
         raise WorkspaceNameTaken(name)
+    project_id = str(payload.get("project_id") or DEFAULT_PROJECT_ID)
+    project_store.require_project(project_id, settings=resolved)
 
     item: dict[str, Any] = {
         "workspace_id": f"{WORKSPACE_ID_PREFIX}{new_ulid()}",
@@ -196,6 +227,8 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "plan_assume_role_arns": list(payload.get("plan_assume_role_arns") or []),
         "created_at": now_iso(),
     }
+    if project_id != DEFAULT_PROJECT_ID:
+        item["project_id"] = project_id
     if payload.get("plan_role_arn"):
         item["plan_role_arn"] = str(payload["plan_role_arn"])
     if payload.get("tracked_branch"):
@@ -235,14 +268,26 @@ def list_workspaces(*, settings: Settings | None = None) -> list[dict[str, Any]]
     return sorted(items, key=lambda item: str(item.get("workspace_id", "")))
 
 
-def list_workspace_items(*, settings: Settings | None = None) -> list[dict[str, Any]]:
-    """Every workspace rendered for the list, each with its newest run and latest change.
+def list_workspace_items(
+    *,
+    project_id: str | None = None,
+    search: str | None = None,
+    sort: WorkspaceSort | None = None,
+    settings: Settings | None = None,
+) -> list[dict[str, Any]]:
+    """Workspaces rendered for the list, each with its newest run and latest change.
 
-    The newest runs come from one walk of the runs table for the whole list, never a
-    read per workspace.
+    `project_id` keeps one project's workspaces and `search` those whose name holds it,
+    ignoring case. Without a `sort` the order stays oldest first. The newest runs come
+    from one walk of the runs table for the whole list, never a read per workspace.
     """
     resolved = settings or get_settings()
     items = list_workspaces(settings=resolved)
+    if project_id is not None:
+        items = [item for item in items if project_of(item) == project_id]
+    if search:
+        needle = search.casefold()
+        items = [item for item in items if needle in str(item.get("name", "")).casefold()]
     runs = latest_runs([str(item["workspace_id"]) for item in items], settings=resolved)
     rendered: list[dict[str, Any]] = []
     for item in items:
@@ -251,7 +296,44 @@ def list_workspace_items(*, settings: Settings | None = None) -> list[dict[str, 
         changed_at = latest["changed_at"] if latest else str(item.get("updated_at") or item.get("created_at") or "")
         extra: dict[str, Any] = {"latest_run": latest, "latest_change_at": changed_at}
         rendered.append(render_workspace(item, settings=resolved) | extra)
-    return rendered
+    return rendered if sort is None else sort_workspace_items(rendered, sort)
+
+
+def _attention_rank(item: dict[str, Any]) -> int:
+    """Where a workspace's newest run falls in the `status` order."""
+    latest = item.get("latest_run")
+    if not latest:
+        return _NEVER_RAN_RANK
+    return _STATUS_ATTENTION.get(str(latest.get("status", "")), _SETTLED_RANK)
+
+
+def _created_key(item: dict[str, Any]) -> tuple[str, str]:
+    """Creation time, with the time ordered id breaking a tie inside one second."""
+    return str(item.get("created_at", "")), str(item["workspace_id"])
+
+
+def sort_workspace_items(items: list[dict[str, Any]], sort: WorkspaceSort) -> list[dict[str, Any]]:
+    """The list items in one of the `WorkspaceSort` orders.
+
+    Every order ends on the name, so equal keys always come back the same way. Each
+    pass is a stable sort, which is what lets a descending key sit beside an ascending
+    tie break.
+    """
+    ordered = sorted(items, key=lambda item: (str(item.get("name", "")).casefold(), str(item["workspace_id"])))
+    if sort == "name":
+        return ordered
+    if sort == "-name":
+        return ordered[::-1]
+    if sort == "-created_at":
+        return sorted(ordered, key=_created_key, reverse=True)
+    if sort == "-updated_at":
+        return sorted(ordered, key=lambda item: str(item.get("latest_change_at", "")), reverse=True)
+    if sort == "-latest_run":
+        ran = [item for item in ordered if item.get("latest_run")]
+        never = [item for item in ordered if not item.get("latest_run")]
+        return sorted(ran, key=lambda item: str(item["latest_run"].get("created_at", "")), reverse=True) + never
+    by_change = sorted(ordered, key=lambda item: str(item.get("latest_change_at", "")), reverse=True)
+    return sorted(by_change, key=_attention_rank)
 
 
 def _stage_run_role(changes: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
@@ -298,6 +380,9 @@ def update_workspace(
     waiting connect token, since the person chose another role by hand, along with
     the plan role that stack created unless the edit names a plan role itself.
 
+    A `project_id` moves the workspace between projects and touches nothing else; the
+    default project's id or a null moves it back to the default.
+
     A change to `vcs_repo` rewrites the lowercased `vcs_repo_key` the binding
     index reads and resolves the repository through the GitHub App, which records
     its id, installation and canonical name, and fills `tracked_branch` with the
@@ -306,6 +391,8 @@ def update_workspace(
     repository. Clearing `vcs_repo` removes all of them.
     """
     resolved = settings or get_settings()
+    if "project_id" in changes:
+        changes = _resolve_project_move(changes, settings=resolved)
     staged: dict[str, Any] | None = None
     if "run_role_arn" in changes or "pending_run_role_arn" in changes:
         staged = get_workspace(workspace_id, settings=resolved)
@@ -380,6 +467,20 @@ def update_workspace(
     if updated is None:
         raise WorkspaceNotFound(workspace_id)
     return updated
+
+
+def _resolve_project_move(changes: dict[str, Any], *, settings: Settings) -> dict[str, Any]:
+    """The edit with a move to the default project read as a clear, and any other target checked.
+
+    The default project is the absence of `project_id`, so moving into it removes the
+    attribute rather than storing its id. A project that does not exist raises
+    `ProjectNotFound` before anything is written.
+    """
+    target = changes["project_id"]
+    if target is None or target == DEFAULT_PROJECT_ID:
+        return {**changes, "project_id": None}
+    project_store.require_project(str(target), settings=settings)
+    return changes
 
 
 def _repository_changed(requested: Any, existing: dict[str, Any]) -> bool:

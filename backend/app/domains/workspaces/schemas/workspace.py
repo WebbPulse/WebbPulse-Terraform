@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ....common.core.auth import RUN_API_TOKEN_SCOPES
 from ....common.runs.workspace_runs import RunStatus
+from ....common.workspaces.projects import DEFAULT_PROJECT_ID, PROJECT_ID_PATTERN
 
 Engine = Literal["terraform", "tofu"]
 """Which binary runs this workspace. The runner image bundles both."""
@@ -204,6 +205,8 @@ class WorkspaceCreate(WorkspaceBase):
     """A new workspace. The name is unique across the environment."""
 
     name: str = Field(min_length=1, max_length=90, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    project_id: Optional[str] = Field(default=None, max_length=64, pattern=PROJECT_ID_PATTERN)
+    """The project the workspace starts in. Absent means the default project."""
 
     @field_validator("working_directory")
     @classmethod
@@ -249,6 +252,7 @@ CLEARABLE_WORKSPACE_FIELDS: Final = (
     "file_triggers_enabled",
     "plan_assume_role_arns",
     "run_api_token_scopes",
+    "project_id",
 )
 """The update fields an explicit JSON null clears.
 
@@ -299,6 +303,9 @@ class WorkspaceUpdate(BaseModel):
     """Grant each run a short lived API token with these scopes. Admin and step-up only; null or empty revokes."""
     auto_apply: Optional[bool] = None
     """Apply successful plans without a confirmation. Admin only, and audited."""
+    project_id: Optional[str] = Field(default=None, max_length=64, pattern=PROJECT_ID_PATTERN)
+    """Move the workspace to this project. Null or the default project's id moves it back to the
+    default. A move touches nothing but this field, so state, runs and variables stay as they are."""
 
     @field_validator("working_directory")
     @classmethod
@@ -405,6 +412,8 @@ class Workspace(WorkspaceBase):
 
     workspace_id: str
     name: str
+    project_id: str = DEFAULT_PROJECT_ID
+    """The project the workspace belongs to, `prj-default` unless it was moved."""
     created_at: str
     updated_at: Optional[str] = None
     run_role_setup: RunRoleSetup

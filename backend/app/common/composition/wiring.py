@@ -73,10 +73,11 @@ def _workspaces_routers() -> "list[APIRouter]":
     """
     from app.domains.workspaces.api_keys_router import router as api_keys_router
     from app.domains.workspaces.notifications_router import router as notifications_router
+    from app.domains.workspaces.projects_router import router as projects_router
     from app.domains.workspaces.router import router
     from app.domains.workspaces.terraform_login_router import router as login_router
 
-    return [router, api_keys_router, login_router, notifications_router]
+    return [router, projects_router, api_keys_router, login_router, notifications_router]
 
 
 def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":

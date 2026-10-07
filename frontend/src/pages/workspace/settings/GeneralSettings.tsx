@@ -15,6 +15,7 @@ import {
 import { useWorkspace } from '../../workspaceContext';
 import { EngineFields } from '../EngineFields';
 import { engineVersionProblem } from '../engineVersions';
+import { ProjectSettings } from './ProjectSettings';
 
 /** The engine to edit, defaulted the way the backend defaults an absent one. */
 function engineOf(workspace: Workspace): Engine {
@@ -30,6 +31,7 @@ export function GeneralSettings(): React.ReactElement {
         General settings
       </h2>
       <SettingsForm workspace={workspace} queryKey={keys.workspace} />
+      <ProjectSettings workspace={workspace} queryKey={keys.workspace} />
     </div>
   );
 }
