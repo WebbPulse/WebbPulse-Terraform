@@ -46,9 +46,14 @@ locals {
 }
 
 variable "run_concurrency_cap" {
-  description = "Concurrent runner tasks allowed in this environment, held as the size of the semaphore item's holders set on the runs table"
+  description = "Abuse limit on concurrent runs in this environment, held as the size of the semaphore item's holders set on the runs table. Runs on one workspace are serial regardless. Keep cap times runner_task_cpu within the account's Fargate On-Demand vCPU quota, 30 vCPU in both accounts, or launches past it fail."
   type        = number
-  default     = 2
+  default     = 25
+
+  validation {
+    condition     = var.run_concurrency_cap >= 1 && floor(var.run_concurrency_cap) == var.run_concurrency_cap
+    error_message = "run_concurrency_cap must be a positive whole number."
+  }
 }
 
 module "run_state_machine" {
