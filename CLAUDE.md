@@ -165,7 +165,7 @@ under `/v1/modules` and `/v1/providers` (a `wpk_` key only), the `tfe.v2` API un
 `/api/v2` (a `wpk_` key only), `POST /v1/oauth/token` (a PKCE code) and the anonymous
 identity documents do not.
 The scopes are `workspaces:{read,write}`, `variables:{read,write}`,
-`configs:{read,write}`, `runs:{read,write,apply}`, `state:download` and
+`configs:{read,write}`, `runs:{read,write,apply}`, `state:download`, `state:write` and
 `registry:{read,write}`. A key's stored scopes are intersected per request with
 its owner's current ones (`key_owner_scopes`, so every domain function reads the
 `users` table), and a new key expires in 90 days by default, 365 at most for a
@@ -434,8 +434,8 @@ challenge and a loopback redirect on ports 10000 to 10010; approving calls `POST
 /api/v1/oauth/authorizations` (a person only, behind step-up) for a code stored in
 the identity module's `authorization-codes` table, and the CLI exchanges it at `POST
 /v1/oauth/token` for a `wpk_` key named `terraform login`, valid 90 days, carrying the
-read, config and plan scopes the person holds (`terraform_login.LOGIN_SCOPES`), never
-`runs:apply` or `state:download`.
+read, config, plan, apply and state scopes the person holds (`terraform_login.LOGIN_SCOPES`),
+so `state:download` and `state:write` only for an admin.
 
 ### Cloud block (`tfe.v2`)
 
@@ -446,7 +446,12 @@ authenticated by the `terraform login` key. `app/common/tfe` holds the shared sh
 workspace resource, whose `permissions` are the caller's scopes; each domain serves its own
 routes from a `tfe_router`. The only organization is `WebbPulse`, a workspace is never created
 from the CLI (the create answers 422), and workspaces carry no tags, so only `workspaces { name
-= ... }` selects one. The design and the slices are on TF-44.
+= ... }` selects one. Workspace locks (`actions/lock`, `unlock`, `force-unlock`, behind
+`state:write`) are the S3 backend's own `terraform.tfstate.tflock`, written with `If-None-Match:
+*` (`workspaces/locks.py`), so a CLI lock and a run's engine exclude each other through one
+object and `locked` reads it. A CLI lock names its subject in `WebbPulseLockedBy`; unlock by
+anyone else answers go-tfe's "is locked by User", an engine lock "is locked by Run", and
+force-unlock is refused only while a run is going. The design and the slices are on TF-44.
 
 A run's configuration arrives through `POST /api/v2/workspaces/{id}/configuration-versions`
 (`configs:write`), which writes the same config version row as `/api/v1` and answers an
@@ -464,7 +469,7 @@ back once signed in (`deviceHandOff` in `returnPath.ts`). The access token has t
 audience `<issuer>/device`, which the gate's authorizer accepts beside the API
 audience, and `claims_or_api_key` checks its grant is still live
 (`device_grant_liveness`), so a revoke ends it within seconds. The default scopes
-leave out `runs:apply`, `state:download` and `admin`, which must be named. The
+leave out `runs:apply`, `state:download`, `state:write` and `admin`, which must be named. The
 session lives in the OS keyring and refreshes itself; `backend/e2e/test_device_login.py`
 drives the whole flow on staging.
 

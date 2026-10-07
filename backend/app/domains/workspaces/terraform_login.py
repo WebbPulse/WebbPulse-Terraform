@@ -42,6 +42,8 @@ from ...common.core.auth import (
     RUNS_APPLY,
     RUNS_READ,
     RUNS_WRITE,
+    STATE_DOWNLOAD,
+    STATE_WRITE,
     VARIABLES_READ,
     WORKSPACES_READ,
 )
@@ -82,13 +84,17 @@ LOGIN_SCOPES: Final = (
     RUNS_READ,
     RUNS_WRITE,
     RUNS_APPLY,
+    STATE_DOWNLOAD,
+    STATE_WRITE,
     REGISTRY_READ,
 )
-"""What a login key may carry: reading, the registry, starting runs and applying them.
+"""What a login key may carry: reading, the registry, runs, and the state a `cloud {}` block needs.
 
 Applying from the CLI is ordinary, as it is with an HCP user token, so `runs:apply` is
-included and the person's own scopes still limit it. Never `state:download` or an admin
-or write scope beyond runs, which stay behind an explicitly minted key.
+included. `state:download` and `state:write` are what `terraform output`, `state mv`,
+`import` and `force-unlock` need through the cloud block. The person's own scopes still
+limit all of it, so someone without state access gets none. Never an admin or workspace
+and variable writes, which stay behind an explicitly minted key.
 """
 
 

@@ -1,4 +1,4 @@
-"""The workspaces function's share of `tfe.v2`: ping, workspaces and config versions.
+"""The workspaces function's share of `tfe.v2`: ping, workspaces, their locks and config versions.
 
 These are the calls `terraform init` makes through a `cloud {}` block before any run
 exists: go-tfe's ping, the organization's entitlements, the workspace by name and,
@@ -12,6 +12,8 @@ process by the same claims dependency every other route uses.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, Path, Request, Response
@@ -20,6 +22,7 @@ from webbpulse.identity.scopes import claims_scopes
 from ...common.core.auth import (
     CONFIGS_READ,
     CONFIGS_WRITE,
+    STATE_WRITE,
     VARIABLES_READ,
     WORKSPACES_READ,
     WORKSPACES_WRITE,
@@ -27,6 +30,7 @@ from ...common.core.auth import (
 )
 from ...common.tfe.jsonapi import (
     JsonApiRoute,
+    conflict,
     document,
     not_found,
     paginate,
@@ -43,6 +47,7 @@ from ...common.tfe.resources import (
 )
 from ...common.workspaces.reads import ConfigVersionNotFound, WorkspaceNotFound
 from ...common.workspaces.reads import get_workspace as read_workspace
+from . import locks
 from .service import (
     create_tfe_config_version,
     find_by_name,
@@ -62,6 +67,12 @@ WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]
 WorkspaceName = Path(min_length=1, max_length=90)
 
 ConfigVersionId = Path(min_length=4, max_length=64, pattern=r"^cv-[0-9A-HJKMNP-TV-Z]{26}$")
+
+
+def _render(item: Mapping[str, Any], held: Any) -> dict[str, Any]:
+    """One workspace resource, `locked` read from the lockfile the runs share."""
+    workspace_id = str(item["workspace_id"])
+    return workspace_resource(item, held, locked=locks.is_locked(workspace_id))
 
 
 @router.get("/ping", status_code=204)
@@ -95,7 +106,7 @@ def read_workspace_by_name(
     item = find_by_name(name)
     if item is None:
         raise not_found("workspace")
-    return document(workspace_resource(item, claims_scopes(current)))
+    return document(_render(item, claims_scopes(current)))
 
 
 @router.get("/organizations/{organization}/workspaces")
@@ -120,7 +131,7 @@ def list_organization_workspaces(
     items = sorted(items, key=lambda item: str(item.get("name", "")))
     page, meta = paginate(items, request)
     held = claims_scopes(current)
-    return document([workspace_resource(item, held) for item in page], meta=meta)
+    return document([_render(item, held) for item in page], meta=meta)
 
 
 @router.post("/organizations/{organization}/workspaces")
@@ -151,7 +162,7 @@ def read_workspace_by_id(
         item = read_workspace(workspace_id)
     except WorkspaceNotFound as error:
         raise not_found("workspace") from error
-    return document(workspace_resource(item, claims_scopes(current)))
+    return document(_render(item, claims_scopes(current)))
 
 
 @router.get("/workspaces/{workspace_id}/all-vars")
@@ -205,3 +216,85 @@ def read_configuration_version(
     except ConfigVersionNotFound as error:
         raise not_found("configuration version") from error
     return document(configuration_version_resource(item))
+
+
+async def _lock_reason(request: Request) -> str:
+    """The `reason` go-tfe sends with a lock, read leniently since it is only shown."""
+    try:
+        body = json.loads(await request.body() or b"{}")
+    except ValueError:
+        return ""
+    if not isinstance(body, Mapping):
+        return ""
+    data = body.get("data")
+    attributes = data.get("attributes") if isinstance(data, Mapping) else None
+    reason = (attributes or {}).get("reason") if isinstance(attributes, Mapping) else body.get("reason")
+    return str(reason or "")[:500]
+
+
+def _workspace_or_404(workspace_id: str) -> dict[str, Any]:
+    """The workspace row, or the JSON:API 404."""
+    try:
+        return read_workspace(workspace_id)
+    except WorkspaceNotFound as error:
+        raise not_found("workspace") from error
+
+
+@router.post("/workspaces/{workspace_id}/actions/lock")
+async def lock_workspace(
+    request: Request,
+    workspace_id: str = WorkspaceId,
+    current: "AuthorizerClaims" = Depends(scopes(STATE_WRITE)),
+) -> Response:
+    """Lock the workspace for a local state operation, through the runs' own lockfile.
+
+    Any 409 here is go-tfe's `ErrWorkspaceLocked`, which the CLI reports with the lock ID
+    `force-unlock` takes.
+    """
+    item = _workspace_or_404(workspace_id)
+    reason = await _lock_reason(request)
+    try:
+        locks.lock(workspace_id, str(current.get("sub") or ""), reason)
+    except locks.LockedByRun as error:
+        raise conflict(f"Unable to lock workspace. The workspace is locked by Run {error}.") from error
+    except locks.WorkspaceLocked as error:
+        raise conflict("Unable to lock workspace. The workspace is already locked.") from error
+    return document(workspace_resource(item, claims_scopes(current), locked=True))
+
+
+@router.post("/workspaces/{workspace_id}/actions/unlock")
+def unlock_workspace(
+    workspace_id: str = WorkspaceId,
+    current: "AuthorizerClaims" = Depends(scopes(STATE_WRITE)),
+) -> Response:
+    """Unlock a workspace this caller locked. go-tfe maps the 409's wording to its errors."""
+    item = _workspace_or_404(workspace_id)
+    try:
+        locks.unlock(workspace_id, str(current.get("sub") or ""))
+    except locks.WorkspaceNotLocked as error:
+        raise conflict("Unable to unlock workspace. The workspace is not locked.") from error
+    except locks.LockedByRun as error:
+        raise conflict("Unable to unlock workspace. The workspace is locked by Run.") from error
+    except locks.LockedByOther as error:
+        raise conflict(f"Unable to unlock workspace. The workspace is locked by User {error.holder}.") from error
+    return document(workspace_resource(item, claims_scopes(current), locked=False))
+
+
+@router.post("/workspaces/{workspace_id}/actions/force-unlock")
+def force_unlock_workspace(
+    workspace_id: str = WorkspaceId,
+    current: "AuthorizerClaims" = Depends(scopes(STATE_WRITE)),
+) -> Response:
+    """Remove any lock, a crashed run's included, unless a run is still going.
+
+    `terraform force-unlock` with the `WebbPulse/<name>` lock ID reaches here, which is
+    the way past a stale lockfile without break-glass.
+    """
+    item = _workspace_or_404(workspace_id)
+    try:
+        locks.force_unlock(workspace_id)
+    except locks.WorkspaceNotLocked as error:
+        raise conflict("Unable to force-unlock workspace. The workspace is not locked.") from error
+    except locks.LockedByRun as error:
+        raise conflict(f"Unable to force-unlock workspace. Run {error} is still going.") from error
+    return document(workspace_resource(item, claims_scopes(current), locked=False))
