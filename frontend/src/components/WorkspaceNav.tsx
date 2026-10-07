@@ -73,10 +73,17 @@ export function WorkspaceNav({
       <Link
         to={back.to}
         className={`flex items-center gap-1 rounded-md text-xs text-text-muted hover:text-text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-          compact ? 'shrink-0 px-2 py-1 whitespace-nowrap' : 'px-2.5 py-1.5'
+          compact
+            ? 'max-w-32 shrink-0 px-2 py-1 whitespace-nowrap'
+            : 'px-2.5 py-1.5'
         }`}
       >
-        <svg viewBox="0 0 16 16" className="size-3" fill="none" aria-hidden>
+        <svg
+          viewBox="0 0 16 16"
+          className="size-3 shrink-0"
+          fill="none"
+          aria-hidden
+        >
           <path
             d="M10 3 5 8l5 5"
             stroke="currentColor"
@@ -85,7 +92,7 @@ export function WorkspaceNav({
             strokeLinejoin="round"
           />
         </svg>
-        {back.label}
+        <span className="truncate">{back.label}</span>
       </Link>
       {compact ? null : (
         <RailGroupLabel className="truncate normal-case">
