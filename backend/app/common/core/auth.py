@@ -46,6 +46,9 @@ RUNS_WRITE: Final = "runs:write"
 RUNS_APPLY: Final = "runs:apply"
 STATE_DOWNLOAD: Final = "state:download"
 """Explicit access to raw state, excluded from ordinary read-only grants."""
+STATE_WRITE: Final = "state:write"
+"""Locking a workspace and writing its state from the CLI, which `terraform state mv`,
+`import` and `force-unlock` need. Like `state:download`, never an ordinary grant."""
 REGISTRY_READ: Final = "registry:read"
 """Reading the module registry, which is what `TF_TOKEN_<host>` carries for `terraform init`."""
 REGISTRY_WRITE: Final = "registry:write"
@@ -74,6 +77,7 @@ ALL_SCOPES: Final = (
     RUNS_WRITE,
     RUNS_APPLY,
     STATE_DOWNLOAD,
+    STATE_WRITE,
     REGISTRY_READ,
     REGISTRY_WRITE,
     ADMIN,
@@ -409,6 +413,7 @@ __all__ = [
     "RUN_TOKEN_TENANT",
     "RunnerRoute",
     "STATE_DOWNLOAD",
+    "STATE_WRITE",
     "STEP_UP_MAX_AGE_SECONDS",
     "VARIABLES_READ",
     "VARIABLES_WRITE",

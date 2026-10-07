@@ -137,9 +137,11 @@ uses `lambda`.
 creating or cancelling a run. Applying from the CLI is ordinary, as with an HCP
 user token: a default `wp-tf login` session carries read and write on workspaces,
 variables, configs, runs and the registry plus `runs:apply` (`wp-tf`'s
-`STANDARD_SCOPES`), and the key `terraform login` leaves carries `runs:apply` too.
-Both are limited by the person's own scopes. `state:download` and `admin` are
-granted only when named. A run's API token never gets `runs:apply`.
+`STANDARD_SCOPES`), and the key `terraform login` leaves carries `runs:apply` too,
+plus `state:download` and `state:write` for `terraform output`, `state mv`, `import`
+and `force-unlock`. Both are limited by the person's own scopes, so only an admin
+gets the state scopes. A `wp-tf login` session gets `state:download`,
+`state:write` and `admin` only when named. A run's API token never gets `runs:apply`.
 
 Confirming and discarding a run take no step-up: a browser session, a `wp-tf login`
 session and a key all confirm on their scopes alone, as an HCP user token does

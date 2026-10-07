@@ -18,7 +18,7 @@ import os
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Final
 
-from app.common.core.auth import ADMIN, ALL_SCOPES, STATE_DOWNLOAD
+from app.common.core.auth import ADMIN, ALL_SCOPES, STATE_DOWNLOAD, STATE_WRITE
 
 if TYPE_CHECKING:  # pragma: no cover
     from fastapi import APIRouter
@@ -37,12 +37,12 @@ though one function serves both surfaces."""
 DEVICE_CLIENTS: Final = {"wp-tf": "wp-tf CLI"}
 """The one client allowed to start a device login, and the name the approval page shows."""
 
-DEVICE_EXPLICIT_SCOPES: Final = (STATE_DOWNLOAD, ADMIN)
+DEVICE_EXPLICIT_SCOPES: Final = (STATE_DOWNLOAD, STATE_WRITE, ADMIN)
 """Scopes a device login gets only when `wp-tf login` names them, never by default.
 
 The default is therefore every other scope, read and write on workspaces, variables,
 configs, runs and the registry plus `runs:apply`, which is `wp-tf`'s `STANDARD_SCOPES`.
-Raw state and operator settings stay out of a session that sits on a workstation."""
+Raw state, state writes and operator settings stay out of a session that sits on a workstation."""
 
 SIGN_IN_PATH: Final = "/sign-in"
 """The SPA's sign-in page, where a signed-out device approval is sent."""

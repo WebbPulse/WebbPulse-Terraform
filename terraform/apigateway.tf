@@ -106,6 +106,9 @@ locals {
     "GET /api/v2/workspaces/{workspace_id}/all-vars"                       = { integration = "workspaces", authorization_type = "NONE" }
     "POST /api/v2/workspaces/{workspace_id}/configuration-versions"        = { integration = "workspaces", authorization_type = "NONE" }
     "GET /api/v2/configuration-versions/{config_version_id}"               = { integration = "workspaces", authorization_type = "NONE" }
+    "POST /api/v2/workspaces/{workspace_id}/actions/lock"                  = { integration = "workspaces", authorization_type = "NONE" }
+    "POST /api/v2/workspaces/{workspace_id}/actions/unlock"                = { integration = "workspaces", authorization_type = "NONE" }
+    "POST /api/v2/workspaces/{workspace_id}/actions/force-unlock"          = { integration = "workspaces", authorization_type = "NONE" }
   }
 
   product_routes = merge(

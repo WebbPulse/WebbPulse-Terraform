@@ -16,6 +16,7 @@ from ..core.auth import (
     RUNS_APPLY,
     RUNS_WRITE,
     STATE_DOWNLOAD,
+    STATE_WRITE,
     VARIABLES_READ,
     VARIABLES_WRITE,
     WORKSPACES_READ,
@@ -28,13 +29,6 @@ ORGANIZATION: Final = "WebbPulse"
 
 API_VERSION: Final = "2.6"
 """The `TFP-API-Version` ping answers with; the cloud backend needs 2.5 or later."""
-
-STATE_WRITE: Final = "state:write"
-"""The scope the lock and state upload routes will require.
-
-Named here so the workspace permissions can render it before it exists: no grant
-carries it yet, so `can-lock` and its siblings read false until the locking slice
-adds it to the scopes a person or key can hold."""
 
 PERMISSION_SCOPES: Final[Mapping[str, tuple[str, ...]]] = {
     "can-destroy": (WORKSPACES_WRITE,),

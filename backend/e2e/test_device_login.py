@@ -158,7 +158,7 @@ def test_a_device_token_reads_the_api_until_revoked(
     session = device_login()
     granted = session.scope.split()
     assert "runs:apply" in granted, "a default device login cannot apply"
-    assert not {"state:download", "admin"} & set(granted), "an explicit scope was granted by default"
+    assert not {"state:download", "state:write", "admin"} & set(granted), "an explicit scope was granted by default"
     device = api.with_token(session.access_token)
     workspaces = device.get("/api/v1/workspaces")
     assert workspaces.status_code == 200, f"a device token reading workspaces answered {workspaces.status_code}"

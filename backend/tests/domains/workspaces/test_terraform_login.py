@@ -12,7 +12,15 @@ from fastapi.testclient import TestClient
 from webbpulse.identity.oauth import pkce_challenge
 from webbpulse.identity.oauth_server_storage import AUTHORIZATION_CODES_TABLE, OAUTH_SERVER_TABLES
 
-from app.common.core.auth import ALL_SCOPES, REGISTRY_READ, RUNS_APPLY, STATE_DOWNLOAD, WORKSPACES_READ
+from app.common.core.auth import (
+    ALL_SCOPES,
+    REGISTRY_READ,
+    RUNS_APPLY,
+    STATE_DOWNLOAD,
+    STATE_WRITE,
+    WORKSPACES_READ,
+    WORKSPACES_WRITE,
+)
 from app.domains.workspaces import terraform_login
 from app.domains.workspaces.api_keys_router import KEY_ACTOR_CODE
 from app.domains.workspaces.terraform_login_router import LOGIN_REFUSED_CODE
@@ -86,7 +94,9 @@ def test_login_mints_a_scoped_ninety_day_key(app, client):
     assert WORKSPACES_READ in login["scopes"]
     assert REGISTRY_READ in login["scopes"]
     assert RUNS_APPLY in login["scopes"]
-    assert STATE_DOWNLOAD not in login["scopes"]
+    assert STATE_DOWNLOAD in login["scopes"]
+    assert STATE_WRITE in login["scopes"]
+    assert WORKSPACES_WRITE not in login["scopes"]
 
     listed = client.get("/api/v1/workspaces", headers={"Authorization": f"Bearer {body['access_token']}"})
     assert listed.status_code == 200
