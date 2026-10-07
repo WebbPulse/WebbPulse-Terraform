@@ -82,11 +82,12 @@ export {
 } from './SegmentedControl';
 export { Spinner, type SpinnerProps } from './Spinner';
 export {
-  ConfirmPasswordDialog,
+  ConfirmIdentityDialog,
   StepUpBoundary,
   confirmationWindow,
-  type ConfirmPasswordDialogProps,
+  type ConfirmIdentityDialogProps,
   type StepUpBoundaryProps,
+  type StepUpFactor,
 } from './StepUpBoundary';
 export { StateBadge, type StateBadgeProps } from './StateBadge';
 export { Table, Td, Th, Tr, type TableProps, type TrProps } from './Table';

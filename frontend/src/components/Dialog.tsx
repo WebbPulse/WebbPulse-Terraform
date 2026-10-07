@@ -15,7 +15,13 @@ export interface DialogProps {
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-/** A modal dialog. Renders nothing while closed. */
+/**
+ * A modal dialog. Renders nothing while closed.
+ *
+ * Focus moves in once, on open, to the element marked `data-autofocus` or else the first
+ * focusable one. `onClose` is read through a ref, so a parent passing a fresh closure on
+ * every render does not pull focus back out of a field mid-typing.
+ */
 export function Dialog({
   open,
   onClose,
@@ -26,19 +32,26 @@ export function Dialog({
   const panel = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const closeRef = useRef(onClose);
+
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) {
       return;
     }
     const previous = document.activeElement;
-    const first = panel.current?.querySelector<HTMLElement>(FOCUSABLE);
+    const first =
+      panel.current?.querySelector<HTMLElement>('[data-autofocus]') ??
+      panel.current?.querySelector<HTMLElement>(FOCUSABLE);
     first?.focus();
 
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        closeRef.current();
         return;
       }
       if (event.key !== 'Tab' || panel.current === null) {
@@ -70,7 +83,7 @@ export function Dialog({
         previous.focus();
       }
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) {
     return null;

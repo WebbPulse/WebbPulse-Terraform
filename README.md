@@ -141,10 +141,16 @@ variables, configs, runs and the registry plus `runs:apply` (`wp-tf`'s
 Both are limited by the person's own scopes. `state:download` and `admin` are
 granted only when named. A run's API token never gets `runs:apply`.
 
-A browser session confirms only within 15 minutes of a login, and otherwise gets
-the step-up prompt. A `wp-tf login` session and a key confirm on their scopes
-alone: the device approval already needed a login within 10 minutes and the session
-ends 12 hours after it, and a key has no login to age.
+Confirming and discarding a run take no step-up: a browser session, a `wp-tf login`
+session and a key all confirm on their scopes alone, as an HCP user token does
+(TF-52). The other sensitive writes still need a login within 15 minutes; in the
+browser a stale one opens an in-place prompt (passkey, authenticator code or
+password) and the action is retried once it succeeds.
+
+A browser session slides while it is used: each refresh pushes its idle limit
+out to 12 hours from then, up to 7 days from the sign-in, after which the person
+signs in again. Signing out and revoking a session end it at once. The access gate
+in front of the site lasts the same 7 days.
 
 `DELETE /workspaces/{workspace_id}` follows HCP Terraform's safe delete. It is a
 409 carrying `WORKSPACE_MANAGES_RESOURCES` while the current state tracks any

@@ -7,6 +7,7 @@ module "access_gate" {
   name          = local.access_gate_name
   cookie_domain = local.host
   site_host     = local.host
+  session_hours = 168
 
   allowed_emails = local.access_gate_users
 
