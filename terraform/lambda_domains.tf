@@ -3,7 +3,7 @@ locals {
     workspaces = {
       memory            = 512
       timeout           = local.lambda_domain_timeout
-      tables            = ["workspaces", "variables", "config-versions", "users", "rate-limits"]
+      tables            = ["workspaces", "variables", "config-versions", "users", "rate-limits", "notification-configurations"]
       read_tables       = ["runs"]
       buckets           = true
       own_image_tag     = false
@@ -13,7 +13,7 @@ locals {
     runs = {
       memory        = 512
       timeout       = local.lambda_domain_timeout
-      tables        = ["runs", "vcs-uploads"]
+      tables        = ["runs", "vcs-uploads", "notification-configurations"]
       read_tables   = ["workspaces", "variables", "config-versions", "users"]
       buckets       = true
       own_image_tag = false
@@ -48,6 +48,11 @@ locals {
           batch_size                      = 1
           maximum_batching_window_seconds = 0
         }
+        run_notifications = {
+          queue_arn                       = module.run_notifications.queue_arn
+          batch_size                      = 1
+          maximum_batching_window_seconds = 0
+        }
       }
       stream_sources = {
         vcs_run_reports = {
@@ -66,6 +71,19 @@ locals {
                 NewImage = {
                   status      = { S = ["applied", "planned_and_finished", "errored", "cancelled", "discarded"] }
                   finished_at = { S = [{ exists = false }] }
+                }
+              }
+            }),
+            jsonencode({
+              eventName = ["INSERT"]
+              dynamodb  = { NewImage = { collection = { S = ["run"] } } }
+            }),
+            jsonencode({
+              eventName = ["MODIFY"]
+              dynamodb = {
+                NewImage = {
+                  collection = { S = ["run"] }
+                  status     = { S = local.run_notification_statuses }
                 }
               }
             }),
@@ -100,6 +118,17 @@ locals {
       stream_sources = {}
     }
   }
+
+  run_notification_statuses = [
+    "planning",
+    "awaiting_confirmation",
+    "applying",
+    "applied",
+    "planned_and_finished",
+    "discarded",
+    "errored",
+    "cancelled",
+  ]
 
   domain_functions_enabled = var.bootstrap_image_tag != ""
 
@@ -280,6 +309,12 @@ locals {
         Effect   = "Allow"
         Action   = ["sts:AssumeRole"]
         Resource = [aws_iam_role.run_credentials.arn]
+      },
+      {
+        Sid      = "QueueRunNotificationDeliveries"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage", "sqs:GetQueueUrl"]
+        Resource = [module.run_notifications.queue_arn]
       },
       {
         Sid      = "DescribeRunnerTasksForTokenExchange"
