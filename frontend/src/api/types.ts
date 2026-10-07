@@ -112,6 +112,36 @@ export type VariableWrite = Schemas['VariableWrite'];
 /** Every variable on a workspace, by key. */
 export type VariableList = Schemas['VariableList'];
 
+/**
+ * A notification configuration as the API returns it.
+ *
+ * The webhook URL and the generic token are write-only: reads carry
+ * `url_masked` and `has_token` instead.
+ */
+export type NotificationConfiguration = Schemas['NotificationConfiguration'];
+
+/** The body that creates a notification configuration. */
+export type NotificationConfigurationCreate =
+  Schemas['NotificationConfigurationCreate'];
+
+/** A partial edit of a notification configuration. An empty `token` clears it. */
+export type NotificationConfigurationUpdate =
+  Schemas['NotificationConfigurationUpdate'];
+
+/** Every notification configuration on a workspace. */
+export type NotificationConfigurationList =
+  Schemas['NotificationConfigurationList'];
+
+/** The outcome of one delivery attempt, a test send included. */
+export type NotificationDelivery = Schemas['NotificationDelivery'];
+
+/** Where a notification configuration delivers. */
+export type NotificationDestination =
+  NotificationConfiguration['destination_type'];
+
+/** A run event a notification configuration can fire on. */
+export type NotificationTrigger = NotificationConfiguration['triggers'][number];
+
 /** Where a configuration version is in its upload lifecycle. */
 export type ConfigVersionStatus = Schemas['ConfigVersion']['status'];
 

@@ -37,6 +37,11 @@ import type {
   ModuleList,
   ModuleSync,
   ModuleVersionDetail,
+  NotificationConfiguration,
+  NotificationConfigurationCreate,
+  NotificationConfigurationList,
+  NotificationConfigurationUpdate,
+  NotificationDelivery,
   ManifestConversionRequest,
   ManifestStart,
   ManifestStartRequest,
@@ -355,6 +360,84 @@ export class TerraformApi {
         options
       )
     );
+  }
+
+  /** Lists a workspace's notification configurations, each with its last delivery. */
+  async listNotificationConfigurations(
+    workspaceId: string,
+    options: RequestOptions = {}
+  ): Promise<NotificationConfigurationList> {
+    const response = await this.client.get<NotificationConfigurationList>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations`,
+      options
+    );
+    return response.data;
+  }
+
+  /** Creates a notification configuration. Rejects with a 409 past 50 on one workspace. */
+  async createNotificationConfiguration(
+    workspaceId: string,
+    body: NotificationConfigurationCreate,
+    options: RequestOptions = {}
+  ): Promise<NotificationConfiguration> {
+    const response = await this.sudo(() =>
+      this.client.post<NotificationConfiguration>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations`,
+        body,
+        options
+      )
+    );
+    return response.data;
+  }
+
+  /** Edits a notification configuration. An absent field is unchanged. */
+  async updateNotificationConfiguration(
+    workspaceId: string,
+    notificationId: string,
+    body: NotificationConfigurationUpdate,
+    options: RequestOptions = {}
+  ): Promise<NotificationConfiguration> {
+    const response = await this.sudo(() =>
+      this.client.patch<NotificationConfiguration>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations/${encodeURIComponent(notificationId)}`,
+        body,
+        options
+      )
+    );
+    return response.data;
+  }
+
+  /** Deletes a notification configuration. */
+  async deleteNotificationConfiguration(
+    workspaceId: string,
+    notificationId: string,
+    options: RequestOptions = {}
+  ): Promise<void> {
+    await this.sudo(() =>
+      this.client.delete(
+        `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations/${encodeURIComponent(notificationId)}`,
+        options
+      )
+    );
+  }
+
+  /**
+   * Sends a test delivery now and returns its outcome. A receiver's refusal comes
+   * back as a `failed` delivery, and a 429 carries `Retry-After`.
+   */
+  async verifyNotificationConfiguration(
+    workspaceId: string,
+    notificationId: string,
+    options: RequestOptions = {}
+  ): Promise<NotificationDelivery> {
+    const response = await this.sudo(() =>
+      this.client.post<NotificationDelivery>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations/${encodeURIComponent(notificationId)}/actions/verify`,
+        undefined,
+        options
+      )
+    );
+    return response.data;
   }
 
   /** Lists a workspace's configuration versions. */
