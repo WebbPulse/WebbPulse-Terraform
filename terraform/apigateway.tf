@@ -96,6 +96,16 @@ locals {
     "POST /v1/oauth/token"              = { integration = "workspaces", authorization_type = "NONE" }
   }
 
+  tfe_routes = {
+    "GET /api/v2/ping"                                                     = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/organizations/{organization}/entitlement-set"             = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/organizations/{organization}/workspaces"                  = { integration = "workspaces", authorization_type = "NONE" }
+    "POST /api/v2/organizations/{organization}/workspaces"                 = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/organizations/{organization}/workspaces/{workspace_name}" = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/workspaces/{workspace_id}"                                = { integration = "workspaces", authorization_type = "NONE" }
+    "GET /api/v2/workspaces/{workspace_id}/all-vars"                       = { integration = "workspaces", authorization_type = "NONE" }
+  }
+
   product_routes = merge(
     { for key, route in local.workspaces_routes : key => merge(route, { require_identity_jwt = true }) },
     {
@@ -111,6 +121,7 @@ locals {
       key => try(route.authorization_type, null) == "NONE" ? route : merge(route, { require_identity_jwt = true })
     },
     local.terraform_login_routes,
+    local.tfe_routes,
   )
 
   auth_anonymous_routes = {
