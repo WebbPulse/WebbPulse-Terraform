@@ -110,7 +110,7 @@ function ResourceChangeRow({
         >
           {actionGlyph(change.action)}
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-sm text-text-strong">
+        <span className="min-w-0 flex-[1_1_12rem] truncate font-mono text-sm text-text-strong">
           {change.address}
         </span>
         <span className="text-xs text-text-faint">
