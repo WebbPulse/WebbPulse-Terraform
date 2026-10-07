@@ -1,4 +1,4 @@
-"""The workspaces function's share of `tfe.v2`: ping, organization and workspace reads.
+"""The workspaces function's share of `tfe.v2`: ping, workspaces and config versions.
 
 These are the calls `terraform init` makes through a `cloud {}` block before any run
 exists: go-tfe's ping, the organization's entitlements, the workspace by name and,
@@ -17,18 +17,40 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, Path, Request, Response
 from webbpulse.identity.scopes import claims_scopes
 
-from ...common.core.auth import VARIABLES_READ, WORKSPACES_READ, WORKSPACES_WRITE, scopes
-from ...common.tfe.jsonapi import JsonApiRoute, document, not_found, paginate, unprocessable
+from ...common.core.auth import (
+    CONFIGS_READ,
+    CONFIGS_WRITE,
+    VARIABLES_READ,
+    WORKSPACES_READ,
+    WORKSPACES_WRITE,
+    scopes,
+)
+from ...common.tfe.jsonapi import (
+    JsonApiRoute,
+    document,
+    not_found,
+    paginate,
+    request_attributes,
+    unprocessable,
+)
 from ...common.tfe.resources import (
     API_VERSION,
+    configuration_version_resource,
     entitlement_set,
     require_organization,
     variable_resource,
     workspace_resource,
 )
-from ...common.workspaces.reads import WorkspaceNotFound
+from ...common.workspaces.reads import ConfigVersionNotFound, WorkspaceNotFound
 from ...common.workspaces.reads import get_workspace as read_workspace
-from .service import find_by_name, list_variables, list_workspaces, render_variable
+from .service import (
+    create_tfe_config_version,
+    find_by_name,
+    find_config_version,
+    list_variables,
+    list_workspaces,
+    render_variable,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from webbpulse.identity.claims import AuthorizerClaims
@@ -38,6 +60,8 @@ router = APIRouter(prefix="/api/v2", include_in_schema=False, route_class=JsonAp
 WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
 
 WorkspaceName = Path(min_length=1, max_length=90)
+
+ConfigVersionId = Path(min_length=4, max_length=64, pattern=r"^cv-[0-9A-HJKMNP-TV-Z]{26}$")
 
 
 @router.get("/ping", status_code=204)
@@ -144,3 +168,40 @@ def list_all_variables(
     rendered: list[dict[str, Any]] = [variable_resource(render_variable(row)) for row in rows]
     page, meta = paginate(rendered, request)
     return document(page, meta=meta)
+
+
+@router.post("/workspaces/{workspace_id}/configuration-versions", status_code=201)
+async def create_configuration_version(
+    request: Request,
+    workspace_id: str = WorkspaceId,
+    _: "AuthorizerClaims" = Depends(scopes(CONFIGS_WRITE)),
+) -> Response:
+    """Store a pending config version and answer its `upload-url`, as `terraform plan` asks.
+
+    The URL is a presigned S3 PUT that signs no content type or length, because go-tfe
+    uploads with no Authorization and `application/octet-stream`; the size ceiling is
+    enforced when the version is read back.
+    """
+    attributes, _relationships = await request_attributes(request)
+    try:
+        item, upload_url = create_tfe_config_version(
+            workspace_id,
+            speculative=bool(attributes.get("speculative", False)),
+            auto_queue_runs=bool(attributes.get("auto-queue-runs", True)),
+        )
+    except WorkspaceNotFound as error:
+        raise not_found("workspace") from error
+    return document(configuration_version_resource(item, upload_url=upload_url), status_code=201)
+
+
+@router.get("/configuration-versions/{config_version_id}")
+def read_configuration_version(
+    config_version_id: str = ConfigVersionId,
+    _: "AuthorizerClaims" = Depends(scopes(CONFIGS_READ)),
+) -> Response:
+    """One config version, reconciled against its object, which the upload poll reads."""
+    try:
+        item = find_config_version(config_version_id)
+    except ConfigVersionNotFound as error:
+        raise not_found("configuration version") from error
+    return document(configuration_version_resource(item))

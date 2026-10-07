@@ -448,6 +448,14 @@ routes from a `tfe_router`. The only organization is `WebbPulse`, a workspace is
 from the CLI (the create answers 422), and workspaces carry no tags, so only `workspaces { name
 = ... }` selects one. The design and the slices are on TF-44.
 
+A run's configuration arrives through `POST /api/v2/workspaces/{id}/configuration-versions`
+(`configs:write`), which writes the same config version row as `/api/v1` and answers an
+`upload-url` that is a presigned PUT signing only the host: go-tfe uploads with no
+Authorization and `application/octet-stream`, so no type or length can be signed. The row
+carries `max_bytes` (250 MB) instead, and `GET /api/v2/configuration-versions/{id}`
+(`configs:read`), which the CLI polls, reconciles it: `uploaded` once the object lands, or
+`errored` with `upload_error` set and the object deleted when it is over the ceiling.
+
 `wp-tf login` is the agent path, with no long-lived key. It runs the OAuth device
 grant from the identity package (`device_grant_enabled`, client `wp-tf`) at
 `<api>/api/auth/device/*`: the approval page sends a signed-out or stale (over ten
