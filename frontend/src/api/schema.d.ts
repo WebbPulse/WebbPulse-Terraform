@@ -3483,14 +3483,17 @@ export interface components {
          * @description A partial workspace edit. The name and the id are not editable.
          *
          *     A rename would break the state key, which is derived from the workspace id,
-         *     and the `by_name` uniqueness claim at the same time, so it is refused by
-         *     omission rather than by a check.
+         *     and the `by_name` uniqueness claim at the same time, so the field is left out
+         *     of the model and a body carrying it is refused as an unknown key.
          *
          *     The model separates "absent" from "explicitly null" by leaving every field
          *     unset by default and reading the body with `model_dump(exclude_unset=True)`,
          *     so a key only reaches the service when the request actually carried it. A null
          *     on one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service
          *     turns into a DynamoDB REMOVE.
+         *
+         *     Every unknown key is a 422 rather than dropped, so a field this server cannot
+         *     store never reads back to the caller as a successful change.
          */
         WorkspaceUpdate: {
             /** Auto Apply */

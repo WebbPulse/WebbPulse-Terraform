@@ -4545,7 +4545,8 @@
         "type": "object"
       },
       "WorkspaceUpdate": {
-        "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so it is refused by\nomission rather than by a check.\n\nThe model separates \"absent\" from \"explicitly null\" by leaving every field\nunset by default and reading the body with `model_dump(exclude_unset=True)`,\nso a key only reaches the service when the request actually carried it. A null\non one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service\nturns into a DynamoDB REMOVE.",
+        "additionalProperties": false,
+        "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so the field is left out\nof the model and a body carrying it is refused as an unknown key.\n\nThe model separates \"absent\" from \"explicitly null\" by leaving every field\nunset by default and reading the body with `model_dump(exclude_unset=True)`,\nso a key only reaches the service when the request actually carried it. A null\non one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service\nturns into a DynamoDB REMOVE.\n\nEvery unknown key is a 422 rather than dropped, so a field this server cannot\nstore never reads back to the caller as a successful change.",
         "properties": {
           "auto_apply": {
             "anyOf": [
