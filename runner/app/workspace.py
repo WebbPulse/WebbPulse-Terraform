@@ -14,6 +14,9 @@ from app.models import BackendConfig, Bundle
 BACKEND_FILENAME = "zz_webbpulse_backend_override.tf"
 TFVARS_FILENAME = "zz_webbpulse.auto.tfvars.json"
 HCL_TFVARS_FILENAME = "zz_webbpulse.auto.tfvars"
+RUN_TFVARS_FILENAME = "zz_webbpulse_run.tfvars"
+"""The run's own variables. Not an `.auto.tfvars` file: the plan names it with `-var-file`,
+which the engine reads after every automatically loaded file."""
 
 DATA_DIRECTORY_EXCLUDED = ("providers", "terraform.tfstate")
 """Data directory entries the workdir archive leaves out: the provider binaries, which
@@ -121,6 +124,27 @@ def write_hcl_tfvars(directory: Path, variables: dict[str, str]) -> Path | None:
             an HCL file unquoted, so anything but an identifier could change the
             file's meaning rather than name a variable.
     """
+    return _write_native_tfvars(directory / HCL_TFVARS_FILENAME, variables)
+
+
+def write_run_tfvars(directory: Path, variables: dict[str, str]) -> Path | None:
+    """Write the run's own variables as the native tfvars file the plan passes with `-var-file`.
+
+    Their values are HCL expressions, as the cloud backend sends `-var` values, so they
+    are written the way `write_hcl_tfvars` writes a workspace's HCL variables.
+
+    Raises:
+        ConfigError: A key is not a usable variable name.
+    """
+    return _write_native_tfvars(directory / RUN_TFVARS_FILENAME, variables)
+
+
+def _write_native_tfvars(path: Path, variables: dict[str, str]) -> Path | None:
+    """Write HCL valued assignments to `path`, owner only, or nothing when there are none.
+
+    Raises:
+        ConfigError: A key is not a usable variable name.
+    """
     if not variables:
         return None
     lines: list[str] = []
@@ -128,7 +152,6 @@ def write_hcl_tfvars(directory: Path, variables: dict[str, str]) -> Path | None:
         if not _VARIABLE_NAME.fullmatch(key):
             raise ConfigError(f"variable name is not a valid HCL identifier: {key}")
         lines.append(f"{key} = (\n{variables[key]}\n)")
-    path = directory / HCL_TFVARS_FILENAME
     path.write_text("\n".join(lines) + "\n")
     path.chmod(0o600)
     return path
@@ -175,6 +198,7 @@ def prepare(directory: Path, bundle: Bundle, archive: Path, *, allow_links: bool
     write_backend_override(target, bundle.backend)
     write_tfvars(target, bundle.terraform_variables)
     write_hcl_tfvars(target, bundle.hcl_variables)
+    write_run_tfvars(target, bundle.run_variables)
     return target
 
 
@@ -203,7 +227,7 @@ def pack_workdir(
     and files the plan generated, such as an `archive_file` zip a lambda reads at
     apply, are there. The archive holds the whole configuration root with the data
     directory's modules. It leaves out the provider binaries, the backend record, the
-    files the runner writes from the bundle (the backend override and both tfvars
+    files the runner writes from the bundle (the backend override and the tfvars
     files, which carry variable values) and `extra`, such as the plan file the apply
     downloads on its own. Links are archived as links, never followed.
     """
@@ -213,7 +237,7 @@ def pack_workdir(
         return (relative / name).as_posix().removeprefix("./")
 
     excluded = frozenset(
-        [under(name) for name in (BACKEND_FILENAME, TFVARS_FILENAME, HCL_TFVARS_FILENAME, *extra)]
+        [under(name) for name in (BACKEND_FILENAME, TFVARS_FILENAME, HCL_TFVARS_FILENAME, RUN_TFVARS_FILENAME, *extra)]
         + [under(f"{data_directory}/{name}") for name in DATA_DIRECTORY_EXCLUDED]
     )
     with tarfile.open(destination, "w:gz") as archive:

@@ -1,4 +1,4 @@
-/** The workspace overview: the setup checklist until it is done, then the latest run. */
+/** The workspace overview: the setup checklist until it is done, the latest run and the README. */
 
 import { Link } from 'react-router-dom';
 
@@ -25,6 +25,7 @@ import {
 } from '../../components';
 import { useWorkspace } from '../workspaceContext';
 import { SetupChecklist } from './SetupChecklist';
+import { WorkspaceReadme } from './WorkspaceReadme';
 import { latestUploadedVersion } from './setup';
 
 /** The overview page. */
@@ -56,37 +57,44 @@ export function OverviewPage(): React.ReactElement {
         />
       ) : null}
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <section aria-labelledby="latest-run" className="space-y-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2
-              id="latest-run"
-              className="text-sm font-semibold text-text-strong"
-            >
-              Latest run
-            </h2>
-            <Link
-              to={`${base}/runs`}
-              className="text-xs text-accent hover:text-accent-hover hover:underline"
-            >
-              View all runs
-            </Link>
-          </div>
-          {latest === null ? (
-            <EmptyState
-              title="No runs yet."
-              hint="Start one with New run, or from a configuration version."
-              action={
-                hasRunRole(workspace) ? (
-                  <Button variant="primary" onClick={openNewRun}>
-                    + New run
-                  </Button>
-                ) : undefined
-              }
-            />
-          ) : (
-            <LatestRunCard run={latest} />
-          )}
-        </section>
+        <div className="min-w-0 space-y-6">
+          <section aria-labelledby="latest-run" className="space-y-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2
+                id="latest-run"
+                className="text-sm font-semibold text-text-strong"
+              >
+                Latest run
+              </h2>
+              <Link
+                to={`${base}/runs`}
+                className="text-xs text-accent hover:text-accent-hover hover:underline"
+              >
+                View all runs
+              </Link>
+            </div>
+            {latest === null ? (
+              <EmptyState
+                title="No runs yet."
+                hint="Start one with New run, or from a configuration version."
+                action={
+                  hasRunRole(workspace) ? (
+                    <Button variant="primary" onClick={openNewRun}>
+                      + New run
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <LatestRunCard run={latest} />
+            )}
+          </section>
+          <WorkspaceReadme
+            workspaceId={workspace.workspace_id}
+            versions={versions}
+            workingDirectory={workspace.working_directory ?? ''}
+          />
+        </div>
         <WorkspaceFacts
           workspace={workspace}
           runRoleCheck={runRoleCheck}

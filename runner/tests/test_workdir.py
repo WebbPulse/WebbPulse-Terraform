@@ -59,7 +59,7 @@ def test_a_plan_with_changes_archives_the_working_directory(
     names = archive_names(payload)
     assert {"main.tf", *GENERATED} <= names
     assert not names & {*LEFT_OUT, "plan.tfplan", workspace.BACKEND_FILENAME}
-    assert not names & {workspace.TFVARS_FILENAME, workspace.HCL_TFVARS_FILENAME}
+    assert not names & {workspace.TFVARS_FILENAME, workspace.HCL_TFVARS_FILENAME, workspace.RUN_TFVARS_FILENAME}
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
         contents = b"".join(
             handle.read() for member in archive.getmembers() if (handle := archive.extractfile(member)) is not None

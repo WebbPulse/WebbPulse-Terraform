@@ -23,6 +23,7 @@ export {
   shortRunId,
 } from './format';
 export { Layout, Mark } from './Layout';
+export { Markdown, type MarkdownProps, type UrlResolver } from './Markdown';
 export { PageHeader, type Crumb, type PageHeaderProps } from './PageHeader';
 export {
   actionGlyph,
@@ -69,6 +70,7 @@ export {
   changeSummary,
   commitHeadline,
   isDestroyRun,
+  isSuperseded,
   runKind,
   runPath,
   runSource,
@@ -82,11 +84,12 @@ export {
 } from './SegmentedControl';
 export { Spinner, type SpinnerProps } from './Spinner';
 export {
-  ConfirmPasswordDialog,
+  ConfirmIdentityDialog,
   StepUpBoundary,
   confirmationWindow,
-  type ConfirmPasswordDialogProps,
+  type ConfirmIdentityDialogProps,
   type StepUpBoundaryProps,
+  type StepUpFactor,
 } from './StepUpBoundary';
 export { StateBadge, type StateBadgeProps } from './StateBadge';
 export { Table, Td, Th, Tr, type TableProps, type TrProps } from './Table';

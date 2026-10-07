@@ -114,19 +114,19 @@ def test_patch_updates_the_engine_version(auth_client, workspace):
     assert body["name"] == workspace["name"]
 
 
-def test_patch_ignores_a_name(auth_client, workspace):
-    """A rename is refused by omission: the name is not an editable field.
+def test_patch_refuses_a_name(auth_client, workspace):
+    """A rename is refused: the name is not an editable field.
 
     A rename would break the state key and the uniqueness claim at once, so the
-    field is absent from the update model and a caller sending one is ignored
-    rather than served a partial rename.
+    field is absent from the update model, and a caller sending one gets a 422
+    rather than a 200 that silently dropped it.
     """
     response = auth_client.patch(
         f"{BASE}/{workspace['workspace_id']}",
         json={"name": "renamed"},
     )
-    assert response.status_code == 200, response.text
-    assert response.json()["name"] == "example"
+    assert response.status_code == 422, response.text
+    assert auth_client.get(f"{BASE}/{workspace['workspace_id']}").json()["name"] == "example"
 
 
 def test_patch_is_404_for_an_absent_workspace(auth_client):

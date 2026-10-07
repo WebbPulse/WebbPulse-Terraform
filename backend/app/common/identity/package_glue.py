@@ -15,9 +15,10 @@ no AWS client, and the runs image never reaches it at all.
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Final
 
-from app.common.core.auth import ADMIN, ALL_SCOPES, STATE_DOWNLOAD
+from app.common.core.auth import ADMIN, ALL_SCOPES, STATE_DOWNLOAD, STATE_WRITE
 
 if TYPE_CHECKING:  # pragma: no cover
     from fastapi import APIRouter
@@ -36,18 +37,26 @@ though one function serves both surfaces."""
 DEVICE_CLIENTS: Final = {"wp-tf": "wp-tf CLI"}
 """The one client allowed to start a device login, and the name the approval page shows."""
 
-DEVICE_EXPLICIT_SCOPES: Final = (STATE_DOWNLOAD, ADMIN)
+DEVICE_EXPLICIT_SCOPES: Final = (STATE_DOWNLOAD, STATE_WRITE, ADMIN)
 """Scopes a device login gets only when `wp-tf login` names them, never by default.
 
 The default is therefore every other scope, read and write on workspaces, variables,
 configs, runs and the registry plus `runs:apply`, which is `wp-tf`'s `STANDARD_SCOPES`.
-Raw state and operator settings stay out of a session that sits on a workstation."""
+Raw state, state writes and operator settings stay out of a session that sits on a workstation."""
 
 SIGN_IN_PATH: Final = "/sign-in"
 """The SPA's sign-in page, where a signed-out device approval is sent."""
 
 WEBAUTHN_ORIGINS_ENV: Final = "IDENTITY_WEBAUTHN_ORIGINS"
 """Set only where the passkey origin differs from the SPA's, such as the local e2e stack."""
+
+SESSION_IDLE_TTL: Final = timedelta(hours=12)
+"""How long a browser session lives without a refresh. Every refresh while the app is
+open pushes it out again, so only a session nobody uses for this long ends."""
+
+SESSION_ABSOLUTE_TTL: Final = timedelta(days=7)
+"""The most a browser session can slide to, counted from its sign-in, after which the
+person signs in again however active they were. Matches the access gate's session."""
 
 
 def consent_theme() -> Any:
@@ -94,12 +103,15 @@ def build_identity_settings(settings: "Settings") -> Any:
 
     Device login's client, scopes and sign-in page are product facts rather than
     deployment config, so they are set here instead of in the function environment,
-    which Lambda caps at 4KB. The WebAuthn origin defaults to the SPA's origin. Raises
-    `ValidationError` on a bad environment.
+    which Lambda caps at 4KB, and so is the session's sliding window. The WebAuthn
+    origin defaults to the SPA's origin. Raises `ValidationError` on a bad environment.
     """
     from webbpulse.identity import IdentitySettings
 
-    overrides: dict[str, Any] = {}
+    overrides: dict[str, Any] = {
+        "refresh_token_ttl": SESSION_IDLE_TTL,
+        "refresh_absolute_ttl": SESSION_ABSOLUTE_TTL,
+    }
     frontend = settings.IDENTITY_FRONTEND_BASE_URL.strip().rstrip("/")
     if frontend and not os.environ.get(WEBAUTHN_ORIGINS_ENV, "").strip():
         overrides["webauthn_origins"] = [frontend]

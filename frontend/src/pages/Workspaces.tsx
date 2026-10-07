@@ -9,8 +9,10 @@ import {
   accountStatus,
   accountStatusLabel,
   api,
+  runStateLabel,
   type Workspace,
   type WorkspaceList,
+  type WorkspaceListItem,
 } from '../api';
 import {
   EmptyState,
@@ -19,7 +21,9 @@ import {
   buttonClass,
   PageHeader,
   RelativeTime,
+  runPath,
   Spinner,
+  StateBadge,
   Table,
   Td,
   Th,
@@ -77,7 +81,7 @@ function WorkspaceTable({
   filter,
   onFilter,
 }: {
-  workspaces: Workspace[];
+  workspaces: WorkspaceListItem[];
   filter: string;
   onFilter: (value: string) => void;
 }): React.ReactElement {
@@ -127,6 +131,7 @@ function WorkspaceTable({
           <thead>
             <tr>
               <Th>Workspace name</Th>
+              <Th>Run status</Th>
               <Th>Engine</Th>
               <Th>AWS account</Th>
               <Th>Latest change</Th>
@@ -148,6 +153,9 @@ function WorkspaceTable({
                     </p>
                   )}
                 </Td>
+                <Td>
+                  <RunStatusCell workspace={workspace} />
+                </Td>
                 <Td className="text-text-muted">
                   {workspace.engine ?? 'terraform'}{' '}
                   <span className="font-mono text-xs">
@@ -158,9 +166,7 @@ function WorkspaceTable({
                   <ConnectionCell workspace={workspace} />
                 </Td>
                 <Td className="text-xs whitespace-nowrap text-text-faint">
-                  <RelativeTime
-                    iso={workspace.updated_at ?? workspace.created_at}
-                  />
+                  <RelativeTime iso={workspace.latest_change_at} />
                 </Td>
               </Tr>
             ))}
@@ -168,6 +174,44 @@ function WorkspaceTable({
         </Table>
       )}
     </div>
+  );
+}
+
+/**
+ * The newest run's state as a badge linking to that run, as HCP Terraform's
+ * list shows it, or the words for a workspace that never ran.
+ */
+function RunStatusCell({
+  workspace,
+}: {
+  workspace: WorkspaceListItem;
+}): React.ReactElement {
+  const run = workspace.latest_run;
+  if (run === null || run === undefined) {
+    return (
+      <span
+        data-testid="workspace-row-run-status"
+        className="text-xs text-text-faint"
+      >
+        No runs yet
+      </span>
+    );
+  }
+  return (
+    <Link
+      to={runPath({
+        run_id: run.run_id,
+        workspace_id: workspace.workspace_id,
+      })}
+      data-testid="workspace-row-run-status"
+      aria-label={`Latest run: ${runStateLabel(run.status)}`}
+      className="inline-flex rounded-full"
+    >
+      <StateBadge
+        state={run.status}
+        className="transition-opacity hover:opacity-80"
+      />
+    </Link>
   );
 }
 

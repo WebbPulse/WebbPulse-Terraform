@@ -32,11 +32,11 @@ from ...common.core.auth import (
 )
 from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
-from ...common.workspaces import run_role_check
-from . import hcl, quick_setup, service, state_versions
+from ...common.workspaces import hcl, run_role_check
+from . import quick_setup, service, state_versions
 from .schemas.workspace import (
-    ConfigVersion,
     ConfigVersionCreate,
+    ConfigVersionDetail,
     ConfigVersionList,
     ConfigVersionUpload,
     RunRoleCheck,
@@ -200,8 +200,8 @@ def _connect_errors() -> Iterator[None]:
     dependencies=[Depends(scopes(WORKSPACES_READ))],
 )
 def list_workspaces() -> dict[str, Any]:
-    """Every workspace in this environment, each with its run role setup."""
-    return {"items": [service.render_workspace(item) for item in service.list_workspaces()]}
+    """Every workspace in this environment, each with its run role setup and newest run."""
+    return {"items": service.list_workspace_items()}
 
 
 @router.post(
@@ -289,7 +289,7 @@ def update_workspace(
 
     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
-    takes the step-up, since it stands in for the step-up gated confirmation.
+    takes the step-up, since it hands every later run's confirmation to the system.
     """
     changes = payload.model_dump(exclude_unset=True)
     auto_apply_from: Optional[bool] = None
@@ -623,16 +623,16 @@ def list_config_versions(workspace_id: str = WorkspaceId) -> dict[str, Any]:
 
 @router.get(
     "/workspaces/{workspace_id}/config-versions/{config_version_id}",
-    response_model=ConfigVersion,
+    response_model=ConfigVersionDetail,
     dependencies=[Depends(scopes(CONFIGS_READ))],
 )
 def get_config_version(
     workspace_id: str = WorkspaceId,
     config_version_id: str = ConfigVersionId,
 ) -> dict[str, Any]:
-    """One config version by id."""
+    """One config version by id, with the README its workspace's overview shows."""
     try:
-        return service.get_config_version(workspace_id, config_version_id)
+        return service.get_config_version_detail(workspace_id, config_version_id)
     except service.ConfigVersionNotFound as error:
         raise _not_found("No such config version.") from error
 

@@ -182,3 +182,59 @@ def test_terraform_init_installs_the_signed_provider(
     )
     lock = (workdir / ".terraform.lock.hcl").read_text()
     assert f'provider "{REGISTRY_HOST}/{NAMESPACE.lower()}/{TYPE}"' in lock
+
+
+def _session_token(api: Any) -> str:
+    """The signed-in user's current access token, refreshed by its source when one is set."""
+    source = getattr(api, "token_source", None)
+    token = source.bearer_token() if source is not None else getattr(api, "token", None)
+    assert token and not str(token).startswith("wpk_"), "the run's client holds no session token"
+    return str(token)
+
+
+def test_a_session_token_downloads_the_provider(published: dict[str, Any], api: Any) -> None:
+    """A person's own access token, not only a key, reads the protocol and the checksum list."""
+    token = _session_token(api)
+    versions = _get(f"{PROTOCOL_URL}/versions", token)
+    assert versions.status_code == 200, f"a session token listing versions answered {versions.status_code}"
+    download = _get(f"{PROTOCOL_URL}/{VERSION}/download/linux/amd64", token)
+    assert download.status_code == 200, f"a session token downloading answered {download.status_code}"
+    body = download.json()
+    sums = httpx.get(body["shasums_url"], timeout=TIMEOUT_SECONDS)
+    assert sums.status_code == 200
+    assert f"{body['shasum']}  {body['filename']}" in sums.text
+
+
+def test_terraform_providers_lock_records_both_hash_schemes(
+    published: dict[str, Any], read_key: str, terraform_binary: str, tmp_path: Path
+) -> None:
+    """`terraform providers lock` with the `terraform login` credential records `h1:` and `zh:` hashes."""
+    platforms = sorted(f"{item['os']}_{item['arch']}" for item in published["platforms"])
+    wanted = [platform for platform in ("linux_amd64", "darwin_arm64") if platform in platforms]
+    workdir = tmp_path / "lock"
+    workdir.mkdir()
+    (workdir / "main.tf").write_text(
+        "terraform {\n  required_providers {\n    webbpulse = {\n"
+        f'      source  = "{REGISTRY_HOST}/{NAMESPACE}/{TYPE}"\n      version = "{VERSION}"\n'
+        "    }\n  }\n}\n"
+    )
+    config = tmp_path / "terraformrc-lock"
+    config.write_text("")
+    env = {name: value for name, value in os.environ.items() if not name.startswith("TF_")}
+    env.update({"TF_CLI_CONFIG_FILE": str(config), "TF_IN_AUTOMATION": "1", TOKEN_VARIABLE: read_key})
+
+    result = subprocess.run(
+        [terraform_binary, "providers", "lock", "-no-color", *(f"-platform={platform}" for platform in wanted)],
+        cwd=workdir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=INIT_TIMEOUT_SECONDS,
+        check=False,
+    )
+    output = (result.stdout + result.stderr).replace(read_key, "[redacted]")
+    assert result.returncode == 0, f"terraform providers lock exited {result.returncode}: {output[-2000:]}"
+    lock = (workdir / ".terraform.lock.hcl").read_text()
+    assert f'provider "{REGISTRY_HOST}/{NAMESPACE.lower()}/{TYPE}"' in lock
+    assert lock.count('"h1:') == len(wanted), f"expected one h1 hash per platform: {lock}"
+    assert '"zh:' in lock, f"no zh hash was recorded: {lock}"

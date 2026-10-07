@@ -137,19 +137,32 @@ def plan_document(plan_json: str) -> str:
     return plan_json
 
 
+def _plan_options(bundle: Bundle) -> list[str]:
+    """The run's own plan flags, naming the run tfvars file only when `prepare` wrote one."""
+    return engine.plan_options(
+        target_addrs=bundle.target_addrs,
+        replace_addrs=bundle.replace_addrs,
+        refresh=bundle.refresh,
+        refresh_only=bundle.refresh_only,
+        var_file=workspace.RUN_TFVARS_FILENAME if bundle.run_variables else None,
+    )
+
+
 def _run_plan(
     runner: engine.EngineRunner,
     sink: CloudWatchLogSink,
     sealed_plan: Path,
     *,
     destroy: bool = False,
+    options: list[str] | None = None,
     init_environment: dict[str, str] | None = None,
     user: isolation.EngineUser | None = None,
 ) -> tuple[int, Changes, bool, str]:
     """Init, plan, seal the plan file and render it as JSON, returning the exit code and change counts.
 
     `destroy` plans the removal of every managed resource, which the apply phase then
-    applies from the saved plan like any other.
+    applies from the saved plan like any other. `options` are the run's targeting,
+    replacement, refresh and run variable flags.
 
     The plan runs under `-detailed-exitcode`, so it exits 0 with no changes and 2
     with changes. Both are successful plans, so both return 0 and the change
@@ -162,7 +175,7 @@ def _run_plan(
     init_code = runner.init(init_environment)
     if init_code != 0:
         raise PhaseFailure("InitFailed", f"init exited {init_code}")
-    plan_code = runner.plan(destroy=destroy)
+    plan_code = runner.plan(destroy=destroy, options=options or [])
     if plan_code not in (engine.NO_CHANGES_EXIT, engine.CHANGES_EXIT):
         raise PhaseFailure("PlanFailed", f"plan exited {plan_code}")
     seal_plan(runner.directory / engine.PLAN_FILE, sealed_plan, user)
@@ -421,6 +434,7 @@ def _run_engine(
             sink,
             sealed_plan,
             destroy=bundle.is_destroy,
+            options=_plan_options(bundle),
             init_environment=init_environment,
             user=user,
         )

@@ -1,5 +1,8 @@
 """The step-up gate on every sensitive route: stale logins refused, fresh ones and keys let in.
 
+Confirming and discarding a run are not on the list (TF-52): they need `runs:apply` or
+`runs:write` on a live session and no recent login.
+
 A person arrives with the claims the JWT authorizer produced, stamped with an
 `auth_time`; an agent arrives with a `wpk_` key, which has no login to age and passes.
 Each gated route is driven three ways, and what is asserted for the fresh login and the
@@ -107,7 +110,6 @@ GATED: dict[str, Callable[[TestClient, dict[str, Any], dict[str, Any]], Call]] =
         _seed_sensitive(c, ws, "gone"),
         Call("DELETE", f"{_workspace_path(ws)}/variables/gone"),
     )[1],
-    "confirm a run": lambda _c, _ws, run: Call("POST", f"/api/v1/runs/{run['run_id']}/confirm", {}),
     "connect a registry module": lambda *_: Call(
         "POST", "/api/v1/registry/modules", {"vcs_repo": "acme/terraform-aws-vpc", "import_tags": False}
     ),
@@ -199,3 +201,29 @@ def test_a_stale_login_still_reads(app, workspace):
     with person(app, auth_age=STEP_UP_MAX_AGE_SECONDS + 60) as client:
         assert client.get(_workspace_path(workspace)).status_code == 200
         assert client.get("/api/v1/api-keys").status_code == 200
+
+
+@pytest.mark.parametrize("auth_age", [STEP_UP_MAX_AGE_SECONDS + 60, None], ids=["stale", "undated"])
+def test_a_browser_session_confirms_without_a_step_up(app, awaiting_confirmation, auth_age):
+    """Confirming a run needs `runs:apply` on a live session, however old its login."""
+    with person(app, auth_age=auth_age) as client:
+        response = client.post(f"/api/v1/runs/{awaiting_confirmation['run_id']}/confirm", json={})
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"]["actor"]["id"] == PERSON
+
+
+def test_a_browser_session_discards_without_a_step_up(app, awaiting_confirmation):
+    """Discarding a plan needs no recent login either."""
+    with person(app, auth_age=STEP_UP_MAX_AGE_SECONDS + 60) as client:
+        response = client.post(f"/api/v1/runs/{awaiting_confirmation['run_id']}/discard", json={})
+    assert response.status_code == 200, response.text
+
+
+def test_confirming_still_needs_runs_apply(app, awaiting_confirmation):
+    """Dropping the step-up does not drop the scope: `runs:write` alone cannot apply."""
+    seed_user(PERSON)
+    without_apply = tuple(scope for scope in ALL_SCOPES if scope != "runs:apply")
+    headers = person_headers(user_id=PERSON, scopes=without_apply, auth_age=30)
+    with TestClient(app, headers=headers) as client:
+        response = client.post(f"/api/v1/runs/{awaiting_confirmation['run_id']}/confirm", json={})
+    assert response.status_code == 403, response.text

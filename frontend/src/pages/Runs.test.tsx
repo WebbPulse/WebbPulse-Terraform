@@ -1,7 +1,8 @@
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { aRun, aWorkspace } from '../test-helpers/fixtures';
+import { aListedWorkspace, aRun } from '../test-helpers/fixtures';
 import {
   renderWithAuth,
   signedInAuthClient,
@@ -19,7 +20,7 @@ const { Runs } = await import('./Runs');
 describe('Runs', () => {
   beforeEach(() => {
     resetApiMock();
-    apiMock.listWorkspaces.mockResolvedValue({ items: [aWorkspace()] });
+    apiMock.listWorkspaces.mockResolvedValue({ items: [aListedWorkspace()] });
   });
 
   it('lists every run with its state and plan counts', async () => {
@@ -149,5 +150,59 @@ describe('Runs', () => {
     expect(
       within(source).getByRole('link', { name: 'PR #12' })
     ).toHaveAttribute('href', 'https://github.com/WebbPulse/infra/pull/12');
+  });
+
+  it('hides superseded pull request plans until asked, then shows them dimmed with their successor', async () => {
+    apiMock.listRuns.mockResolvedValue({
+      items: [
+        aRun('planning', { run_id: 'run-new', plan_only: true }),
+        aRun('cancelled', {
+          run_id: 'run-old',
+          plan_only: true,
+          message: 'The older commit',
+          superseded_by: {
+            run_id: 'run-new',
+            sha: '9876543aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          },
+        }),
+      ],
+    });
+
+    renderWithAuth(<Runs />, signedInAuthClient());
+
+    const toggle = await screen.findByRole('button', {
+      name: 'Show superseded runs (1)',
+    });
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+    expect(screen.queryByText('The older commit')).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+
+    expect(
+      screen.getByRole('button', { name: 'Hide superseded runs (1)' })
+    ).toHaveAttribute('aria-pressed', 'true');
+    const rows = screen.getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toHaveAttribute('data-superseded', 'true');
+    expect(rows[1]).toHaveClass('opacity-60');
+    expect(
+      within(rows[1] as HTMLElement).getByRole('link', {
+        name: 'superseded by 9876543',
+      })
+    ).toHaveAttribute(
+      'href',
+      '/workspaces/ws-01J000000000000000000000/runs/run-new'
+    );
+  });
+
+  it('offers no superseded toggle when nothing was superseded', async () => {
+    apiMock.listRuns.mockResolvedValue({ items: [aRun('applied')] });
+
+    renderWithAuth(<Runs />, signedInAuthClient());
+
+    await screen.findAllByRole('listitem');
+    expect(
+      screen.queryByRole('button', { name: /superseded runs/ })
+    ).not.toBeInTheDocument();
   });
 });

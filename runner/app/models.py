@@ -299,6 +299,20 @@ class Bundle(BaseModel):
     """Plan the destruction of every managed resource with `plan -destroy`. Only the
     plan phase reads it: the apply applies the saved plan, which already carries the
     destroy mode. A bundle from a control plane that predates destroy runs has none."""
+    target_addrs: list[str] = Field(default_factory=lambda: list[str]())
+    """Resource addresses the plan is limited to, each passed as `-target`. Only the plan
+    phase reads them, since the saved plan already carries the targeting."""
+    replace_addrs: list[str] = Field(default_factory=lambda: list[str]())
+    """Resource addresses the plan must replace, each passed as `-replace`."""
+    refresh: bool = True
+    """False plans with `-refresh=false`, skipping the read of remote objects."""
+    refresh_only: bool = False
+    """Plan with `-refresh-only`, proposing only to update state to match remote objects."""
+    run_variables: dict[str, str] = Field(default_factory=dict)
+    """Variables set for this run alone, as `terraform plan -var` sends them through a cloud
+    block: each value is an HCL expression. They go to a native tfvars file passed with
+    `-var-file`, which the engine reads after every `.auto.tfvars` file, so they win over
+    workspace variables and the configuration's own files as HCP's run variables do."""
     environment_variables: dict[str, str] = Field(default_factory=dict)
     terraform_variables: dict[str, object] = Field(default_factory=dict)
     """Literal values. They go to a JSON tfvars file, where a string is a string
@@ -331,7 +345,7 @@ class Bundle(BaseModel):
         for variable in self.terraform_variables.values():
             if isinstance(variable, str) and variable:
                 values.append(variable)
-        for expression in self.hcl_variables.values():
+        for expression in [*self.hcl_variables.values(), *self.run_variables.values()]:
             values.extend(hcl_literal_fragments(expression))
         values.extend(self.aws_credentials.secrets())
         values.extend(self.backend.credentials.secrets())

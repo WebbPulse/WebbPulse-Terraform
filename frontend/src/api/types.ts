@@ -89,6 +89,12 @@ export type WorkspaceUpdate = Schemas['WorkspaceUpdate'];
 /** Every workspace, newest last by id. */
 export type WorkspaceList = Schemas['WorkspaceList'];
 
+/** A workspace as the list returns it, with its newest run and latest change. */
+export type WorkspaceListItem = Schemas['WorkspaceListItem'];
+
+/** The newest run on a workspace, as the workspace list carries it. */
+export type LatestRun = Schemas['LatestRun'];
+
 /** Whether a variable is passed to Terraform or to the process environment. */
 export type VariableCategory = Schemas['Variable']['category'];
 
@@ -111,6 +117,15 @@ export type ConfigVersionStatus = Schemas['ConfigVersion']['status'];
 
 /** A configuration version as the API returns it. */
 export type ConfigVersion = Schemas['ConfigVersion'];
+
+/** The commit a VCS configuration version was ingested from. */
+export type ConfigVersionVcs = Schemas['ConfigVersionVcs'];
+
+/** The README a configuration version carries for its working directory. */
+export type ConfigReadme = Schemas['ConfigReadme'];
+
+/** One configuration version with its README, as the single read returns it. */
+export type ConfigVersionDetail = Schemas['ConfigVersionDetail'];
 
 /** The body that creates a configuration version. */
 export type ConfigVersionCreate = Schemas['ConfigVersionCreate'];

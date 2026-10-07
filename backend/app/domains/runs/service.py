@@ -42,7 +42,7 @@ from ...common.db.tables import (
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
-from . import api_credentials, registry_credentials, vending
+from . import api_credentials, registry_credentials, run_options, vending
 from .schemas.run import Phase
 
 _log = logging.getLogger(__name__)
@@ -84,6 +84,9 @@ AUTO_APPLY_ACTOR: Final = {"kind": "system", "id": "auto-apply", "display_name":
 
 AUTO_APPLY_EVENT: Final = "runs.run.auto_applied"
 """The log event an auto-apply confirmation is recorded under."""
+
+AUTO_APPLY_OVERRIDE_ATTRIBUTE: Final = "auto_apply_override"
+"""Set on a run whose creator chose `auto_apply` itself, so the workspace setting no longer decides."""
 
 AUTO_APPLY_SOURCES: Final = frozenset({"api", "vcs_push"})
 """The sources whose runs may auto-apply. A pull request plan and a Quick setup
@@ -392,13 +395,15 @@ def create_run(
         PendingRunRoleMissing: A run role check on a workspace with no staged role.
         ConfigVersionNotFound: No such config version on that workspace.
         ConfigVersionNotReady: The tarball was never uploaded.
+        InvalidRunOptions: A target, replacement, refresh flag or run variable is malformed.
     """
     resolved = settings or get_settings()
     workspace_id = str(payload["workspace_id"])
     config_version_id = str(payload["config_version_id"])
 
-    workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
     role_check = bool(payload.get("run_role_check", False))
+    options = {} if role_check else run_options.parse(payload)
+    workspace = workspace_reads.get_workspace(workspace_id, settings=resolved)
     role_arn = str(workspace.get("pending_run_role_arn" if role_check else "run_role_arn", "") or "")
     if not role_arn and role_check:
         raise PendingRunRoleMissing(workspace_id)
@@ -423,7 +428,7 @@ def create_run(
         "collection": RUNS_COLLECTION,
         "status": "pending",
         "plan_only": plan_only,
-        "auto_apply": bool(workspace.get("auto_apply", False))
+        "auto_apply": _requested_auto_apply(payload, workspace)
         and not plan_only
         and not role_check
         and source in AUTO_APPLY_SOURCES,
@@ -441,8 +446,11 @@ def create_run(
     )
     if plan_role_arn:
         item["plan_role_arn"] = plan_role_arn
+    item.update(run_options.stored(options, workspace_id=workspace_id, run_id=run_id, settings=resolved))
     if role_check:
         item["run_role_check"] = True
+    if not role_check and isinstance(payload.get("auto_apply"), bool):
+        item[AUTO_APPLY_OVERRIDE_ATTRIBUTE] = True
     if vcs is not None:
         item["vcs"] = {key: value for key, value in vcs.items() if value is not None}
     if actor is not None:
@@ -455,6 +463,19 @@ def create_run(
     if blocking is not None:
         return item
     return start_run(run_id, settings=resolved)
+
+
+def _requested_auto_apply(payload: Mapping[str, Any], workspace: Mapping[str, Any]) -> bool:
+    """Whether the run asks to apply on its own: the payload's own choice, else the workspace's.
+
+    The cloud block sends `auto-apply` with every run, true for `-auto-approve`, and
+    on HCP that choice overrides the workspace, so a prompted `terraform apply` on an
+    auto-apply workspace still waits for its answer.
+    """
+    requested = payload.get("auto_apply")
+    if isinstance(requested, bool):
+        return requested
+    return bool(workspace.get("auto_apply", False))
 
 
 def start_run(run_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
@@ -708,7 +729,8 @@ def auto_apply_eligible(run: Mapping[str, Any], *, settings: Settings | None = N
     pull request and role check runs, must still be one of those sources and not
     plan only, and must be waiting on a confirmation, which an errored plan never
     reaches. The workspace must still have auto-apply on, so turning it off stops a
-    run that is planning now from applying.
+    run that is planning now from applying, unless the run's creator chose
+    auto-apply itself, as `terraform apply -auto-approve` does.
     """
     if not bool(run.get("auto_apply", False)):
         return False
@@ -718,6 +740,8 @@ def auto_apply_eligible(run: Mapping[str, Any], *, settings: Settings | None = N
         return False
     if str(run.get("status", "")) not in CONFIRMABLE_STATUSES:
         return False
+    if bool(run.get(AUTO_APPLY_OVERRIDE_ATTRIBUTE, False)):
+        return True
     try:
         workspace = workspace_reads.get_workspace(str(run["workspace_id"]), settings=settings or get_settings())
     except workspace_reads.WorkspaceNotFound:
@@ -1305,7 +1329,7 @@ def _plan_action(actions: list[Any]) -> str:
     normalised = [str(action) for action in actions]
     if tuple(normalised) in _REPLACE_ACTIONS:
         return "replace"
-    if len(normalised) == 1 and normalised[0] in {"create", "update", "delete", "read", "no-op"}:
+    if len(normalised) == 1 and normalised[0] in {"create", "update", "delete", "read", "forget", "no-op"}:
         return normalised[0]
     return "no-op"
 
@@ -1347,6 +1371,8 @@ def _resource_change(raw: dict[str, Any]) -> dict[str, Any]:
         "replace_paths": list(change.get("replace_paths") or []),
         "before_sensitive": before_sensitive,
         "after_sensitive": after_sensitive,
+        "importing": isinstance(change.get("importing"), dict),
+        "previous_address": str(raw.get("previous_address") or ""),
     }
 
 
@@ -1365,6 +1391,15 @@ def _output_change(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         "after_unknown": bool(raw.get("after_unknown", False)),
         "sensitive": sensitive,
     }
+
+
+def _is_unchanged(entry: dict[str, Any]) -> bool:
+    """Whether a projected entry does nothing at all, so a large plan may drop it.
+
+    An import or a move arrives as a `no-op` action but still changes what the
+    state tracks, so it is never dropped.
+    """
+    return entry["action"] == "no-op" and not entry["importing"] and not entry["previous_address"]
 
 
 def summarise_plan(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
@@ -1389,8 +1424,11 @@ def summarise_plan(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
             add += 1
             destroy += 1
 
+    unchanged_omitted = 0
     if len(resource_changes) > NO_OP_KEPT_BELOW:
-        resource_changes = [entry for entry in resource_changes if entry["action"] != "no-op"]
+        kept = [entry for entry in resource_changes if not _is_unchanged(entry)]
+        unchanged_omitted = len(resource_changes) - len(kept)
+        resource_changes = kept
 
     raw_outputs = plan.get("output_changes") or {}
     output_changes = [_output_change(str(name), raw) for name, raw in raw_outputs.items() if isinstance(raw, dict)]
@@ -1403,6 +1441,7 @@ def summarise_plan(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
         "resource_changes": resource_changes,
         "output_changes": output_changes,
         "has_changes": bool(add or change or destroy or changed_outputs),
+        "unchanged_omitted": unchanged_omitted,
     }
 
 
@@ -1662,6 +1701,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         "registry": registry_credentials.issue(run, settings=resolved),
         "api": api_credentials.issue(run, workspace, settings=resolved),
         "workload_identity": identity,
+        **run_options.bundle_fields(run, settings=resolved),
     }
 
 
@@ -1810,6 +1850,26 @@ def record_pull_request(run_id: str, number: int, url: str, *, settings: Setting
         return
 
 
+def mark_superseded(run_id: str, by_run_id: str, by_sha: str, *, settings: Settings | None = None) -> bool:
+    """Record on a pull request plan the newer run that replaced it. Returns whether it was marked.
+
+    The first newer run to mark it stands. The status is untouched, so the stream
+    record this write makes is dropped by the reports consumer.
+    """
+    resolved = settings or get_settings()
+    try:
+        _runs(resolved).update(
+            {"run_id": run_id},
+            update_expression="SET #superseded = :by",
+            expression_values={":by": {"run_id": by_run_id, "sha": by_sha}},
+            expression_names={"#superseded": "superseded_by"},
+            condition=Attr("run_id").exists() & Attr("superseded_by").not_exists(),
+        )
+    except ConditionFailed:
+        return False
+    return True
+
+
 def render_run(item: dict[str, Any]) -> dict[str, Any]:
     """Strip the stored-only fields a run row carries.
 
@@ -1822,6 +1882,7 @@ def render_run(item: dict[str, Any]) -> dict[str, Any]:
         "run_token_hash",
         registry_credentials.HASH_ATTRIBUTE,
         api_credentials.HASH_ATTRIBUTE,
+        run_options.SEALED_ATTRIBUTE,
         "collection",
     }
     return {field: value for field, value in item.items() if field not in hidden}
@@ -1862,6 +1923,7 @@ __all__ = [
     "cancel_run",
     "confirm_run",
     "decision",
+    "mark_superseded",
     "record_commit_message",
     "record_pull_request",
     "create_run",

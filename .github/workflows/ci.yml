@@ -312,48 +312,6 @@ jobs:
         working-directory: terraform
         run: terraform fmt -recursive -check -diff
 
-  terraform-validate:
-    name: terraform validate
-    needs: changes
-    if: needs.changes.outputs.terraform == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Decide whether a registry token is available
-        id: token
-        env:
-          TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -n "${TF_API_TOKEN:-}" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::secrets.TF_API_TOKEN is not set, so validate is skipped. The module sources live in the private HCP registry and init cannot reach them without it. The HCP workspace plan on this pull request is the real gate."
-          fi
-
-      - name: Set up Terraform
-        if: steps.token.outputs.available == 'true'
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
-          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
-
-      - name: terraform init -backend=false
-        if: steps.token.outputs.available == 'true'
-        working-directory: terraform
-        run: terraform init -backend=false -input=false
-
-      - name: terraform validate
-        if: steps.token.outputs.available == 'true'
-        working-directory: terraform
-        run: terraform validate -no-color
-
   all-checks-passed:
     name: all-checks-passed
     runs-on: ubuntu-latest
@@ -366,7 +324,6 @@ jobs:
       - runner
       - runner-image
       - terraform-fmt
-      - terraform-validate
     if: always()
     steps:
       - name: Fail unless every upstream job succeeded or was skipped

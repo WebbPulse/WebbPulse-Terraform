@@ -7,6 +7,7 @@ import type {
 } from '../api/runPlan';
 import type {
   ConfigVersion,
+  LatestRun,
   Run,
   RunRoleSetup,
   RunState,
@@ -70,6 +71,22 @@ export function aFreshWorkspace(
     run_role_account_id: null,
     ...overrides,
   });
+}
+
+/** A workspace as the list returns it, never run unless `listed` says otherwise. */
+export function aListedWorkspace(
+  workspace: SettledWorkspace = aWorkspace(),
+  listed: { latest_run?: LatestRun | null; latest_change_at?: string } = {}
+): SettledWorkspace & {
+  latest_run: LatestRun | null;
+  latest_change_at: string;
+} {
+  return {
+    ...workspace,
+    latest_run: listed.latest_run ?? null,
+    latest_change_at:
+      listed.latest_change_at ?? workspace.updated_at ?? workspace.created_at,
+  };
 }
 
 /** A variable, overridable field by field. */

@@ -24,6 +24,9 @@ from ..db import repositories
 WORKSPACE_ID_PREFIX: Final = "ws-"
 CONFIG_VERSION_ID_PREFIX: Final = "cv-"
 
+UPLOAD_TOO_LARGE: Final = "too_large"
+"""The `upload_error` of a config version whose object exceeded its `max_bytes`."""
+
 
 class WorkspaceNotFound(Exception):
     """No workspace with this id."""
@@ -117,7 +120,7 @@ def resolved_variables(
     return out
 
 
-def _s3(settings: Settings) -> Any:
+def s3_client(settings: Settings) -> Any:
     """An S3 client. Imported late so nothing connects at import."""
     import boto3
 
@@ -128,8 +131,8 @@ def _s3(settings: Settings) -> Any:
     )
 
 
-def config_object_exists(key: str, *, settings: Settings) -> bool:
-    """Whether the config tarball is in the artifacts bucket.
+def config_object_size(key: str, *, settings: Settings) -> int | None:
+    """The config tarball's size in the artifacts bucket, or None while it is absent.
 
     A HEAD rather than a GET, so deciding that a multi-megabyte tarball arrived
     costs one metadata call. Any error other than an absent object propagates:
@@ -139,19 +142,25 @@ def config_object_exists(key: str, *, settings: Settings) -> bool:
     from botocore.exceptions import ClientError
 
     try:
-        _s3(settings).head_object(Bucket=settings.ARTIFACTS_BUCKET, Key=key)
+        head = s3_client(settings).head_object(Bucket=settings.ARTIFACTS_BUCKET, Key=key)
     except ClientError as error:
         status = int(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
         if status == 404 or error.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
-            return False
+            return None
         raise
-    return True
+    return int(head.get("ContentLength", 0))
+
+
+def config_object_exists(key: str, *, settings: Settings) -> bool:
+    """Whether the config tarball is in the artifacts bucket."""
+    return config_object_size(key, settings=settings) is not None
 
 
 def reconcile_config_version(
     item: dict[str, Any],
     *,
     persist: Callable[[str], None] | None = None,
+    reject: Callable[[str, str], None] | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Move a `pending` row to `uploaded` once its object is in the bucket.
@@ -161,26 +170,57 @@ def reconcile_config_version(
     looks, which is what makes the status a caller sees reflect the bucket rather
     than the moment the URL was minted.
 
-    A row already `uploaded` is returned untouched, so the HEAD is spent only on
-    rows that could still change.
+    A row already `uploaded`, or one already refused, is returned untouched, so the
+    HEAD is spent only on rows that could still change.
+
+    A row carrying `max_bytes` was handed a URL that signs no length, as the
+    `tfe.v2` upload is, so the ceiling is checked here instead: an object over it
+    reads with `upload_error` set and never as `uploaded`, so no run can use it.
 
     Nothing here writes. With no `persist` the bucket is still consulted and the
     returned row still reads `uploaded`, which is what the runs function needs:
     its role holds a read only grant on this table by design. The workspaces
-    domain owns the write and hands in its own writer, which is called with the
-    config version id once the object is found.
+    domain owns the writes and hands in its own writers: `persist` is called with
+    the config version id once the object is found, and `reject` with the id and
+    the object key when the object is over its ceiling.
     """
-    if str(item.get("status", "")) != "pending":
+    if str(item.get("status", "")) != "pending" or item.get("upload_error"):
         return item
 
     resolved = settings or get_settings()
     key = str(item.get("key", ""))
-    if not key or not config_object_exists(key, settings=resolved):
+    size = config_object_size(key, settings=resolved) if key else None
+    if size is None:
         return item
+
+    ceiling = item.get("max_bytes")
+    if ceiling is not None and size > int(ceiling):
+        if reject is not None:
+            reject(str(item["config_version_id"]), key)
+        return dict(item) | {"upload_error": UPLOAD_TOO_LARGE}
 
     if persist is not None:
         persist(str(item["config_version_id"]))
     return dict(item) | {"status": "uploaded"}
+
+
+def find_config_version(
+    config_version_id: str,
+    *,
+    persist: Callable[[str], None] | None = None,
+    reject: Callable[[str, str], None] | None = None,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """One config version by id alone, reconciled, or `ConfigVersionNotFound`.
+
+    For `tfe.v2`, whose paths name a config version without its workspace; the
+    caller checks the workspace it belongs to.
+    """
+    resolved = settings or get_settings()
+    item = repositories.config_versions(resolved).get({"config_version_id": config_version_id})
+    if item is None:
+        raise ConfigVersionNotFound(config_version_id)
+    return reconcile_config_version(item, persist=persist, reject=reject, settings=resolved)
 
 
 def get_config_version(
@@ -188,6 +228,7 @@ def get_config_version(
     config_version_id: str,
     *,
     persist: Callable[[str], None] | None = None,
+    reject: Callable[[str, str], None] | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """One config version, or `ConfigVersionNotFound`.
@@ -203,4 +244,4 @@ def get_config_version(
     item = repositories.config_versions(resolved).get({"config_version_id": config_version_id})
     if item is None or str(item.get("workspace_id")) != workspace_id:
         raise ConfigVersionNotFound(config_version_id)
-    return reconcile_config_version(item, persist=persist, settings=resolved)
+    return reconcile_config_version(item, persist=persist, reject=reject, settings=resolved)

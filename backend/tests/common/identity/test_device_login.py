@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -148,10 +148,21 @@ def test_device_login_facts_come_from_code_not_the_environment(
     assert identity.device_grant_enabled
     assert identity.device_clients == {"wp-tf": "wp-tf CLI"}
     assert identity.device_scopes_supported == list(ALL_SCOPES)
-    assert identity.device_explicit_scopes == ["state:download", "admin"]
+    assert identity.device_explicit_scopes == ["state:download", "state:write", "admin"]
     assert identity.device_login_url == "https://terraform.example.test/sign-in"
     assert identity.device_audience == ""
     assert identity.webauthn_origins == ["https://terraform.example.test"]
+
+
+def test_browser_sessions_slide_for_12_hours_up_to_7_days(identity_environment: None) -> None:
+    """The refresh window rolls 12 hours from each refresh and stops 7 days after the sign-in."""
+    del identity_environment
+    settings_module.reset_settings_cache()
+    identity = build_identity_settings(settings_module.get_settings())
+    settings_module.reset_settings_cache()
+    assert identity.refresh_token_ttl == timedelta(hours=12)
+    assert identity.refresh_absolute_ttl == timedelta(days=7)
+    assert identity.cookie_kwargs()["max_age"] == 12 * 3600
 
 
 def test_an_explicit_webauthn_origin_wins(monkeypatch: pytest.MonkeyPatch, identity_environment: None) -> None:
@@ -224,14 +235,14 @@ def test_a_device_session_applies_on_an_old_login(device_enabled: None, app, awa
     assert response.json()["decision"]["actor"]["id"] == USER_ID
 
 
-def test_a_browser_session_on_an_old_login_steps_up_to_apply(app, awaiting_confirmation) -> None:
-    """A browser session is not a device login, so the step-up still guards its apply."""
+def test_a_browser_session_on_an_old_login_applies(app, awaiting_confirmation) -> None:
+    """A browser session confirms on `runs:apply` alone, like a device session, with no step-up."""
     seed_user(USER_ID)
     run_id = awaiting_confirmation["run_id"]
     with TestClient(app, headers=person_headers(user_id=USER_ID, auth_age=3600)) as client:
         response = client.post(f"/api/v1/runs/{run_id}/confirm")
-    assert response.status_code == 401
-    assert response.json()["error_code"] == "STEP_UP_REQUIRED"
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"]["actor"]["id"] == USER_ID
 
 
 def test_a_revoked_device_session_cannot_apply(device_enabled: None, app, awaiting_confirmation) -> None:

@@ -415,6 +415,37 @@ def test_a_destroy_bundle_plans_with_destroy(
     assert recorder.phase_results[0]["has_changes"] is True
 
 
+def test_a_bundle_with_run_options_plans_with_their_flags(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """Targets, replacements, refresh and run variables reach the plan as the engine's flags."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = {
+        **bundle_payload(run_role_arn),
+        "target_addrs": ["null_resource.a"],
+        "replace_addrs": ["terraform_data.b"],
+        "refresh": False,
+        "run_variables": {"size": "3"},
+    }
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    lines = plan_arguments(f"{RUN_ID}/plan")
+    assert len(lines) == 1
+    arguments = lines[0].split()
+    assert "-target=null_resource.a" in arguments
+    assert "-replace=terraform_data.b" in arguments
+    assert "-refresh=false" in arguments
+    assert f"-var-file={workspace.RUN_TFVARS_FILENAME}" in arguments
+    assert "-refresh-only" not in arguments
+
+
 def test_a_destroy_apply_applies_the_saved_plan(
     aws: None,
     run_role_arn: str,

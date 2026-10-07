@@ -79,27 +79,30 @@ def _workspaces_routers() -> "list[APIRouter]":
 
 
 def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
-    """The shared package's identity router and `terraform login`'s token route.
+    """The identity router, `terraform login`'s token route and the `tfe.v2` reads.
 
-    Both carry their own paths: the token route is `/v1/oauth/token`, beside the
-    registry protocols, because service discovery names it. Identity is served by
+    Each carries its own paths: the token route is `/v1/oauth/token`, beside the
+    registry protocols, because service discovery names it, and the `tfe.v2`
+    routes sit under `/api/v2`, where discovery points the `cloud {}` block. Identity is served by
     the workspaces function rather than a domain of its own, so the glue mounts
     here. It takes no prefix; a prefix would double every path to
     `/api/auth/api/auth/...`.
 
-    Only the token route when `IDENTITY_ISSUER` is unset, so a deployment without
+    No identity router when `IDENTITY_ISSUER` is unset, so a deployment without
     an issuer builds none of the glue's AWS clients. The imports are inside the
     body for the same reason every loader's is: the runs image must never reach
     these modules.
     """
     from app.domains.workspaces.terraform_login_router import token_router
+    from app.domains.workspaces.tfe_router import router as tfe_router
+    from app.domains.workspaces.tfe_state_router import router as tfe_state_router
 
     if not settings.IDENTITY_ISSUER:
-        return [token_router]
+        return [token_router, tfe_router, tfe_state_router]
 
     from app.common.identity.package_glue import build_router
 
-    return [build_router(settings), token_router]
+    return [build_router(settings), token_router, tfe_router, tfe_state_router]
 
 
 def _runs_routers() -> "list[APIRouter]":
@@ -110,16 +113,18 @@ def _runs_routers() -> "list[APIRouter]":
 
 
 def _runs_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
-    """The consumers' one route, at the adapter's pass-through path.
+    """The consumers' one route, at the adapter's pass-through path, and the runs share of `tfe.v2`.
 
     Unprefixed because a prefix would leave the event source mapping posting to a
     path the application does not serve, which every message would then fail on. One
     router for every consumer, because the adapter posts every queue invocation to
-    the same pass-through path and `dispatch` routes each record on its `kind`.
+    the same pass-through path and `dispatch` routes each record on its `kind`. The
+    `tfe.v2` router carries its own `/api/v2` prefix, the path go-tfe calls.
     """
     from app.domains.runs.consumers.dispatch import build_router
+    from app.domains.runs.tfe_router import router as tfe_router
 
-    return [build_router(settings)]
+    return [build_router(settings), tfe_router]
 
 
 def _github_routers() -> "list[APIRouter]":

@@ -158,7 +158,7 @@ def test_a_device_token_reads_the_api_until_revoked(
     session = device_login()
     granted = session.scope.split()
     assert "runs:apply" in granted, "a default device login cannot apply"
-    assert not {"state:download", "admin"} & set(granted), "an explicit scope was granted by default"
+    assert not {"state:download", "state:write", "admin"} & set(granted), "an explicit scope was granted by default"
     device = api.with_token(session.access_token)
     workspaces = device.get("/api/v1/workspaces")
     assert workspaces.status_code == 200, f"a device token reading workspaces answered {workspaces.status_code}"
@@ -171,6 +171,40 @@ def test_a_device_token_reads_the_api_until_revoked(
     time.sleep(LIVENESS_WAIT_SECONDS)
     after = device.get("/api/v1/workspaces")
     assert after.status_code == 401, f"a revoked device token answered {after.status_code}"
+
+
+PROVIDER_PROTOCOL_URL = f"https://{API_HOST}/v1/providers/WebbPulse/webbpulse"
+
+
+def test_a_device_token_downloads_a_provider_until_revoked(
+    device_login: Callable[[], DeviceSession], gate_headers: Mapping[str, str]
+) -> None:
+    """A `wp-tf login` token reads the provider protocol and its checksums, and stops once revoked.
+
+    The protocol routes have no gateway authorizer, so the registry function verifies the
+    token itself; this proves that path, liveness included, on the deployed stage.
+    """
+    session = device_login()
+    assert "registry:read" in session.scope.split(), "a default device login cannot read the registry"
+    headers = {"Authorization": f"Bearer {session.access_token}"}
+    versions = httpx.get(f"{PROVIDER_PROTOCOL_URL}/versions", headers=headers, timeout=TIMEOUT_SECONDS)
+    if versions.status_code == 404:
+        pytest.skip("the WebbPulse/webbpulse provider is not connected on staging")
+    assert versions.status_code == 200, f"a device token listing versions answered {versions.status_code}"
+    listed = [row for row in versions.json()["versions"] if {"os": "linux", "arch": "amd64"} in row["platforms"]]
+    assert listed, "no published version carries linux_amd64"
+    download_url = f"{PROVIDER_PROTOCOL_URL}/{listed[0]['version']}/download/linux/amd64"
+    download = httpx.get(download_url, headers=headers, timeout=TIMEOUT_SECONDS)
+    assert download.status_code == 200, f"a device token downloading answered {download.status_code}"
+    body = download.json()
+    sums = httpx.get(body["shasums_url"], timeout=TIMEOUT_SECONDS)
+    assert sums.status_code == 200
+    assert f"{body['shasum']}  {body['filename']}" in sums.text
+
+    assert _revoke(session.refresh_token, gate_headers) == 200
+    time.sleep(LIVENESS_WAIT_SECONDS)
+    after = httpx.get(download_url, headers=headers, timeout=TIMEOUT_SECONDS)
+    assert after.status_code == 401, f"a revoked device token downloading answered {after.status_code}"
 
 
 def test_a_denied_device_login_issues_nothing(

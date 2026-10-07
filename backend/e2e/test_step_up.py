@@ -2,8 +2,10 @@
 
 Sensitive writes need a login inside the last fifteen minutes. A stepped up session is let
 through, an agent key is exempt, and a token whose `auth_time` is old or missing is refused
-with `STEP_UP_REQUIRED` and the RFC 9470 challenge. The refusal cases mint their own token,
-so they run only where `E2E_MINT_ENABLED` is set.
+with `STEP_UP_REQUIRED` and the RFC 9470 challenge, which a step-up clears so the same call
+can be replayed. Confirming and discarding a run are not gated: a stale login with
+`runs:apply` reaches the run. The cases that mint their own token run only where
+`E2E_MINT_ENABLED` is set.
 
 Nothing here prints a password, a token or a minted key.
 """
@@ -19,6 +21,8 @@ STEP_UP_REQUIRED = "STEP_UP_REQUIRED"
 MAX_AGE_SECONDS = 15 * 60
 API_KEYS = "/api/v1/api-keys"
 MISSING_KEY_ID = "0" * 64
+MISSING_RUN_ID = f"run-{'0' * 26}"
+RUN_SCOPES = "runs:read runs:write runs:apply"
 
 pytestmark = pytest.mark.e2e_writes
 
@@ -74,3 +78,34 @@ def test_a_stale_login_is_refused(api: Any, minted_token: Any) -> None:
 def test_a_token_without_auth_time_is_refused(api: Any, minted_token: Any) -> None:
     """A token that names no login time, as an MCP OAuth token does, is refused the same way."""
     _assert_step_up_required(api.with_token(minted_token()).delete(f"{API_KEYS}/{MISSING_KEY_ID}"))
+
+
+@pytest.mark.parametrize("auth_time_age", [MAX_AGE_SECONDS + 300, None], ids=["stale", "undated"])
+def test_a_stale_login_confirms_and_discards_without_a_step_up(
+    api: Any, minted_token: Any, auth_time_age: int | None
+) -> None:
+    """Confirming or discarding a run passes the auth checks on an old login and reaches the run lookup.
+
+    The token carries `runs:apply` and `runs:write`, as a signed-in browser session does, so
+    only the login's age differs from a fresh session.
+    """
+    claims: dict[str, Any] = {"scope": RUN_SCOPES}
+    if auth_time_age is not None:
+        claims["auth_time"] = int(time.time()) - auth_time_age
+    stale = api.with_token(minted_token(claims))
+    for action in ("confirm", "discard"):
+        response = stale.post(f"/api/v1/runs/{MISSING_RUN_ID}/{action}")
+        assert response.status_code == 404, f"{action} answered {response.status_code}: {response.text[:200]}"
+
+
+def test_a_refused_call_goes_through_once_the_login_steps_up(
+    api: Any, minted_token: Any, user_session: Any, credentials: Any
+) -> None:
+    """The browser's retry path: a stale login is refused, steps up in place, and the replay is let through."""
+    from webbpulse.e2e.identity import step_up
+
+    stale = minted_token({"auth_time": int(time.time()) - MAX_AGE_SECONDS - 300})
+    _assert_step_up_required(api.with_token(stale).delete(f"{API_KEYS}/{MISSING_KEY_ID}"))
+
+    replayed = step_up(user_session, credentials.password).client.delete(f"{API_KEYS}/{MISSING_KEY_ID}")
+    assert replayed.status_code == 404, f"the replay answered {replayed.status_code}"

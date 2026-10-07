@@ -161,10 +161,11 @@ environments, or the `lambda` mode authorizer where the gate is off) passes thro
 so a route guarded by `require_scopes` cannot tell them apart. Every product
 route in `terraform/apigateway.tf` carries `require_identity_jwt`; only the two
 runner routes, `POST /github/webhooks` (a webhook signature), the registry protocol
-under `/v1/modules` and `/v1/providers` (a `wpk_` key only), `POST /v1/oauth/token`
-(a PKCE code) and the anonymous identity documents do not.
+under `/v1/modules` and `/v1/providers` (a `wpk_` key only), the `tfe.v2` API under
+`/api/v2` (a `wpk_` key only), `POST /v1/oauth/token` (a PKCE code) and the anonymous
+identity documents do not.
 The scopes are `workspaces:{read,write}`, `variables:{read,write}`,
-`configs:{read,write}`, `runs:{read,write,apply}`, `state:download` and
+`configs:{read,write}`, `runs:{read,write,apply}`, `state:download`, `state:write` and
 `registry:{read,write}`. A key's stored scopes are intersected per request with
 its owner's current ones (`key_owner_scopes`, so every domain function reads the
 `users` table), and a new key expires in 90 days by default, 365 at most for a
@@ -433,8 +434,63 @@ challenge and a loopback redirect on ports 10000 to 10010; approving calls `POST
 /api/v1/oauth/authorizations` (a person only, behind step-up) for a code stored in
 the identity module's `authorization-codes` table, and the CLI exchanges it at `POST
 /v1/oauth/token` for a `wpk_` key named `terraform login`, valid 90 days, carrying the
-read, config and plan scopes the person holds (`terraform_login.LOGIN_SCOPES`), never
-`runs:apply` or `state:download`.
+read, config, plan, apply and state scopes the person holds (`terraform_login.LOGIN_SCOPES`),
+so `state:download` and `state:write` only for an admin.
+
+### Cloud block (`tfe.v2`)
+
+`tfe.v2` in the discovery document points `cloud { hostname = "<SPA host>" organization =
+"WebbPulse" }` at `<api host>/api/v2/`, which speaks HCP's JSON:API as go-tfe decodes it,
+authenticated by the `terraform login` key. `app/common/tfe` holds the shared shapes
+(`jsonapi.JsonApiRoute` renders every refusal as a JSON:API `errors` document) and the
+workspace resource, whose `permissions` are the caller's scopes; each domain serves its own
+routes from a `tfe_router`. The only organization is `WebbPulse`, a workspace is never created
+from the CLI (the create answers 422), and workspaces carry no tags, so only `workspaces { name
+= ... }` selects one. Workspace locks (`actions/lock`, `unlock`, `force-unlock`, behind
+`state:write`) are the S3 backend's own `terraform.tfstate.tflock`, written with `If-None-Match:
+*` (`workspaces/locks.py`), so a CLI lock and a run's engine exclude each other through one
+object and `locked` reads it. A CLI lock names its subject in `WebbPulseLockedBy`; unlock by
+anyone else answers go-tfe's "is locked by User", an engine lock "is locked by Run", and
+force-unlock is refused only while a run is going.
+
+State versions and outputs (`workspaces/tfe_state.py`, `tfe_state_router.py`) are the S3
+versions of the runner's `terraform.tfstate`, with no second history: a state version id is
+`sv-<workspace ULID><S3 VersionId>` and an output id `wsout-` plus URL safe base64 of
+`[workspace, version, name]`, so neither needs a lookup table. Reads need `state:download`;
+the download is a 307 to the same 60 second presigned GET as `/api/v1`, recorded first, and
+the outputs list withholds sensitive values that `GET state-version-outputs/{id}` returns.
+`POST workspaces/{id}/state-versions` (`state:write`) takes inline base64 state only; a
+create without `state` answers the 422 wording go-tfe retries inline on. The caller must
+hold the CLI lock, the md5, serial and lineage must match the bytes, and without `force` the
+lineage must be the current one and the serial must not go backwards (an equal serial only
+for identical bytes). The write is SSE-KMS under the state key. The design and the slices
+are on TF-44.
+
+A run's configuration arrives through `POST /api/v2/workspaces/{id}/configuration-versions`
+(`configs:write`), which writes the same config version row as `/api/v1` and answers an
+`upload-url` that is a presigned PUT signing only the host: go-tfe uploads with no
+Authorization and `application/octet-stream`, so no type or length can be signed. The row
+carries `max_bytes` (250 MB) instead, and `GET /api/v2/configuration-versions/{id}`
+(`configs:read`), which the CLI polls, reconciles it: `uploaded` once the object lands, or
+`errored` with `upload_error` set and the object deleted when it is over the ceiling.
+
+Remote plans and applies are the runs function's `tfe_router` over the runs service
+(`runs/tfe_runs.py` renders them). `POST /api/v2/runs` (`runs:write`) is plan only on a
+speculative config version, maps `target-addrs`, `replace-addrs`, `refresh`, `refresh-only`
+and `variables` to the run options, refuses `save-plan`, and takes `auto-apply` (the CLI's
+`-auto-approve`, which needs `runs:apply`) as a per run override of the workspace setting.
+Plans and applies have no rows: `plan-<ulid>` and `apply-<ulid>` are derived from the run,
+and a plan reads `running` until the run holds its confirmation token, or the CLI would find
+nothing to confirm. `actions/apply` (`runs:apply`), `discard` and `cancel` call the service.
+Log URLs are absolute and bare, since go-tfe fetches them without a bearer: the path carries a
+12 hour HMAC keyed by `derive_key("tfe-log-read")`, and the body is STX, the CloudWatch lines
+(the S3 transcript once the phase is over) and ETX once done, windowed by `offset` and
+`limit`. Apply logs start with three filler lines because the CLI skips three.
+
+`backend/e2e/test_cloud_block.py` proves the whole surface on staging with the real CLI and
+a key carrying the `terraform login` scopes: remote apply, `-target`, `-replace`,
+`-destroy`, outputs, `state list/show/mv/rm`, `import` and `force-unlock`, on
+`terraform_data` only.
 
 `wp-tf login` is the agent path, with no long-lived key. It runs the OAuth device
 grant from the identity package (`device_grant_enabled`, client `wp-tf`) at
@@ -444,7 +500,7 @@ back once signed in (`deviceHandOff` in `returnPath.ts`). The access token has t
 audience `<issuer>/device`, which the gate's authorizer accepts beside the API
 audience, and `claims_or_api_key` checks its grant is still live
 (`device_grant_liveness`), so a revoke ends it within seconds. The default scopes
-leave out `runs:apply`, `state:download` and `admin`, which must be named. The
+leave out `runs:apply`, `state:download`, `state:write` and `admin`, which must be named. The
 session lives in the OS keyring and refreshes itself; `backend/e2e/test_device_login.py`
 drives the whole flow on staging.
 
@@ -475,7 +531,11 @@ against `.webbpulse/changed-paths.txt` (empty patterns mean
 filter. It copies the tarball to a config version and creates a run sourced `vcs_push` (normal) or
 `vcs_pr` (plan only) with a `vcs` block and a `vcs` actor. The config version and
 run ids are derived from the upload and the workspace, so a redelivered message or
-a second S3 event for the same object creates nothing new. A newer upload from the
+a second S3 event for the same object creates nothing new. The config version row
+also keeps the commit (`vcs`) and the README for the workspace's working directory,
+falling back to the root (`app/common/workspaces/readme.py`, 64 KB, `readme_scanned`);
+an API upload's README is read once on its first `GET .../config-versions/{id}`, so the
+overview reads a row and never the tarball or GitHub. A newer upload from the
 same source cancels that source's pending runs and discards one awaiting
 confirmation; a late older upload starts nothing. A workspace with no run role is
 skipped.
@@ -529,7 +589,7 @@ native `zz_webbpulse.auto.tfvars` as `key = (<value>)` rather than into the JSON
 tfvars file, so the engine parses it. That is the only way a `list` or `map`
 typed input variable can be given a value. It is refused on an `env` variable,
 whose value is a string to the process with nothing to parse it. The value is
-checked at write time by `app/domains/workspaces/hcl.py` without adding an HCL
+checked at write time by `app/common/workspaces/hcl.py` without adding an HCL
 parser dependency. The check is also the injection boundary: its scanner mirrors
 the engine's string, heredoc, comment and interpolation rules, so a value whose
 brackets balance outside them cannot close the wrapping parenthesis and add an

@@ -37,6 +37,7 @@ from webbpulse.dynamodb import ConditionFailed
 from ....common.composition.settings import Settings, get_settings
 from ....common.db import repositories
 from ....common.db.tables import RUNS_BY_WORKSPACE_INDEX
+from ....common.workspaces import readme as workspace_readme
 from ....common.workspaces import reads as workspace_reads
 from ....common.workspaces import vcs as workspace_vcs
 from .. import reporting, service
@@ -65,6 +66,9 @@ BAD_RUN_ROLE_REASON = "The workspace's run role is not an IAM role ARN, so the r
 
 SUPERSEDE_CANCEL_STATUSES = frozenset({"pending"})
 SUPERSEDE_DISCARD_STATUSES = frozenset({"awaiting_confirmation"})
+SUPERSEDE_PLAN_CANCEL_STATUSES = frozenset({"pending", "planning"})
+"""A pull request plan an outdated commit started is cancelled while queued or planning,
+as HCP Terraform cancels plan only runs triggered by outdated commits."""
 
 
 class MalformedIngest(Exception):
@@ -186,8 +190,20 @@ def _eligible(workspace: Mapping[str, Any], upload: Mapping[str, Any]) -> bool:
         tracked = workspace.get("tracked_branch")
         return bool(tracked) and str(tracked) == str(upload.get("branch", ""))
     if upload["event"] == PULL_REQUEST_EVENT:
-        return bool(workspace.get("speculative_plans", True))
+        return bool(workspace.get("speculative_plans", True)) and targets_base(workspace, upload)
     return False
+
+
+def targets_base(workspace: Mapping[str, Any], upload: Mapping[str, Any]) -> bool:
+    """Whether a pull request upload's base branch is the branch the workspace tracks.
+
+    A workspace with no tracked branch tracks the repository's default branch. An
+    upload that names no base branch, or a workspace whose branch cannot be told,
+    keeps planning, so an older record never loses its plans.
+    """
+    base = str(upload.get("base_branch") or "")
+    target = str(workspace.get("tracked_branch") or upload.get("default_branch") or "")
+    return not base or not target or base == target
 
 
 def skip_reason(workspace: Mapping[str, Any]) -> Optional[str]:
@@ -210,8 +226,27 @@ def _skip(workspace: Mapping[str, Any], reason: str) -> dict[str, str]:
     }
 
 
+def _readme(upload: Mapping[str, Any], working_directory: str, *, settings: Settings) -> dict[str, Any]:
+    """The README row attributes for this upload, read once at ingest.
+
+    Best effort: a README that cannot be read is left for the workspaces function to
+    read on first view, so it never holds up a run.
+    """
+    try:
+        found = workspace_readme.read_config_readme(
+            settings.ARTIFACTS_BUCKET, str(upload["key"]), working_directory, settings=settings
+        )
+    except Exception:  # noqa: BLE001
+        _log.warning(
+            "Could not read the README from an ingested tarball.",
+            extra={"event": "runs.ingest.readme_failed", "upload_id": upload.get("upload_id")},
+        )
+        return {}
+    return workspace_readme.readme_fields(found)
+
+
 def _ensure_config_version(
-    workspace_id: str,
+    workspace: Mapping[str, Any],
     config_version_id: str,
     upload: Mapping[str, Any],
     *,
@@ -220,8 +255,11 @@ def _ensure_config_version(
     """Copy the tarball to the workspace's config key and record it `uploaded`.
 
     The row is written after the copy, so an `uploaded` row always has its object,
-    and an existing row means both are already done.
+    and an existing row means both are already done. The row also carries the
+    commit it came from and the README for the workspace's working directory, so
+    the overview shows it without reopening the tarball or calling GitHub.
     """
+    workspace_id = str(workspace["workspace_id"])
     table = repositories.config_versions(settings)
     if table.get({"config_version_id": config_version_id}, consistent=True):
         return
@@ -242,6 +280,13 @@ def _ensure_config_version(
         "source": "vcs",
         "upload_id": str(upload["upload_id"]),
         "created_at": str(upload["created_at"]),
+        "vcs": {
+            "repo": str(upload["repo"]),
+            "sha": str(upload["sha"]),
+            "branch": upload.get("branch") or None,
+            "pr_number": int(upload["pr_number"]) if upload.get("pr_number") else None,
+        },
+        **_readme(upload, str(workspace.get("working_directory", "") or ""), settings=settings),
     }
     try:
         table.put(item, condition=Attr("config_version_id").not_exists())
@@ -262,12 +307,44 @@ def _same_source(run: Mapping[str, Any], source: str, upload: Mapping[str, Any])
     return str(vcs.get("branch", "")) == str(upload.get("branch", ""))
 
 
+def _supersede_plan(run: Mapping[str, Any], run_id: str, upload: Mapping[str, Any], *, settings: Settings) -> None:
+    """Mark an older pull request plan superseded by `run_id`, cancelling it if still queued or planning.
+
+    Only plan only runs are touched, so an apply or a held run is never ended here.
+    """
+    if not bool(run.get("plan_only", False)):
+        return
+    other = str(run["run_id"])
+    head = str(upload.get("head_sha") or upload["sha"])
+    marked = service.mark_superseded(other, run_id, head, settings=settings)
+    status = str(run.get("status", ""))
+    cancelled = False
+    if status in SUPERSEDE_PLAN_CANCEL_STATUSES:
+        try:
+            service.cancel_run(other, settings=settings)
+            cancelled = True
+        except (service.RunNotFound, service.RunNotCancellable):
+            pass
+    if marked or cancelled:
+        _log.info(
+            "Superseded an older pull request plan.",
+            extra={
+                "event": "runs.ingest.plan_superseded",
+                "run_id": other,
+                "by": run_id,
+                "status": status,
+                "cancelled": cancelled,
+            },
+        )
+
+
 def _supersede(workspace_id: str, run_id: str, source: str, upload: Mapping[str, Any], *, settings: Settings) -> bool:
     """End the older runs this upload replaces. Returns False when a newer one exists.
 
-    An older pending run is cancelled and an older run awaiting confirmation is
-    discarded. A run that already moved on is left alone, and one that a
-    concurrent path ended first is not an error.
+    An older pull request plan is marked superseded and cancelled while queued or
+    planning. Otherwise an older pending run is cancelled and an older run awaiting
+    confirmation is discarded. A run that already moved on is left alone, and one
+    that a concurrent path ended first is not an error.
     """
     runs = repositories.runs(settings)
     for run in runs.iter_query(Key("workspace_id").eq(workspace_id), index_name=RUNS_BY_WORKSPACE_INDEX):
@@ -276,6 +353,9 @@ def _supersede(workspace_id: str, run_id: str, source: str, upload: Mapping[str,
             continue
         if other > run_id:
             return False
+        if source == SOURCE_PR:
+            _supersede_plan(run, run_id, upload, settings=settings)
+            continue
         status = str(run.get("status", ""))
         try:
             if status in SUPERSEDE_CANCEL_STATUSES:
@@ -328,7 +408,7 @@ def _run_for_workspace(
         _resume(run_id, settings=settings)
         return run_id
 
-    _ensure_config_version(workspace_id, config_version_id, upload, settings=settings)
+    _ensure_config_version(workspace, config_version_id, upload, settings=settings)
     if not _supersede(workspace_id, run_id, source, upload, settings=settings):
         _log.info(
             "Skipped an upload a newer one already superseded.",
@@ -479,5 +559,6 @@ __all__ = [
     "paths_match",
     "read_changed_paths",
     "skip_reason",
+    "targets_base",
     "trigger_patterns",
 ]

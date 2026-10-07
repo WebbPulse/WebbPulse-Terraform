@@ -7,6 +7,10 @@ Terraform sends the `TF_TOKEN_<host>` credential for the source's host as a bear
 `authorization_type = "NONE"`, so no authorizer context exists and only a key
 verified here in process gets through.
 
+A person's access token is accepted too, whether a browser session or a `wp-tf login`
+device token: no authorizer ran, so it is verified here against the issuer's JWKS, a
+device token's grant has to still be live, and it needs `registry:read` like a key.
+
 A run's registry credential is the other key accepted: one the runs domain mints
 per bundle with `runner:registry` under the run token tenant, for the runner to set
 as `TF_TOKEN_<host>` during `terraform init`. It carries no user, so it is checked
@@ -19,16 +23,40 @@ rather than this API's.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+import os
+import threading
+from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from fastapi.responses import JSONResponse
 from webbpulse.identity.api_keys import is_api_key, verify
+from webbpulse.identity.claims import AuthorizerClaims
+from webbpulse.identity.device_grant import DEVICE_GRANT_CLAIM
 from webbpulse.identity.scopes import FORBIDDEN_ERROR_CODE, bearer_credential, missing_scopes
+from webbpulse.identity.service import InvalidToken
+from webbpulse.identity.verifier import JwksVerifier
 from webbpulse.messages import forbidden
 
-from ...common.core.auth import REGISTRY_READ, RUN_TOKEN_TENANT, RUNNER_REGISTRY_SCOPE, api_key_store, claims
+from ...common.composition.settings import get_settings
+from ...common.core.auth import (
+    REGISTRY_READ,
+    RUN_TOKEN_TENANT,
+    RUNNER_REGISTRY_SCOPE,
+    api_key_store,
+    claims,
+    device_grant_liveness,
+    unauthenticated,
+)
 from . import providers, service
+
+AUDIENCE_ENV: Final = "IDENTITY_AUDIENCE"
+"""The browser session audience, set on every domain function by the identity module."""
+
+DEVICE_AUDIENCE_ENV: Final = "IDENTITY_DEVICE_AUDIENCE"
+"""An explicit device token audience; unset means the package default, `<issuer>/device`."""
+
+_VERIFIERS: dict[tuple[str, str, str], JwksVerifier] = {}
+_VERIFIERS_LOCK = threading.Lock()
 
 
 def is_run_registry_credential(request: Request) -> bool:
@@ -42,14 +70,62 @@ def is_run_registry_credential(request: Request) -> bool:
     return RUNNER_REGISTRY_SCOPE in record.scopes and record.tenant_id == RUN_TOKEN_TENANT
 
 
+def access_token_verifier() -> JwksVerifier | None:
+    """The cached verifier for this deployment's access tokens, or None without an issuer and audience.
+
+    It accepts the device login audience as well when device login is on, so a
+    `wp-tf login` token is verified the same way the gate verifies it on other routes.
+    """
+    settings = get_settings()
+    issuer = settings.IDENTITY_ISSUER.strip().rstrip("/")
+    audience = os.environ.get(AUDIENCE_ENV, "").strip()
+    if not issuer or not audience:
+        return None
+    device_audience = ""
+    if settings.IDENTITY_DEVICE_GRANT_ENABLED:
+        device_audience = os.environ.get(DEVICE_AUDIENCE_ENV, "").strip() or f"{issuer}/device"
+    key = (issuer, audience, device_audience)
+    with _VERIFIERS_LOCK:
+        verifier = _VERIFIERS.get(key)
+        if verifier is None:
+            audiences = [audience, device_audience] if device_audience else [audience]
+            verifier = JwksVerifier(issuer=issuer, audience=audiences)
+            _VERIFIERS[key] = verifier
+    return verifier
+
+
+def access_token_claims(token: str) -> AuthorizerClaims:
+    """The claims of a person's access token verified in process, or a 401.
+
+    A device token is refused once its grant is revoked or past its cap, and wherever
+    device login is off, the same rule `claims_or_api_key` applies behind the gate.
+    """
+    verifier = access_token_verifier()
+    if verifier is None:
+        raise unauthenticated()
+    try:
+        verified = verifier.verify(token)
+    except InvalidToken as error:
+        raise unauthenticated() from error
+    if str(verified.get(DEVICE_GRANT_CLAIM, "") or "") == "device":
+        liveness = device_grant_liveness()
+        if liveness is None or not liveness(verified):
+            raise unauthenticated()
+    return AuthorizerClaims(verified)
+
+
 async def registry_reader(request: Request) -> None:
-    """Admit a run's registry credential, or claims holding `registry:read`.
+    """Admit a run's registry credential, or a key or access token holding `registry:read`.
 
     Anything else is the 401 or 403 every other scoped route answers.
     """
     if is_run_registry_credential(request):
         return
-    current = await claims(request)
+    presented = bearer_credential(request)
+    if presented and not is_api_key(presented) and presented.count(".") == 2:
+        current = access_token_claims(presented)
+    else:
+        current = await claims(request)
     if missing_scopes(current, (REGISTRY_READ,)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

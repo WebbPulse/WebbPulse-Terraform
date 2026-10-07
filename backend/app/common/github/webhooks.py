@@ -262,6 +262,7 @@ def delivery_message(event: str, delivery: str, payload: Mapping[str, Any]) -> O
             "head_sha": head_sha,
             "base_sha": str(base_ref.get("sha") or "") or None,
             "base_branch": str(base_ref.get("ref") or "") or None,
+            "default_branch": str((payload.get("repository") or {}).get("default_branch") or "") or None,
         }
     return None
 

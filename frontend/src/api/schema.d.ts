@@ -1028,7 +1028,7 @@ export interface paths {
         put?: never;
         /**
          * Confirm Run
-         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`, and a recent login in a browser.
+         * @description Apply a planned run. Needs `runs:apply`, not `runs:write`, and no step-up.
          *
          *     The body is optional; its comment is kept on the run with the confirming actor.
          */
@@ -1209,7 +1209,7 @@ export interface paths {
         };
         /**
          * List Workspaces
-         * @description Every workspace in this environment, each with its run role setup.
+         * @description Every workspace in this environment, each with its run role setup and newest run.
          */
         get: operations["list_workspaces_api_v1_workspaces_get"];
         put?: never;
@@ -1287,7 +1287,7 @@ export interface paths {
          *
          *     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
          *     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
-         *     takes the step-up, since it stands in for the step-up gated confirmation.
+         *     takes the step-up, since it hands every later run's confirmation to the system.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -1325,7 +1325,7 @@ export interface paths {
         };
         /**
          * Get Config Version
-         * @description One config version by id.
+         * @description One config version by id, with the README its workspace's overview shows.
          */
         get: operations["get_config_version_api_v1_workspaces__workspace_id__config_versions__config_version_id__get"];
         put?: never;
@@ -1775,6 +1775,21 @@ export interface components {
             region: string;
         };
         /**
+         * ConfigReadme
+         * @description The README a config version carries for its workspace's working directory.
+         */
+        ConfigReadme: {
+            /** Content */
+            content: string;
+            /** Path */
+            path: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated?: boolean;
+        };
+        /**
          * ConfigVersion
          * @description A stored config version.
          */
@@ -1788,12 +1803,19 @@ export interface components {
             /** Size Bytes */
             size_bytes: number;
             /**
+             * Source
+             * @default api
+             * @enum {string}
+             */
+            source?: "api" | "vcs";
+            /**
              * Status
              * @enum {string}
              */
             status: "pending" | "uploaded";
             /** Updated At */
             updated_at?: string | null;
+            vcs?: components["schemas"]["ConfigVersionVcs"] | null;
             /** Workspace Id */
             workspace_id: string;
         };
@@ -1807,6 +1829,37 @@ export interface components {
              * @default 50000000
              */
             size_bytes?: number;
+        };
+        /**
+         * ConfigVersionDetail
+         * @description One config version with its README, which only the single read returns.
+         */
+        ConfigVersionDetail: {
+            /** Config Version Id */
+            config_version_id: string;
+            /** Created At */
+            created_at: string;
+            /** Key */
+            key: string;
+            readme?: components["schemas"]["ConfigReadme"] | null;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Source
+             * @default api
+             * @enum {string}
+             */
+            source?: "api" | "vcs";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "uploaded";
+            /** Updated At */
+            updated_at?: string | null;
+            vcs?: components["schemas"]["ConfigVersionVcs"] | null;
+            /** Workspace Id */
+            workspace_id: string;
         };
         /**
          * ConfigVersionList
@@ -1833,6 +1886,20 @@ export interface components {
             };
             /** Upload Url */
             upload_url: string;
+        };
+        /**
+         * ConfigVersionVcs
+         * @description The commit a VCS config version was ingested from.
+         */
+        ConfigVersionVcs: {
+            /** Branch */
+            branch?: string | null;
+            /** Pr Number */
+            pr_number?: number | null;
+            /** Repo */
+            repo: string;
+            /** Sha */
+            sha: string;
         };
         /**
          * ErrorResponse
@@ -1977,6 +2044,37 @@ export interface components {
         InstallationList: {
             /** Items */
             items: components["schemas"]["Installation"][];
+        };
+        /**
+         * LatestRun
+         * @description The newest run on a workspace, as the workspace list shows it.
+         */
+        LatestRun: {
+            /** Changed At */
+            changed_at: string;
+            /** Created At */
+            created_at: string;
+            /** Finished At */
+            finished_at?: string | null;
+            /**
+             * Is Destroy
+             * @default false
+             */
+            is_destroy?: boolean;
+            /**
+             * Plan Only
+             * @default false
+             */
+            plan_only?: boolean;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
+            /** Updated At */
+            updated_at?: string | null;
         };
         /**
          * LogEvent
@@ -2336,7 +2434,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "create" | "update" | "delete" | "replace" | "read" | "no-op";
+            action: "create" | "update" | "delete" | "replace" | "read" | "forget" | "no-op";
             /** After */
             after?: unknown;
             /**
@@ -2370,7 +2468,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "create" | "update" | "delete" | "replace" | "read" | "no-op";
+            action: "create" | "update" | "delete" | "replace" | "read" | "forget" | "no-op";
             /**
              * Action Reason
              * @default
@@ -2395,6 +2493,11 @@ export interface components {
                 [key: string]: unknown;
             } | boolean | null;
             /**
+             * Importing
+             * @default false
+             */
+            importing?: boolean;
+            /**
              * Mode
              * @enum {string}
              */
@@ -2406,6 +2509,11 @@ export interface components {
             module_address?: string;
             /** Name */
             name: string;
+            /**
+             * Previous Address
+             * @default
+             */
+            previous_address?: string;
             /**
              * Provider Name
              * @default
@@ -2617,6 +2725,7 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
+            superseded_by?: components["schemas"]["RunSupersededBy"] | null;
             /** Updated At */
             updated_at?: string | null;
             vcs?: components["schemas"]["RunVcs"] | null;
@@ -2689,11 +2798,38 @@ export interface components {
             phase: "plan" | "apply";
             /** Plan Only */
             plan_only: boolean;
+            /**
+             * Refresh
+             * @default true
+             */
+            refresh?: boolean;
+            /**
+             * Refresh Only
+             * @default false
+             */
+            refresh_only?: boolean;
             registry?: components["schemas"]["RegistryCredentials"] | null;
+            /**
+             * Replace Addrs
+             * @default []
+             */
+            replace_addrs?: string[];
             /** Run Id */
             run_id: string;
             /** Run Role Arn */
             run_role_arn: string;
+            /**
+             * Run Variables
+             * @default {}
+             */
+            run_variables?: {
+                [key: string]: string;
+            };
+            /**
+             * Target Addrs
+             * @default []
+             */
+            target_addrs?: string[];
             /** Terraform Variables */
             terraform_variables: {
                 [key: string]: string;
@@ -2820,6 +2956,7 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "planning" | "planned" | "awaiting_confirmation" | "applying" | "applied" | "planned_and_finished" | "errored" | "cancelled" | "discarded";
+            superseded_by?: components["schemas"]["RunSupersededBy"] | null;
             /** Updated At */
             updated_at?: string | null;
             vcs?: components["schemas"]["RunVcs"] | null;
@@ -2896,6 +3033,11 @@ export interface components {
              * @default
              */
             terraform_version?: string;
+            /**
+             * Unchanged Omitted
+             * @default 0
+             */
+            unchanged_omitted?: number;
         };
         /**
          * RunPullRequest
@@ -3013,6 +3155,16 @@ export interface components {
             principal_arns?: string[];
             /** Role Name */
             role_name: string;
+        };
+        /**
+         * RunSupersededBy
+         * @description The newer run on the same pull request and workspace that replaced a plan only run.
+         */
+        RunSupersededBy: {
+            /** Run Id */
+            run_id: string;
+            /** Sha */
+            sha: string;
         };
         /**
          * RunVcs
@@ -3476,21 +3628,105 @@ export interface components {
          */
         WorkspaceList: {
             /** Items */
-            items: components["schemas"]["Workspace"][];
+            items: components["schemas"]["WorkspaceListItem"][];
+        };
+        /**
+         * WorkspaceListItem
+         * @description A workspace as the list returns it, with its newest run.
+         */
+        WorkspaceListItem: {
+            /**
+             * Auto Apply
+             * @default false
+             */
+            auto_apply?: boolean;
+            aws_connection?: components["schemas"]["AwsConnection"] | null;
+            /** Created At */
+            created_at: string;
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /**
+             * Engine
+             * @default terraform
+             * @enum {string}
+             */
+            engine?: "terraform" | "tofu";
+            /** Engine Version */
+            engine_version: string;
+            /**
+             * File Triggers Enabled
+             * @default true
+             */
+            file_triggers_enabled?: boolean;
+            /** Latest Change At */
+            latest_change_at: string;
+            latest_run?: components["schemas"]["LatestRun"] | null;
+            /** Name */
+            name: string;
+            /** Pending Run Role Arn */
+            pending_run_role_arn?: string | null;
+            /** Plan Assume Role Arns */
+            plan_assume_role_arns?: string[];
+            /** Plan Role Arn */
+            plan_role_arn?: string | null;
+            /** Run Api Token Scopes */
+            run_api_token_scopes?: string[];
+            /** Run Role Account Id */
+            run_role_account_id?: string | null;
+            /** Run Role Arn */
+            run_role_arn?: string | null;
+            /** Run Role Checked At */
+            run_role_checked_at?: string | null;
+            /**
+             * Run Role Reconnect Required
+             * @default false
+             */
+            run_role_reconnect_required?: boolean;
+            run_role_setup: components["schemas"]["RunRoleSetup"];
+            /**
+             * Speculative Plans
+             * @default true
+             */
+            speculative_plans?: boolean;
+            /** Tracked Branch */
+            tracked_branch?: string | null;
+            /** Trigger Patterns */
+            trigger_patterns?: string[];
+            /** Updated At */
+            updated_at?: string | null;
+            /** Vcs Installation Id */
+            vcs_installation_id?: string | null;
+            /** Vcs Repo */
+            vcs_repo?: string | null;
+            /** Vcs Repository Id */
+            vcs_repository_id?: string | null;
+            /**
+             * Working Directory
+             * @default
+             */
+            working_directory?: string;
+            /** Workspace Id */
+            workspace_id: string;
         };
         /**
          * WorkspaceUpdate
          * @description A partial workspace edit. The name and the id are not editable.
          *
          *     A rename would break the state key, which is derived from the workspace id,
-         *     and the `by_name` uniqueness claim at the same time, so it is refused by
-         *     omission rather than by a check.
+         *     and the `by_name` uniqueness claim at the same time, so the field is left out
+         *     of the model and a body carrying it is refused as an unknown key.
          *
          *     The model separates "absent" from "explicitly null" by leaving every field
          *     unset by default and reading the body with `model_dump(exclude_unset=True)`,
          *     so a key only reaches the service when the request actually carried it. A null
          *     on one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service
          *     turns into a DynamoDB REMOVE.
+         *
+         *     Every unknown key is a 422 rather than dropped, so a field this server cannot
+         *     store never reads back to the caller as a successful change.
          */
         WorkspaceUpdate: {
             /** Auto Apply */
@@ -6189,7 +6425,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConfigVersion"];
+                    "application/json": components["schemas"]["ConfigVersionDetail"];
                 };
             };
             /** @description Request validation failed. */

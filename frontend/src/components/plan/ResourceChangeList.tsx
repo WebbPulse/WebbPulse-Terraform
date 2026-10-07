@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-import type { PlanResourceChange } from '../../api/runPlan';
+import { isResourceChanged, type PlanResourceChange } from '../../api/runPlan';
 import { AttributeDiffTable } from './AttributeDiffTable';
 import {
   actionGlyph,
@@ -25,6 +25,32 @@ const TONE_CLASSES: Record<ActionTone, { glyph: string; edge: string }> = {
   read: { glyph: 'text-read', edge: 'border-l-read' },
   none: { glyph: 'text-text-faint', edge: 'border-l-line' },
 };
+
+/**
+ * The tone a row is drawn in: its action's, except that an import or a move
+ * with nothing else to do reads as a state change rather than as unchanged.
+ */
+function rowTone(change: PlanResourceChange): ActionTone {
+  if (change.action === 'no-op' && isResourceChanged(change)) {
+    return 'read';
+  }
+  return actionTone(change.action);
+}
+
+/** What happens to the resource in words, naming an import or a move too. */
+function rowLabel(change: PlanResourceChange): string {
+  const parts: string[] = [];
+  if (change.action !== 'no-op' || !isResourceChanged(change)) {
+    parts.push(actionLabel(change.action));
+  }
+  if (change.importing === true) {
+    parts.push('imported');
+  }
+  if ((change.previous_address ?? '') !== '') {
+    parts.push('moved');
+  }
+  return parts.join(', ');
+}
 
 /** The resources the plan changes, in the order the engine reported them. */
 export function ResourceChangeList({
@@ -57,14 +83,16 @@ function ResourceChangeRow({
   change: PlanResourceChange;
 }): React.ReactElement {
   const [open, setOpen] = useState(false);
-  const tone = TONE_CLASSES[actionTone(change.action)];
-  const hasDiff = change.action !== 'no-op';
+  const tone = TONE_CLASSES[rowTone(change)];
+  const hasDiff = isResourceChanged(change);
+  const movedFrom = change.previous_address ?? '';
 
   return (
     <li
       data-testid="resource-change"
       data-address={change.address}
       data-action={change.action}
+      data-changed={hasDiff}
       className={`border-l-2 ${tone.edge}`}
     >
       <button
@@ -82,13 +110,21 @@ function ResourceChangeRow({
         >
           {actionGlyph(change.action)}
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-sm text-text-strong">
+        <span className="min-w-0 flex-[1_1_12rem] truncate font-mono text-sm text-text-strong">
           {change.address}
         </span>
         <span className="text-xs text-text-faint">
           {change.type}
-          <span className="sr-only">{`, ${actionLabel(change.action)}`}</span>
+          <span className="sr-only">{`, ${rowLabel(change)}`}</span>
         </span>
+        {change.importing === true ? (
+          <span
+            data-testid="import-badge"
+            className="rounded border border-read-line bg-read-soft px-1.5 py-0.5 text-[10px] font-medium text-read"
+          >
+            import
+          </span>
+        ) : null}
         {change.action_reason === undefined ||
         change.action_reason === '' ? null : (
           <span
@@ -96,6 +132,14 @@ function ResourceChangeRow({
             className="rounded border border-line-strong px-1.5 py-0.5 text-[10px] text-text-muted"
           >
             {change.action_reason.replaceAll('_', ' ')}
+          </span>
+        )}
+        {movedFrom === '' ? null : (
+          <span
+            data-testid="moved-from"
+            className="w-full truncate pl-10 font-mono text-xs text-text-faint"
+          >
+            moved from {movedFrom}
           </span>
         )}
       </button>

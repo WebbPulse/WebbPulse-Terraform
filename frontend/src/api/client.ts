@@ -21,8 +21,8 @@ import type {
   ApiKeyCreate,
   ApiKeyCreated,
   ApiKeyList,
-  ConfigVersion,
   ConfigVersionCreate,
+  ConfigVersionDetail,
   ConfigVersionList,
   ConfigVersionUpload,
   GitHubAppStatus,
@@ -106,7 +106,7 @@ export function describeError(error: unknown): string {
 
 /**
  * The shape of `withStepUp` from `useStepUp`: wraps a call so a
- * `STEP_UP_REQUIRED` refusal prompts for a password and replays it once.
+ * `STEP_UP_REQUIRED` refusal prompts in place and replays it once.
  */
 export type StepUpWrapper = <TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<TResult>
@@ -167,7 +167,7 @@ export class TerraformApi {
 
   /**
    * Routes every step-up gated call through `gate`, the `withStepUp` of the one
-   * mounted prompt, so a `STEP_UP_REQUIRED` refusal asks for the password and
+   * mounted prompt, so a `STEP_UP_REQUIRED` refusal asks for a passkey, code or password and
    * replays the call once. Returns a function that detaches the gate again.
    */
   setStepUpGate(gate: StepUpWrapper): () => void {
@@ -386,13 +386,13 @@ export class TerraformApi {
     return response.data;
   }
 
-  /** Reads one configuration version. */
+  /** Reads one configuration version, with the README the overview shows. */
   async getConfigVersion(
     workspaceId: string,
     configVersionId: string,
     options: RequestOptions = {}
-  ): Promise<ConfigVersion> {
-    const response = await this.client.get<ConfigVersion>(
+  ): Promise<ConfigVersionDetail> {
+    const response = await this.client.get<ConfigVersionDetail>(
       `/workspaces/${encodeURIComponent(workspaceId)}/config-versions/${encodeURIComponent(configVersionId)}`,
       options
     );
@@ -445,18 +445,20 @@ export class TerraformApi {
     return response.data;
   }
 
-  /** Confirms a planned run, which starts its apply, with an optional comment kept on the run. */
+  /**
+   * Confirms a planned run, which starts its apply, with an optional comment kept on the run.
+   *
+   * Not step-up gated: `runs:apply` on a live session is enough.
+   */
   async confirmRun(
     runId: string,
     comment = '',
     options: RequestOptions = {}
   ): Promise<Run> {
-    const response = await this.sudo(() =>
-      this.client.post<Run>(
-        `/runs/${encodeURIComponent(runId)}/confirm`,
-        comment.trim() === '' ? undefined : { comment },
-        options
-      )
+    const response = await this.client.post<Run>(
+      `/runs/${encodeURIComponent(runId)}/confirm`,
+      comment.trim() === '' ? undefined : { comment },
+      options
     );
     return response.data;
   }

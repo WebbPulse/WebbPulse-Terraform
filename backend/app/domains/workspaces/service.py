@@ -10,6 +10,7 @@ query is what makes the ordinary case a clean 409.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Final
 
 from boto3.dynamodb.conditions import Attr, Key
@@ -25,10 +26,13 @@ from ...common.db.tables import (
 from ...common.runs.workspace_runs import (
     RunStillActive,
     delete_workspace_runs,
+    latest_run_summary,
+    latest_runs,
     require_no_active_run,
     workspace_run_ids,
 )
-from ...common.workspaces import aws_connect, cleanup, reads
+from ...common.workspaces import aws_connect, cleanup, hcl, reads
+from ...common.workspaces import readme as config_readme
 from ...common.workspaces import vcs as workspace_vcs
 from ...common.workspaces.reads import (
     CONFIG_VERSION_ID_PREFIX,
@@ -44,9 +48,11 @@ from ...common.workspaces.reads import (
     list_variables,
     resolved_variables,
 )
-from . import hcl, state_versions, vcs_connect
+from . import state_versions, vcs_connect
 from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
 from .vcs_connect import RepositoryNotInstalled
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "CONFIG_VERSION_ID_PREFIX",
@@ -76,6 +82,11 @@ CONFIG_CONTENT_TYPE: Final = "application/gzip"
 
 CONFIG_UPLOAD_EXPIRES_IN: Final = 900
 """Fifteen minutes for the client to start its upload, the package's own default."""
+
+TFE_CONFIG_MAX_BYTES: Final = 250_000_000
+"""The ceiling on a `tfe.v2` upload, the largest the `/api/v1` create accepts.
+
+go-tfe sends no length up front, so it is checked against the object once it lands."""
 
 _PRIVATE_WORKSPACE_FIELDS: Final = frozenset({aws_connect.TOKEN_HASH_ATTRIBUTE, aws_connect.TOKEN_EXPIRES_ATTRIBUTE})
 """Row attributes no response carries, the connect token's hash above all."""
@@ -221,6 +232,25 @@ def list_workspaces(*, settings: Settings | None = None) -> list[dict[str, Any]]
     resolved = settings or get_settings()
     items = list(repositories.workspaces(resolved).iter_scan())
     return sorted(items, key=lambda item: str(item.get("workspace_id", "")))
+
+
+def list_workspace_items(*, settings: Settings | None = None) -> list[dict[str, Any]]:
+    """Every workspace rendered for the list, each with its newest run and latest change.
+
+    The newest runs come from one walk of the runs table for the whole list, never a
+    read per workspace.
+    """
+    resolved = settings or get_settings()
+    items = list_workspaces(settings=resolved)
+    runs = latest_runs([str(item["workspace_id"]) for item in items], settings=resolved)
+    rendered: list[dict[str, Any]] = []
+    for item in items:
+        run = runs.get(str(item["workspace_id"]))
+        latest = None if run is None else latest_run_summary(run)
+        changed_at = latest["changed_at"] if latest else str(item.get("updated_at") or item.get("created_at") or "")
+        extra: dict[str, Any] = {"latest_run": latest, "latest_change_at": changed_at}
+        rendered.append(render_workspace(item, settings=resolved) | extra)
+    return rendered
 
 
 def _stage_run_role(changes: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
@@ -543,6 +573,84 @@ def create_config_version(
     return item, upload
 
 
+def create_tfe_config_version(
+    workspace_id: str,
+    *,
+    speculative: bool,
+    auto_queue_runs: bool,
+    settings: Settings | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Store a pending config version for `tfe.v2` and mint its unbounded PUT.
+
+    go-tfe uploads with `Content-Type: application/octet-stream`, no length known at
+    create time and no Authorization header, so the URL signs neither a type nor a
+    length. The row carries `max_bytes` instead, and the reconcile refuses an object
+    over it. `speculative` and `auto_queue_runs` are kept for the run that names it.
+    """
+    resolved = settings or get_settings()
+    get_workspace(workspace_id, settings=resolved)
+
+    config_version_id = f"{CONFIG_VERSION_ID_PREFIX}{new_ulid()}"
+    key = config_key(workspace_id, config_version_id)
+    item: dict[str, Any] = {
+        "config_version_id": config_version_id,
+        "workspace_id": workspace_id,
+        "key": key,
+        "status": "pending",
+        "size_bytes": TFE_CONFIG_MAX_BYTES,
+        "max_bytes": TFE_CONFIG_MAX_BYTES,
+        "source": "api",
+        "speculative": bool(speculative),
+        "auto_queue_runs": bool(auto_queue_runs),
+        "created_at": now_iso(),
+    }
+    repositories.config_versions(resolved).put(item)
+
+    import boto3
+    from botocore.config import Config
+
+    client = boto3.client(
+        "s3",
+        region_name=resolved.AWS_REGION_NAME or None,
+        endpoint_url=resolved.s3_endpoint_url,
+        config=Config(signature_version="s3v4"),
+    )
+    url = client.generate_presigned_url(
+        ClientMethod="put_object",
+        Params={"Bucket": resolved.ARTIFACTS_BUCKET, "Key": key},
+        ExpiresIn=CONFIG_UPLOAD_EXPIRES_IN,
+        HttpMethod="PUT",
+    )
+    return item, str(url)
+
+
+def _rejected_writer(settings: Settings) -> Callable[[str, str], None]:
+    """The writer that refuses an oversized upload: the object goes, the row says why."""
+
+    def reject(config_version_id: str, key: str) -> None:
+        """Delete the object and record `upload_error` on the row."""
+        cleanup.purge_prefix(settings.ARTIFACTS_BUCKET, key, settings=settings)
+        repositories.config_versions(settings).update(
+            {"config_version_id": config_version_id},
+            update_expression="SET upload_error = :e, updated_at = :now",
+            expression_values={":e": reads.UPLOAD_TOO_LARGE, ":now": now_iso()},
+            condition=Attr("config_version_id").exists(),
+        )
+
+    return reject
+
+
+def find_config_version(config_version_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """One config version by id alone, reconciled and persisted, or `ConfigVersionNotFound`."""
+    resolved = settings or get_settings()
+    return reads.find_config_version(
+        config_version_id,
+        persist=_uploaded_writer(resolved),
+        reject=_rejected_writer(resolved),
+        settings=resolved,
+    )
+
+
 def _uploaded_writer(settings: Settings) -> Callable[[str], None]:
     """The writer that persists the `uploaded` flip, which only this domain holds.
 
@@ -577,6 +685,7 @@ def reconcile_config_version(
     return reads.reconcile_config_version(
         item,
         persist=_uploaded_writer(resolved) if persist else None,
+        reject=_rejected_writer(resolved) if persist else None,
         settings=resolved,
     )
 
@@ -602,8 +711,55 @@ def get_config_version(
         workspace_id,
         config_version_id,
         persist=_uploaded_writer(resolved) if persist else None,
+        reject=_rejected_writer(resolved) if persist else None,
         settings=resolved,
     )
+
+
+def get_config_version_detail(
+    workspace_id: str,
+    config_version_id: str,
+    *,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """One config version with its README, reading the README once if nothing has.
+
+    A VCS config version gets its README at ingest. An API upload has no ingest
+    step, since nothing tells the control plane when its PUT lands, so the first
+    view of an uploaded one streams the tarball and stores the result on the row,
+    found or not. Every later view reads the row alone. A tarball that cannot be
+    read, expired say, is reported as no README and not marked, so nothing is
+    stored that a later read could not confirm.
+    """
+    resolved = settings or get_settings()
+    item = get_config_version(workspace_id, config_version_id, settings=resolved)
+    if item.get("readme_scanned") or str(item.get("status")) != "uploaded":
+        return item
+    workspace = get_workspace(workspace_id, settings=resolved)
+    try:
+        found = config_readme.read_config_readme(
+            resolved.ARTIFACTS_BUCKET,
+            str(item["key"]),
+            str(workspace.get("working_directory", "") or ""),
+            settings=resolved,
+        )
+    except Exception:  # noqa: BLE001
+        _log.warning(
+            "Could not read the README from a config tarball.",
+            extra={"event": "workspaces.config_readme.failed", "config_version_id": config_version_id},
+        )
+        return item
+    fields = config_readme.readme_fields(found)
+    names = {f"#f{index}": name for index, name in enumerate(fields)}
+    values = {f":f{index}": value for index, value in enumerate(fields.values())}
+    repositories.config_versions(resolved).update(
+        {"config_version_id": config_version_id},
+        update_expression="SET " + ", ".join(f"#f{index} = :f{index}" for index in range(len(fields))),
+        expression_names=names,
+        expression_values=values,
+        condition=Attr("config_version_id").exists(),
+    )
+    return {**item, **fields}
 
 
 def list_config_versions(

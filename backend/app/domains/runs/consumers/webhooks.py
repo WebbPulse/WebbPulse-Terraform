@@ -8,6 +8,11 @@ the App's installation token and writes the same ingest record and the same
 the runs and the existing reporting posts the checks, so nothing downstream can
 tell a webhook upload from a workflow one.
 
+A pull request only plans on the workspaces whose tracked branch, or the
+repository's default branch when none is set, is the pull request's base branch,
+as HCP Terraform does, so a pull request into `staging` never plans a workspace
+tracking `main`.
+
 A delivery no bound workspace would run on never fetches anything. A push to a
 branch that some bound workspace tracks, and every pull request, has its record
 written and is reported straight away as "No runs needed". A push to a branch no
@@ -102,8 +107,9 @@ def _record(upload_id: str, message: Mapping[str, Any], resolved: Mapping[str, A
     else:
         item["pr_number"] = int(message["pr_number"])
         item["head_sha"] = str(resolved["head_sha"])
-        if message.get("base_sha"):
-            item["base_sha"] = str(message["base_sha"])
+        for field in ("base_sha", "base_branch", "default_branch"):
+            if message.get(field):
+                item[field] = str(message[field])
     return item
 
 

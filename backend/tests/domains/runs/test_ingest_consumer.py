@@ -188,6 +188,53 @@ def test_speculative_plans_off_ignores_pull_requests(settings, bind, state_machi
     assert deliver(upload(settings, pr_claims(3), tarball()), settings) == []
 
 
+def upload_into(settings, base: str, data: bytes, *, default: str | None = "main") -> dict:
+    """Write a pull request into `base` from the webhook bridge and return the event body."""
+    item = record_for(pr_claims(5), data, head_sha=HEAD_SHA, base_sha=BASE_SHA)
+    item["base_branch"] = base
+    if default:
+        item["default_branch"] = default
+    repositories.vcs_uploads(settings).put(item)
+    boto3.client("s3", region_name="us-west-2").put_object(Bucket=settings.ARTIFACTS_BUCKET, Key=item["key"], Body=data)
+    return {"kind": ingest.INGEST_KIND, "bucket": settings.ARTIFACTS_BUCKET, "key": item["key"], "size": len(data)}
+
+
+def test_a_pull_request_plans_only_the_workspaces_tracking_its_base(settings, bind, state_machine):
+    """A pull request into `staging` plans the staging workspace and leaves the one tracking `main` alone."""
+    prod = bind("prod", tracked_branch="main")
+    staging = bind("prod-staging", tracked_branch="staging")
+    [run_id] = deliver(upload_into(settings, "staging", tarball()), settings)
+    assert runs_service.get_run(run_id, settings=settings)["workspace_id"] == staging["workspace_id"]
+    assert runs_on(prod, settings) == []
+
+
+def test_a_promotion_into_main_plans_only_the_main_workspaces(settings, bind, state_machine):
+    """A pull request into `main` plans the workspace tracking `main` and not the staging one."""
+    prod = bind("prod", tracked_branch="main")
+    staging = bind("prod-staging", tracked_branch="staging")
+    [run_id] = deliver(upload_into(settings, "main", tarball()), settings)
+    assert runs_service.get_run(run_id, settings=settings)["workspace_id"] == prod["workspace_id"]
+    assert runs_on(staging, settings) == []
+
+
+@pytest.mark.parametrize(
+    ("tracked", "base", "default", "plans"),
+    [
+        ("main", "main", "main", True),
+        ("main", "staging", "main", False),
+        (None, "main", "main", True),
+        (None, "staging", "main", False),
+        (None, "staging", None, True),
+        ("main", None, "main", True),
+    ],
+    ids=["tracked", "other-base", "default", "default-other-base", "unknown-default", "no-base"],
+)
+def test_a_workspace_with_no_tracked_branch_targets_the_default_branch(tracked, base, default, plans):
+    """The tracked branch, else the default branch, must be the base; an unknown side keeps planning."""
+    upload_record = {"event": "pull_request", "base_branch": base, "default_branch": default}
+    assert ingest.targets_base({"tracked_branch": tracked}, upload_record) is plans
+
+
 def test_the_default_pattern_is_the_working_directory(settings, bind, state_machine):
     """Empty patterns mean everything under `working_directory`."""
     inside = bind("inside", working_directory="stacks/app")
@@ -440,6 +487,86 @@ def test_a_pull_request_supersedes_only_its_own_number(settings, bind, state_mac
     assert runs_service.get_run(newer, settings=settings)["status"] == "pending"
 
 
+NEWER_HEAD = "9" * 40
+
+
+def test_a_newer_commit_cancels_and_marks_a_pull_request_plan_mid_plan(settings, bind, state_machine):
+    """HCP Terraform's behaviour: an outdated commit's plan still planning is cancelled and marked."""
+    bind()
+    older = deliver(upload(settings, pr_claims(6, run_id="1"), tarball()), settings)[0]
+    assert runs_service.get_run(older, settings=settings)["status"] == "planning"
+    newer = deliver(upload(settings, pr_claims(6, run_id="2", sha="f" * 40), tarball(), sha=NEWER_HEAD), settings)[0]
+    run = runs_service.get_run(older, settings=settings)
+    assert run["status"] == "cancelled"
+    assert run["superseded_by"] == {"run_id": newer, "sha": NEWER_HEAD}
+    assert runs_service.get_run(newer, settings=settings)["status"] in ("pending", "planning")
+    assert "superseded_by" not in runs_service.get_run(newer, settings=settings)
+
+
+def test_a_newer_commit_marks_a_finished_pull_request_plan_and_leaves_its_status(settings, bind, state_machine):
+    """A plan that already finished keeps its result and only gains the marker."""
+    bind()
+    older = deliver(upload(settings, pr_claims(6, run_id="1"), tarball()), settings)[0]
+    repositories.runs(settings).update(
+        {"run_id": older},
+        update_expression="SET #s = :s",
+        expression_names={"#s": "status"},
+        expression_values={":s": "planned_and_finished"},
+    )
+    newer = deliver(upload(settings, pr_claims(6, run_id="2", sha="f" * 40), tarball(), sha=NEWER_HEAD), settings)[0]
+    run = runs_service.get_run(older, settings=settings)
+    assert run["status"] == "planned_and_finished"
+    assert run["superseded_by"] == {"run_id": newer, "sha": NEWER_HEAD}
+
+
+def test_the_first_newer_commit_to_mark_a_plan_stands(settings, bind, state_machine):
+    """A third commit marks only the second commit's plan, not the first again."""
+    bind()
+    first = deliver(upload(settings, pr_claims(6, run_id="1"), tarball()), settings)[0]
+    second = deliver(upload(settings, pr_claims(6, run_id="2", sha="f" * 40), tarball(), sha=NEWER_HEAD), settings)[0]
+    third = deliver(upload(settings, pr_claims(6, run_id="3", sha="e" * 40), tarball(), sha="8" * 40), settings)[0]
+    assert runs_service.get_run(first, settings=settings)["superseded_by"]["run_id"] == second
+    assert runs_service.get_run(second, settings=settings)["superseded_by"]["run_id"] == third
+
+
+def test_one_workspace_never_supersedes_another(settings, bind, state_machine):
+    """A newer commit that runs on one workspace leaves the other workspace's plan running and unmarked."""
+    one = bind("one", working_directory="stacks/one")
+    two = bind("two", working_directory="stacks/two")
+    both = tarball("stacks/one/main.tf\nstacks/two/main.tf\n")
+    deliver(upload(settings, pr_claims(6, run_id="1"), both), settings)
+    [older_one] = runs_on(one, settings)
+    [older_two] = runs_on(two, settings)
+    [newer] = deliver(
+        upload(settings, pr_claims(6, run_id="2", sha="f" * 40), tarball("stacks/one/main.tf\n"), sha=NEWER_HEAD),
+        settings,
+    )
+    assert runs_service.get_run(newer, settings=settings)["workspace_id"] == one["workspace_id"]
+    marked = runs_service.get_run(older_one["run_id"], settings=settings)
+    assert (marked["status"], marked["superseded_by"]["run_id"]) == ("cancelled", newer)
+    untouched = runs_service.get_run(older_two["run_id"], settings=settings)
+    assert untouched["status"] == older_two["status"]
+    assert "superseded_by" not in untouched
+
+
+def test_push_runs_are_never_marked_superseded(settings, bind, state_machine):
+    """Tracked branch runs keep the push rules, and a pull request never touches them."""
+    bind()
+    push = deliver(upload(settings, claims(run_id="1"), tarball()), settings)[0]
+    repositories.runs(settings).update(
+        {"run_id": push},
+        update_expression="SET #s = :s",
+        expression_names={"#s": "status"},
+        expression_values={":s": "awaiting_confirmation"},
+    )
+    deliver(upload(settings, pr_claims(6, run_id="2"), tarball()), settings)
+    held = runs_service.get_run(push, settings=settings)
+    assert held["status"] == "awaiting_confirmation"
+    assert "superseded_by" not in held
+    deliver(upload(settings, claims(run_id="3", sha="d" * 40), tarball()), settings)
+    assert "superseded_by" not in runs_service.get_run(push, settings=settings)
+
+
 def test_a_push_does_not_supersede_an_api_run(settings, bind, auth_client, state_machine):
     """Only runs from the same source are replaced."""
     workspace = bind()
@@ -525,3 +652,46 @@ def test_the_default_trigger_pattern():
     assert ingest.trigger_patterns({"working_directory": "./stacks/app/"}) == ["stacks/app/**"]
     assert ingest.trigger_patterns({"working_directory": ""}) == ["**"]
     assert ingest.trigger_patterns({"trigger_patterns": ["x/*"], "working_directory": "y"}) == ["x/*"]
+
+
+def test_the_config_version_carries_the_readme_and_the_commit(settings, bind, state_machine):
+    """The README is read once at ingest, so the overview never opens the tarball."""
+    bind("app", working_directory="stacks/app")
+    data = tarball("stacks/app/main.tf\n", {"README.md": "# Root\n", "stacks/app/README.md": "# App\n"})
+    [run_id] = deliver(upload(settings, claims(), data), settings)
+    run = runs_service.get_run(run_id, settings=settings)
+    row = repositories.config_versions(settings).get({"config_version_id": run["config_version_id"]}) or {}
+    assert row["readme_scanned"] is True
+    assert row["readme"]["path"] == "stacks/app/README.md"
+    assert row["readme"]["content"] == "# App\n"
+    assert row["vcs"]["repo"] == REPO
+    assert row["vcs"]["sha"] == HEAD_SHA
+    assert row["vcs"]["branch"] == "main"
+    assert row["vcs"]["pr_number"] is None
+
+
+def test_a_pull_request_config_version_records_its_number(settings, bind, state_machine):
+    """A speculative config version is marked so the overview can pass over it."""
+    bind()
+    [run_id] = deliver(upload(settings, pr_claims(), tarball()), settings)
+    run = runs_service.get_run(run_id, settings=settings)
+    row = repositories.config_versions(settings).get({"config_version_id": run["config_version_id"]}) or {}
+    assert row["vcs"]["pr_number"] == run["vcs"]["pr_number"]
+    assert row["readme_scanned"] is True
+    assert "readme" not in row
+
+
+def test_a_readme_read_failure_does_not_hold_up_the_run(settings, bind, state_machine, monkeypatch):
+    """The README is best effort: the run starts and the row is left for a later read."""
+    from app.common.workspaces import readme
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(readme, "read_config_readme", fail)
+    bind()
+    [run_id] = deliver(upload(settings, claims(), tarball()), settings)
+    run = runs_service.get_run(run_id, settings=settings)
+    row = repositories.config_versions(settings).get({"config_version_id": run["config_version_id"]}) or {}
+    assert row["status"] == "uploaded"
+    assert "readme_scanned" not in row

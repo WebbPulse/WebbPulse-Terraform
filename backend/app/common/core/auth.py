@@ -30,7 +30,6 @@ from starlette.responses import Response
 from webbpulse.identity import DeviceGrantLiveness, dynamo_device_grant_stores
 from webbpulse.identity.api_keys import ApiKeyRecord, ApiKeyStore, DynamoApiKeyStore, verify
 from webbpulse.identity.claims import AuthorizerClaims
-from webbpulse.identity.device_grant import DEVICE_GRANT_CLAIM
 from webbpulse.identity.scopes import bearer_credential, claims_or_api_key, require_recent_auth, require_scopes
 
 from ..composition.settings import Settings, get_settings
@@ -47,6 +46,9 @@ RUNS_WRITE: Final = "runs:write"
 RUNS_APPLY: Final = "runs:apply"
 STATE_DOWNLOAD: Final = "state:download"
 """Explicit access to raw state, excluded from ordinary read-only grants."""
+STATE_WRITE: Final = "state:write"
+"""Locking a workspace and writing its state from the CLI, which `terraform state mv`,
+`import` and `force-unlock` need. Like `state:download`, never an ordinary grant."""
 REGISTRY_READ: Final = "registry:read"
 """Reading the module registry, which is what `TF_TOKEN_<host>` carries for `terraform init`."""
 REGISTRY_WRITE: Final = "registry:write"
@@ -54,9 +56,6 @@ REGISTRY_WRITE: Final = "registry:write"
 ADMIN: Final = "admin"
 """Operator settings such as the GitHub App. It does not end in `:read`, so only an
 admin holds it, and a key carries it only when an admin minted it."""
-
-DEVICE_GRANT_VALUE: Final = "device"
-"""The `DEVICE_GRANT_CLAIM` value on a `wp-tf login` access token."""
 
 RUNNER_SCOPE: Final = "runner"
 """The scope a run token carries. Never granted to a human or an agent key: it
@@ -78,6 +77,7 @@ ALL_SCOPES: Final = (
     RUNS_WRITE,
     RUNS_APPLY,
     STATE_DOWNLOAD,
+    STATE_WRITE,
     REGISTRY_READ,
     REGISTRY_WRITE,
     ADMIN,
@@ -289,9 +289,10 @@ def scopes(*required: str) -> Any:
 STEP_UP_MAX_AGE_SECONDS: Final = 15 * 60
 """How recent a person's login must be for a sensitive change, like HCP and GitHub sudo mode.
 
-A person whose login is older gets a 401 `STEP_UP_REQUIRED` and confirms their password
-through `/api/auth/step-up`. An agent key has no login to age and passes; its scopes are
-what limit it."""
+A person whose login is older gets a 401 `STEP_UP_REQUIRED` and confirms with a passkey, an
+authenticator code or their password through `/api/auth/step-up`, after which the browser
+replays the call. An agent key has no login to age and passes; its scopes are what limit it.
+Confirming a run is not gated: `runs:apply` on a live session is enough, as on HCP."""
 
 recent_auth = require_recent_auth(STEP_UP_MAX_AGE_SECONDS, claims_dependency=claims)
 """The step-up gate on its own, for a route that already checks its caller another way."""
@@ -304,25 +305,6 @@ def sudo(*required: str) -> Any:
     rather than a password prompt that leads nowhere.
     """
     return require_recent_auth(STEP_UP_MAX_AGE_SECONDS, claims_dependency=scopes(*required))
-
-
-def apply_gate(*required: str) -> Any:
-    """A dependency requiring `required`, plus a recent login for a browser session only.
-
-    A `wp-tf login` session was approved by a login no older than the device approval
-    limit and ends at the device session cap, and a key has no login to age, so both
-    apply on their scopes alone, as an HCP user token does. A browser session still needs
-    a login within `STEP_UP_MAX_AGE_SECONDS`.
-    """
-    scoped = scopes(*required)
-
-    async def dependency(current: AuthorizerClaims = Depends(scoped)) -> AuthorizerClaims:
-        """Pass a device session, and send anything else through the step-up gate."""
-        if str(current.get(DEVICE_GRANT_CLAIM, "")) == DEVICE_GRANT_VALUE:
-            return current
-        return await recent_auth(current)
-
-    return dependency
 
 
 def ensure_recent_auth(current: AuthorizerClaims) -> None:
@@ -431,6 +413,7 @@ __all__ = [
     "RUN_TOKEN_TENANT",
     "RunnerRoute",
     "STATE_DOWNLOAD",
+    "STATE_WRITE",
     "STEP_UP_MAX_AGE_SECONDS",
     "VARIABLES_READ",
     "VARIABLES_WRITE",
@@ -438,7 +421,6 @@ __all__ = [
     "WORKSPACES_WRITE",
     "Depends",
     "api_key_store",
-    "apply_gate",
     "claims",
     "ensure_recent_auth",
     "device_grant_liveness",

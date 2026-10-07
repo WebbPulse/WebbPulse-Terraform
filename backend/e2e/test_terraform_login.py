@@ -35,6 +35,7 @@ REDIRECT = "http://localhost:10000/login"
 CLIENT_ID = "terraform-cli"
 KEY_NAME = "terraform login"
 PROOF_MODULE = f"https://{API_HOST}/v1/modules/WebbPulse/registry-proof/null/versions"
+TFE_API = f"https://{API_HOST}/api/v2/"
 TIMEOUT_SECONDS = 30
 
 pytestmark = [
@@ -113,11 +114,12 @@ def approve(step_up_again: Callable[[], Any]) -> Iterator[Callable[[str], str]]:
 
 
 def test_discovery_advertises_login_and_providers() -> None:
-    """The SPA host's discovery document carries what `terraform login` and provider installs read."""
+    """The SPA host's discovery document carries what `terraform login`, provider installs and `cloud {}` read."""
     response = httpx.get(f"https://{REGISTRY_HOST}/.well-known/terraform.json", timeout=TIMEOUT_SECONDS)
     assert response.status_code == 200
     body = response.json()
     assert body.get("providers.v1") == f"https://{API_HOST}/v1/providers/"
+    assert body.get("tfe.v2") == TFE_API
     login = body.get("login.v1")
     assert login == {
         "client": CLIENT_ID,
@@ -142,6 +144,17 @@ def test_login_issues_a_key_that_reads_the_registry(approve: Callable[[str], str
 
     versions = httpx.get(PROOF_MODULE, headers={"Authorization": f"Bearer {token}"}, timeout=TIMEOUT_SECONDS)
     assert versions.status_code == 200, f"the login key could not read the registry: {versions.status_code}"
+
+    ping = httpx.get(f"{TFE_API}ping", headers={"Authorization": f"Bearer {token}"}, timeout=TIMEOUT_SECONDS)
+    assert ping.status_code == 204
+    assert ping.headers.get("tfp-api-version") == "2.6"
+    entitlements = httpx.get(
+        f"{TFE_API}organizations/WebbPulse/entitlement-set",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=TIMEOUT_SECONDS,
+    )
+    assert entitlements.status_code == 200, f"the login key could not read the entitlements: {entitlements.status_code}"
+    assert entitlements.json()["data"]["attributes"]["operations"] is True
 
     replay = _exchange(code, verifier)
     assert replay.status_code == 400

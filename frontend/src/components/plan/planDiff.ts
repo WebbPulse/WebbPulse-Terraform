@@ -9,6 +9,7 @@ const GLYPHS: Record<PlanAction, string> = {
   delete: '-',
   replace: '-/+',
   read: '<=',
+  forget: '.',
   'no-op': ' ',
 };
 
@@ -24,6 +25,7 @@ const ACTION_LABELS: Record<PlanAction, string> = {
   delete: 'destroyed',
   replace: 'replaced',
   read: 'read',
+  forget: 'removed from state, not destroyed',
   'no-op': 'unchanged',
 };
 
@@ -49,6 +51,7 @@ export function actionTone(action: PlanAction): ActionTone {
       return 'replace';
     case 'read':
       return 'read';
+    case 'forget':
     case 'no-op':
       return 'none';
   }

@@ -520,3 +520,176 @@ def test_connecting_adopts_a_provider_uploads_created(
     assert provider_row["vcs_installation_id"]
     assert _row(settings)["status"] == service.PUBLISHED
     assert auth_client.post(BASE, json={"vcs_repo": REPO}).status_code == 409
+
+
+ISSUER = "https://api.terraform.test/api/auth"
+AUDIENCE = "webbpulse-terraform-test-api"
+DEVICE_AUDIENCE = f"{ISSUER}/device"
+
+
+class _Jwks:
+    """A key set client serving one RSA key, standing in for the issuer's JWKS."""
+
+    def __init__(self, public_key: Any) -> None:
+        """Serve `public_key` for every `kid`."""
+        self.public_key = public_key
+
+    def get_signing_key_from_jwt(self, _token: str) -> Any:
+        """The key the verifier checks the signature with."""
+        return type("SigningKey", (), {"key": self.public_key})()
+
+
+@pytest.fixture(scope="module")
+def token_key() -> Any:
+    """The issuer's RSA signing key for the module."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+@pytest.fixture
+def issuer(monkeypatch: pytest.MonkeyPatch, token_key: Any) -> dict[str, bool]:
+    """Verify access tokens against the test key, with device grants live unless flipped."""
+    from webbpulse.identity.verifier import JwksVerifier
+
+    from app.domains.registry import protocol_router
+
+    verifier = JwksVerifier(issuer=ISSUER, audience=[AUDIENCE, DEVICE_AUDIENCE], client=_Jwks(token_key.public_key()))
+    grants = {"live": True}
+    monkeypatch.setattr(protocol_router, "access_token_verifier", lambda: verifier)
+    monkeypatch.setattr(protocol_router, "device_grant_liveness", lambda: lambda _claims: grants["live"])
+    return grants
+
+
+def access_token(key: Any, *, scope: str = REGISTRY_READ, device: bool = True, **overrides: Any) -> str:
+    """A signed access token, a `wp-tf login` device token unless `device` is false."""
+    import time
+
+    import jwt
+
+    now = int(time.time())
+    claims: dict[str, Any] = {
+        "iss": ISSUER,
+        "aud": DEVICE_AUDIENCE if device else AUDIENCE,
+        "sub": "user-device",
+        "iat": now,
+        "exp": now + 600,
+        "typ": "access",
+        "scope": scope,
+    }
+    if device:
+        claims["grant"] = "device"
+    claims.update(overrides)
+    return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "test"})
+
+
+@pytest.fixture
+def published_upload(settings: Any, signing_parameters: SigningKey) -> None:
+    """The provider published from an upload, so the protocol has a version to serve."""
+    dispatch.route_record(upload(settings, build_release(signing_parameters)), settings=settings)
+    assert _row(settings)["status"] == service.PUBLISHED
+
+
+DOWNLOAD = f"/v1/providers/WebbPulse/webbpulse/{VERSION}/download/linux/amd64"
+
+
+@pytest.mark.parametrize("device", [True, False], ids=["device token", "session token"])
+def test_a_persons_access_token_with_registry_read_downloads_a_provider(
+    app: Any, issuer: dict[str, bool], token_key: Any, published_upload: None, device: bool
+) -> None:
+    """A `wp-tf login` or browser token holding `registry:read` gets the download and its checksum list."""
+    from fastapi.testclient import TestClient
+
+    headers = {"Authorization": f"Bearer {access_token(token_key, device=device)}"}
+    with TestClient(app, headers=headers) as client:
+        versions = client.get("/v1/providers/WebbPulse/webbpulse/versions")
+        download = client.get(DOWNLOAD)
+
+    assert versions.status_code == 200, versions.text
+    assert download.status_code == 200, download.text
+    body = download.json()
+    assert body["shasum"] == hashlib.sha256(b"linux build").hexdigest()
+    assert f"{STEM}SHA256SUMS" in body["shasums_url"]
+    assert "X-Amz-Signature" in body["shasums_url"]
+
+
+def test_an_access_token_without_registry_read_is_forbidden(
+    app: Any, issuer: dict[str, bool], token_key: Any, published_upload: None
+) -> None:
+    """The token verifies, so the refusal is the scope 403."""
+    from fastapi.testclient import TestClient
+
+    headers = {"Authorization": f"Bearer {access_token(token_key, scope=WORKSPACES_READ)}"}
+    with TestClient(app, headers=headers) as client:
+        assert client.get(DOWNLOAD).status_code == 403
+
+
+def test_a_revoked_device_grant_is_refused(
+    app: Any, issuer: dict[str, bool], token_key: Any, published_upload: None
+) -> None:
+    """`wp-tf logout` or a revoked session ends registry access too."""
+    from fastapi.testclient import TestClient
+
+    issuer["live"] = False
+    headers = {"Authorization": f"Bearer {access_token(token_key)}"}
+    with TestClient(app, headers=headers) as client:
+        assert client.get(DOWNLOAD).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"exp": 1}, {"iss": "https://elsewhere.test"}, {"aud": "another-api"}, {"typ": "mfa"}],
+    ids=["expired", "another issuer", "another audience", "not an access token"],
+)
+def test_an_invalid_access_token_is_unauthorized(
+    app: Any, issuer: dict[str, bool], token_key: Any, published_upload: None, overrides: dict[str, Any]
+) -> None:
+    """Every verification failure is the same 401."""
+    from fastapi.testclient import TestClient
+
+    headers = {"Authorization": f"Bearer {access_token(token_key, **overrides)}"}
+    with TestClient(app, headers=headers) as client:
+        assert client.get(DOWNLOAD).status_code == 401
+
+
+def test_a_token_signed_by_another_key_is_unauthorized(
+    app: Any, issuer: dict[str, bool], published_upload: None
+) -> None:
+    """A forged signature is refused."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from fastapi.testclient import TestClient
+
+    forged = access_token(rsa.generate_private_key(public_exponent=65537, key_size=2048))
+    with TestClient(app, headers={"Authorization": f"Bearer {forged}"}) as client:
+        assert client.get(DOWNLOAD).status_code == 401
+
+
+def test_an_access_token_is_refused_where_no_issuer_is_configured(
+    app: Any, token_key: Any, published_upload: None
+) -> None:
+    """Without `IDENTITY_ISSUER` there is nothing to verify against, so it fails closed."""
+    from fastapi.testclient import TestClient
+
+    headers = {"Authorization": f"Bearer {access_token(token_key)}"}
+    with TestClient(app, headers=headers) as client:
+        assert client.get(DOWNLOAD).status_code == 401
+
+
+def test_the_verifier_follows_the_function_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The issuer, session audience and device audience come from the identity environment alone."""
+    from app.common.composition.settings import get_settings
+    from app.domains.registry import protocol_router
+
+    monkeypatch.setenv("IDENTITY_ISSUER", ISSUER)
+    monkeypatch.setenv("IDENTITY_AUDIENCE", AUDIENCE)
+    monkeypatch.setenv("IDENTITY_DEVICE_GRANT_ENABLED", "true")
+    get_settings.cache_clear()
+    try:
+        verifier = protocol_router.access_token_verifier()
+        assert verifier is not None
+        assert verifier.jwks_uri == f"{ISSUER}/.well-known/jwks.json"
+        assert verifier._audience == [AUDIENCE, DEVICE_AUDIENCE]  # pyright: ignore[reportPrivateUsage]
+        monkeypatch.delenv("IDENTITY_AUDIENCE")
+        assert protocol_router.access_token_verifier() is None
+    finally:
+        get_settings.cache_clear()

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.common.composition import settings as settings_module
 from app.common.core.auth import RUNNER_SCOPE
-from app.domains.runs import phase_tasks, vending
+from app.domains.runs import phase_tasks, run_options, vending
 from app.domains.runs import service as runs_service
 from tests.conftest import STATE_KMS_KEY_ARN, mint_key, runner_token
 
@@ -177,6 +177,65 @@ def test_a_destroy_runs_bundle_asks_for_a_destroy_plan(
         body = runner.get(f"{BASE}/{created['run_id']}/bundle").json()
     assert body["is_destroy"] is True
     assert body["phase"] == "plan"
+
+
+def test_a_runs_options_reach_its_bundle(app, workspace, uploaded_config_version, state_machine):
+    """Targets, replacements, refresh flags and run variables travel from the create to the runner."""
+    created = runs_service.create_run(
+        {
+            "workspace_id": workspace["workspace_id"],
+            "config_version_id": uploaded_config_version["config_version_id"],
+            "target_addrs": ["null_resource.a"],
+            "replace_addrs": ["terraform_data.b"],
+            "refresh": False,
+            "run_variables": {"size": "3", "names": '["a", "b"]'},
+        },
+        actor=None,
+    )
+    stored = runs_service.get_run(created["run_id"])
+    assert "run_variables" not in stored
+    assert stored[run_options.KEYS_ATTRIBUTE] == ["names", "size"]
+    assert '["a", "b"]' not in json.dumps(runs_service.render_run(stored))
+    with TestClient(app, headers={"Authorization": f"Bearer {runner_token(created['run_id'])}"}) as runner:
+        body = runner.get(f"{BASE}/{created['run_id']}/bundle").json()
+    assert body["target_addrs"] == ["null_resource.a"]
+    assert body["replace_addrs"] == ["terraform_data.b"]
+    assert body["refresh"] is False
+    assert body["refresh_only"] is False
+    assert body["run_variables"] == {"size": "3", "names": '["a", "b"]'}
+
+
+def test_an_ordinary_bundle_carries_default_run_options(runner_client, created_run):
+    """A run created without options plans exactly as before."""
+    body = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle").json()
+    assert body["target_addrs"] == []
+    assert body["replace_addrs"] == []
+    assert body["refresh"] is True
+    assert body["run_variables"] == {}
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"target_addrs": ["a\n-destroy"]},
+        {"target_addrs": "null_resource.a"},
+        {"replace_addrs": [""]},
+        {"refresh": "no"},
+        {"run_variables": {"bad name": "1"}},
+        {"run_variables": {"size": "1)\nother = (2"}},
+    ],
+)
+def test_malformed_run_options_are_refused(workspace, uploaded_config_version, state_machine, options):
+    """An option that is not one clean flag value never reaches a row."""
+    with pytest.raises(run_options.InvalidRunOptions):
+        runs_service.create_run(
+            {
+                "workspace_id": workspace["workspace_id"],
+                "config_version_id": uploaded_config_version["config_version_id"],
+                **options,
+            },
+            actor=None,
+        )
 
 
 def test_the_bundle_backend_points_at_the_workspace_state(runner_client, created_run, workspace):

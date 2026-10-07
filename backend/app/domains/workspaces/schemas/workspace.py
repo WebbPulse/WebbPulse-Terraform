@@ -10,6 +10,7 @@ from typing import Any, Final, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ....common.core.auth import RUN_API_TOKEN_SCOPES
+from ....common.runs.workspace_runs import RunStatus
 
 Engine = Literal["terraform", "tofu"]
 """Which binary runs this workspace. The runner image bundles both."""
@@ -262,15 +263,20 @@ class WorkspaceUpdate(BaseModel):
     """A partial workspace edit. The name and the id are not editable.
 
     A rename would break the state key, which is derived from the workspace id,
-    and the `by_name` uniqueness claim at the same time, so it is refused by
-    omission rather than by a check.
+    and the `by_name` uniqueness claim at the same time, so the field is left out
+    of the model and a body carrying it is refused as an unknown key.
 
     The model separates "absent" from "explicitly null" by leaving every field
     unset by default and reading the body with `model_dump(exclude_unset=True)`,
     so a key only reaches the service when the request actually carried it. A null
     on one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service
     turns into a DynamoDB REMOVE.
+
+    Every unknown key is a 422 rather than dropped, so a field this server cannot
+    store never reads back to the caller as a successful change.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     engine: Optional[Engine] = None
     engine_version: Optional[str] = Field(default=None, min_length=1, max_length=32)
@@ -428,10 +434,34 @@ class Workspace(WorkspaceBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LatestRun(BaseModel):
+    """The newest run on a workspace, as the workspace list shows it."""
+
+    run_id: str
+    status: RunStatus
+    created_at: str
+    updated_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    changed_at: str
+    """The run's latest timestamp: its last update, else its finish, else its creation."""
+    plan_only: bool = False
+    is_destroy: bool = False
+
+
+class WorkspaceListItem(Workspace):
+    """A workspace as the list returns it, with its newest run."""
+
+    latest_run: Optional[LatestRun] = None
+    """The newest run by creation, or `None` for a workspace that never ran."""
+    latest_change_at: str
+    """When the workspace last changed: its newest run's `changed_at`, or for a workspace
+    that never ran its own `updated_at`, else its `created_at`. What "Latest change" shows."""
+
+
 class WorkspaceList(BaseModel):
     """Every workspace, newest last by id, which is a ULID and so time ordered."""
 
-    items: list[Workspace]
+    items: list[WorkspaceListItem]
 
 
 RunRoleCheckStatus = Literal["connected", "failed", "unverified"]
@@ -581,6 +611,18 @@ class ConfigVersionCreate(BaseModel):
     `Content-Length` and S3 enforces at the header."""
 
 
+class ConfigVersionVcs(BaseModel):
+    """The commit a VCS config version was ingested from."""
+
+    repo: str
+    """The repository's `owner/name` on GitHub."""
+    sha: str
+    """The commit the tarball holds: a push's commit, or a pull request's merge commit."""
+    branch: Optional[str] = None
+    pr_number: Optional[int] = None
+    """Set when the config version came from a pull request, so it ran plan only."""
+
+
 class ConfigVersion(BaseModel):
     """A stored config version."""
 
@@ -589,8 +631,26 @@ class ConfigVersion(BaseModel):
     key: str
     status: Literal["pending", "uploaded"]
     size_bytes: int
+    source: Literal["api", "vcs"] = "api"
+    vcs: Optional[ConfigVersionVcs] = None
     created_at: str
     updated_at: Optional[str] = None
+
+
+class ConfigReadme(BaseModel):
+    """The README a config version carries for its workspace's working directory."""
+
+    path: str
+    """Where the file sits in the tarball, which for a VCS upload is the repository."""
+    content: str
+    """The Markdown source, cut on a line break when the file was too long to store."""
+    truncated: bool = False
+
+
+class ConfigVersionDetail(ConfigVersion):
+    """One config version with its README, which only the single read returns."""
+
+    readme: Optional[ConfigReadme] = None
 
 
 class ConfigVersionUpload(BaseModel):

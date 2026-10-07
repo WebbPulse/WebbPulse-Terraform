@@ -6,19 +6,7 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-RunStatus = Literal[
-    "pending",
-    "planning",
-    "planned",
-    "awaiting_confirmation",
-    "applying",
-    "applied",
-    "planned_and_finished",
-    "errored",
-    "cancelled",
-    "discarded",
-]
-"""Every state a run can hold, as the contract fixes them."""
+from ....common.runs.workspace_runs import RunStatus
 
 Phase = Literal["plan", "apply"]
 """Which half of a run a task, a log stream or a phase result belongs to."""
@@ -65,6 +53,14 @@ class RunVcs(BaseModel):
     pull_request: Optional[RunPullRequest] = None
     """For a push run, the pull request its commit came from, found through the
     GitHub App when the run is first reported. `None` for a direct push."""
+
+
+class RunSupersededBy(BaseModel):
+    """The newer run on the same pull request and workspace that replaced a plan only run."""
+
+    run_id: str
+    sha: str
+    """The head commit of the newer run."""
 
 
 class RunActor(BaseModel):
@@ -179,6 +175,9 @@ class Run(BaseModel):
     """The commit a VCS run came from. `None` on an API run."""
     decision: Optional[RunDecision] = None
     """The confirmation or discard of the plan, `None` until someone decides."""
+    superseded_by: Optional[RunSupersededBy] = None
+    """For a pull request plan, the newer run a later commit of the same pull request
+    started on this workspace. `None` while this run is the newest."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -222,13 +221,14 @@ class LogPage(BaseModel):
     does not exist yet, which is not the same as an empty page."""
 
 
-PlanAction = Literal["create", "update", "delete", "replace", "read", "no-op"]
+PlanAction = Literal["create", "update", "delete", "replace", "read", "forget", "no-op"]
 """One resource or output's change, flattened from Terraform's action list.
 
 Terraform reports a replacement as the two element list `["delete", "create"]`
 or `["create", "delete"]`, depending on whether the provider replaces before or
 after destroying. Both collapse to `replace` here, because the ordering is a
-provider detail the viewer has no use for.
+provider detail the viewer has no use for. `forget` is a `removed` block that
+drops the resource from state without destroying it.
 """
 
 PlanMode = Literal["managed", "data"]
@@ -263,6 +263,10 @@ class PlanResourceChange(BaseModel):
     after_sensitive: Optional[Union[dict[str, Any], bool]] = None
     """Terraform's own sensitivity map, kept so the viewer can mark a field even
     where the value itself was redacted away."""
+    importing: bool = False
+    """Whether an `import` block brings this resource under management in this plan."""
+    previous_address: str = ""
+    """The address a `moved` block moves this resource from, empty when it stays put."""
 
 
 class PlanOutputChange(BaseModel):
@@ -305,6 +309,8 @@ class RunPlan(BaseModel):
     resource_changes: list[PlanResourceChange] = Field(default_factory=list)
     output_changes: list[PlanOutputChange] = Field(default_factory=list)
     has_changes: bool = False
+    unchanged_omitted: int = 0
+    """How many unchanged resources a large plan left out of `resource_changes`."""
     applied_outputs: Optional[list[AppliedOutput]] = None
     """The outputs as the apply left them, `None` until the run is applied and
     on an apply that uploaded none."""
@@ -471,6 +477,16 @@ class RunBundle(BaseModel):
     """Google and Azure identity tokens for this phase, absent unless the workspace asks for them."""
     api: Optional[ApiCredentials] = None
     """The run's control plane API token, absent unless an admin granted the workspace's runs scopes."""
+    target_addrs: list[str] = []
+    """`-target` addresses the plan is limited to."""
+    replace_addrs: list[str] = []
+    """`-replace` addresses the plan replaces."""
+    refresh: bool = True
+    """False for `-refresh=false`."""
+    refresh_only: bool = False
+    """True for `-refresh-only`."""
+    run_variables: dict[str, str] = {}
+    """`-var` values set on this run, HCL expressions the runner writes to a tfvars file."""
 
 
 class PhaseResult(BaseModel):

@@ -323,6 +323,16 @@ describe('TerraformApi runs', () => {
     expect(transport.requests[1]?.path).toBe('/api/v1/runs/run-1/cancel');
   });
 
+  it('confirms without going through the step-up prompt', async () => {
+    const { api } = apiOver({
+      'POST /api/v1/runs/run-1/confirm': { body: aRun('applying') },
+    });
+    const gate = vi.fn(() => () => Promise.reject(new Error('prompted')));
+    api.setStepUpGate(gate);
+    expect((await api.confirmRun('run-1')).status).toBe('applying');
+    expect(gate).not.toHaveBeenCalled();
+  });
+
   it('discards on its own route', async () => {
     const { api, transport } = apiOver({
       'POST /api/v1/runs/run-1/discard': { body: aRun('discarded') },
