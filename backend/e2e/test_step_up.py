@@ -22,6 +22,7 @@ MAX_AGE_SECONDS = 15 * 60
 API_KEYS = "/api/v1/api-keys"
 MISSING_KEY_ID = "0" * 64
 MISSING_RUN_ID = f"run-{'0' * 26}"
+RUN_SCOPES = "runs:read runs:write runs:apply"
 
 pytestmark = pytest.mark.e2e_writes
 
@@ -83,8 +84,14 @@ def test_a_token_without_auth_time_is_refused(api: Any, minted_token: Any) -> No
 def test_a_stale_login_confirms_and_discards_without_a_step_up(
     api: Any, minted_token: Any, auth_time_age: int | None
 ) -> None:
-    """Confirming or discarding a run passes the auth checks on an old login and reaches the run lookup."""
-    claims = {} if auth_time_age is None else {"auth_time": int(time.time()) - auth_time_age}
+    """Confirming or discarding a run passes the auth checks on an old login and reaches the run lookup.
+
+    The token carries `runs:apply` and `runs:write`, as a signed-in browser session does, so
+    only the login's age differs from a fresh session.
+    """
+    claims: dict[str, Any] = {"scope": RUN_SCOPES}
+    if auth_time_age is not None:
+        claims["auth_time"] = int(time.time()) - auth_time_age
     stale = api.with_token(minted_token(claims))
     for action in ("confirm", "discard"):
         response = stale.post(f"/api/v1/runs/{MISSING_RUN_ID}/{action}")
