@@ -1937,6 +1937,7 @@
               "delete",
               "replace",
               "read",
+              "forget",
               "no-op"
             ],
             "title": "Action",
@@ -1980,6 +1981,7 @@
               "delete",
               "replace",
               "read",
+              "forget",
               "no-op"
             ],
             "title": "Action",
@@ -2042,6 +2044,11 @@
             ],
             "title": "Before Sensitive"
           },
+          "importing": {
+            "default": false,
+            "title": "Importing",
+            "type": "boolean"
+          },
           "mode": {
             "enum": [
               "managed",
@@ -2057,6 +2064,11 @@
           },
           "name": {
             "title": "Name",
+            "type": "string"
+          },
+          "previous_address": {
+            "default": "",
+            "title": "Previous Address",
             "type": "string"
           },
           "provider_name": {
@@ -3221,6 +3233,11 @@
             "default": "",
             "title": "Terraform Version",
             "type": "string"
+          },
+          "unchanged_omitted": {
+            "default": 0,
+            "title": "Unchanged Omitted",
+            "type": "integer"
           }
         },
         "required": [

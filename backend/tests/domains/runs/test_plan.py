@@ -111,6 +111,47 @@ def test_a_large_plan_drops_its_no_ops():
     assert summary["changes"] == {"add": 1, "change": 0, "destroy": 0}
 
 
+def test_a_large_plan_reports_how_many_unchanged_it_left_out():
+    """The viewer can say how many unchanged resources the cap dropped."""
+    entries = [resource_change(f"aws_s3_bucket.b{index}", ["no-op"]) for index in range(runs_service.NO_OP_KEPT_BELOW)]
+    entries.append(resource_change("aws_s3_bucket.changed", ["create"]))
+    summary = runs_service.summarise_plan("run-x", {"resource_changes": entries})
+    assert summary["unchanged_omitted"] == runs_service.NO_OP_KEPT_BELOW
+
+
+def test_a_small_plan_omits_nothing():
+    """Under the cap nothing is left out."""
+    summary = runs_service.summarise_plan(
+        "run-x", {"resource_changes": [resource_change("aws_s3_bucket.a", ["no-op"])]}
+    )
+    assert summary["unchanged_omitted"] == 0
+
+
+def test_imports_and_moves_are_flagged_and_survive_the_cap():
+    """An import or a move is a `no-op` action that still changes state, so it is kept."""
+    entries = [resource_change(f"aws_s3_bucket.b{index}", ["no-op"]) for index in range(runs_service.NO_OP_KEPT_BELOW)]
+    entries.append(resource_change("aws_s3_bucket.imported", ["no-op"], change={"importing": {"id": "bucket-1"}}))
+    entries.append(resource_change("aws_s3_bucket.moved", ["no-op"], previous_address="aws_s3_bucket.old"))
+    summary = runs_service.summarise_plan("run-x", {"resource_changes": entries})
+    kept = {entry["address"]: entry for entry in summary["resource_changes"]}
+    assert set(kept) == {"aws_s3_bucket.imported", "aws_s3_bucket.moved"}
+    assert kept["aws_s3_bucket.imported"]["importing"] is True
+    assert kept["aws_s3_bucket.imported"]["previous_address"] == ""
+    assert kept["aws_s3_bucket.moved"]["previous_address"] == "aws_s3_bucket.old"
+    assert kept["aws_s3_bucket.moved"]["importing"] is False
+    RunPlan.model_validate(summary)
+
+
+def test_a_forget_is_its_own_action_and_counts_for_nothing():
+    """A `removed` block without destroy forgets the resource, which is not a destroy."""
+    summary = runs_service.summarise_plan(
+        "run-x", {"resource_changes": [resource_change("aws_s3_bucket.a", ["forget"])]}
+    )
+    assert summary["resource_changes"][0]["action"] == "forget"
+    assert summary["changes"] == {"add": 0, "change": 0, "destroy": 0}
+    RunPlan.model_validate(summary)
+
+
 def test_the_fields_are_carried_across():
     """Every contract field is taken from the plan, with the documented defaults."""
     summary = runs_service.summarise_plan(

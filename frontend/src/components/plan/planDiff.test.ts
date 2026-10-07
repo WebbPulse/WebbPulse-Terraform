@@ -20,6 +20,7 @@ describe('actionGlyph', () => {
       delete: '-',
       replace: '-/+',
       read: '<=',
+      forget: '.',
       'no-op': ' ',
     };
     for (const [action, glyph] of Object.entries(glyphs)) {

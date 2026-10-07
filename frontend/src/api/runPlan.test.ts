@@ -6,6 +6,7 @@ import {
   SENSITIVE_VALUE,
   changedOutputs,
   changedResources,
+  unchangedResourceCount,
   planActionLabel,
   planActionSymbol,
   planHasChanges,
@@ -21,6 +22,7 @@ const ACTIONS: PlanAction[] = [
   'delete',
   'replace',
   'read',
+  'forget',
   'no-op',
 ];
 
@@ -124,6 +126,59 @@ describe('reading a plan', () => {
       'aws_s3_bucket.a',
     ]);
     expect(changedOutputs(plan).map((entry) => entry.name)).toEqual(['url']);
+  });
+
+  it('keeps imports and moves, which change state with a no-op action', () => {
+    const plan = aPlan({
+      resource_changes: [
+        {
+          address: 'aws_s3_bucket.imported',
+          mode: 'managed',
+          type: 'aws_s3_bucket',
+          name: 'imported',
+          action: 'no-op',
+          importing: true,
+        },
+        {
+          address: 'aws_s3_bucket.moved',
+          mode: 'managed',
+          type: 'aws_s3_bucket',
+          name: 'moved',
+          action: 'no-op',
+          previous_address: 'aws_s3_bucket.old',
+        },
+        {
+          address: 'aws_s3_bucket.same',
+          mode: 'managed',
+          type: 'aws_s3_bucket',
+          name: 'same',
+          action: 'no-op',
+        },
+      ],
+    });
+
+    expect(changedResources(plan).map((entry) => entry.address)).toEqual([
+      'aws_s3_bucket.imported',
+      'aws_s3_bucket.moved',
+    ]);
+    expect(unchangedResourceCount(plan)).toBe(1);
+  });
+
+  it('counts the unchanged resources a large plan left out', () => {
+    const plan = aPlan({
+      resource_changes: [
+        {
+          address: 'aws_s3_bucket.same',
+          mode: 'managed',
+          type: 'aws_s3_bucket',
+          name: 'same',
+          action: 'no-op',
+        },
+      ],
+      unchanged_omitted: 700,
+    });
+
+    expect(unchangedResourceCount(plan)).toBe(701);
   });
 
   it('treats an absent list as empty', () => {
