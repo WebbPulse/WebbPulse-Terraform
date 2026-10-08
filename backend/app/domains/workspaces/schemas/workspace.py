@@ -136,8 +136,12 @@ RunApiTokenScope = Literal[
     "variables:write",
     "registry:read",
     "registry:write",
+    "workspaces:factory",
 ]
-"""A scope a workspace may grant its runs' API token. Never admin, runner or `runs:apply`."""
+"""A scope a workspace may grant its runs' API token. Never admin, runner or `runs:apply`.
+
+`workspaces:factory` lets the token reach every workspace and pass step-up, for the
+factory workspace that manages the others."""
 
 
 def normalize_run_api_token_scopes(values: list[str]) -> list[str] | None:

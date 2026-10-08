@@ -1125,6 +1125,9 @@ def record_phase_result(
     terraform plans under `-detailed-exitcode`. The runner already reports 0 for
     it; this keeps a runner that does not from erroring every plan with changes.
 
+    Whatever the plan's outcome, its API token is revoked here: a run left awaiting
+    confirmation holds none until the apply phase's bundle mints one.
+
     Raises:
         RunNotFound: No such run.
         PhaseMismatch: The reported phase is not the one the run is in.
@@ -1136,6 +1139,9 @@ def record_phase_result(
     expected = {"plan": "planning", "apply": "applying"}[phase]
     if status != expected:
         raise PhaseMismatch(f"{run_id} is {status}, not {expected}")
+
+    if phase == "plan":
+        api_credentials.revoke(run, settings=resolved)
 
     changes = dict(result.get("changes") or {"add": 0, "change": 0, "destroy": 0})
     exit_code = int(result.get("exit_code", 0))

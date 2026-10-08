@@ -15,7 +15,7 @@ from webbpulse.identity.claims import AuthorizerClaims
 from webbpulse.ratelimit import RateLimiter
 
 from ...common.composition.settings import Settings, get_settings
-from ...common.core.auth import WORKSPACES_READ, WORKSPACES_WRITE, scopes, sudo
+from ...common.core.auth import WORKSPACES_READ, WORKSPACES_WRITE, run_api_workspace_binding, scopes, sudo
 from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
 from ...common.notifications import delivery, store
@@ -29,7 +29,7 @@ from .schemas.notification import (
     NotificationDelivery,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(run_api_workspace_binding)])
 
 NotificationId = Path(min_length=4, max_length=64, pattern=r"^nc-[0-9A-HJKMNP-TV-Z]{26}$")
 

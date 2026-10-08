@@ -4146,7 +4146,7 @@ export interface components {
             /** Remote State Consumer Ids */
             remote_state_consumer_ids?: string[] | null;
             /** Run Api Token Scopes */
-            run_api_token_scopes?: ("workspaces:read" | "workspaces:write" | "variables:read" | "variables:write" | "registry:read" | "registry:write")[] | null;
+            run_api_token_scopes?: ("workspaces:read" | "workspaces:write" | "variables:read" | "variables:write" | "registry:read" | "registry:write" | "workspaces:factory")[] | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /** Speculative Plans */

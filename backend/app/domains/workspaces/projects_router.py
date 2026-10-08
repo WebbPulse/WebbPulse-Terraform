@@ -10,7 +10,7 @@ from typing import Any, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 
-from ...common.core.auth import WORKSPACES_READ, WORKSPACES_WRITE, scopes
+from ...common.core.auth import WORKSPACES_READ, WORKSPACES_WRITE, run_api_workspace_binding, scopes
 from ...common.workspaces.projects import PROJECT_ID_PATTERN
 from . import projects
 from .schemas.project import Project, ProjectCreate, ProjectList, ProjectUpdate
@@ -24,7 +24,7 @@ PROJECT_NOT_EMPTY_CODE: Final = "PROJECT_NOT_EMPTY"
 DEFAULT_PROJECT_READ_ONLY_CODE: Final = "DEFAULT_PROJECT_READ_ONLY"
 """The stable code an edit or delete of the default project is refused with."""
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(run_api_workspace_binding)])
 
 ProjectId = Path(min_length=4, max_length=64, pattern=PROJECT_ID_PATTERN)
 

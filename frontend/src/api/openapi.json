@@ -5857,7 +5857,8 @@
                     "variables:read",
                     "variables:write",
                     "registry:read",
-                    "registry:write"
+                    "registry:write",
+                    "workspaces:factory"
                   ],
                   "type": "string"
                 },

@@ -25,7 +25,9 @@ from ...common.core.auth import (
     STATE_WRITE,
     VARIABLES_READ,
     WORKSPACES_READ,
+    bound_workspace_id,
     claims,
+    run_api_workspace_binding,
     scopes,
 )
 from ...common.tfe.jsonapi import (
@@ -60,7 +62,12 @@ from .service import (
 if TYPE_CHECKING:  # pragma: no cover
     from webbpulse.identity.claims import AuthorizerClaims
 
-router = APIRouter(prefix="/api/v2", include_in_schema=False, route_class=JsonApiRoute)
+router = APIRouter(
+    prefix="/api/v2",
+    include_in_schema=False,
+    route_class=JsonApiRoute,
+    dependencies=[Depends(run_api_workspace_binding)],
+)
 
 WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
 
@@ -98,12 +105,19 @@ def read_entitlements(
 @router.get("/organizations/{organization}/workspaces/{name}")
 def read_workspace_by_name(
     organization: str,
+    request: Request,
     name: str = WorkspaceName,
     current: "AuthorizerClaims" = Depends(scopes(WORKSPACES_READ)),
 ) -> Response:
-    """One workspace by name, which is how the `cloud {}` block names it."""
+    """One workspace by name, which is how the `cloud {}` block names it.
+
+    A run's API token finds only its own workspace; any other name is not found.
+    """
     require_organization(organization)
     item = find_by_name(name)
+    bound = bound_workspace_id(request)
+    if item is not None and bound is not None and str(item.get("workspace_id", "")) != bound:
+        item = None
     if item is None:
         raise not_found("workspace")
     return document(_render(item, claims_scopes(current)))
@@ -118,11 +132,15 @@ def list_organization_workspaces(
     """The organization's workspaces, filtered by `search[name]` and paginated.
 
     Workspaces carry no tags, so a `search[tags]` or `filter[tagged]` query matches
-    none, which is what a `cloud {}` block selecting by tags sees.
+    none, which is what a `cloud {}` block selecting by tags sees. A run's API token
+    sees only its own workspace.
     """
     require_organization(organization)
     params = request.query_params
     items = list_workspaces()
+    bound = bound_workspace_id(request)
+    if bound is not None:
+        items = [item for item in items if str(item.get("workspace_id", "")) == bound]
     if params.get("search[tags]") or any(key.startswith("filter[tagged]") for key in params):
         items = []
     needle = (params.get("search[name]") or "").lower()
