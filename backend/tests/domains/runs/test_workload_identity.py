@@ -5,6 +5,7 @@ the tests sign with a KMS key and verify against the JWKS the issuer's own
 handler builds from that key, loaded from the terraform directory it deploys from.
 """
 
+import base64
 import importlib.util
 import json
 from pathlib import Path
@@ -33,6 +34,14 @@ def _issuer_handler() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _published_jwks(kms: Any, key_arns: list[str]) -> dict[str, Any]:
+    """The JWKS the issuer serves when Terraform hands it the public keys of `key_arns`."""
+    keys = [
+        {"kid": arn, "der": base64.b64encode(kms.get_public_key(KeyId=arn)["PublicKey"]).decode()} for arn in key_arns
+    ]
+    return _issuer_handler().build_jwks(keys)
 
 
 @pytest.fixture
@@ -71,7 +80,7 @@ def signing_key(settings, monkeypatch) -> str:
 
 def _verify(token: str, key_arn: str, audience: str) -> dict[str, Any]:
     """The claims of `token`, verified against the JWKS the issuer publishes for `key_arn`."""
-    jwks = _issuer_handler().build_jwks(boto3.client("kms", region_name=REGION), [key_arn])
+    jwks = _published_jwks(boto3.client("kms", region_name=REGION), [key_arn])
     header = jwt.get_unverified_header(token)
     (published,) = [key for key in jwks["keys"] if key["kid"] == header["kid"]]
     public_key = jwt.PyJWK.from_dict(published).key
@@ -139,7 +148,7 @@ def test_a_token_signed_by_another_key_does_not_verify(signing_key, settings):
     minted = _mint({"TFC_AZURE_PROVIDER_AUTH": "true", "TFC_AZURE_RUN_CLIENT_ID": "client"}, settings)
     assert minted is not None
     other = boto3.client("kms", region_name=REGION).create_key(KeyUsage="SIGN_VERIFY", KeySpec="RSA_2048")
-    jwks = _issuer_handler().build_jwks(boto3.client("kms", region_name=REGION), [other["KeyMetadata"]["Arn"]])
+    jwks = _published_jwks(boto3.client("kms", region_name=REGION), [other["KeyMetadata"]["Arn"]])
     public_key = jwt.PyJWK.from_dict({**jwks["keys"][0], "kid": signing_key.rsplit("/", 1)[-1]}).key
 
     with pytest.raises(jwt.InvalidSignatureError):
@@ -152,7 +161,7 @@ def test_the_jwks_publishes_every_generation_newest_first(signing_key):
     """A rotation publishes the new key before it signs and keeps the old one until its tokens expire."""
     kms = boto3.client("kms", region_name=REGION)
     newer = kms.create_key(KeyUsage="SIGN_VERIFY", KeySpec="RSA_2048")["KeyMetadata"]["Arn"]
-    jwks = _issuer_handler().build_jwks(kms, [newer, signing_key])
+    jwks = _published_jwks(kms, [newer, signing_key])
 
     assert [key["kid"] for key in jwks["keys"]] == [newer.rsplit("/", 1)[-1], signing_key.rsplit("/", 1)[-1]]
     assert {key["alg"] for key in jwks["keys"]} == {"RS256"}
