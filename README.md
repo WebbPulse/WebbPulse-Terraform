@@ -82,8 +82,8 @@ The `runs` table also holds the concurrency semaphore as a single item with
 `run_id` of `run-semaphore`, whose `holders` string set the state machine adds to
 and removes from. `var.run_concurrency_cap`, default 25, is the size it is
 condition checked against. It is an abuse limit, not a queue: 25 one vCPU runner
-tasks sit under the 30 vCPU Fargate On-Demand quota in both accounts. Runs on one
-workspace stay serial whatever the cap.
+tasks sit under the 30 vCPU Fargate On-Demand quota in both accounts. Runs that
+can apply on one workspace stay serial whatever the cap; plan only runs do not queue.
 
 The `workspaces` domain owns `workspaces`, `variables`, `config-versions` and
 `users`, and reads `runs`; the `runs` domain owns `runs` and `vcs-uploads` and
@@ -213,7 +213,7 @@ A run holds one of ten states.
 
 | State | Meaning |
 | --- | --- |
-| `pending` | Created, queued behind another run on the workspace |
+| `pending` | Created, queued behind another applying run on the workspace |
 | `planning` | Plan task running |
 | `planned` | Plan finished |
 | `awaiting_confirmation` | Plan has changes and is waiting for `runs:apply` |

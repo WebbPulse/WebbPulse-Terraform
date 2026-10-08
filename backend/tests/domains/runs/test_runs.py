@@ -213,6 +213,120 @@ def test_only_one_queued_run_is_promoted(auth_client, workspace, uploaded_config
     assert auth_client.get(f"{BASE}/{second['run_id']}").json()["status"] == "pending"
 
 
+def mark_plan_only(run_id: str) -> None:
+    """Flip a stored run to plan only, as a run queued before plan only runs stopped queueing."""
+    table = boto3.resource("dynamodb", region_name=REGION).Table(local_table_name(RUNS, ENVIRONMENT))
+    table.update_item(
+        Key={"run_id": run_id},
+        UpdateExpression="SET plan_only = :yes",
+        ExpressionAttributeValues={":yes": True},
+    )
+
+
+def test_plan_only_runs_start_beside_an_applying_run(
+    auth_client, workspace, uploaded_config_version, state_machine, created_run
+):
+    """Plan only runs never queue: several start at once while an applying run is planning."""
+    workspace_id = workspace["workspace_id"]
+    config_version_id = uploaded_config_version["config_version_id"]
+    plans = [
+        auth_client.post(BASE, json=create_body(workspace_id, config_version_id, plan_only=True)).json()
+        for _ in range(3)
+    ]
+
+    for plan in plans:
+        assert plan["status"] == "planning"
+        assert plan["queued_behind"] is None
+        assert plan["execution_arn"]
+    assert auth_client.get(f"{BASE}/{created_run['run_id']}").json()["status"] == "planning"
+
+
+def test_an_applying_run_is_not_blocked_by_plan_only_runs(
+    auth_client, workspace, uploaded_config_version, state_machine
+):
+    """A plan only run in flight is passed over when an applying run looks for its slot."""
+    workspace_id = workspace["workspace_id"]
+    config_version_id = uploaded_config_version["config_version_id"]
+    plan = auth_client.post(BASE, json=create_body(workspace_id, config_version_id, plan_only=True)).json()
+    applying = auth_client.post(BASE, json=create_body(workspace_id, config_version_id)).json()
+
+    assert plan["status"] == "planning"
+    assert applying["status"] == "planning"
+    assert applying["queued_behind"] is None
+
+
+def test_applying_runs_stay_serial_with_plan_only_runs_between_them(
+    auth_client, workspace, uploaded_config_version, state_machine, created_run
+):
+    """A second applying run queues behind the first, never behind a plan only run."""
+    workspace_id = workspace["workspace_id"]
+    config_version_id = uploaded_config_version["config_version_id"]
+    plan = auth_client.post(BASE, json=create_body(workspace_id, config_version_id, plan_only=True)).json()
+    second = auth_client.post(BASE, json=create_body(workspace_id, config_version_id)).json()
+
+    assert second["status"] == "pending"
+    assert second["queued_behind"] == created_run["run_id"]
+
+    runs_service.finish_run(plan["run_id"], "planned_and_finished")
+    assert auth_client.get(f"{BASE}/{second['run_id']}").json()["status"] == "pending"
+
+    runs_service.finish_run(created_run["run_id"], "applied")
+    assert auth_client.get(f"{BASE}/{second['run_id']}").json()["status"] == "planning"
+
+
+def test_a_plan_only_run_queued_before_the_change_is_started_on_the_next_ending(
+    auth_client, workspace, uploaded_config_version, state_machine, created_run
+):
+    """A plan only run stored queued is promoted by any ending, even while an applying run executes."""
+    workspace_id = workspace["workspace_id"]
+    config_version_id = uploaded_config_version["config_version_id"]
+    legacy = auth_client.post(BASE, json=create_body(workspace_id, config_version_id)).json()
+    mark_plan_only(legacy["run_id"])
+    applying = auth_client.post(BASE, json=create_body(workspace_id, config_version_id)).json()
+    assert applying["queued_behind"] == created_run["run_id"]
+    other = auth_client.post(BASE, json=create_body(workspace_id, config_version_id, plan_only=True)).json()
+
+    runs_service.finish_run(other["run_id"], "planned_and_finished")
+
+    promoted = auth_client.get(f"{BASE}/{legacy['run_id']}").json()
+    assert promoted["status"] == "planning"
+    assert promoted["queued_behind"] is None
+    assert auth_client.get(f"{BASE}/{applying['run_id']}").json()["status"] == "pending"
+    assert auth_client.get(f"{BASE}/{created_run['run_id']}").json()["status"] == "planning"
+
+
+def test_a_chain_through_a_plan_only_run_keeps_moving(
+    auth_client, workspace, uploaded_config_version, state_machine, created_run
+):
+    """An applying run queued behind a queued plan only run starts beside it once the head ends."""
+    workspace_id = workspace["workspace_id"]
+    config_version_id = uploaded_config_version["config_version_id"]
+    middle = auth_client.post(BASE, json=create_body(workspace_id, config_version_id)).json()
+    tail = auth_client.post(BASE, json=create_body(workspace_id, config_version_id)).json()
+    mark_plan_only(middle["run_id"])
+
+    runs_service.finish_run(created_run["run_id"], "applied")
+
+    assert auth_client.get(f"{BASE}/{middle['run_id']}").json()["status"] == "planning"
+    assert auth_client.get(f"{BASE}/{tail['run_id']}").json()["status"] == "planning"
+
+
+def test_an_applying_run_queued_behind_an_executing_plan_only_run_starts_when_it_ends(
+    auth_client, workspace, uploaded_config_version, state_machine, created_run
+):
+    """A run queued behind what is now a plan only run is promoted when that run ends."""
+    workspace_id = workspace["workspace_id"]
+    config_version_id = uploaded_config_version["config_version_id"]
+    queued = auth_client.post(BASE, json=create_body(workspace_id, config_version_id)).json()
+    mark_plan_only(created_run["run_id"])
+
+    runs_service.cancel_run(created_run["run_id"])
+
+    promoted = auth_client.get(f"{BASE}/{queued['run_id']}").json()
+    assert promoted["status"] == "planning"
+    assert promoted["queued_behind"] is None
+
+
 def test_a_run_on_another_workspace_is_not_queued(
     auth_client, workspace, uploaded_config_version, state_machine, created_run
 ):

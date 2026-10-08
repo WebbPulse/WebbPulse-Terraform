@@ -476,18 +476,32 @@ def test_a_newer_push_discards_an_older_run_awaiting_confirmation(settings, bind
 
 
 def test_a_pull_request_supersedes_only_its_own_number(settings, bind, state_machine):
-    """Another pull request's queued plan is left alone."""
+    """Another pull request's plan is left running, and none of them waits on the push run."""
     bind()
-    deliver(upload(settings, claims(run_id="1"), tarball()), settings)
+    push = deliver(upload(settings, claims(run_id="1"), tarball()), settings)[0]
     other = deliver(upload(settings, pr_claims(5, run_id="2"), tarball()), settings)[0]
     older = deliver(upload(settings, pr_claims(6, run_id="3"), tarball()), settings)[0]
     newer = deliver(upload(settings, pr_claims(6, run_id="4", sha="f" * 40), tarball()), settings)[0]
-    assert runs_service.get_run(other, settings=settings)["status"] == "pending"
+    assert runs_service.get_run(push, settings=settings)["status"] == "planning"
+    assert runs_service.get_run(other, settings=settings)["status"] == "planning"
     assert runs_service.get_run(older, settings=settings)["status"] == "cancelled"
-    assert runs_service.get_run(newer, settings=settings)["status"] == "pending"
+    assert runs_service.get_run(newer, settings=settings)["status"] == "planning"
 
 
 NEWER_HEAD = "9" * 40
+
+
+def test_pull_request_plans_on_one_workspace_run_side_by_side(settings, bind, state_machine):
+    """Plans for several pull requests all start at once rather than queueing in a line."""
+    workspace = bind()
+    plans = [
+        deliver(upload(settings, pr_claims(number, run_id=str(number)), tarball()), settings)[0] for number in (5, 6, 7)
+    ]
+    for run_id in plans:
+        run = runs_service.get_run(run_id, settings=settings)
+        assert run["status"] == "planning"
+        assert not run.get("queued_behind")
+    assert len(runs_on(workspace, settings)) == 3
 
 
 def test_a_newer_commit_cancels_and_marks_a_pull_request_plan_mid_plan(settings, bind, state_machine):
@@ -499,7 +513,7 @@ def test_a_newer_commit_cancels_and_marks_a_pull_request_plan_mid_plan(settings,
     run = runs_service.get_run(older, settings=settings)
     assert run["status"] == "cancelled"
     assert run["superseded_by"] == {"run_id": newer, "sha": NEWER_HEAD}
-    assert runs_service.get_run(newer, settings=settings)["status"] in ("pending", "planning")
+    assert runs_service.get_run(newer, settings=settings)["status"] == "planning"
     assert "superseded_by" not in runs_service.get_run(newer, settings=settings)
 
 

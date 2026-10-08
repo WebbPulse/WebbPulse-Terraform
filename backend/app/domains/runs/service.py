@@ -2,10 +2,12 @@
 
 Two rules drive most of this module.
 
-Runs against one workspace are serial. A create either starts a state machine
-execution or, when that workspace already has a run in flight, stores the new run
-`pending` with `queued_behind` set and starts nothing. The run ahead of it starts
-it when it finishes, which is the only place a queued run is promoted.
+Runs that can apply are serial on their workspace. A create either starts a state
+machine execution or, when that workspace already has an applying run in flight,
+stores the new run `pending` with `queued_behind` set and starts nothing. The run
+ahead of it starts it when it finishes, which is the only place a queued run is
+promoted. A plan only run is speculative, as on HCP Terraform: it reads state
+without the lock, never queues and never blocks, so only the semaphore limits it.
 
 A run token is minted when an execution starts and revoked when the run finishes.
 It is a `wpk_` key whose subject is the run id and whose only scope is `runner`,
@@ -61,8 +63,8 @@ EXECUTING_STATUSES: Final = frozenset({"planning", "planned", "awaiting_confirma
 included: a run on its way to `awaiting_confirmation` has state locked."""
 
 ACTIVE_STATUSES: Final = frozenset({"pending"}) | EXECUTING_STATUSES
-"""A run in one of these occupies its workspace's slot, queued runs included, so a
-new run queues behind the whole queue rather than racing its head."""
+"""An applying run in one of these occupies its workspace's slot, queued runs
+included, so a new run queues behind the whole queue rather than racing its head."""
 
 TERMINAL_STATUSES: Final = TERMINAL_RUN_STATUSES
 """A run in one of these is finished, so its token is dead and the next queued run
@@ -311,6 +313,11 @@ def prune_semaphore(*, settings: Settings | None = None) -> list[str]:
     return sorted(stale)
 
 
+def is_plan_only(run: Mapping[str, Any]) -> bool:
+    """Whether a run is speculative, so it neither queues nor blocks its workspace."""
+    return bool(run.get("plan_only", False))
+
+
 def active_run(
     workspace_id: str,
     *,
@@ -320,7 +327,8 @@ def active_run(
     """The run currently holding `workspace_id`'s slot, if any.
 
     Reads newest first and returns the first matching row, so a workspace with a
-    long history costs one page rather than a full partition scan.
+    long history costs one page rather than a full partition scan. A plan only run
+    never holds the slot, so it is passed over.
 
     `statuses` defaults to every status that occupies the slot, which is what a new
     run asks about. Promotion passes `EXECUTING_STATUSES` instead, because the runs
@@ -332,7 +340,7 @@ def active_run(
         index_name=RUNS_BY_WORKSPACE_INDEX,
         ascending=False,
     ):
-        if _is_run_row(item) and str(item.get("status", "")) in statuses:
+        if _is_run_row(item) and str(item.get("status", "")) in statuses and not is_plan_only(item):
             return item
     return None
 
@@ -361,6 +369,8 @@ def create_run(
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Create a run, starting it or queueing it behind the workspace's active one.
+
+    A plan only run never queues: it starts at once, limited only by the semaphore.
 
     Validates the workspace and the config version before writing anything, so a
     run never exists against a config version that was never uploaded.
@@ -418,10 +428,10 @@ def create_run(
     if str(config_version.get("status", "")) != "uploaded":
         raise ConfigVersionNotReady(config_version_id)
 
-    blocking = active_run(workspace_id, settings=resolved)
     run_id = run_id or f"{RUN_ID_PREFIX}{new_ulid()}"
     timestamp = now_iso()
     plan_only = role_check or bool(payload.get("plan_only", False))
+    blocking = None if plan_only else active_run(workspace_id, settings=resolved)
     save_plan = not plan_only and bool(payload.get("save_plan", False))
     item: dict[str, Any] = {
         "run_id": run_id,
@@ -1077,31 +1087,36 @@ def _revoke_run_token(run: dict[str, Any], *, settings: Settings) -> None:
 
 
 def _promote_queue(workspace_id: str, *, settings: Settings) -> None:
-    """Start the oldest run queued on this workspace, if nothing else is active.
+    """Start every plan only run queued on this workspace, then its oldest applying one.
+
+    A plan only run is queued only when it was stored before plan only runs stopped
+    queueing, so each one is started whatever else is going. The oldest applying run
+    starts only when no other applying run is executing, which is what keeps a chain
+    that ran through a plan only run moving.
 
     Best effort: a failure to start the next run must not fail the transition that
     finished the previous one, which would leave a run stuck non-terminal. It is
     logged rather than swallowed silently, because a promotion that never happens
     leaves a run `pending` with nothing left to start it.
     """
-    if active_run(workspace_id, statuses=EXECUTING_STATUSES, settings=settings) is not None:
-        return
     queued = _queued_runs(workspace_id, settings=settings)
-    if not queued:
-        return
-    next_run_id = str(queued[0]["run_id"])
-    try:
-        start_run(next_run_id, settings=settings)
-    except Exception as error:  # noqa: BLE001
-        _log.exception(
-            "Could not promote the next queued run.",
-            extra={
-                "event": "runs.promote.failed",
-                "run_id": next_run_id,
-                "workspace_id": workspace_id,
-                "error": type(error).__name__,
-            },
-        )
+    promoted = [str(run["run_id"]) for run in queued if is_plan_only(run)]
+    applying = [str(run["run_id"]) for run in queued if not is_plan_only(run)]
+    if applying and active_run(workspace_id, statuses=EXECUTING_STATUSES, settings=settings) is None:
+        promoted.append(applying[0])
+    for next_run_id in promoted:
+        try:
+            start_run(next_run_id, settings=settings)
+        except Exception as error:  # noqa: BLE001
+            _log.exception(
+                "Could not promote the next queued run.",
+                extra={
+                    "event": "runs.promote.failed",
+                    "run_id": next_run_id,
+                    "workspace_id": workspace_id,
+                    "error": type(error).__name__,
+                },
+            )
 
 
 def record_phase_result(
@@ -1953,6 +1968,7 @@ __all__ = [
     "StateKmsKeyMissing",
     "TERMINAL_STATUSES",
     "active_run",
+    "is_plan_only",
     "artifact_upload",
     "auto_apply_eligible",
     "auto_confirm_run",
