@@ -214,11 +214,10 @@ function WorkspaceHeader({
           className="h-6 px-1.5"
         />
       </div>
-      <dl className="flex flex-wrap items-center gap-x-2 text-xs text-text-muted">
+      <dl className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-text-muted">
         <Fact label={workspace.engine ?? 'terraform'}>
           <span className="font-mono">{workspace.engine_version}</span>
         </Fact>
-        <Divider />
         <Fact label="AWS account">
           <span
             data-testid="workspace-account"
@@ -228,7 +227,6 @@ function WorkspaceHeader({
             {accountStatusLabel(account)}
           </span>
         </Fact>
-        <Divider />
         <Fact label="Updated">
           <RelativeTime iso={updated} />
         </Fact>
@@ -250,14 +248,5 @@ function Fact({
       <dt className="text-text-faint">{label}</dt>
       <dd className="text-text">{children}</dd>
     </div>
-  );
-}
-
-/** The thin bar between two facts. */
-function Divider(): React.ReactElement {
-  return (
-    <span aria-hidden="true" className="text-line-strong">
-      |
-    </span>
   );
 }

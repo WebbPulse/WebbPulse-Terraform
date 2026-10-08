@@ -196,21 +196,16 @@ function RunHeader({
           </span>
         ) : null}
       </div>
-      <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-text-faint">
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-text-faint">
         <span className="font-mono" title={run.run_id}>
           #{shortRunId(run.run_id)}
         </span>
-        <span aria-hidden="true">|</span>
         <span>
           {runKind(run)} triggered <RelativeTime iso={run.created_at} />
         </span>
         {run.vcs === undefined || run.vcs === null ? null : (
-          <>
-            <span aria-hidden="true">|</span>
-            <RunSourceLine run={run} />
-          </>
+          <RunSourceLine run={run} />
         )}
-        <span aria-hidden="true">|</span>
         <Link
           to={`/workspaces/${run.workspace_id}/configuration-versions`}
           className="font-mono hover:text-accent hover:underline"

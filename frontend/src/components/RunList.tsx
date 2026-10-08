@@ -88,19 +88,23 @@ function RunRows({
       {runs.map((run) => {
         const needsAction = runGroup(run) === 'attention';
         const superseded = run.superseded_by ?? null;
+        const workspaceName =
+          workspaceNames === undefined
+            ? null
+            : (workspaceNames.get(run.workspace_id) ?? run.workspace_id);
         return (
           <li
             key={run.run_id}
             data-run-id={run.run_id}
             data-needs-action={needsAction}
             data-superseded={superseded !== null}
-            className={`relative flex flex-wrap items-center gap-x-4 gap-y-2 border-l-2 px-4 py-3 ${
+            className={`relative flex flex-col gap-2 border-l-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4 ${
               needsAction
                 ? 'border-l-warning bg-warning-soft/30'
                 : 'border-l-transparent hover:bg-raised/60'
             } ${superseded === null ? '' : 'opacity-60'}`}
           >
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 sm:flex-1">
               <div className="flex min-w-0 items-center gap-2">
                 <Link
                   to={runPath(run)}
@@ -110,51 +114,41 @@ function RunRows({
                 </Link>
                 {isDestroyRun(run) ? <DestroyBadge /> : null}
               </div>
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-text-faint">
+              <p className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-text-faint">
                 <span className="font-mono" title={run.run_id}>
                   #{shortRunId(run.run_id)}
                 </span>
-                <span aria-hidden="true">|</span>
                 <span>{runKind(run).toLowerCase()}</span>
                 {run.vcs === undefined || run.vcs === null ? null : (
-                  <>
-                    <span aria-hidden="true">|</span>
-                    <RunSourceLine run={run} raised />
-                  </>
+                  <RunSourceLine run={run} raised />
                 )}
-                {workspaceNames === undefined ? null : (
-                  <>
-                    <span aria-hidden="true">|</span>
-                    <Link
-                      to={`/workspaces/${run.workspace_id}`}
-                      className="relative z-10 hover:text-accent hover:underline"
-                    >
-                      {workspaceNames.get(run.workspace_id) ?? run.workspace_id}
-                    </Link>
-                  </>
+                {workspaceName === null ? null : (
+                  <Link
+                    to={`/workspaces/${run.workspace_id}`}
+                    title={workspaceName}
+                    className="relative z-10 line-clamp-2 min-w-0 break-all hover:text-accent hover:underline"
+                  >
+                    {workspaceName}
+                  </Link>
                 )}
-                <span aria-hidden="true">|</span>
                 <ChangeCounts run={run} />
                 {superseded === null ? null : (
-                  <>
-                    <span aria-hidden="true">|</span>
-                    <Link
-                      to={runPath({
-                        run_id: superseded.run_id,
-                        workspace_id: run.workspace_id,
-                      })}
-                      className="relative z-10 hover:text-accent hover:underline"
-                    >
-                      superseded by{' '}
-                      <span className="font-mono">
-                        {superseded.sha.slice(0, 7)}
-                      </span>
-                    </Link>
-                  </>
+                  <Link
+                    to={runPath({
+                      run_id: superseded.run_id,
+                      workspace_id: run.workspace_id,
+                    })}
+                    className="relative z-10 hover:text-accent hover:underline"
+                  >
+                    superseded by{' '}
+                    <span className="font-mono">
+                      {superseded.sha.slice(0, 7)}
+                    </span>
+                  </Link>
                 )}
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-3">
               <StateBadge state={run.status} />
               <span className="text-xs whitespace-nowrap text-text-faint">
                 <RelativeTime iso={run.created_at} />
