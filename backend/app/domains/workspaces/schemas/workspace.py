@@ -251,8 +251,8 @@ class WorkspaceBase(BaseModel):
     """Exact role ARNs a plan session may assume beside its read only access, such as
     Route 53 reader roles. An apply is not limited by this list."""
     plan_secret_arns: list[str] = Field(default_factory=list, max_length=PLAN_SECRET_ARNS_MAX)
-    """Secrets Manager ARN patterns every plan may read. Empty lets a confirmable plan read
-    any secret the role can and a speculative plan none. An apply is not limited by this list."""
+    """Secrets Manager ARN patterns every plan may read. Empty lets every plan read any
+    secret the role can, for now even a speculative plan. An apply is not limited by this list."""
     auto_apply: bool = False
     """Whether a successful plan with changes applies without a confirmation, like HCP
     Terraform's `auto-apply`. Plan only and pull request runs never apply. Admin only."""
@@ -366,8 +366,8 @@ class WorkspaceUpdate(BaseModel):
     plan_assume_role_arns: Optional[list[str]] = Field(default=None, max_length=PLAN_ASSUME_ROLE_ARNS_MAX)
     """Replace the roles a plan may assume. Null or an empty list leaves none."""
     plan_secret_arns: Optional[list[str]] = Field(default=None, max_length=PLAN_SECRET_ARNS_MAX)
-    """Replace the secrets every plan may read. Null or an empty list lets a confirmable plan
-    read any secret the role can and a speculative plan none. Admin and step-up only."""
+    """Replace the secrets every plan may read. Null or an empty list lets every plan read any
+    secret the role can, for now even a speculative plan. Admin and step-up only."""
     run_api_token_scopes: Optional[list[RunApiTokenScope]] = Field(default=None, max_length=12)
     """Grant each run a short lived API token with these scopes. Admin and step-up only; null or empty revokes."""
     global_remote_state: Optional[bool] = None

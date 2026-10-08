@@ -235,10 +235,10 @@ A plan's inline document grants `secretsmanager:GetSecretValue` and `kms:Decrypt
 via Secrets Manager or SSM, so refresh and ephemeral reads of secrets and
 SecureString parameters work, on the secret ARN patterns in the workspace's
 `plan_secret_arns` (at most 10, 200 characters each, `*` and `?` allowed in the
-region and name, null or `[]` clears). With none named, a confirmable plan reads
-any secret and a speculative one (`plan_only` or `vcs_pr`, a run role check
-excepted) reads none and may decrypt nothing, so a pull request plan of a config
-that refreshes secrets needs its secrets listed. Readers and secrets together must
+region and name, null or `[]` clears). With none named, every plan reads any
+secret. For a speculative plan (`plan_only` or `vcs_pr`, a run role check excepted)
+that is transitional: `session_policy.SPECULATIVE_PLANS_READ_ANY_SECRET` flips it to
+none once every prod workspace lists its secrets through the factory (TF-86). Readers and secrets together must
 fit STS's limit, or the edit is a 422 `PLAN_SESSION_POLICY_TOO_LARGE`. Setting
 `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns`, on create or
 PATCH, takes `admin` (or a factory run token) plus step-up, since it decides what
@@ -351,11 +351,15 @@ A configuration that uses the WebbPulse provider (the Platform factory) gets HCP
 scoped API token the same way. An admin who passed step-up sets the workspace's
 `run_api_token_scopes` (a subset of `workspaces:{read,write}`, `variables:{read,write}`,
 `registry:{read,write}` and `workspaces:factory`, PATCH only, null or `[]` clears), and
-each bundle of a non-speculative run then carries `api`
-(`app/domains/runs/api_credentials.py`): a `wpk_` key of kind `run_api` with the run as
-its subject and the workspace in its metadata, lasting its phase's timeout. A
-`plan_only` or `vcs_pr` run gets none. The plan phase's key carries the grant less its
-write scopes and is revoked by the plan's phase result, so only the apply writes. Its
+each bundle then carries `api` (`app/domains/runs/api_credentials.py`): a `wpk_` key of
+kind `run_api` with the run as its subject and the workspace in its metadata, lasting
+its phase's timeout. The plan phase's key carries the grant less its write scopes and
+is revoked by the plan's phase result, so only the apply writes. A `plan_only` or
+`vcs_pr` run always gets that read-only plan key, like HCP's speculative plans. A grant
+stored before `workspaces:factory` existed (no `run_api_token_scopes_version`) that
+holds every write scope gains `workspaces:factory` on its first mint, once and
+conditionally, since write scopes alone reached every workspace then; any admin change
+of the grant stamps the version, so a grant set since is never touched. Its
 scopes are the workspace's current grant intersected with the grant it was minted
 under, read on every request (`key_owner_scopes`), so the registry function reads
 `workspaces` too. The run keeps its hash in `api_token_hash`, and a newer bundle, the
@@ -369,8 +373,8 @@ project, connecting a registry module) is refused the same way, and listings sho
 its own workspace. It never passes step-up (403 `RUN_TOKEN_STEP_UP_REFUSED`), so it
 cannot set sensitive variables or change a run role. `workspaces:factory` lifts all of
 that, for the WebbPulse-Platform workspace whose factory manages every other workspace,
-and survives into the plan phase so its refresh can read them; it adds no write scope
-by itself. Behind the access gate the runs function reads the
+and survives into the plan phase and speculative plans so their refresh can read them;
+it adds no write scope by itself. Behind the access gate the runs function reads the
 gate's `x-origin-verify` from SSM (`ORIGIN_VERIFY_PARAMETER`) into the bundle; the
 runner task role never holds that read. The runner exports `WEBBPULSE_TF_HOST`,
 `WEBBPULSE_TF_TOKEN` and `WEBBPULSE_TF_ORIGIN_VERIFY` to every subcommand, after
