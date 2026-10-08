@@ -78,19 +78,18 @@ def render_outputs(workspace_id: str, version_id: str | None, found: list[dict[s
     }
 
 
-@router.get(
-    "/workspaces/{workspace_id}/outputs",
-    response_model=WorkspaceOutputs,
-    dependencies=[Depends(scopes(WORKSPACES_READ, STATE_READ_OUTPUTS))],
-)
-def read_workspace_outputs(request: Request, response: Response, workspace_id: str = WorkspaceId) -> dict[str, Any]:
-    """The non-sensitive outputs of a workspace's current state.
+def outputs_reader(
+    request: Request,
+    workspace_id: str = WorkspaceId,
+    _authorized: Any = Depends(scopes(WORKSPACES_READ, STATE_READ_OUTPUTS)),
+) -> dict[str, Any]:
+    """The dependency that guards an outputs read, returning the source workspace.
 
-    A run's API token reads only a workspace that is its own, shares globally, or
-    names the run's workspace as a consumer; anything else is a 403
-    `REMOTE_STATE_NOT_SHARED`. A workspace with no state yet answers an empty list.
+    It requires `workspaces:read` and `state:read-outputs`, answers 404 for an
+    unknown workspace, and refuses a run's API token with a 403
+    `REMOTE_STATE_NOT_SHARED` unless the source is its own workspace, shares
+    globally, or names the run's workspace as a consumer.
     """
-    response.headers["Cache-Control"] = "no-store"
     try:
         source = service.get_workspace(workspace_id)
     except service.WorkspaceNotFound as error:
@@ -98,6 +97,25 @@ def read_workspace_outputs(request: Request, response: Response, workspace_id: s
     consumer = caller_workspace_id(request)
     if consumer is not None and not shares_with(source, consumer):
         raise _not_shared()
+    return source
+
+
+@router.get(
+    "/workspaces/{workspace_id}/outputs",
+    response_model=WorkspaceOutputs,
+)
+def read_workspace_outputs(
+    response: Response,
+    workspace_id: str = WorkspaceId,
+    _source: dict[str, Any] = Depends(outputs_reader),
+) -> dict[str, Any]:
+    """The non-sensitive outputs of a workspace's current state.
+
+    A run's API token reads only a workspace that is its own, shares globally, or
+    names the run's workspace as a consumer; anything else is a 403
+    `REMOTE_STATE_NOT_SHARED`. A workspace with no state yet answers an empty list.
+    """
+    response.headers["Cache-Control"] = "no-store"
     try:
         version_id = tfe_state.current_version_id(workspace_id)
         found = tfe_state.outputs(workspace_id, version_id) if version_id else []
@@ -116,6 +134,7 @@ def read_workspace_outputs(request: Request, response: Response, workspace_id: s
 __all__ = [
     "REMOTE_STATE_NOT_SHARED_CODE",
     "caller_workspace_id",
+    "outputs_reader",
     "read_workspace_outputs",
     "render_outputs",
     "router",
