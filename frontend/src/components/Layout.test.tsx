@@ -36,6 +36,31 @@ describe('Layout', () => {
     ).toHaveAttribute('href', '#main');
   });
 
+  it.each(['/projects', '/projects/proj-1'])(
+    'marks Projects active in the rail and the phone nav on %s',
+    (path) => {
+      renderWithAuth(
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/projects" element={<p>Projects page</p>} />
+            <Route path="/projects/:projectId" element={<p>Project page</p>} />
+          </Route>
+        </Routes>,
+        signedInAuthClient(),
+        [path]
+      );
+      const links = screen.getAllByRole('link', { name: 'Projects' });
+      expect(links).toHaveLength(2);
+      for (const link of links) {
+        expect(link).toHaveAttribute('href', '/projects');
+        expect(link).toHaveAttribute('aria-current', 'page');
+      }
+      for (const link of screen.getAllByRole('link', { name: 'Workspaces' })) {
+        expect(link).not.toHaveAttribute('aria-current');
+      }
+    }
+  );
+
   it('keeps the GitHub settings link from a non admin', () => {
     renderWithAuth(
       <Routes>

@@ -23,10 +23,9 @@ export function RunSourceLine({
   return (
     <span
       data-testid="run-source"
-      className="inline-flex flex-wrap items-center gap-x-1.5"
+      className="inline-flex flex-wrap items-center gap-x-3"
     >
       <span>{source.trigger}</span>
-      <span aria-hidden="true">|</span>
       <a
         href={source.commitUrl}
         target="_blank"
@@ -38,17 +37,14 @@ export function RunSourceLine({
         {source.shortSha}
       </a>
       {source.prUrl === null ? null : (
-        <>
-          <span aria-hidden="true">|</span>
-          <a
-            href={source.prUrl}
-            target="_blank"
-            rel="noreferrer"
-            className={linkClass}
-          >
-            PR #{source.prNumber}
-          </a>
-        </>
+        <a
+          href={source.prUrl}
+          target="_blank"
+          rel="noreferrer"
+          className={linkClass}
+        >
+          PR #{source.prNumber}
+        </a>
       )}
     </span>
   );

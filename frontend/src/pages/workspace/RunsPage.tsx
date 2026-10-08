@@ -108,9 +108,9 @@ export function RunsPage(): React.ReactElement {
 /** The card for the run on top of the list. */
 function CurrentRunCard({ run }: { run: Run }): React.ReactElement {
   return (
-    <article className="relative flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-line border-l-4 border-l-accent bg-panel px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+    <article className="relative flex flex-col gap-2 rounded-lg border border-line border-l-4 border-l-accent bg-panel px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+      <div className="min-w-0 sm:flex-1">
+        <div className="flex min-w-0 items-center gap-2">
           <span className="rounded border border-accent-line bg-accent-soft px-1.5 text-[10px] font-semibold tracking-wide text-accent uppercase">
             Current
           </span>
@@ -121,18 +121,18 @@ function CurrentRunCard({ run }: { run: Run }): React.ReactElement {
             {runTitle(run)}
           </Link>
         </div>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-text-faint">
-          <span className="font-mono">#{run.run_id}</span>
-          <span aria-hidden="true">|</span>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-text-faint">
+          <span className="font-mono break-all">#{run.run_id}</span>
           <span>{run.plan_only ? 'plan only run' : 'plan and apply run'}</span>
-          <span aria-hidden="true">|</span>
           <span className="font-mono">{changeSummary(run)}</span>
         </p>
       </div>
-      <StateBadge state={run.status} />
-      <span className="text-xs whitespace-nowrap text-text-faint">
-        <RelativeTime iso={run.created_at} />
-      </span>
+      <div className="flex shrink-0 items-center gap-3">
+        <StateBadge state={run.status} />
+        <span className="text-xs whitespace-nowrap text-text-faint">
+          <RelativeTime iso={run.created_at} />
+        </span>
+      </div>
     </article>
   );
 }
