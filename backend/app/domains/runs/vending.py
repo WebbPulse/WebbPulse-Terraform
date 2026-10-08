@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from ...common.composition.settings import Settings
-from . import session_policy
+from ...common.runs import session_policy
 from .schemas.run import Phase
 
 VENDING_SESSION_NAME: Final = "webbpulse-terraform-vending"
@@ -156,9 +156,10 @@ def run_role_request(
     duration_seconds: int,
     workspace_name: str,
     plan_assume_role_arns: Sequence[str] = (),
+    plan_secret_arns: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """The `AssumeRole` request for a workspace's run role in one phase."""
-    policy = session_policy.for_phase(phase, plan_assume_role_arns)
+    policy = session_policy.for_phase(phase, plan_assume_role_arns, plan_secret_arns=plan_secret_arns)
     request: dict[str, Any] = {
         "RoleArn": role_arn,
         "RoleSessionName": run_role_session_name(run_id, phase, workspace_name),
@@ -194,11 +195,13 @@ def vend(
     workspace_name: str,
     plan_assume_role_arns: Sequence[str] = (),
     plan_role_arn: str = "",
+    plan_secret_arns: Sequence[str] | None = None,
 ) -> tuple[VendedCredentials, VendedCredentials]:
     """The provider and state credentials for one phase of one run.
 
-    `plan_assume_role_arns` are the reader roles a plan session may assume; an
-    apply ignores them. `workspace_name` is carried in the run role's session name.
+    `plan_assume_role_arns` are the reader roles a plan session may assume, and
+    `plan_secret_arns` the secrets it may read (any for None, none when empty);
+    an apply ignores both. `workspace_name` is carried in the run role's session name.
     A `plan_role_arn` is what a plan's provider keys come from; the run role is
     then only assumed to prove its trust.
 
@@ -233,6 +236,7 @@ def vend(
                 duration_seconds=PROOF_DURATION_SECONDS if separate else settings.run_credentials_duration_seconds,
                 workspace_name=workspace_name,
                 plan_assume_role_arns=() if separate else plan_assume_role_arns,
+                plan_secret_arns=[] if separate else plan_secret_arns,
             )
         )
     except Exception as error:
@@ -250,6 +254,7 @@ def vend(
                         duration_seconds=settings.run_credentials_duration_seconds,
                         workspace_name=workspace_name,
                         plan_assume_role_arns=plan_assume_role_arns,
+                        plan_secret_arns=plan_secret_arns,
                     )
                 )
             )

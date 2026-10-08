@@ -41,6 +41,7 @@ from ...common.db.tables import (
     RUNS_COLLECTION,
     SEMAPHORE_RUN_ID,
 )
+from ...common.runs import session_policy
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
@@ -1592,6 +1593,20 @@ def _plan_assume_role_arns(workspace: Mapping[str, Any]) -> list[str]:
     return [str(arn) for arn in workspace.get("plan_assume_role_arns") or [] if str(arn).strip()]
 
 
+def _plan_secret_arns(run: Mapping[str, Any], workspace: Mapping[str, Any]) -> list[str] | None:
+    """The secrets this run's plan may read, from the workspace's list and whether the run is speculative.
+
+    A `plan_only` run and a pull request plan are speculative: they never apply. A run
+    role check is not, since it plans the workspace's own configuration to prove a role
+    the workspace is about to apply with.
+    """
+    named = [str(arn) for arn in workspace.get("plan_secret_arns") or [] if str(arn).strip()]
+    speculative = not run.get("run_role_check") and (
+        bool(run.get("plan_only")) or str(run.get("source", "")) == "vcs_pr"
+    )
+    return session_policy.plan_secret_arns_for(named, speculative=speculative)
+
+
 def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Settings | None = None) -> dict[str, Any]:
     """A fresh pair of provider and state keys for a run still in `phase`.
 
@@ -1620,6 +1635,7 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         workspace_name=str(workspace.get("name", "")),
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
         plan_role_arn=_plan_role_arn(run, workspace),
+        plan_secret_arns=_plan_secret_arns(run, workspace),
     )
     identity = _workload_identity(
         workspace_reads.resolved_variables(workspace_id, settings=resolved)["env"],
@@ -1715,6 +1731,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         workspace_name=str(workspace.get("name", "")),
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
         plan_role_arn=plan_role_arn,
+        plan_secret_arns=_plan_secret_arns(run, workspace),
     )
     identity = _workload_identity(
         variables["env"], workspace_id, str(workspace.get("name", "")), run_id, phase, settings=resolved

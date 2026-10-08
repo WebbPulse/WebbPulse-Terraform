@@ -44,6 +44,19 @@ It still leaves a 64 character role name a 45 character path.
 """
 
 
+PLAN_SECRET_ARN_PATTERN: Final = re.compile(
+    r"^arn:aws:secretsmanager:(\*|[a-z]{2}(-[a-z]+)+-[0-9]):[0-9]{12}:secret:[A-Za-z0-9/_+=.@*?-]+$"
+)
+"""A Secrets Manager ARN pattern pinned to one account. The region and the name may hold wildcards."""
+
+PLAN_SECRET_ARNS_MAX: Final = 10
+"""How many secret ARN patterns one workspace may name."""
+
+PLAN_SECRET_ARN_MAX_LENGTH: Final = 200
+"""The longest secret ARN pattern accepted. Together with the reader roles, the list
+must still fit the plan's session policy, which the create and the edit check."""
+
+
 def normalize_working_directory(value: str) -> str:
     """A working directory as a clean relative path, `""` for the repository root.
 
@@ -125,6 +138,28 @@ def validate_plan_assume_role_arns(values: list[str]) -> list[str]:
             )
         if arn in cleaned:
             raise ValueError(f"plan_assume_role_arns repeats {arn}")
+        cleaned.append(arn)
+    return cleaned
+
+
+def validate_plan_secret_arns(values: list[str]) -> list[str]:
+    """Trimmed Secrets Manager ARN patterns, each pinned to one account, refusing oversized entries and repeats.
+
+    These bound which secret values a plan may read, so a pattern reaching past one
+    account would hand a speculative plan more than the person meant.
+    """
+    cleaned: list[str] = []
+    for value in values:
+        arn = value.strip()
+        if len(arn) > PLAN_SECRET_ARN_MAX_LENGTH:
+            raise ValueError(f"a plan secret ARN is longer than {PLAN_SECRET_ARN_MAX_LENGTH} characters")
+        if not PLAN_SECRET_ARN_PATTERN.match(arn):
+            raise ValueError(
+                "plan_secret_arns entries must be Secrets Manager ARNs of the form "
+                "arn:aws:secretsmanager:<region or *>:<12 digit account id>:secret:<name pattern>"
+            )
+        if arn in cleaned:
+            raise ValueError(f"plan_secret_arns repeats {arn}")
         cleaned.append(arn)
     return cleaned
 
@@ -215,6 +250,9 @@ class WorkspaceBase(BaseModel):
     plan_assume_role_arns: list[str] = Field(default_factory=list, max_length=PLAN_ASSUME_ROLE_ARNS_MAX)
     """Exact role ARNs a plan session may assume beside its read only access, such as
     Route 53 reader roles. An apply is not limited by this list."""
+    plan_secret_arns: list[str] = Field(default_factory=list, max_length=PLAN_SECRET_ARNS_MAX)
+    """Secrets Manager ARN patterns every plan may read. Empty lets a confirmable plan read
+    any secret the role can and a speculative plan none. An apply is not limited by this list."""
     auto_apply: bool = False
     """Whether a successful plan with changes applies without a confirmation, like HCP
     Terraform's `auto-apply`. Plan only and pull request runs never apply. Admin only."""
@@ -251,6 +289,12 @@ class WorkspaceCreate(WorkspaceBase):
         """Accept exact role ARNs only."""
         return validate_plan_assume_role_arns(value)
 
+    @field_validator("plan_secret_arns")
+    @classmethod
+    def _validate_plan_secret_arns(cls, value: list[str]) -> list[str]:
+        """Accept account pinned Secrets Manager ARN patterns only."""
+        return validate_plan_secret_arns(value)
+
     @field_validator("plan_role_arn")
     @classmethod
     def _validate_plan_role_arn(cls, value: Optional[str]) -> Optional[str]:
@@ -270,6 +314,7 @@ CLEARABLE_WORKSPACE_FIELDS: Final = (
     "speculative_plans",
     "file_triggers_enabled",
     "plan_assume_role_arns",
+    "plan_secret_arns",
     "run_api_token_scopes",
     "project_id",
     "global_remote_state",
@@ -320,6 +365,9 @@ class WorkspaceUpdate(BaseModel):
     file_triggers_enabled: Optional[bool] = None
     plan_assume_role_arns: Optional[list[str]] = Field(default=None, max_length=PLAN_ASSUME_ROLE_ARNS_MAX)
     """Replace the roles a plan may assume. Null or an empty list leaves none."""
+    plan_secret_arns: Optional[list[str]] = Field(default=None, max_length=PLAN_SECRET_ARNS_MAX)
+    """Replace the secrets every plan may read. Null or an empty list lets a confirmable plan
+    read any secret the role can and a speculative plan none. Admin and step-up only."""
     run_api_token_scopes: Optional[list[RunApiTokenScope]] = Field(default=None, max_length=12)
     """Grant each run a short lived API token with these scopes. Admin and step-up only; null or empty revokes."""
     global_remote_state: Optional[bool] = None
@@ -358,6 +406,12 @@ class WorkspaceUpdate(BaseModel):
     def _validate_plan_assume_role_arns(cls, value: Optional[list[str]]) -> Optional[list[str]]:
         """Accept exact role ARNs only."""
         return None if value is None else validate_plan_assume_role_arns(value)
+
+    @field_validator("plan_secret_arns")
+    @classmethod
+    def _validate_plan_secret_arns(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        """Accept account pinned Secrets Manager ARN patterns only."""
+        return None if value is None else validate_plan_secret_arns(value)
 
     @field_validator("run_api_token_scopes")
     @classmethod

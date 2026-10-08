@@ -19,17 +19,20 @@ applies the writers.
 
 A plan also reads secret values, which `ReadOnlyAccess` withholds: it lacks
 `secretsmanager:GetSecretValue` and `kms:Decrypt`. Refreshing a secret version
-or a SecureString parameter, and any ephemeral secret read, needs both, so every
-plan session carries an inline grant for them, always rather than per workspace.
-A plan must refresh what its configuration manages to say anything, the grant
-reads and never writes, the run role still bounds which secrets and keys are
-reachable, and the apply session of the same workspace already holds the role's
-full rights, so an opt-in would add configuration without narrowing anything
-real. `kms:Decrypt` is limited by `kms:ViaService` to Secrets Manager and SSM,
-so the plan cannot decrypt arbitrary ciphertext directly. SSM reads need no
-statement: `ReadOnlyAccess` already holds `ssm:Get*`. The secret statements and
-the reader role statement share one inline document.
+or a SecureString parameter, and any ephemeral secret read, needs both, so a plan
+session carries an inline grant for them. `kms:Decrypt` is limited by
+`kms:ViaService` to Secrets Manager and SSM, so the plan cannot decrypt arbitrary
+ciphertext directly. SSM reads need no statement: `ReadOnlyAccess` already holds
+`ssm:Get*`. The secret statements and the reader role statement share one inline
+document.
 
+Which secrets the grant reaches depends on the run. A workspace may name secret
+ARN patterns in `plan_secret_arns`; when it does, every plan of it reads those
+secrets and no others. When it names none, a confirmable plan reads any secret
+the run role can, because its apply holds the role's full rights anyway, while a
+speculative plan, a `plan_only` run or a pull request plan, reads none: it runs
+code nobody has reviewed and never applies, so the role's reach is not a bound
+on it worth trusting.
 State is not the run role's business. The S3 backend gets its own credentials,
 from the control plane's state role narrowed by `state_policy` to one workspace's
 prefix, so a run can reach its own state and nothing else in the bucket, and a
@@ -41,9 +44,10 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, Literal
 
-from .schemas.run import Phase
+Phase = Literal["plan", "apply"]
+"""A run phase, the same values as the runs domain's own `Phase`."""
 
 PLAN_SESSION_POLICY_ARNS: Final = ("arn:aws:iam::aws:policy/ReadOnlyAccess",)
 """The managed policies a plan's workspace session is limited to.
@@ -69,22 +73,42 @@ class SessionPolicy:
     policy_arns: tuple[str, ...]
 
 
-PLAN_SECRET_READ_STATEMENTS: Final[tuple[dict[str, Any], ...]] = (
-    {
-        "Sid": "PlanReadSecretValues",
-        "Effect": "Allow",
-        "Action": "secretsmanager:GetSecretValue",
-        "Resource": "arn:aws:secretsmanager:*:*:secret:*",
-    },
-    {
-        "Sid": "PlanDecryptViaSecretsAndSsm",
-        "Effect": "Allow",
-        "Action": "kms:Decrypt",
-        "Resource": "*",
-        "Condition": {"StringLike": {"kms:ViaService": ["secretsmanager.*.amazonaws.com", "ssm.*.amazonaws.com"]}},
-    },
-)
-"""The statements every plan session carries so refresh can read secret values and SecureString parameters."""
+ANY_SECRET_ARN: Final = "arn:aws:secretsmanager:*:*:secret:*"
+"""The secrets a confirmable plan of a workspace with no `plan_secret_arns` may read."""
+
+
+def plan_secret_statements(secret_arns: Sequence[str] | None) -> tuple[dict[str, Any], ...]:
+    """The statements letting a plan read secret values: `secret_arns`, any secret for None, nothing when empty."""
+    if secret_arns is None:
+        resource: str | list[str] = ANY_SECRET_ARN
+    else:
+        arns = list(dict.fromkeys(arn for arn in secret_arns if arn))
+        if not arns:
+            return ()
+        resource = arns
+    return (
+        {
+            "Sid": "PlanReadSecretValues",
+            "Effect": "Allow",
+            "Action": "secretsmanager:GetSecretValue",
+            "Resource": resource,
+        },
+        {
+            "Sid": "PlanDecryptViaSecretsAndSsm",
+            "Effect": "Allow",
+            "Action": "kms:Decrypt",
+            "Resource": "*",
+            "Condition": {"StringLike": {"kms:ViaService": ["secretsmanager.*.amazonaws.com", "ssm.*.amazonaws.com"]}},
+        },
+    )
+
+
+def plan_secret_arns_for(secret_arns: Sequence[str], *, speculative: bool) -> list[str] | None:
+    """The secrets one plan may read: the workspace's list, else any when confirmable and none when speculative."""
+    named = [arn for arn in secret_arns if arn]
+    if named:
+        return named
+    return [] if speculative else None
 
 
 def plan_assume_statement(role_arns: Sequence[str]) -> dict[str, Any] | None:
@@ -100,12 +124,18 @@ def plan_assume_statement(role_arns: Sequence[str]) -> dict[str, Any] | None:
     }
 
 
-def plan_document(role_arns: Sequence[str] = ()) -> dict[str, Any]:
-    """The inline document of a plan session: the secret reads, plus `sts:AssumeRole` on `role_arns` when any."""
+def plan_document(role_arns: Sequence[str] = (), secret_arns: Sequence[str] | None = None) -> dict[str, Any] | None:
+    """The inline document of a plan session, or None when it grants nothing.
+
+    It holds the secret reads `plan_secret_statements` gives `secret_arns`, plus
+    `sts:AssumeRole` on `role_arns` when any.
+    """
+    statements = [dict(statement) for statement in plan_secret_statements(secret_arns)]
     assume = plan_assume_statement(role_arns)
-    statements = [dict(statement) for statement in PLAN_SECRET_READ_STATEMENTS]
     if assume is not None:
         statements.append(assume)
+    if not statements:
+        return None
     return {"Version": "2012-10-17", "Statement": statements}
 
 
@@ -120,19 +150,32 @@ def plaintext_size(policy: SessionPolicy) -> int:
     return inline + sum(len(arn) for arn in policy.policy_arns)
 
 
-def for_phase(phase: Phase, plan_assume_role_arns: Sequence[str] = ()) -> SessionPolicy:
+def for_phase(
+    phase: Phase, plan_assume_role_arns: Sequence[str] = (), *, plan_secret_arns: Sequence[str] | None = None
+) -> SessionPolicy:
     """The workspace session policy for one phase.
 
-    A plan is `ReadOnlyAccess` plus an inline document allowing secret value
-    reads and, when the workspace names any, `sts:AssumeRole` on its reader
-    roles. An apply is the role itself, and the list does not apply to it.
+    A plan is `ReadOnlyAccess` plus an inline document allowing reads of the
+    secrets `plan_secret_arns` names (any for None, none when empty) and, when
+    the workspace names any, `sts:AssumeRole` on its reader roles. An apply is
+    the role itself, and neither list applies to it.
     """
     if phase == "plan":
         return SessionPolicy(
-            document=plan_document(plan_assume_role_arns),
+            document=plan_document(plan_assume_role_arns, plan_secret_arns),
             policy_arns=PLAN_SESSION_POLICY_ARNS,
         )
     return SessionPolicy(document=None, policy_arns=())
+
+
+def plan_policy_fits(plan_assume_role_arns: Sequence[str], plan_secret_arns: Sequence[str]) -> bool:
+    """Whether every plan session of a workspace with these lists stays within `SESSION_POLICY_PLAINTEXT_LIMIT`."""
+    candidates = [list(plan_secret_arns)] if any(plan_secret_arns) else [None, []]
+    return all(
+        plaintext_size(for_phase("plan", plan_assume_role_arns, plan_secret_arns=secrets))
+        <= SESSION_POLICY_PLAINTEXT_LIMIT
+        for secrets in candidates
+    )
 
 
 def state_prefix(workspace_id: str) -> str:
@@ -208,9 +251,9 @@ def state_policy(state_bucket: str, workspace_id: str, kms_key_arn: str, phase: 
 
 
 __all__ = [
+    "ANY_SECRET_ARN",
     "LOCK_FILE_SUFFIX",
     "PLAN_SESSION_POLICY_ARNS",
-    "PLAN_SECRET_READ_STATEMENTS",
     "SESSION_POLICY_PLAINTEXT_LIMIT",
     "SessionPolicy",
     "encode",
@@ -218,6 +261,9 @@ __all__ = [
     "plaintext_size",
     "plan_assume_statement",
     "plan_document",
+    "plan_policy_fits",
+    "plan_secret_arns_for",
+    "plan_secret_statements",
     "state_policy",
     "state_prefix",
 ]
