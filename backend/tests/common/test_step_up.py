@@ -21,11 +21,14 @@ from fastapi.testclient import TestClient
 from webbpulse.identity.scopes import STEP_UP_REQUIRED_ERROR_CODE
 
 from app.common.core.auth import ALL_SCOPES, STEP_UP_MAX_AGE_SECONDS
-from tests.conftest import mint_key, person_headers, seed_user
+from tests.conftest import WORKSPACE_PAYLOAD, mint_key, person_headers, seed_user
 
 PERSON = "user-step-up"
 NEW_ROLE = "arn:aws:iam::870550636948:role/webbpulse-terraform-test-other"
 MISSING_KEY_ID = "0" * 64
+PLAN_ROLE = "arn:aws:iam::870550636948:role/webbpulse-terraform-test-plan"
+READER = "arn:aws:iam::488386929690:role/WebbPulse-Terraform-Route53-Reader"
+PLAN_SECRET = "arn:aws:secretsmanager:us-west-2:870550636948:secret:example-prod/app-*"
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,14 @@ GATED: dict[str, Callable[[TestClient, dict[str, Any], dict[str, Any]], Call]] =
     "change the run role": lambda _c, ws, _r: Call("PATCH", _workspace_path(ws), {"run_role_arn": NEW_ROLE}),
     "clear the run role": lambda _c, ws, _r: Call("PATCH", _workspace_path(ws), {"run_role_arn": None}),
     "stage a run role": lambda _c, ws, _r: Call("PATCH", _workspace_path(ws), {"pending_run_role_arn": NEW_ROLE}),
+    "set the plan role": lambda _c, ws, _r: Call("PATCH", _workspace_path(ws), {"plan_role_arn": PLAN_ROLE}),
+    "name plan reader roles": lambda _c, ws, _r: Call(
+        "PATCH", _workspace_path(ws), {"plan_assume_role_arns": [READER]}
+    ),
+    "name plan secrets": lambda _c, ws, _r: Call("PATCH", _workspace_path(ws), {"plan_secret_arns": [PLAN_SECRET]}),
+    "create a workspace with a run role": lambda *_: Call(
+        "POST", "/api/v1/workspaces", {**WORKSPACE_PAYLOAD, "name": "stepped-up"}
+    ),
     "grant run API token scopes": lambda _c, ws, _r: Call(
         "PATCH", _workspace_path(ws), {"run_api_token_scopes": ["workspaces:read"]}
     ),

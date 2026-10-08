@@ -19,6 +19,8 @@ WRITE_GRANT = ["workspaces:read", "workspaces:write", "variables:read", "variabl
 FACTORY_GRANT = [*WRITE_GRANT, "registry:write", "workspaces:factory"]
 ORG = "/api/v2/organizations/WebbPulse"
 NEW_ROLE = "arn:aws:iam::870550636948:role/webbpulse-terraform-test-other"
+READER = "arn:aws:iam::488386929690:role/WebbPulse-Terraform-Route53-Reader"
+PLAN_SECRET = "arn:aws:secretsmanager:us-west-2:870550636948:secret:example-prod/app-*"
 
 
 @pytest.fixture
@@ -168,6 +170,32 @@ def test_the_factory_grant_reaches_every_workspace(
         listed = client.get("/api/v1/workspaces").json()["items"]
 
     assert len(listed) == 3
+
+
+def test_the_factory_sets_what_another_workspaces_plans_reach(
+    app, api_origin, auth_client, created_run, runner_client, other_workspace
+):
+    """The factory's token names another workspace's plan readers and plan secrets."""
+    token = _token(auth_client, runner_client, created_run, FACTORY_GRANT)
+    access = {"plan_assume_role_arns": [READER], "plan_secret_arns": [PLAN_SECRET]}
+
+    with _as(app, token) as client:
+        response = client.patch(_path(other_workspace["workspace_id"]), json=access)
+
+    assert response.status_code == 200, response.text
+    assert {field: response.json()[field] for field in access} == access
+
+
+def test_a_run_token_without_the_factory_grant_cannot_set_plan_access(
+    app, api_origin, auth_client, created_run, runner_client
+):
+    """Plan readers and plan secrets take admin or the factory grant, even on the run's own workspace."""
+    token = _token(auth_client, runner_client, created_run, WRITE_GRANT)
+
+    with _as(app, token) as client:
+        for access in ({"plan_assume_role_arns": [READER]}, {"plan_secret_arns": [PLAN_SECRET]}):
+            response = client.patch(_path(created_run["workspace_id"]), json=access)
+            assert response.status_code == 403, response.text
 
 
 def test_a_revoked_factory_grant_binds_a_live_token(

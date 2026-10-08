@@ -1288,7 +1288,9 @@ export interface paths {
          *     `PROJECT_NOT_FOUND`.
          *
          *     Creating a workspace with `auto_apply` on lets anyone who can start a run apply
-         *     it, so it takes `admin` and the step-up, as turning it on later does.
+         *     it, so it takes `admin` and the step-up, as turning it on later does. Naming a
+         *     plan role, reader roles or plan secrets takes the same, as setting them later does,
+         *     and naming a run role takes the step-up.
          */
         post: operations["create_workspace_api_v1_workspaces_post"];
         delete?: never;
@@ -1339,8 +1341,15 @@ export interface paths {
          *     Connecting another `vcs_repo` resolves it through the GitHub App the way the
          *     create does, and a null disconnects the repository.
          *
-         *     Changing either run role field is the workspace's AWS connection, so a person has to
-         *     have signed in within the step-up window; resending the stored value is not a change.
+         *     Changing a run role, the plan role or the reader roles is the workspace's AWS
+         *     connection, so a person has to have signed in within the step-up window; resending
+         *     the stored value is not a change.
+         *
+         *     Changing `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns` decides what
+         *     every plan, a pull request plan included, may reach, so it takes `admin`, or a run
+         *     token holding the factory grant, as well as the step-up. The reader roles and the
+         *     plan secrets together must fit the plan's session policy, or the edit is a 422
+         *     `PLAN_SESSION_POLICY_TOO_LARGE`.
          *
          *     Changing `run_api_token_scopes` hands every later run of this workspace a key on
          *     this API, so it takes `admin` as well as the step-up.
@@ -3872,6 +3881,8 @@ export interface components {
             plan_assume_role_arns?: string[];
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Plan Secret Arns */
+            plan_secret_arns?: string[];
             /**
              * Project Id
              * @default prj-default
@@ -3952,6 +3963,8 @@ export interface components {
             plan_assume_role_arns?: string[];
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Plan Secret Arns */
+            plan_secret_arns?: string[];
             /** Project Id */
             project_id?: string | null;
             /** Run Role Arn */
@@ -4028,6 +4041,8 @@ export interface components {
             plan_assume_role_arns?: string[];
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Plan Secret Arns */
+            plan_secret_arns?: string[];
             /**
              * Project Id
              * @default prj-default
@@ -4141,6 +4156,8 @@ export interface components {
             plan_assume_role_arns?: string[] | null;
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Plan Secret Arns */
+            plan_secret_arns?: string[] | null;
             /** Project Id */
             project_id?: string | null;
             /** Remote State Consumer Ids */

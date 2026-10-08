@@ -217,10 +217,8 @@ POST gives the same answer and stamps `run_role_checked_at` and
 Credentials are vended per phase by the runs function when it serves the bundle
 (`app/domains/runs/vending.py`): the runs function role assumes the vending role,
 which assumes the workspace's run role (external id = workspace id; a plan passes
-`ReadOnlyAccess` as its session policy ARN plus an inline document granting
-`secretsmanager:GetSecretValue` and `kms:Decrypt` via Secrets Manager or SSM, so
-refresh and ephemeral reads of secrets and SecureString parameters work, an apply
-none; the session name is
+`ReadOnlyAccess` as its session policy ARN plus an inline document built by
+`app/common/runs/session_policy.py`, an apply none; the session name is
 `<run>-<phase>@<workspace name>`, cut to 64) and the state role
 `<prefix>-run-state`, narrowed by `session_policy.state_policy` to
 `workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last
@@ -232,6 +230,19 @@ The staging e2e run role (`terraform/e2e_run_role.tf`) trusts only sessions name
 once the run has left that phase or its task token no longer resolves.
 A refused run role is a 409 `RUN_ROLE_ASSUME_FAILED` on the bundle, which the
 runner reports as `AssumeRoleFailed`.
+
+A plan's inline document grants `secretsmanager:GetSecretValue` and `kms:Decrypt`
+via Secrets Manager or SSM, so refresh and ephemeral reads of secrets and
+SecureString parameters work, on the secret ARN patterns in the workspace's
+`plan_secret_arns` (at most 10, 200 characters each, `*` and `?` allowed in the
+region and name, null or `[]` clears). With none named, a confirmable plan reads
+any secret and a speculative one (`plan_only` or `vcs_pr`, a run role check
+excepted) reads none and may decrypt nothing, so a pull request plan of a config
+that refreshes secrets needs its secrets listed. Readers and secrets together must
+fit STS's limit, or the edit is a 422 `PLAN_SESSION_POLICY_TOO_LARGE`. Setting
+`plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns`, on create or
+PATCH, takes `admin` (or a factory run token) plus step-up, since it decides what
+every plan reaches.
 
 `ReadOnlyAccess` holds no `sts:AssumeRole`, so a plan whose providers assume
 roles elsewhere (Route 53 writers in a zone account, say) is denied. A workspace

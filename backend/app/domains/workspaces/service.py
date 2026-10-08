@@ -236,6 +236,7 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "file_triggers_enabled": bool(payload.get("file_triggers_enabled", True)),
         "auto_apply": bool(payload.get("auto_apply", False)),
         "plan_assume_role_arns": list(payload.get("plan_assume_role_arns") or []),
+        "plan_secret_arns": list(payload.get("plan_secret_arns") or []),
         "created_at": now_iso(),
     }
     if project_id != DEFAULT_PROJECT_ID:

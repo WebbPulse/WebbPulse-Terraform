@@ -28,12 +28,14 @@ from ...common.core.auth import (
     WORKSPACES_WRITE,
     bound_workspace_id,
     ensure_recent_auth,
+    holds_factory_grant,
     run_api_workspace_binding,
     scopes,
     sudo,
 )
 from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
+from ...common.runs import session_policy
 from ...common.workspaces import hcl, run_role_check
 from ...common.workspaces.projects import PROJECT_ID_PATTERN
 from . import quick_setup, service, state_versions
@@ -81,8 +83,14 @@ GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
 WORKSPACE_DELETE_EVENT = "workspaces.workspace.delete"
 """The log event a workspace delete is recorded under, naming the workspace and the mode."""
 
-RUN_ROLE_FIELDS = ("run_role_arn", "pending_run_role_arn")
-"""The PATCH fields that change which AWS role a workspace's runs assume, and so need a step-up."""
+PLAN_ACCESS_FIELDS = ("plan_role_arn", "plan_assume_role_arns", "plan_secret_arns")
+"""The fields that set what a plan, a pull request plan included, may reach, admin and step-up only."""
+
+RUN_ROLE_FIELDS = ("run_role_arn", "pending_run_role_arn", "plan_role_arn", "plan_assume_role_arns")
+"""The PATCH fields that change which AWS roles a workspace's runs assume, and so need a step-up."""
+
+PLAN_SESSION_POLICY_TOO_LARGE_CODE = "PLAN_SESSION_POLICY_TOO_LARGE"
+"""The stable code a create or edit refuses with when reader roles and secrets overflow the plan session policy."""
 
 RUN_API_TOKEN_FIELD = "run_api_token_scopes"
 """The PATCH field that grants a workspace's runs control plane API scopes, admin and step-up only."""
@@ -275,11 +283,17 @@ def create_workspace(
     `PROJECT_NOT_FOUND`.
 
     Creating a workspace with `auto_apply` on lets anyone who can start a run apply
-    it, so it takes `admin` and the step-up, as turning it on later does.
+    it, so it takes `admin` and the step-up, as turning it on later does. Naming a
+    plan role, reader roles or plan secrets takes the same, as setting them later does,
+    and naming a run role takes the step-up.
     """
     if payload.auto_apply:
         _require_admin(current)
+    if any(getattr(payload, field, None) for field in PLAN_ACCESS_FIELDS):
+        _require_admin_or_factory(current)
+    if payload.auto_apply or any(getattr(payload, field, None) for field in (*RUN_ROLE_FIELDS, *PLAN_ACCESS_FIELDS)):
         ensure_recent_auth(current)
+    _ensure_plan_policy_fits(payload.plan_assume_role_arns, payload.plan_secret_arns)
     try:
         with _connect_errors():
             created = service.create_workspace(payload.model_dump())
@@ -331,8 +345,15 @@ def update_workspace(
     Connecting another `vcs_repo` resolves it through the GitHub App the way the
     create does, and a null disconnects the repository.
 
-    Changing either run role field is the workspace's AWS connection, so a person has to
-    have signed in within the step-up window; resending the stored value is not a change.
+    Changing a run role, the plan role or the reader roles is the workspace's AWS
+    connection, so a person has to have signed in within the step-up window; resending
+    the stored value is not a change.
+
+    Changing `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns` decides what
+    every plan, a pull request plan included, may reach, so it takes `admin`, or a run
+    token holding the factory grant, as well as the step-up. The reader roles and the
+    plan secrets together must fit the plan's session policy, or the edit is a 422
+    `PLAN_SESSION_POLICY_TOO_LARGE`.
 
     Changing `run_api_token_scopes` hands every later run of this workspace a key on
     this API, so it takes `admin` as well as the step-up.
@@ -348,11 +369,18 @@ def update_workspace(
     changes = payload.model_dump(exclude_unset=True)
     auto_apply_from: Optional[bool] = None
     try:
-        if any(field in changes for field in (*RUN_ROLE_FIELDS, RUN_API_TOKEN_FIELD, AUTO_APPLY_FIELD)):
+        gated = (*RUN_ROLE_FIELDS, *PLAN_ACCESS_FIELDS, RUN_API_TOKEN_FIELD, AUTO_APPLY_FIELD)
+        if any(field in changes for field in gated):
             existing = service.get_workspace(workspace_id)
             if _changes(changes, existing, RUN_API_TOKEN_FIELD):
                 _require_admin(current)
                 ensure_recent_auth(current)
+            if any(_changes(changes, existing, field) for field in PLAN_ACCESS_FIELDS):
+                _require_admin_or_factory(current)
+                ensure_recent_auth(current)
+                _ensure_plan_policy_fits(
+                    _after(changes, existing, "plan_assume_role_arns"), _after(changes, existing, "plan_secret_arns")
+                )
             if any(_changes(changes, existing, field) for field in RUN_ROLE_FIELDS):
                 ensure_recent_auth(current)
             if AUTO_APPLY_FIELD in changes and bool(changes[AUTO_APPLY_FIELD]) != bool(existing.get(AUTO_APPLY_FIELD)):
@@ -390,6 +418,37 @@ def _require_admin(current: AuthorizerClaims) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"message": forbidden(), "error_code": FORBIDDEN_ERROR_CODE},
+        )
+
+
+def _require_admin_or_factory(current: AuthorizerClaims) -> None:
+    """Refuse a caller holding neither `admin` nor the factory grant on its run's API token.
+
+    The factory already sets any workspace's run role, which reaches further than a
+    plan role, so it may set what plans reach too.
+    """
+    if not holds_factory_grant(current):
+        _require_admin(current)
+
+
+def _after(changes: dict[str, Any], existing: dict[str, Any], field: str) -> list[str]:
+    """A list field's value once the edit lands, a null clearing it."""
+    value = changes[field] if field in changes else existing.get(field)
+    return [str(item) for item in value or []]
+
+
+def _ensure_plan_policy_fits(plan_assume_role_arns: list[str], plan_secret_arns: list[str]) -> None:
+    """Refuse reader roles and plan secrets that would overflow a plan's session policy."""
+    if not session_policy.plan_policy_fits(plan_assume_role_arns, plan_secret_arns):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": (
+                    "The reader roles and plan secrets together are too long for a plan's session policy. "
+                    "Name fewer, or use a wildcard pattern for several secrets."
+                ),
+                "error_code": PLAN_SESSION_POLICY_TOO_LARGE_CODE,
+            },
         )
 
 
