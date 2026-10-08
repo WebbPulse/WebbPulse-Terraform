@@ -5027,6 +5027,11 @@
             "title": "File Triggers Enabled",
             "type": "boolean"
           },
+          "global_remote_state": {
+            "default": false,
+            "title": "Global Remote State",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -5067,6 +5072,13 @@
             "default": "prj-default",
             "title": "Project Id",
             "type": "string"
+          },
+          "remote_state_consumer_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Remote State Consumer Ids",
+            "type": "array"
           },
           "run_api_token_scopes": {
             "items": {
@@ -5414,6 +5426,11 @@
             "title": "File Triggers Enabled",
             "type": "boolean"
           },
+          "global_remote_state": {
+            "default": false,
+            "title": "Global Remote State",
+            "type": "boolean"
+          },
           "latest_change_at": {
             "title": "Latest Change At",
             "type": "string"
@@ -5468,6 +5485,13 @@
             "default": "prj-default",
             "title": "Project Id",
             "type": "string"
+          },
+          "remote_state_consumer_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Remote State Consumer Ids",
+            "type": "array"
           },
           "run_api_token_scopes": {
             "items": {
@@ -5613,6 +5637,70 @@
         "title": "WorkspaceListItem",
         "type": "object"
       },
+      "WorkspaceOutput": {
+        "description": "One non-sensitive root output of a workspace's current state.",
+        "properties": {
+          "detailed_type": {
+            "title": "Detailed Type"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "WorkspaceOutput",
+        "type": "object"
+      },
+      "WorkspaceOutputs": {
+        "description": "A workspace's non-sensitive outputs, as remote state sharing hands them to another workspace.\n\nSensitive outputs never appear with a value; only their names are listed, so a\nconsumer can tell a withheld output from a missing one.",
+        "properties": {
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceOutput"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "sensitive_output_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sensitive Output Names",
+            "type": "array"
+          },
+          "state_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State Version Id"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "WorkspaceOutputs",
+        "type": "object"
+      },
       "WorkspaceUpdate": {
         "additionalProperties": false,
         "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so the field is left out\nof the model and a body carrying it is refused as an unknown key.\n\nThe model separates \"absent\" from \"explicitly null\" by leaving every field\nunset by default and reading the body with `model_dump(exclude_unset=True)`,\nso a key only reaches the service when the request actually carried it. A null\non one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service\nturns into a DynamoDB REMOVE.\n\nEvery unknown key is a 422 rather than dropped, so a field this server cannot\nstore never reads back to the caller as a successful change.",
@@ -5678,6 +5766,17 @@
             ],
             "title": "File Triggers Enabled"
           },
+          "global_remote_state": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Global Remote State"
+          },
           "pending_run_role_arn": {
             "anyOf": [
               {
@@ -5731,6 +5830,22 @@
               }
             ],
             "title": "Project Id"
+          },
+          "remote_state_consumer_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remote State Consumer Ids"
           },
           "run_api_token_scopes": {
             "anyOf": [
@@ -9221,7 +9336,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging either run role field is the workspace's AWS connection, so a person has to\nhave signed in within the step-up window; resending the stored value is not a change.\n\nChanging `run_api_token_scopes` hands every later run of this workspace a key on\nthis API, so it takes `admin` as well as the step-up.\n\nChanging `auto_apply` turns `runs:write` into the power to apply, so it takes\n`admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also\ntakes the step-up, since it hands every later run's confirmation to the system.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging either run role field is the workspace's AWS connection, so a person has to\nhave signed in within the step-up window; resending the stored value is not a change.\n\nChanging `run_api_token_scopes` hands every later run of this workspace a key on\nthis API, so it takes `admin` as well as the step-up.\n\nChanging `auto_apply` turns `runs:write` into the power to apply, so it takes\n`admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also\ntakes the step-up, since it hands every later run's confirmation to the system.\n\n`global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'\nruns may read this workspace's non-sensitive outputs. Every named consumer has to\nexist, or the edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {
@@ -9759,6 +9874,52 @@
           }
         },
         "summary": "Verify Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/outputs": {
+      "get": {
+        "description": "The non-sensitive outputs of a workspace's current state.\n\nA run's API token reads only a workspace that is its own, shares globally, or\nnames the run's workspace as a consumer; anything else is a 403\n`REMOTE_STATE_NOT_SHARED`. A workspace with no state yet answers an empty list.",
+        "operationId": "read_workspace_outputs_api_v1_workspaces__workspace_id__outputs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceOutputs"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Read Workspace Outputs",
         "tags": [
           "workspaces"
         ]

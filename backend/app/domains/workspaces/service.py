@@ -63,6 +63,7 @@ __all__ = [
     "ConfigVersionNotFound",
     "HclNotAllowed",
     "ProjectNotFound",
+    "RemoteStateConsumerNotFound",
     "RepositoryNotInstalled",
     "RunRoleMissing",
     "RunStillActive",
@@ -95,12 +96,22 @@ go-tfe sends no length up front, so it is checked against the object once it lan
 _PRIVATE_WORKSPACE_FIELDS: Final = frozenset({aws_connect.TOKEN_HASH_ATTRIBUTE, aws_connect.TOKEN_EXPIRES_ATTRIBUTE})
 """Row attributes no response carries, the connect token's hash above all."""
 
+GLOBAL_REMOTE_STATE_FIELD: Final = "global_remote_state"
+"""The workspace attribute sharing its non-sensitive outputs with every workspace's runs."""
+
+REMOTE_STATE_CONSUMERS_FIELD: Final = "remote_state_consumer_ids"
+"""The workspace attribute naming the workspaces whose runs may read its non-sensitive outputs."""
+
 IAM_ROLE_NAME_MAX_LENGTH: Final = 64
 """The IAM ceiling on a role name. The derived name has to fit inside it."""
 
 
 class WorkspaceNameTaken(Exception):
     """Another workspace already holds this name."""
+
+
+class RemoteStateConsumerNotFound(Exception):
+    """A remote state sharing edit named a workspace that does not exist."""
 
 
 ProjectNotFound = project_store.ProjectNotFound
@@ -393,6 +404,10 @@ def update_workspace(
     resolved = settings or get_settings()
     if "project_id" in changes:
         changes = _resolve_project_move(changes, settings=resolved)
+    if changes.get(REMOTE_STATE_CONSUMERS_FIELD):
+        changes = _resolve_remote_state_consumers(workspace_id, changes, settings=resolved)
+    if changes.get(GLOBAL_REMOTE_STATE_FIELD) is False:
+        changes = {**changes, GLOBAL_REMOTE_STATE_FIELD: None}
     staged: dict[str, Any] | None = None
     if "run_role_arn" in changes or "pending_run_role_arn" in changes:
         staged = get_workspace(workspace_id, settings=resolved)
@@ -481,6 +496,22 @@ def _resolve_project_move(changes: dict[str, Any], *, settings: Settings) -> dic
         return {**changes, "project_id": None}
     project_store.require_project(str(target), settings=settings)
     return changes
+
+
+def _resolve_remote_state_consumers(
+    workspace_id: str, changes: dict[str, Any], *, settings: Settings
+) -> dict[str, Any]:
+    """The edit with this workspace dropped from its consumers and every other one checked.
+
+    An emptied list becomes a clear. A consumer that does not exist raises
+    `RemoteStateConsumerNotFound` before anything is written.
+    """
+    consumers = [str(item) for item in changes[REMOTE_STATE_CONSUMERS_FIELD] if item != workspace_id]
+    repository = repositories.workspaces(settings)
+    missing = [item for item in consumers if repository.get({"workspace_id": item}) is None]
+    if missing:
+        raise RemoteStateConsumerNotFound(", ".join(missing))
+    return {**changes, REMOTE_STATE_CONSUMERS_FIELD: consumers or None}
 
 
 def _repository_changed(requested: Any, existing: dict[str, Any]) -> bool:

@@ -31,6 +31,9 @@ locals {
       "POST /api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}/download" = { integration = "workspaces" }
     },
     {
+      "GET /api/v1/workspaces/{workspace_id}/outputs" = { integration = "workspaces" }
+    },
+    {
       "POST /api/v1/workspaces/{workspace_id}/run-role/check"       = { integration = "workspaces" }
       "GET /api/v1/workspaces/{workspace_id}/run-role/check"        = { integration = "workspaces" }
       "POST /api/v1/workspaces/{workspace_id}/run-role/quick-setup" = { integration = "workspaces" }

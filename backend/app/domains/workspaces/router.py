@@ -70,6 +70,9 @@ VCS_REPO_NOT_INSTALLED_CODE = "VCS_REPO_NOT_INSTALLED"
 PROJECT_NOT_FOUND_CODE = "PROJECT_NOT_FOUND"
 """The stable code a create or move refuses with when the named project does not exist."""
 
+REMOTE_STATE_CONSUMER_NOT_FOUND_CODE = "REMOTE_STATE_CONSUMER_NOT_FOUND"
+"""The stable code an edit refuses with when it shares outputs with a workspace that does not exist."""
+
 GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
 """The stable code a connect fails with when GitHub could not answer."""
 
@@ -330,6 +333,10 @@ def update_workspace(
     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
     takes the step-up, since it hands every later run's confirmation to the system.
+
+    `global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'
+    runs may read this workspace's non-sensitive outputs. Every named consumer has to
+    exist, or the edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`.
     """
     changes = payload.model_dump(exclude_unset=True)
     auto_apply_from: Optional[bool] = None
@@ -352,6 +359,14 @@ def update_workspace(
         raise _not_found("No such workspace.") from error
     except service.ProjectNotFound as error:
         raise _project_not_found() from error
+    except service.RemoteStateConsumerNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": f"No such workspace to share outputs with: {error}.",
+                "error_code": REMOTE_STATE_CONSUMER_NOT_FOUND_CODE,
+            },
+        ) from error
     if auto_apply_from is not None:
         record_auto_apply_change(
             current,
