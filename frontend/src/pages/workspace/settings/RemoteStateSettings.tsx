@@ -106,8 +106,8 @@ export function RemoteStateSettings({
         <p className="mt-1 text-xs text-text-muted">
           Choose which workspaces&apos; runs may read this workspace&apos;s
           outputs with a{' '}
-          <code className="font-mono">terraform_remote_state</code> data
-          source. Sensitive outputs are never shared.
+          <code className="font-mono">terraform_remote_state</code> data source.
+          Sensitive outputs are never shared.
         </p>
       </div>
       <label className="flex items-start gap-2 text-sm">

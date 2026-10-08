@@ -5,10 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
 import { Layout } from '../../../components/Layout';
-import {
-  aListedWorkspace,
-  aWorkspace,
-} from '../../../test-helpers/fixtures';
+import { aListedWorkspace, aWorkspace } from '../../../test-helpers/fixtures';
 import {
   jsonResponse,
   renderWithAuth,
