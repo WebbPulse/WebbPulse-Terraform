@@ -338,14 +338,28 @@ with the redactor.
 
 A configuration that uses the WebbPulse provider (the Platform factory) gets HCP's run
 scoped API token the same way. An admin who passed step-up sets the workspace's
-`run_api_token_scopes` (a subset of `workspaces:{read,write}`, `variables:{read,write}`
-and `registry:{read,write}`, PATCH only, null or `[]` clears), and each bundle then
-carries `api` (`app/domains/runs/api_credentials.py`): a `wpk_` key of kind `run_api`
-with the run as its subject and the workspace in its metadata, lasting its phase's
-timeout. Its scopes are the workspace's current grant intersected with the grant it
-was minted under, read on every request (`key_owner_scopes`), so the registry function
-reads `workspaces` too. The run keeps its hash in `api_token_hash`, and a newer bundle
-or the run's ending revokes it. Behind the access gate the runs function reads the
+`run_api_token_scopes` (a subset of `workspaces:{read,write}`, `variables:{read,write}`,
+`registry:{read,write}` and `workspaces:factory`, PATCH only, null or `[]` clears), and
+each bundle of a non-speculative run then carries `api`
+(`app/domains/runs/api_credentials.py`): a `wpk_` key of kind `run_api` with the run as
+its subject and the workspace in its metadata, lasting its phase's timeout. A
+`plan_only` or `vcs_pr` run gets none. The plan phase's key carries the grant less its
+write scopes and is revoked by the plan's phase result, so only the apply writes. Its
+scopes are the workspace's current grant intersected with the grant it was minted
+under, read on every request (`key_owner_scopes`), so the registry function reads
+`workspaces` too. The run keeps its hash in `api_token_hash`, and a newer bundle, the
+plan's end or the run's ending revokes it.
+
+The key is bound to its own workspace by `run_api_workspace_binding` in
+`app/common/core/auth.py`, a router dependency on the workspaces, notifications,
+projects, registry and `tfe.v2` workspace routers: another workspace in the path is a
+403 `RUN_TOKEN_WORKSPACE_BOUND`, a write naming no workspace (creating a workspace or a
+project, connecting a registry module) is refused the same way, and listings show only
+its own workspace. It never passes step-up (403 `RUN_TOKEN_STEP_UP_REFUSED`), so it
+cannot set sensitive variables or change a run role. `workspaces:factory` lifts all of
+that, for the WebbPulse-Platform workspace whose factory manages every other workspace,
+and survives into the plan phase so its refresh can read them; it adds no write scope
+by itself. Behind the access gate the runs function reads the
 gate's `x-origin-verify` from SSM (`ORIGIN_VERIFY_PARAMETER`) into the bundle; the
 runner task role never holds that read. The runner exports `WEBBPULSE_TF_HOST`,
 `WEBBPULSE_TF_TOKEN` and `WEBBPULSE_TF_ORIGIN_VERIFY` to every subcommand, after

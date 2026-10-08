@@ -12,6 +12,7 @@ BASE = "/api/v1/runs"
 GATE_PARAMETER = "/webbpulse-terraform-test/origin-verify"
 VERSIONS = "/v1/modules/WebbPulse/missing/aws/versions"
 GRANT = ["workspaces:read", "workspaces:write", "variables:read", "registry:read"]
+PLAN_GRANT = ["workspaces:read", "variables:read", "registry:read"]
 
 
 @pytest.fixture
@@ -46,6 +47,13 @@ def _bundle(runner_client, run_id):
     return response.json()
 
 
+def _applying(run):
+    """Move the run to its apply phase, as a confirmation would."""
+    return runs_service._update_run(
+        run["run_id"], {"status": "applying"}, settings=get_settings(), expected_statuses=frozenset({"planning"})
+    )
+
+
 def _as(app, token):
     """A client presenting `token`."""
     return TestClient(app, headers={"Authorization": f"Bearer {token}"})
@@ -53,6 +61,7 @@ def _as(app, token):
 
 def test_the_bundle_carries_an_api_token_for_a_granting_workspace(granted, runner_client):
     """The provider gets the API origin, a `wpk_` token that expires and the grant it was minted under."""
+    _applying(granted)
     api = _bundle(runner_client, granted["run_id"])["api"]
 
     assert api["host"] == "https://api.terraform.example.test"
@@ -75,8 +84,14 @@ def test_no_api_origin_means_no_token(monkeypatch, auth_client, runner_client, c
     assert _bundle(runner_client, created_run["run_id"])["api"] is None
 
 
+def test_the_plan_phase_token_holds_only_the_grants_reads(granted, runner_client):
+    """Planning never writes, so its token carries the grant less its write scopes."""
+    assert _bundle(runner_client, granted["run_id"])["api"]["scopes"] == PLAN_GRANT
+
+
 def test_the_token_holds_the_granted_scopes(app, granted, runner_client):
     """Reads and writes inside the grant work."""
+    _applying(granted)
     token = _bundle(runner_client, granted["run_id"])["api"]["token"]
 
     with _as(app, token) as client:
@@ -102,6 +117,7 @@ def test_the_token_holds_nothing_outside_the_grant(app, granted, runner_client):
 
 def test_narrowing_the_grant_narrows_a_live_token(app, auth_client, granted, runner_client):
     """Scopes are read from the workspace on every request, not fixed at mint."""
+    _applying(granted)
     token = _bundle(runner_client, granted["run_id"])["api"]["token"]
     _grant(auth_client, granted, ["workspaces:read"])
 
@@ -112,6 +128,7 @@ def test_narrowing_the_grant_narrows_a_live_token(app, auth_client, granted, run
 
 def test_widening_the_grant_does_not_widen_a_live_token(app, auth_client, granted, runner_client):
     """A token keeps at most the grant it was minted under."""
+    _applying(granted)
     token = _bundle(runner_client, granted["run_id"])["api"]["token"]
     _grant(auth_client, granted, [*GRANT, "variables:write"])
 

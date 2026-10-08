@@ -26,7 +26,9 @@ from ...common.core.auth import (
     VARIABLES_WRITE,
     WORKSPACES_READ,
     WORKSPACES_WRITE,
+    bound_workspace_id,
     ensure_recent_auth,
+    run_api_workspace_binding,
     scopes,
     sudo,
 )
@@ -91,7 +93,7 @@ AUTO_APPLY_FIELD = "auto_apply"
 AUTO_APPLY_EVENT = "workspaces.workspace.auto_apply"
 """The log event a change to a workspace's auto-apply is recorded under, naming who and the new value."""
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(run_api_workspace_binding)])
 
 WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
 ConfigVersionId = Path(min_length=4, max_length=64, pattern=r"^cv-[0-9A-HJKMNP-TV-Z]{26}$")
@@ -215,6 +217,7 @@ def _connect_errors() -> Iterator[None]:
     dependencies=[Depends(scopes(WORKSPACES_READ))],
 )
 def list_workspaces(
+    request: Request,
     project_id: Optional[str] = Query(
         default=None,
         max_length=64,
@@ -239,9 +242,13 @@ def list_workspaces(
 
     The filters and the sort compose, so a project's workspaces can be searched and
     ordered in one request. A `project_id` naming a project that holds nothing, or none
-    at all, is an empty list.
+    at all, is an empty list. A run's API token sees only its own workspace.
     """
-    return {"items": service.list_workspace_items(project_id=project_id, search=search or None, sort=sort)}
+    items = service.list_workspace_items(project_id=project_id, search=search or None, sort=sort)
+    bound = bound_workspace_id(request)
+    if bound is not None:
+        items = [item for item in items if str(item.get("workspace_id", "")) == bound]
+    return {"items": items}
 
 
 @router.post(

@@ -7,6 +7,12 @@ signed in recently can set, and each bundle of its runs then carries a fresh `wp
 minted under the run token tenant with the run as its subject and the workspace in its
 metadata.
 
+A speculative run, `plan_only` or a pull request's plan, gets no token at all, since its
+code is whatever the branch says. A plan phase's token carries the grant's read scopes
+only and is revoked when planning ends, so only the apply phase can write. The key
+reaches its own workspace only (`auth.run_api_workspace_binding`), unless the workspace
+holds the factory grant.
+
 What the key may do is read live on every request (`auth.key_owner_scopes`): the
 workspace's current grant, intersected with the grant it was minted under. The run
 keeps only its hash, a newer bundle revokes the one before and the run's ending revokes
@@ -31,6 +37,7 @@ from webbpulse.dynamodb import ConditionFailed
 from ...common.composition.settings import Settings
 from ...common.core.auth import (
     RUN_API_TOKEN_KIND,
+    RUN_API_WRITE_SCOPES,
     RUN_TOKEN_TENANT,
     api_key_store,
     effective_run_api_scopes,
@@ -45,7 +52,22 @@ HASH_ATTRIBUTE: Final = "api_token_hash"
 PHASE_TTLS: Final = {"planning": timedelta(hours=2), "applying": timedelta(hours=4)}
 """How long each phase's token lasts: the phase's own timeout, since the engine reads it once."""
 
+SPECULATIVE_SOURCES: Final = frozenset({"vcs_pr"})
+"""Run sources whose code nobody merged, which never get a token."""
+
 _log = logging.getLogger(__name__)
+
+
+def is_speculative(run: Mapping[str, Any]) -> bool:
+    """Whether a run only plans code nobody merged or confirmed, such as a pull request's plan."""
+    return bool(run.get("plan_only")) or str(run.get("source", "")) in SPECULATIVE_SOURCES
+
+
+def phase_scopes(scopes: tuple[str, ...], status: str) -> tuple[str, ...]:
+    """The part of `scopes` a token for `status` carries: all of it, less the write scopes while planning."""
+    if status == "planning":
+        return tuple(scope for scope in scopes if scope not in RUN_API_WRITE_SCOPES)
+    return scopes
 
 
 def origin_verify(settings: Settings) -> str | None:
@@ -70,15 +92,17 @@ def origin_verify(settings: Settings) -> str | None:
 def issue(run: Mapping[str, Any], workspace: Mapping[str, Any], *, settings: Settings) -> dict[str, Any] | None:
     """Mint this phase's API token and swap it in for the run's previous one.
 
-    `None` when the workspace grants its runs nothing, when no API origin is
-    configured, or when the run left its phase between the bundle read and the swap,
-    in which case the fresh key is revoked.
+    `None` for a speculative run, when the workspace grants this phase nothing, when no
+    API origin is configured, or when the run left its phase between the bundle read and the
+    swap, in which case the fresh key is revoked.
     """
     from webbpulse.identity.api_keys import mint
 
-    scopes = granted_run_api_scopes(workspace)
     host = (settings.API_BASE_URL or "").rstrip("/")
     status = str(run.get("status", ""))
+    if is_speculative(run):
+        return None
+    scopes = phase_scopes(granted_run_api_scopes(workspace), status)
     if not scopes or not host or status not in PHASE_TTLS:
         return None
     run_id = str(run["run_id"])
@@ -87,7 +111,7 @@ def issue(run: Mapping[str, Any], workspace: Mapping[str, Any], *, settings: Set
     minted = mint(
         user_id=run_id,
         tenant_id=RUN_TOKEN_TENANT,
-        scopes=effective_run_api_scopes(workspace),
+        scopes=phase_scopes(effective_run_api_scopes(workspace), status),
         name=f"api token {run_id}",
         expires_at=expires_at,
         store=api_key_store(settings),
@@ -126,4 +150,13 @@ def revoke(run: Mapping[str, Any], *, settings: Settings) -> None:
     revoke_run_key(str(run.get(HASH_ATTRIBUTE, "") or ""), settings=settings)
 
 
-__all__ = ["HASH_ATTRIBUTE", "PHASE_TTLS", "issue", "origin_verify", "revoke"]
+__all__ = [
+    "HASH_ATTRIBUTE",
+    "PHASE_TTLS",
+    "SPECULATIVE_SOURCES",
+    "is_speculative",
+    "issue",
+    "origin_verify",
+    "phase_scopes",
+    "revoke",
+]

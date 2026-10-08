@@ -17,13 +17,13 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from webbpulse.identity.claims import AuthorizerClaims
 from webbpulse.integrations.github import GitHubError, GitHubRateLimited
 
-from ...common.core.auth import REGISTRY_READ, REGISTRY_WRITE, claims, scopes, sudo
+from ...common.core.auth import REGISTRY_READ, REGISTRY_WRITE, claims, run_api_workspace_binding, scopes, sudo
 from ...common.github.repositories import RepositoryNotInstalled
 from . import providers, service
 from .schemas.providers import Provider, ProviderCreate, ProviderList, ProviderSync
 from .schemas.registry import Module, ModuleCreate, ModuleList, ModuleSync, ModuleVersionDetail
 
-router = APIRouter(prefix="/registry")
+router = APIRouter(prefix="/registry", dependencies=[Depends(run_api_workspace_binding)])
 
 INVALID_MODULE_NAME_CODE = "REGISTRY_INVALID_MODULE_NAME"
 INVALID_PROVIDER_NAME_CODE = "REGISTRY_INVALID_PROVIDER_NAME"

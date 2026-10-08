@@ -1268,7 +1268,7 @@ export interface paths {
          *
          *     The filters and the sort compose, so a project's workspaces can be searched and
          *     ordered in one request. A `project_id` naming a project that holds nothing, or none
-         *     at all, is an empty list.
+         *     at all, is an empty list. A run's API token sees only its own workspace.
          */
         get: operations["list_workspaces_api_v1_workspaces_get"];
         put?: never;
@@ -4146,7 +4146,7 @@ export interface components {
             /** Remote State Consumer Ids */
             remote_state_consumer_ids?: string[] | null;
             /** Run Api Token Scopes */
-            run_api_token_scopes?: ("workspaces:read" | "workspaces:write" | "variables:read" | "variables:write" | "registry:read" | "registry:write")[] | null;
+            run_api_token_scopes?: ("workspaces:read" | "workspaces:write" | "variables:read" | "variables:write" | "registry:read" | "registry:write" | "workspaces:factory")[] | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /** Speculative Plans */
