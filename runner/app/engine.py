@@ -237,12 +237,15 @@ class EngineRunner:
         exit_code, _ = self.run(["init", "-input=false"], extra_environment=extra_environment)
         return exit_code
 
-    def plan(self, *, destroy: bool = False, options: Sequence[str] = ()) -> int:
+    def plan(self, *, destroy: bool = False, options: Sequence[str] = (), lock: bool = True) -> int:
         """Produce a plan file, a destroy plan when `destroy`, returning the detailed exit code.
 
-        `options` are the run's own plan flags, from `plan_options`.
+        `options` are the run's own plan flags, from `plan_options`. Without `lock` the
+        plan reads state under `-lock=false`, which is how a plan only run stays out of
+        an apply's way.
         """
-        arguments = ["plan", "-input=false", "-lock-timeout=120s", f"-out={PLAN_FILE}", "-detailed-exitcode"]
+        locking = "-lock-timeout=120s" if lock else "-lock=false"
+        arguments = ["plan", "-input=false", locking, f"-out={PLAN_FILE}", "-detailed-exitcode"]
         if destroy:
             arguments.append("-destroy")
         arguments.extend(options)

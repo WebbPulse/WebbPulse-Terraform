@@ -78,7 +78,7 @@ def test_an_errored_ending_is_settled(app, auth_client, created_run, workspace, 
         json={
             "workspace_id": workspace["workspace_id"],
             "config_version_id": uploaded_config_version["config_version_id"],
-            "plan_only": True,
+            "plan_only": False,
         },
     ).json()
     assert queued["queued_behind"] == run_id

@@ -213,10 +213,13 @@ task roles and nothing else. A workspace with no ARN is a 400 carrying
 
 ## Runs
 
-Runs are serial per workspace: a run created while another is active is stored
-`pending` with `queued_behind` set, and the previous run's terminal transition
-promotes the next one. Two concurrent executions would otherwise contend on the
-S3 state lock.
+Runs that can apply are serial per workspace: one created while another is
+active is stored `pending` with `queued_behind` set, and the previous run's
+terminal transition promotes the next one. Two concurrent applying executions
+would otherwise contend on the S3 state lock. A plan only run, which every pull
+request plan is, never queues and never blocks: it starts at once, limited only
+by the semaphore, and plans under `-lock=false`, as speculative plans do on HCP
+Terraform.
 
 A run's phase comes from its stored status, never from the caller, because the
 plan phase gets a read-only IAM session policy and the apply phase an

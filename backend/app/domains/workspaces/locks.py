@@ -128,6 +128,8 @@ def is_locked(workspace_id: str, *, settings: Settings | None = None) -> bool:
 def lock(workspace_id: str, subject: str, reason: str, *, settings: Settings | None = None) -> None:
     """Write the lockfile for `subject`, refused while a run is going or another lock holds.
 
+    A plan only run never takes the lockfile, so one going does not refuse the lock.
+
     The write is conditional on no object being there, the same condition the engine
     writes under, so a run and the CLI racing for the lock cannot both win.
     """
@@ -136,7 +138,7 @@ def lock(workspace_id: str, subject: str, reason: str, *, settings: Settings | N
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
     try:
-        require_no_active_run(workspace_id, settings=resolved)
+        require_no_active_run(workspace_id, ignore_plan_only=True, settings=resolved)
     except RunStillActive as error:
         raise LockedByRun(error.run_id) from error
 
@@ -200,14 +202,14 @@ def force_unlock(workspace_id: str, *, settings: Settings | None = None) -> None
 
     This is the way past a lock a crashed runner or another person left. A run that is
     still going may be holding its lock right now, so that is refused rather than
-    letting two writers at the state.
+    letting two writers at the state. A plan only run holds no lock, so it is not counted.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
     if read_lock(workspace_id, settings=resolved) is None:
         raise WorkspaceNotLocked(workspace_id)
     try:
-        require_no_active_run(workspace_id, settings=resolved)
+        require_no_active_run(workspace_id, ignore_plan_only=True, settings=resolved)
     except RunStillActive as error:
         raise LockedByRun(error.run_id) from error
     _delete(workspace_id, resolved)
