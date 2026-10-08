@@ -119,7 +119,20 @@ def test_creating_a_workspace_from_the_cli_is_refused_with_a_reason(auth_client)
         headers={"content-type": JSON_API},
     )
     assert response.status_code == 422
-    assert "UI" in response.json()["errors"][0]["detail"]
+    detail = response.json()["errors"][0]["detail"]
+    assert "UI" in detail
+    assert 'Workspace "new" does not exist.' in detail
+
+
+def test_a_login_key_gets_the_create_reason_not_a_scope_error(scoped_client):
+    """A `terraform login` key has no `workspaces:write`, and still sees what to do."""
+    response = scoped_client(WORKSPACES_READ, RUNS_READ).post(
+        f"{ORG}/workspaces",
+        json={"data": {"type": "workspaces", "attributes": {"name": "new"}}},
+        headers={"content-type": JSON_API},
+    )
+    assert response.status_code == 422
+    assert "Create it in the WebbPulse Terraform UI" in response.json()["errors"][0]["detail"]
 
 
 def test_workspace_list_filters_and_paginates(auth_client, workspace):

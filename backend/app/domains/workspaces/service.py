@@ -681,6 +681,7 @@ def create_tfe_config_version(
     *,
     speculative: bool,
     auto_queue_runs: bool,
+    provisional: bool = False,
     settings: Settings | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Store a pending config version for `tfe.v2` and mint its unbounded PUT.
@@ -688,7 +689,8 @@ def create_tfe_config_version(
     go-tfe uploads with `Content-Type: application/octet-stream`, no length known at
     create time and no Authorization header, so the URL signs neither a type nor a
     length. The row carries `max_bytes` instead, and the reconcile refuses an object
-    over it. `speculative` and `auto_queue_runs` are kept for the run that names it.
+    over it. `speculative` and `auto_queue_runs` are kept for the run that names it, and
+    `provisional`, which `terraform plan -out` sends, is kept so it reads back as sent.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
@@ -707,6 +709,8 @@ def create_tfe_config_version(
         "auto_queue_runs": bool(auto_queue_runs),
         "created_at": now_iso(),
     }
+    if provisional:
+        item["provisional"] = True
     repositories.config_versions(resolved).put(item)
 
     import boto3

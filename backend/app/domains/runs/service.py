@@ -422,6 +422,7 @@ def create_run(
     run_id = run_id or f"{RUN_ID_PREFIX}{new_ulid()}"
     timestamp = now_iso()
     plan_only = role_check or bool(payload.get("plan_only", False))
+    save_plan = not plan_only and bool(payload.get("save_plan", False))
     item: dict[str, Any] = {
         "run_id": run_id,
         "workspace_id": workspace_id,
@@ -431,6 +432,7 @@ def create_run(
         "plan_only": plan_only,
         "auto_apply": _requested_auto_apply(payload, workspace)
         and not plan_only
+        and not save_plan
         and not role_check
         and source in AUTO_APPLY_SOURCES,
         "is_destroy": not role_check and bool(payload.get("is_destroy", False)),
@@ -450,8 +452,10 @@ def create_run(
     item.update(run_options.stored(options, workspace_id=workspace_id, run_id=run_id, settings=resolved))
     if role_check:
         item["run_role_check"] = True
-    if not role_check and isinstance(payload.get("auto_apply"), bool):
+    if not role_check and (isinstance(payload.get("auto_apply"), bool) or save_plan):
         item[AUTO_APPLY_OVERRIDE_ATTRIBUTE] = True
+    if save_plan:
+        item["save_plan"] = True
     if vcs is not None:
         item["vcs"] = {key: value for key, value in vcs.items() if value is not None}
     if actor is not None:
