@@ -67,7 +67,6 @@ export function Projects(): React.ReactElement {
   return (
     <div className="space-y-5">
       <PageHeader
-        crumbs={[{ label: 'Workspaces', to: '/workspaces' }]}
         title="Projects"
         description="Projects group the workspaces that ship together, such as one service's staging and production."
         meta={

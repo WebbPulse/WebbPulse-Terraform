@@ -86,10 +86,7 @@ export function ProjectDetail(): React.ReactElement {
   return (
     <div className="space-y-6">
       <PageHeader
-        crumbs={[
-          { label: 'Workspaces', to: '/workspaces' },
-          { label: 'Projects', to: '/projects' },
-        ]}
+        crumbs={[{ label: 'Projects', to: '/projects' }]}
         title={name}
         description={
           (project.data?.description ?? '') === ''
