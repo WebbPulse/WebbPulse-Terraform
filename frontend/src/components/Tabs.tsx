@@ -21,7 +21,7 @@ export interface TabsProps<TId extends string> {
   className?: string;
 }
 
-/** A tab list with an underline on the selected tab and arrow key movement. */
+/** A tab list with an underline on the selected tab and arrow key movement; it scrolls sideways within itself when narrow. */
 export function Tabs<TId extends string>({
   tabs,
   value,
@@ -62,7 +62,7 @@ export function Tabs<TId extends string>({
       role="tablist"
       aria-label={label}
       onKeyDown={onKeyDown}
-      className={`flex gap-1 border-b border-line ${className}`}
+      className={`flex gap-1 overflow-x-auto shadow-[inset_0_-1px_0_var(--color-line)] ${className}`}
     >
       {tabs.map((tab) => {
         const selected = tab.id === value;
@@ -78,7 +78,7 @@ export function Tabs<TId extends string>({
             onClick={() => {
               onChange(tab.id);
             }}
-            className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40 ${
+            className={`inline-flex shrink-0 items-center whitespace-nowrap gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40 ${
               selected
                 ? 'border-accent text-text-strong'
                 : 'border-transparent text-text-muted hover:text-text-strong'
