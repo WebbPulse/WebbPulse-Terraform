@@ -1,14 +1,16 @@
 """The control plane's OIDC issuer: the discovery document and the JWKS, both anonymous.
 
 Google and Azure workload identity federation fetch these two documents to verify
-the identity tokens the runs function signs for a run with KMS. The public halves
-of the signing keys come from `kms:GetPublicKey` and are cached per container, so a
-cold start is the only KMS call on the path. Every key listed in `SIGNING_KEY_IDS`
-is published, which lets a rotation publish the new key before it signs and keep
-the old one until tokens it signed have expired.
+the identity tokens the runs function signs for a run with KMS. Terraform reads the
+public halves of the signing keys at deploy time and hands them over in
+`SIGNING_KEYS`, a JSON list of `{"kid", "der"}` objects with the base64 DER
+SubjectPublicKeyInfo, so a request never waits on boto3 or KMS. Entra gives up on a
+JWKS fetch after about five seconds, and a cold boto3 import plus `kms:GetPublicKey`
+at 128 MB took six. Every key listed is published, which lets a rotation publish the
+new key before it signs and keep the old one until tokens it signed have expired.
 
-It runs on the Lambda Python runtime with nothing but the standard library and
-boto3, so it deploys as one file.
+It runs on the Lambda Python runtime with nothing but the standard library, so it
+deploys as one file.
 """
 
 from __future__ import annotations
@@ -16,11 +18,9 @@ from __future__ import annotations
 import base64
 import json
 import os
-import time
 from typing import Any
 
 CACHE_SECONDS = 300
-SIGNING_ALGORITHM = "RSASSA_PKCS1_V1_5_SHA_256"
 CLAIMS_SUPPORTED = [
     "sub",
     "aud",
@@ -35,7 +35,7 @@ CLAIMS_SUPPORTED = [
     "terraform_run_phase",
 ]
 
-_cache: dict[str, Any] = {"at": 0.0, "jwks": None}
+_cache: dict[str, Any] = {"jwks": None}
 
 
 def b64url(data: bytes) -> str:
@@ -87,20 +87,14 @@ def jwk(kms_key_id: str, der: bytes) -> dict[str, str]:
     }
 
 
-def signing_key_ids() -> list[str]:
-    """The KMS keys to publish, newest first."""
-    return [value.strip() for value in os.environ.get("SIGNING_KEY_IDS", "").split(",") if value.strip()]
+def signing_keys() -> list[dict[str, str]]:
+    """The public keys to publish, newest first, as `SIGNING_KEYS` lists them."""
+    return list(json.loads(os.environ.get("SIGNING_KEYS") or "[]"))
 
 
-def build_jwks(kms: Any, key_ids: list[str]) -> dict[str, Any]:
-    """The JWKS for `key_ids`, skipping any key that is not an RS256 signing key."""
-    keys = []
-    for kms_key_id in key_ids:
-        response = kms.get_public_key(KeyId=kms_key_id)
-        if response.get("KeyUsage") != "SIGN_VERIFY" or SIGNING_ALGORITHM not in response.get("SigningAlgorithms", []):
-            continue
-        keys.append(jwk(str(response["KeyId"]), bytes(response["PublicKey"])))
-    return {"keys": keys}
+def build_jwks(keys: list[dict[str, str]]) -> dict[str, Any]:
+    """The JWKS for `keys`, each a `kid` and a base64 DER SubjectPublicKeyInfo."""
+    return {"keys": [jwk(key["kid"], base64.b64decode(key["der"])) for key in keys]}
 
 
 def discovery(issuer: str) -> dict[str, Any]:
@@ -117,12 +111,9 @@ def discovery(issuer: str) -> dict[str, Any]:
 
 
 def _jwks() -> dict[str, Any]:
-    """The JWKS, from the container's cache while it is fresh."""
-    if _cache["jwks"] is None or time.monotonic() - float(_cache["at"]) > CACHE_SECONDS:
-        import boto3
-
-        _cache["jwks"] = build_jwks(boto3.client("kms"), signing_key_ids())
-        _cache["at"] = time.monotonic()
+    """The JWKS, built once per container."""
+    if _cache["jwks"] is None:
+        _cache["jwks"] = build_jwks(signing_keys())
     return _cache["jwks"]
 
 
