@@ -33,6 +33,7 @@ from ...common.core.auth import (
     RUN_API_TOKEN_KIND,
     RUN_TOKEN_TENANT,
     api_key_store,
+    effective_run_api_scopes,
     granted_run_api_scopes,
     revoke_run_key,
 )
@@ -86,7 +87,7 @@ def issue(run: Mapping[str, Any], workspace: Mapping[str, Any], *, settings: Set
     minted = mint(
         user_id=run_id,
         tenant_id=RUN_TOKEN_TENANT,
-        scopes=scopes,
+        scopes=effective_run_api_scopes(workspace),
         name=f"api token {run_id}",
         expires_at=expires_at,
         store=api_key_store(settings),

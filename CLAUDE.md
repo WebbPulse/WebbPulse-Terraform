@@ -165,8 +165,8 @@ under `/v1/modules` and `/v1/providers` (a `wpk_` key only), the `tfe.v2` API un
 `/api/v2` (a `wpk_` key only), `POST /v1/oauth/token` (a PKCE code) and the anonymous
 identity documents do not.
 The scopes are `workspaces:{read,write}`, `variables:{read,write}`,
-`configs:{read,write}`, `runs:{read,write,apply}`, `state:download`, `state:write` and
-`registry:{read,write}`. A key's stored scopes are intersected per request with
+`configs:{read,write}`, `runs:{read,write,apply}`, `state:download`, `state:write`,
+`state:read-outputs` and `registry:{read,write}`. A key's stored scopes are intersected per request with
 its owner's current ones (`key_owner_scopes`, so every domain function reads the
 `users` table), and a new key expires in 90 days by default, 365 at most for a
 dated expiry, or never with `no_expiry: true` (`expires_at: null`).
@@ -352,6 +352,18 @@ runner task role never holds that read. The runner exports `WEBBPULSE_TF_HOST`,
 workspace variables, and redacts the token and the gate value. The provider block must
 leave `host`, `token` and `origin_verify` unset, since its config wins over the
 environment.
+
+Remote state sharing follows HCP's. A workspace's `global_remote_state` and
+`remote_state_consumer_ids` (PATCH with `workspaces:write`, each id must exist or the
+edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`, null or `[]` clears) decide which
+workspaces' runs may read `GET /api/v1/workspaces/{id}/outputs`
+(`app/domains/workspaces/outputs_router.py`): the current state's non-sensitive outputs
+with values, sensitive ones by name only. It needs `workspaces:read` and
+`state:read-outputs`; a run API token carries the latter whenever its grant holds
+`workspaces:read` (`effective_run_api_scopes`), and is refused with a 403
+`REMOTE_STATE_NOT_SHARED` unless the source is its own workspace, shares globally or
+names it. Admins hold the scope and read any; device logins get it only when named.
+The provider's `webbpulse_workspace_outputs` data source reads it.
 
 Publishing follows HCP's tag based "Publish module from VCS". `POST
 /api/v1/registry/modules` (`registry:write`) connects a module to a repository the

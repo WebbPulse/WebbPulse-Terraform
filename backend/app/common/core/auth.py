@@ -49,6 +49,12 @@ STATE_DOWNLOAD: Final = "state:download"
 STATE_WRITE: Final = "state:write"
 """Locking a workspace and writing its state from the CLI, which `terraform state mv`,
 `import` and `force-unlock` need. Like `state:download`, never an ordinary grant."""
+STATE_READ_OUTPUTS: Final = "state:read-outputs"
+"""Reading another workspace's non-sensitive outputs, as HCP's remote state sharing does.
+
+Like `state:download`, never an ordinary grant: an admin holds it, and a run's API token
+carries it whenever its workspace grants `workspaces:read`, where the source workspace's
+sharing settings decide which outputs that run may read."""
 REGISTRY_READ: Final = "registry:read"
 """Reading the module registry, which is what `TF_TOKEN_<host>` carries for `terraform init`."""
 REGISTRY_WRITE: Final = "registry:write"
@@ -78,6 +84,7 @@ ALL_SCOPES: Final = (
     RUNS_APPLY,
     STATE_DOWNLOAD,
     STATE_WRITE,
+    STATE_READ_OUTPUTS,
     REGISTRY_READ,
     REGISTRY_WRITE,
     ADMIN,
@@ -177,6 +184,16 @@ def granted_run_api_scopes(workspace: Mapping[str, Any] | None) -> tuple[str, ..
     return tuple(scope for scope in RUN_API_TOKEN_SCOPES if scope in {str(value) for value in stored})
 
 
+def effective_run_api_scopes(workspace: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """The scopes a run's API token carries: the grant, plus `state:read-outputs` beside `workspaces:read`.
+
+    Reading another workspace's outputs is then gated by that workspace's remote state
+    sharing settings rather than by a separate grant on this one, as on HCP.
+    """
+    granted = granted_run_api_scopes(workspace)
+    return (*granted, STATE_READ_OUTPUTS) if WORKSPACES_READ in granted else granted
+
+
 def is_run_api_token(record: ApiKeyRecord) -> bool:
     """Whether a verified key is a run's API token rather than a person's or an agent's."""
     return (
@@ -197,7 +214,7 @@ def run_api_token_scopes(record: ApiKeyRecord) -> tuple[str, ...]:
     workspace_id = str(record.metadata.get("workspace_id", "") or "")
     if not workspace_id:
         return ()
-    return granted_run_api_scopes(repositories.workspaces().get({"workspace_id": workspace_id}))
+    return effective_run_api_scopes(repositories.workspaces().get({"workspace_id": workspace_id}))
 
 
 def key_owner_scopes(record: ApiKeyRecord) -> tuple[str, ...]:
@@ -413,6 +430,7 @@ __all__ = [
     "RUN_TOKEN_TENANT",
     "RunnerRoute",
     "STATE_DOWNLOAD",
+    "STATE_READ_OUTPUTS",
     "STATE_WRITE",
     "STEP_UP_MAX_AGE_SECONDS",
     "VARIABLES_READ",
@@ -424,6 +442,7 @@ __all__ = [
     "claims",
     "ensure_recent_auth",
     "device_grant_liveness",
+    "effective_run_api_scopes",
     "granted_run_api_scopes",
     "is_run_api_token",
     "key_owner_scopes",

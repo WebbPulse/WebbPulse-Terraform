@@ -1348,6 +1348,10 @@ export interface paths {
          *     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
          *     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
          *     takes the step-up, since it hands every later run's confirmation to the system.
+         *
+         *     `global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'
+         *     runs may read this workspace's non-sensitive outputs. Every named consumer has to
+         *     exist, or the edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -1471,6 +1475,30 @@ export interface paths {
          *     a 200, since the request itself succeeded; 20 a minute per configuration.
          */
         post: operations["verify_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__actions_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/outputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Workspace Outputs
+         * @description The non-sensitive outputs of a workspace's current state.
+         *
+         *     A run's API token reads only a workspace that is its own, shares globally, or
+         *     names the run's workspace as a consumer; anything else is a 403
+         *     `REMOTE_STATE_NOT_SHARED`. A workspace with no state yet answers an empty list.
+         */
+        get: operations["read_workspace_outputs_api_v1_workspaces__workspace_id__outputs_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3831,6 +3859,11 @@ export interface components {
              * @default true
              */
             file_triggers_enabled?: boolean;
+            /**
+             * Global Remote State
+             * @default false
+             */
+            global_remote_state?: boolean;
             /** Name */
             name: string;
             /** Pending Run Role Arn */
@@ -3844,6 +3877,8 @@ export interface components {
              * @default prj-default
              */
             project_id?: string;
+            /** Remote State Consumer Ids */
+            remote_state_consumer_ids?: string[];
             /** Run Api Token Scopes */
             run_api_token_scopes?: string[];
             /** Run Role Account Id */
@@ -3977,6 +4012,11 @@ export interface components {
              * @default true
              */
             file_triggers_enabled?: boolean;
+            /**
+             * Global Remote State
+             * @default false
+             */
+            global_remote_state?: boolean;
             /** Latest Change At */
             latest_change_at: string;
             latest_run?: components["schemas"]["LatestRun"] | null;
@@ -3993,6 +4033,8 @@ export interface components {
              * @default prj-default
              */
             project_id?: string;
+            /** Remote State Consumer Ids */
+            remote_state_consumer_ids?: string[];
             /** Run Api Token Scopes */
             run_api_token_scopes?: string[];
             /** Run Role Account Id */
@@ -4033,6 +4075,37 @@ export interface components {
             workspace_id: string;
         };
         /**
+         * WorkspaceOutput
+         * @description One non-sensitive root output of a workspace's current state.
+         */
+        WorkspaceOutput: {
+            /** Detailed Type */
+            detailed_type?: unknown;
+            /** Name */
+            name: string;
+            /** Type */
+            type: string;
+            /** Value */
+            value?: unknown;
+        };
+        /**
+         * WorkspaceOutputs
+         * @description A workspace's non-sensitive outputs, as remote state sharing hands them to another workspace.
+         *
+         *     Sensitive outputs never appear with a value; only their names are listed, so a
+         *     consumer can tell a withheld output from a missing one.
+         */
+        WorkspaceOutputs: {
+            /** Outputs */
+            outputs?: components["schemas"]["WorkspaceOutput"][];
+            /** Sensitive Output Names */
+            sensitive_output_names?: string[];
+            /** State Version Id */
+            state_version_id?: string | null;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
          * WorkspaceUpdate
          * @description A partial workspace edit. The name and the id are not editable.
          *
@@ -4060,6 +4133,8 @@ export interface components {
             engine_version?: string | null;
             /** File Triggers Enabled */
             file_triggers_enabled?: boolean | null;
+            /** Global Remote State */
+            global_remote_state?: boolean | null;
             /** Pending Run Role Arn */
             pending_run_role_arn?: string | null;
             /** Plan Assume Role Arns */
@@ -4068,6 +4143,8 @@ export interface components {
             plan_role_arn?: string | null;
             /** Project Id */
             project_id?: string | null;
+            /** Remote State Consumer Ids */
+            remote_state_consumer_ids?: string[] | null;
             /** Run Api Token Scopes */
             run_api_token_scopes?: ("workspaces:read" | "workspaces:write" | "variables:read" | "variables:write" | "registry:read" | "registry:write")[] | null;
             /** Run Role Arn */
@@ -7110,6 +7187,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NotificationDelivery"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_workspace_outputs_api_v1_workspaces__workspace_id__outputs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceOutputs"];
                 };
             };
             /** @description Request validation failed. */

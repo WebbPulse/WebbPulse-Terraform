@@ -5,9 +5,9 @@ from __future__ import annotations
 import posixpath
 import re
 from datetime import datetime
-from typing import Any, Final, Literal, Optional
+from typing import Annotated, Any, Final, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from ....common.core.auth import RUN_API_TOKEN_SCOPES
 from ....common.runs.workspace_runs import RunStatus
@@ -150,6 +150,21 @@ def normalize_run_api_token_scopes(values: list[str]) -> list[str] | None:
     return ordered or None
 
 
+WORKSPACE_ID_PATTERN: Final = r"^ws-[0-9A-HJKMNP-TV-Z]{26}$"
+"""A workspace id: `ws-` and a ULID."""
+
+WorkspaceIdValue = Annotated[str, StringConstraints(pattern=WORKSPACE_ID_PATTERN)]
+"""A string that has to be a workspace id."""
+
+REMOTE_STATE_CONSUMERS_MAX: Final = 100
+"""How many workspaces one workspace may share its outputs with by name."""
+
+
+def normalize_remote_state_consumer_ids(values: list[str]) -> list[str] | None:
+    """The consumers deduplicated and sorted, or `None` for an empty list, which clears them."""
+    return sorted(set(values)) or None
+
+
 class RunRoleSetup(BaseModel):
     """What a person needs to build the run role for one workspace.
 
@@ -253,6 +268,8 @@ CLEARABLE_WORKSPACE_FIELDS: Final = (
     "plan_assume_role_arns",
     "run_api_token_scopes",
     "project_id",
+    "global_remote_state",
+    "remote_state_consumer_ids",
 )
 """The update fields an explicit JSON null clears.
 
@@ -301,6 +318,13 @@ class WorkspaceUpdate(BaseModel):
     """Replace the roles a plan may assume. Null or an empty list leaves none."""
     run_api_token_scopes: Optional[list[RunApiTokenScope]] = Field(default=None, max_length=12)
     """Grant each run a short lived API token with these scopes. Admin and step-up only; null or empty revokes."""
+    global_remote_state: Optional[bool] = None
+    """Share this workspace's non-sensitive outputs with every workspace's runs. Null turns it off."""
+    remote_state_consumer_ids: Optional[list[WorkspaceIdValue]] = Field(
+        default=None, max_length=REMOTE_STATE_CONSUMERS_MAX
+    )
+    """Replace the workspaces whose runs may read this workspace's non-sensitive outputs.
+    Each has to exist; this workspace itself is dropped. Null or an empty list shares with none."""
     auto_apply: Optional[bool] = None
     """Apply successful plans without a confirmation. Admin only, and audited."""
     project_id: Optional[str] = Field(default=None, max_length=64, pattern=PROJECT_ID_PATTERN)
@@ -336,6 +360,12 @@ class WorkspaceUpdate(BaseModel):
     def _normalize_run_api_token_scopes(cls, value: Optional[list[str]]) -> Optional[list[str]]:
         """Store the grant in canonical order, with an empty one as a clear."""
         return None if value is None else normalize_run_api_token_scopes(value)
+
+    @field_validator("remote_state_consumer_ids")
+    @classmethod
+    def _normalize_remote_state_consumer_ids(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        """Store the consumers sorted and deduplicated, with an empty list as a clear."""
+        return None if value is None else normalize_remote_state_consumer_ids(value)
 
     @field_validator("plan_role_arn")
     @classmethod
@@ -439,6 +469,10 @@ class Workspace(WorkspaceBase):
     """The last Quick setup link's progress, or `None` when none was handed out."""
     run_api_token_scopes: list[str] = Field(default_factory=list)
     """The scopes each run's API token carries, read live on every request. Empty grants none."""
+    global_remote_state: bool = False
+    """Whether every workspace's runs may read this workspace's non-sensitive outputs."""
+    remote_state_consumer_ids: list[str] = Field(default_factory=list)
+    """The workspaces whose runs may read this workspace's non-sensitive outputs."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -748,3 +782,28 @@ class StateVersionDownload(BaseModel):
     download_url: str
     expires_in: int
     size_bytes: int
+
+
+class WorkspaceOutput(BaseModel):
+    """One non-sensitive root output of a workspace's current state."""
+
+    name: str
+    type: str
+    """The coarse JSON type: string, number, boolean, array, object or null."""
+    detailed_type: Any = None
+    """The cty type the state recorded for the value."""
+    value: Any = None
+
+
+class WorkspaceOutputs(BaseModel):
+    """A workspace's non-sensitive outputs, as remote state sharing hands them to another workspace.
+
+    Sensitive outputs never appear with a value; only their names are listed, so a
+    consumer can tell a withheld output from a missing one.
+    """
+
+    workspace_id: str
+    state_version_id: Optional[str] = None
+    """The S3 version of the state read, or null when the workspace has no state yet."""
+    outputs: list[WorkspaceOutput] = Field(default_factory=list)
+    sensitive_output_names: list[str] = Field(default_factory=list)
