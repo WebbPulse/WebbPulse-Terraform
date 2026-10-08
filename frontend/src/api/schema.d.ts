@@ -1347,8 +1347,9 @@ export interface paths {
          *
          *     Changing `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns` decides what
          *     every plan, a pull request plan included, may reach, so it takes `admin`, or a run
-         *     token holding the factory grant, as well as the step-up. The reader roles and the plan secrets together must fit the plan's
-         *     session policy, or the edit is a 422 `PLAN_SESSION_POLICY_TOO_LARGE`.
+         *     token holding the factory grant, as well as the step-up. The reader roles and the
+         *     plan secrets together must fit the plan's session policy, or the edit is a 422
+         *     `PLAN_SESSION_POLICY_TOO_LARGE`.
          *
          *     Changing `run_api_token_scopes` hands every later run of this workspace a key on
          *     this API, so it takes `admin` as well as the step-up.
