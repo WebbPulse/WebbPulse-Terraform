@@ -1268,7 +1268,7 @@ export interface paths {
          *
          *     The filters and the sort compose, so a project's workspaces can be searched and
          *     ordered in one request. A `project_id` naming a project that holds nothing, or none
-         *     at all, is an empty list.
+         *     at all, is an empty list. A run's API token sees only its own workspace.
          */
         get: operations["list_workspaces_api_v1_workspaces_get"];
         put?: never;

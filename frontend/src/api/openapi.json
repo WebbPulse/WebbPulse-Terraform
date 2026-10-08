@@ -9105,7 +9105,7 @@
     },
     "/api/v1/workspaces": {
       "get": {
-        "description": "Workspaces in this environment, each with its run role setup and newest run.\n\nThe filters and the sort compose, so a project's workspaces can be searched and\nordered in one request. A `project_id` naming a project that holds nothing, or none\nat all, is an empty list.",
+        "description": "Workspaces in this environment, each with its run role setup and newest run.\n\nThe filters and the sort compose, so a project's workspaces can be searched and\nordered in one request. A `project_id` naming a project that holds nothing, or none\nat all, is an empty list. A run's API token sees only its own workspace.",
         "operationId": "list_workspaces_api_v1_workspaces_get",
         "parameters": [
           {

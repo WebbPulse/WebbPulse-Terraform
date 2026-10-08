@@ -436,6 +436,7 @@ authenticator code or their password through `/api/auth/step-up`, after which th
 replays the call. An agent key has no login to age and passes; its scopes are what limit it.
 Confirming a run is not gated: `runs:apply` on a live session is enough, as on HCP."""
 
+
 def refuse_run_token_step_up(current: Mapping[str, Any]) -> None:
     """Refuse a run's API token at a step-up gate, unless it holds the factory grant.
 
