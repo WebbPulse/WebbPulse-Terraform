@@ -18,6 +18,11 @@ from webbpulse.dynamodb import ConditionFailed, new_ulid, now_iso
 
 from ...common.composition.settings import Settings, get_settings
 from ...common.core import variable_cipher
+from ...common.core.auth import (
+    RUN_API_TOKEN_SCOPES_ATTRIBUTE,
+    RUN_API_TOKEN_SCOPES_VERSION,
+    RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE,
+)
 from ...common.db import repositories
 from ...common.db.tables import (
     CONFIG_VERSIONS_BY_WORKSPACE_INDEX,
@@ -93,7 +98,9 @@ TFE_CONFIG_MAX_BYTES: Final = 250_000_000
 
 go-tfe sends no length up front, so it is checked against the object once it lands."""
 
-_PRIVATE_WORKSPACE_FIELDS: Final = frozenset({aws_connect.TOKEN_HASH_ATTRIBUTE, aws_connect.TOKEN_EXPIRES_ATTRIBUTE})
+_PRIVATE_WORKSPACE_FIELDS: Final = frozenset(
+    {aws_connect.TOKEN_HASH_ATTRIBUTE, aws_connect.TOKEN_EXPIRES_ATTRIBUTE, RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE}
+)
 """Row attributes no response carries, the connect token's hash above all."""
 
 GLOBAL_REMOTE_STATE_FIELD: Final = "global_remote_state"
@@ -401,6 +408,10 @@ def update_workspace(
     default branch when the request carries no branch. Without an App the recorded
     id and installation are dropped instead, since they belonged to the previous
     repository. Clearing `vcs_repo` removes all of them.
+
+    A change to `run_api_token_scopes`, a clear included, stamps the grant's current
+    version, so the run API token's one-off factory migration never touches a grant an
+    admin chose since.
     """
     resolved = settings or get_settings()
     if "project_id" in changes:
@@ -422,6 +433,10 @@ def update_workspace(
     role_changed = "run_role_arn" in changes and changes["run_role_arn"] != existing.get("run_role_arn")
 
     assignments["updated_at"] = now_iso()
+    if RUN_API_TOKEN_SCOPES_ATTRIBUTE in changes and set(changes[RUN_API_TOKEN_SCOPES_ATTRIBUTE] or ()) != set(
+        existing.get(RUN_API_TOKEN_SCOPES_ATTRIBUTE) or ()
+    ):
+        assignments[RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE] = RUN_API_TOKEN_SCOPES_VERSION
     removals = [*clears]
     if role_changed:
         removals.extend(("run_role_checked_at", "run_role_account_id"))

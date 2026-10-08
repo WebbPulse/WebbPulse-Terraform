@@ -135,6 +135,15 @@ RUN_API_TOKEN_KIND: Final = "run_api"
 RUN_API_TOKEN_SCOPES_ATTRIBUTE: Final = "run_api_token_scopes"
 """The workspace attribute holding the scopes its runs' API token may exercise."""
 
+RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE: Final = "run_api_token_scopes_version"
+"""The workspace attribute saying which meaning its `run_api_token_scopes` was set under.
+
+Absent on a grant set before the factory grant existed, when a grant holding every write
+scope already reached every workspace. Every write of the grant stamps the current version."""
+
+RUN_API_TOKEN_SCOPES_VERSION: Final = 2
+"""The current meaning of `run_api_token_scopes`: cross-workspace reach only with `workspaces:factory`."""
+
 RUN_TOKEN_TENANT: Final = "webbpulse-terraform"
 """The tenant every run token is minted under. The control plane is single tenant,
 and the claim is required, so one constant stands in for it."""
@@ -579,6 +588,8 @@ __all__ = [
     "RUN_API_TOKEN_KIND",
     "RUN_API_TOKEN_SCOPES",
     "RUN_API_TOKEN_SCOPES_ATTRIBUTE",
+    "RUN_API_TOKEN_SCOPES_VERSION",
+    "RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE",
     "RUN_API_WRITE_SCOPES",
     "RUN_TOKEN_STEP_UP_CODE",
     "RUN_TOKEN_WORKSPACE_BOUND_CODE",

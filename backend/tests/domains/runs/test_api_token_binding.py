@@ -1,15 +1,23 @@
-"""A run's API token is bound to its own workspace, minted for no speculative plan and read-only while planning.
+"""A run's API token is bound to its own workspace, read-only while planning and for every speculative plan.
 
 The factory grant, `workspaces:factory`, is the one way a run's token reaches past its
 own workspace, creates workspaces or passes step-up; the WebbPulse-Platform workspace
 holds it for the factory configuration that manages every other workspace.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.common.composition.settings import get_settings
-from app.common.core.auth import RUN_TOKEN_STEP_UP_CODE, RUN_TOKEN_WORKSPACE_BOUND_CODE
+from app.common.core.auth import (
+    RUN_API_TOKEN_SCOPES_VERSION,
+    RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE,
+    RUN_TOKEN_STEP_UP_CODE,
+    RUN_TOKEN_WORKSPACE_BOUND_CODE,
+)
+from app.common.db import repositories
 from app.domains.runs import api_credentials
 from app.domains.runs import service as runs_service
 from tests.conftest import WORKSPACE_PAYLOAD, runner_token
@@ -17,6 +25,8 @@ from tests.conftest import WORKSPACE_PAYLOAD, runner_token
 BASE = "/api/v1/runs"
 WRITE_GRANT = ["workspaces:read", "workspaces:write", "variables:read", "variables:write", "registry:read"]
 FACTORY_GRANT = [*WRITE_GRANT, "registry:write", "workspaces:factory"]
+PRE_FACTORY_GRANT = [*WRITE_GRANT, "registry:write"]
+PLAN_SCOPES = ["workspaces:read", "variables:read", "registry:read"]
 ORG = "/api/v2/organizations/WebbPulse"
 NEW_ROLE = "arn:aws:iam::870550636948:role/webbpulse-terraform-test-other"
 READER = "arn:aws:iam::488386929690:role/WebbPulse-Terraform-Route53-Reader"
@@ -272,26 +282,106 @@ def test_a_failed_plan_revokes_its_token(app, api_origin, auth_client, created_r
         assert client.get("/api/v1/workspaces").status_code == 401
 
 
-def test_a_plan_only_run_gets_no_token(app, api_origin, auth_client, plan_only_run):
-    """A speculative run's bundle carries no API token, whatever the grant."""
+def test_a_plan_only_run_gets_a_read_only_token(app, api_origin, auth_client, plan_only_run, other_workspace):
+    """A speculative run's token carries the grant's reads and the factory's reach, and writes nothing."""
     _grant(auth_client, plan_only_run["workspace_id"], FACTORY_GRANT)
     run_id = plan_only_run["run_id"]
+    other = other_workspace["workspace_id"]
 
     with _as(app, runner_token(run_id)) as client:
         response = client.get(f"{BASE}/{run_id}/bundle")
 
     assert response.status_code == 200, response.text
-    assert response.json()["api"] is None
+    api = response.json()["api"]
+    assert api["scopes"] == [*PLAN_SCOPES, "workspaces:factory"]
+    with _as(app, api["token"]) as client:
+        assert client.get(_path(other)).status_code == 200
+        assert client.get(f"{_path(other)}/variables").status_code == 200
+        assert client.patch(_path(other), json={"description": "x"}).status_code == 403
+        assert client.put(f"{_path(other)}/variables/x", json={"value": "y"}).status_code == 403
+        assert client.post("/api/v1/workspaces", json={**WORKSPACE_PAYLOAD, "name": "spawned"}).status_code == 403
 
 
 @pytest.mark.parametrize("status", ["planning", "applying"])
-def test_a_pull_request_plan_gets_no_token(api_origin, created_run, status):
-    """A run from a pull request is speculative, so nothing is minted in either phase."""
-    run = {**created_run, "status": status, "source": "vcs_pr", "plan_only": True}
-    workspace = {"run_api_token_scopes": FACTORY_GRANT}
+def test_a_pull_request_plan_gets_the_plan_token(api_origin, created_run, status):
+    """A run from a pull request is speculative, so either phase gets the read-only plan token and lifetime."""
+    run = {**created_run, "status": status, "source": "vcs_pr", "plan_only": False}
+    workspace = {"workspace_id": created_run["workspace_id"], "run_api_token_scopes": FACTORY_GRANT}
+
+    issued = api_credentials.issue(run, workspace, settings=get_settings())
+
+    assert issued is not None
+    assert issued["scopes"] == [*PLAN_SCOPES, "workspaces:factory"]
+    lifetime = datetime.fromisoformat(issued["expires_at"]) - datetime.now(timezone.utc)
+    assert lifetime <= api_credentials.PHASE_TTLS["planning"]
+
+
+def test_a_speculative_plan_with_a_write_only_grant_gets_no_token(api_origin, created_run):
+    """A grant with nothing to read hands a speculative plan nothing."""
+    run = {**created_run, "status": "planning", "plan_only": True}
+    workspace = {"workspace_id": created_run["workspace_id"], "run_api_token_scopes": ["workspaces:write"]}
 
     assert api_credentials.issue(run, workspace, settings=get_settings()) is None
-    assert api_credentials.issue({**run, "plan_only": False}, workspace, settings=get_settings()) is None
+
+
+def _store_grant(workspace_id, scopes):
+    """Write a grant straight to the table, as one set before grants carried a version."""
+    repositories.workspaces().update(
+        {"workspace_id": workspace_id},
+        update_expression="SET run_api_token_scopes = :scopes",
+        expression_values={":scopes": scopes},
+    )
+
+
+def _stored(workspace_id):
+    """The workspace row as stored."""
+    return repositories.workspaces().get({"workspace_id": workspace_id}, consistent=True) or {}
+
+
+def test_a_pre_factory_grant_with_every_write_scope_gains_the_factory_grant_once(
+    app, api_origin, auth_client, created_run, runner_client, other_workspace
+):
+    """The factory workspace keeps its reach through the release, with no admin call, and only once."""
+    own = created_run["workspace_id"]
+    _store_grant(own, PRE_FACTORY_GRANT)
+
+    first = _bundle(runner_client, created_run["run_id"])["api"]
+    second = _bundle(runner_client, created_run["run_id"])["api"]
+
+    assert first["scopes"] == [*PLAN_SCOPES, "workspaces:factory"]
+    assert second["scopes"] == first["scopes"]
+    stored = _stored(own)
+    assert stored["run_api_token_scopes"] == [*PRE_FACTORY_GRANT, "workspaces:factory"]
+    assert int(stored[RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE]) == RUN_API_TOKEN_SCOPES_VERSION
+    with _as(app, second["token"]) as client:
+        assert client.get(_path(other_workspace["workspace_id"])).status_code == 200
+    assert RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE not in auth_client.get(_path(own)).json()
+
+
+def test_a_pre_factory_grant_without_every_write_scope_is_left_alone(
+    api_origin, auth_client, created_run, runner_client
+):
+    """Only a grant that could already write everything was the factory's."""
+    own = created_run["workspace_id"]
+    _store_grant(own, WRITE_GRANT)
+
+    api = _bundle(runner_client, created_run["run_id"])["api"]
+
+    assert api["scopes"] == PLAN_SCOPES
+    assert _stored(own)["run_api_token_scopes"] == WRITE_GRANT
+    assert RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE not in _stored(own)
+
+
+def test_a_grant_an_admin_sets_is_never_migrated(api_origin, auth_client, created_run, runner_client):
+    """An edit stamps the grant's version, so every write scope without the factory grant stays bound."""
+    own = created_run["workspace_id"]
+    _grant(auth_client, own, PRE_FACTORY_GRANT)
+
+    api = _bundle(runner_client, created_run["run_id"])["api"]
+
+    assert api["scopes"] == PLAN_SCOPES
+    assert _stored(own)["run_api_token_scopes"] == PRE_FACTORY_GRANT
+    assert int(_stored(own)[RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE]) == RUN_API_TOKEN_SCOPES_VERSION
 
 
 def test_a_person_is_not_bound(auth_client, created_run, other_workspace):
