@@ -58,7 +58,8 @@ RUN_STATUSES: Final[Mapping[str, str]] = {
     "discarded": "discarded",
 }
 """Stored run statuses under HCP's names. `planned` and `awaiting_confirmation` are
-decided by `run_status`, since they depend on the confirmation token."""
+decided by `run_status`, since they depend on the confirmation token, and a saved plan
+waiting for its `terraform apply` reads `planned_and_saved`."""
 
 CANCELABLE: Final = frozenset({"pending", "planning", "planned", "applying"})
 """Statuses HCP offers a cancel in; a plan awaiting a decision is discarded instead."""
@@ -94,7 +95,9 @@ def run_status(run: Mapping[str, Any]) -> str:
     """The run's HCP status. A plan waiting on its confirmation token still reads `planning`."""
     status = str(run.get("status", ""))
     if status in ("planned", "awaiting_confirmation"):
-        return "planned" if _confirmable(run) else "planning"
+        if not _confirmable(run):
+            return "planning"
+        return "planned_and_saved" if run.get("save_plan") else "planned"
     return RUN_STATUSES.get(status, status)
 
 
@@ -196,6 +199,7 @@ def run_resource(run: Mapping[str, Any], held: Iterable[str]) -> dict[str, Any]:
         "position-in-queue": 0,
         "refresh": bool(run.get("refresh", True)),
         "refresh-only": bool(run.get("refresh_only", False)),
+        "save-plan": bool(run.get("save_plan", False)),
         "replace-addrs": [str(address) for address in run.get("replace_addrs") or []],
         "source": "tfe-api",
         "status": run_status(run),
@@ -212,6 +216,7 @@ def run_resource(run: Mapping[str, Any], held: Iterable[str]) -> dict[str, Any]:
         "policy-checks": {"data": []},
         "run-events": {"data": []},
         "task-stages": {"data": []},
+        "tf-policy-evaluations": {"data": []},
         "workspace": linkage("workspaces", str(run["workspace_id"])),
     }
     return resource("runs", run_id, attributes, relationships=relationships, links={"self": f"/api/v2/runs/{run_id}"})

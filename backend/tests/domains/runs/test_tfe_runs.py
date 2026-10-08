@@ -109,13 +109,30 @@ def test_an_unparseable_run_variable_is_a_json_api_422(auth_client, workspace, s
     assert response.json()["errors"][0]["status"] == "422"
 
 
-def test_a_saved_plan_is_refused(auth_client, workspace, state_machine):
-    """`terraform plan -out` against a cloud workspace is not served, and says so."""
+def test_a_saved_plan_never_applies_on_its_own(auth_client, workspace, state_machine):
+    """`terraform plan -out` saves the plan, which waits for `terraform apply <planfile>`."""
     workspace_id = workspace["workspace_id"]
+    workspaces_service.update_workspace(workspace_id, {"auto_apply": True})
     config_version_id = _config_version(auth_client, workspace_id, speculative=False)
     response = _create(auth_client, workspace_id, config_version_id, **{"save-plan": True})
-    assert response.status_code == 422
-    assert "Saved cloud plans" in response.json()["errors"][0]["detail"]
+    assert response.status_code == 201, response.text
+    attributes = response.json()["data"]["attributes"]
+    assert attributes["save-plan"] is True
+    assert attributes["plan-only"] is False
+    assert attributes["auto-apply"] is False
+    row = runs_service.get_run(response.json()["data"]["id"])
+    assert row["save_plan"] is True
+    assert runs_service.auto_apply_eligible(row | {"status": "awaiting_confirmation"}) is False
+
+
+def test_save_plan_on_a_speculative_version_is_plan_only(auth_client, workspace, state_machine):
+    """A speculative version cannot be applied, so it is never saved."""
+    workspace_id = workspace["workspace_id"]
+    config_version_id = _config_version(auth_client, workspace_id, speculative=True)
+    response = _create(auth_client, workspace_id, config_version_id, **{"save-plan": True})
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["attributes"]["save-plan"] is False
+    assert "save_plan" not in runs_service.get_run(response.json()["data"]["id"])
 
 
 def test_auto_approve_needs_runs_apply(scoped_client, auth_client, workspace, state_machine):
@@ -177,6 +194,31 @@ def test_a_confirmable_run_reads_planned(auth_client, awaiting_confirmation):
     assert plan["attributes"]["log-read-url"].startswith("http")
     apply = auth_client.get(f"{API}/applies/{tfe_runs.apply_id(run_id)}").json()["data"]
     assert apply["attributes"]["status"] == "pending"
+
+
+def test_a_confirmable_saved_plan_reads_planned_and_saved(auth_client, awaiting_confirmation):
+    """A saved plan reads as HCP's `planned_and_saved` and is still confirmable by its apply."""
+    run_id = awaiting_confirmation["run_id"]
+    runs_service._update_run(run_id, {"save_plan": True}, settings=get_settings())
+    data = auth_client.get(f"{API}/runs/{run_id}", params={"include": "workspace"}).json()["data"]
+    assert data["attributes"]["status"] == "planned_and_saved"
+    assert data["attributes"]["save-plan"] is True
+    assert data["attributes"]["actions"]["is-confirmable"] is True
+    response = auth_client.post(f"{API}/runs/{run_id}/actions/apply", content=b"{}")
+    assert response.status_code == 202, response.text
+    assert runs_service.get_run(run_id)["status"] == "applying"
+
+
+def test_stage_includes_read_as_empty(auth_client, awaiting_confirmation):
+    """Task stages, policy evaluations, checks and cost estimates are empty, as on a workspace with none."""
+    run_id = awaiting_confirmation["run_id"]
+    response = auth_client.get(f"{API}/runs/{run_id}", params={"include": "task_stages,tf_policy_evaluations"})
+    assert response.status_code == 200, response.text
+    relationships = response.json()["data"]["relationships"]
+    assert relationships["task-stages"] == {"data": []}
+    assert relationships["tf-policy-evaluations"] == {"data": []}
+    assert relationships["policy-checks"] == {"data": []}
+    assert relationships["cost-estimate"] == {"data": None}
 
 
 def test_apply_confirms_the_run(auth_client, awaiting_confirmation):

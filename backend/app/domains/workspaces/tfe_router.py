@@ -25,7 +25,7 @@ from ...common.core.auth import (
     STATE_WRITE,
     VARIABLES_READ,
     WORKSPACES_READ,
-    WORKSPACES_WRITE,
+    claims,
     scopes,
 )
 from ...common.tfe.jsonapi import (
@@ -135,19 +135,25 @@ def list_organization_workspaces(
 
 
 @router.post("/organizations/{organization}/workspaces")
-def create_organization_workspace(
+async def create_organization_workspace(
+    request: Request,
     organization: str,
-    _: "AuthorizerClaims" = Depends(scopes(WORKSPACES_WRITE)),
+    _: "AuthorizerClaims" = Depends(claims),
 ) -> Response:
-    """Refuse to create a workspace from the CLI.
+    """Refuse to create a workspace from the CLI, naming the workspace and what to do.
 
     The cloud backend creates a workspace it cannot find. A workspace here needs a run
     role and a reviewed engine version, so it is created in the UI or through
-    `/api/v1/workspaces`, and the CLI shows this message instead.
+    `/api/v1/workspaces`, and the CLI shows this message instead. Any valid key gets
+    the message, since a `terraform login` key carries no `workspaces:write` and a
+    scope error would not say what to do.
     """
     require_organization(organization)
+    attributes, _relationships = await request_attributes(request)
+    name = str(attributes.get("name") or "").strip()
+    named = f'Workspace "{name}" does not exist. ' if name else ""
     raise unprocessable(
-        "Workspaces are not created from the CLI. "
+        f"{named}Workspaces are not created from the CLI. "
         "Create it in the WebbPulse Terraform UI, then run terraform init again."
     )
 
@@ -199,6 +205,7 @@ async def create_configuration_version(
             workspace_id,
             speculative=bool(attributes.get("speculative", False)),
             auto_queue_runs=bool(attributes.get("auto-queue-runs", True)),
+            provisional=attributes.get("provisional") is True,
         )
     except WorkspaceNotFound as error:
         raise not_found("workspace") from error

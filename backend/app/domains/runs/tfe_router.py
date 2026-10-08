@@ -145,6 +145,8 @@ def _create_payload(
     }
     if isinstance(attributes.get("auto-apply"), bool):
         payload["auto_apply"] = attributes["auto-apply"]
+    if attributes.get("save-plan") is True and not payload["plan_only"]:
+        payload["save_plan"] = True
     return payload
 
 
@@ -158,7 +160,8 @@ async def create_run(
     A run on a speculative configuration version is plan only, which is how a
     `terraform plan` without `-out` asks for one. `auto-apply`, which the CLI sends
     for `-auto-approve`, needs `runs:apply`, since it is a confirmation made up front.
-    A saved plan is refused: `terraform apply` of a saved cloud plan is not served yet.
+    `save-plan`, which `terraform plan -out` sends, keeps the plan waiting for the
+    `terraform apply <planfile>` that confirms it, and never applies on its own.
     """
     attributes, relationships = await request_attributes(request)
     held = claims_scopes(current)
@@ -166,8 +169,6 @@ async def create_run(
     config_version_id = related_id(relationships, "configuration-version")
     if not workspace_id or not config_version_id:
         raise unprocessable("A run needs a workspace and a configuration version.")
-    if attributes.get("save-plan"):
-        raise unprocessable("Saved cloud plans are not supported. Run `terraform apply` without a saved plan.")
     if attributes.get("auto-apply") is True and RUNS_APPLY not in held:
         raise unprocessable("Auto-approving a run needs the runs:apply scope.")
     try:
