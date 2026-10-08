@@ -648,7 +648,10 @@ with a message saying which.
 
 Google and Azure get HCP style workload identity. The control plane is an OIDC issuer
 (`terraform/oidc_issuer.tf`, `oidc.<stage host>`, anonymous discovery and JWKS from a
-KMS RSA key only the runs function may sign with). A workspace setting
+KMS RSA key only the runs function may sign with). Terraform reads the public keys at
+deploy time into the issuer Lambda's `SIGNING_KEYS`, so a JWKS request makes no AWS
+call: Entra abandons a JWKS fetch after about five seconds (AADSTS50166) and a cold
+boto3 import plus `kms:GetPublicKey` took six (TF-75). A workspace setting
 `TFC_GCP_PROVIDER_AUTH` (with `TFC_GCP_WORKLOAD_PROVIDER_NAME`, optionally
 `TFC_GCP_RUN_SERVICE_ACCOUNT_EMAIL`) or `TFC_AZURE_PROVIDER_AUTH` (with
 `TFC_AZURE_RUN_CLIENT_ID`) gets a one hour RS256 token per cloud in the bundle and on

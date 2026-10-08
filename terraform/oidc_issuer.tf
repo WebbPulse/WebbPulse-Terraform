@@ -5,9 +5,15 @@ locals {
   oidc_issuer_url     = "https://${local.oidc_host}"
   oidc_function_name  = "${local.prefix}-oidc"
 
-  oidc_signing_keys  = local.oidc_issuer_enabled ? toset(var.oidc_signing_key_generations) : toset([])
-  oidc_active_key    = local.oidc_issuer_enabled ? aws_kms_key.oidc_signing[var.oidc_signing_key_generations[length(var.oidc_signing_key_generations) - 1]].arn : ""
-  oidc_published_ids = [for label in reverse(var.oidc_signing_key_generations) : aws_kms_key.oidc_signing[label].key_id if local.oidc_issuer_enabled]
+  oidc_signing_keys = local.oidc_issuer_enabled ? toset(var.oidc_signing_key_generations) : toset([])
+  oidc_active_key   = local.oidc_issuer_enabled ? aws_kms_key.oidc_signing[var.oidc_signing_key_generations[length(var.oidc_signing_key_generations) - 1]].arn : ""
+
+  oidc_published_keys = [
+    for label in reverse(var.oidc_signing_key_generations) : {
+      kid = aws_kms_key.oidc_signing[label].key_id
+      der = data.aws_kms_public_key.oidc_signing[label].public_key
+    } if local.oidc_issuer_enabled
+  ]
 }
 
 data "aws_iam_policy_document" "oidc_signing_key" {
@@ -54,6 +60,12 @@ resource "aws_kms_key" "oidc_signing" {
   tags = { Component = "oidc-issuer" }
 }
 
+data "aws_kms_public_key" "oidc_signing" {
+  for_each = local.oidc_signing_keys
+
+  key_id = aws_kms_key.oidc_signing[each.key].arn
+}
+
 resource "aws_kms_alias" "oidc_signing" {
   for_each = local.oidc_signing_keys
 
@@ -85,7 +97,7 @@ resource "aws_iam_role" "oidc_issuer" {
   count = local.oidc_issuer_count
 
   name               = "${local.oidc_function_name}-lambda"
-  description        = "Serves the OIDC issuer's discovery document and JWKS. Reads the signing keys' public halves and nothing else"
+  description        = "Serves the OIDC issuer's discovery document and JWKS from its environment. Writes its own logs and nothing else"
   assume_role_policy = data.aws_iam_policy_document.oidc_issuer_trust.json
 
   tags = { Component = "oidc-issuer" }
@@ -115,12 +127,6 @@ resource "aws_iam_role_policy" "oidc_issuer" {
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = "${aws_cloudwatch_log_group.oidc_issuer[0].arn}:*"
       },
-      {
-        Sid      = "ReadTheSigningKeysPublicHalves"
-        Effect   = "Allow"
-        Action   = ["kms:GetPublicKey"]
-        Resource = [for key in aws_kms_key.oidc_signing : key.arn]
-      },
     ]
   })
 }
@@ -145,8 +151,8 @@ resource "aws_lambda_function" "oidc_issuer" {
 
   environment {
     variables = {
-      ISSUER          = local.oidc_issuer_url
-      SIGNING_KEY_IDS = join(",", local.oidc_published_ids)
+      ISSUER       = local.oidc_issuer_url
+      SIGNING_KEYS = jsonencode(local.oidc_published_keys)
     }
   }
 
