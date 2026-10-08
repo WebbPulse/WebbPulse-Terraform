@@ -226,7 +226,7 @@ def configuration_version_resource(item: Mapping[str, Any], *, upload_url: str |
         "error-message": CONFIG_ERROR_MESSAGES.get(str(error), str(error)) if error else None,
         "source": "github" if item.get("source") == "vcs" else "tfe-api",
         "speculative": bool(item.get("speculative", False)),
-        "provisional": False,
+        "provisional": bool(item.get("provisional", False)),
         "status": status,
         "upload-url": upload_url,
     }

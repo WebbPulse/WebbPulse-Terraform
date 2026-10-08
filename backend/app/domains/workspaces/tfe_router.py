@@ -25,7 +25,9 @@ from ...common.core.auth import (
     STATE_WRITE,
     VARIABLES_READ,
     WORKSPACES_READ,
-    WORKSPACES_WRITE,
+    bound_workspace_id,
+    claims,
+    run_api_workspace_binding,
     scopes,
 )
 from ...common.tfe.jsonapi import (
@@ -60,7 +62,12 @@ from .service import (
 if TYPE_CHECKING:  # pragma: no cover
     from webbpulse.identity.claims import AuthorizerClaims
 
-router = APIRouter(prefix="/api/v2", include_in_schema=False, route_class=JsonApiRoute)
+router = APIRouter(
+    prefix="/api/v2",
+    include_in_schema=False,
+    route_class=JsonApiRoute,
+    dependencies=[Depends(run_api_workspace_binding)],
+)
 
 WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
 
@@ -98,12 +105,19 @@ def read_entitlements(
 @router.get("/organizations/{organization}/workspaces/{name}")
 def read_workspace_by_name(
     organization: str,
+    request: Request,
     name: str = WorkspaceName,
     current: "AuthorizerClaims" = Depends(scopes(WORKSPACES_READ)),
 ) -> Response:
-    """One workspace by name, which is how the `cloud {}` block names it."""
+    """One workspace by name, which is how the `cloud {}` block names it.
+
+    A run's API token finds only its own workspace; any other name is not found.
+    """
     require_organization(organization)
     item = find_by_name(name)
+    bound = bound_workspace_id(request)
+    if item is not None and bound is not None and str(item.get("workspace_id", "")) != bound:
+        item = None
     if item is None:
         raise not_found("workspace")
     return document(_render(item, claims_scopes(current)))
@@ -118,11 +132,15 @@ def list_organization_workspaces(
     """The organization's workspaces, filtered by `search[name]` and paginated.
 
     Workspaces carry no tags, so a `search[tags]` or `filter[tagged]` query matches
-    none, which is what a `cloud {}` block selecting by tags sees.
+    none, which is what a `cloud {}` block selecting by tags sees. A run's API token
+    sees only its own workspace.
     """
     require_organization(organization)
     params = request.query_params
     items = list_workspaces()
+    bound = bound_workspace_id(request)
+    if bound is not None:
+        items = [item for item in items if str(item.get("workspace_id", "")) == bound]
     if params.get("search[tags]") or any(key.startswith("filter[tagged]") for key in params):
         items = []
     needle = (params.get("search[name]") or "").lower()
@@ -135,19 +153,25 @@ def list_organization_workspaces(
 
 
 @router.post("/organizations/{organization}/workspaces")
-def create_organization_workspace(
+async def create_organization_workspace(
+    request: Request,
     organization: str,
-    _: "AuthorizerClaims" = Depends(scopes(WORKSPACES_WRITE)),
+    _: "AuthorizerClaims" = Depends(claims),
 ) -> Response:
-    """Refuse to create a workspace from the CLI.
+    """Refuse to create a workspace from the CLI, naming the workspace and what to do.
 
     The cloud backend creates a workspace it cannot find. A workspace here needs a run
     role and a reviewed engine version, so it is created in the UI or through
-    `/api/v1/workspaces`, and the CLI shows this message instead.
+    `/api/v1/workspaces`, and the CLI shows this message instead. Any valid key gets
+    the message, since a `terraform login` key carries no `workspaces:write` and a
+    scope error would not say what to do.
     """
     require_organization(organization)
+    attributes, _relationships = await request_attributes(request)
+    name = str(attributes.get("name") or "").strip()
+    named = f'Workspace "{name}" does not exist. ' if name else ""
     raise unprocessable(
-        "Workspaces are not created from the CLI. "
+        f"{named}Workspaces are not created from the CLI. "
         "Create it in the WebbPulse Terraform UI, then run terraform init again."
     )
 
@@ -199,6 +223,7 @@ async def create_configuration_version(
             workspace_id,
             speculative=bool(attributes.get("speculative", False)),
             auto_queue_runs=bool(attributes.get("auto-queue-runs", True)),
+            provisional=attributes.get("provisional") is True,
         )
     except WorkspaceNotFound as error:
         raise not_found("workspace") from error

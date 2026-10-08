@@ -40,6 +40,8 @@ STACK_TABLE_FIELDS = {
     "GITHUB_TABLE": tables.GITHUB,
     "VCS_UPLOADS_TABLE": tables.VCS_UPLOADS,
     "REGISTRY_TABLE": tables.REGISTRY,
+    "NOTIFICATION_CONFIGURATIONS_TABLE": tables.NOTIFICATION_CONFIGURATIONS,
+    "PROJECTS_TABLE": tables.PROJECTS,
 }
 """Each table setting and the logical name the stack prefixes to name that table."""
 
@@ -75,6 +77,17 @@ class Settings(BaseServiceSettings):
 
     REGISTRY_TABLE: str = ""
     """The module registry's one table: modules and their versions."""
+
+    NOTIFICATION_CONFIGURATIONS_TABLE: str = ""
+    """Each workspace's run notification configurations, with their sealed webhook URLs."""
+
+    RUN_NOTIFICATIONS_QUEUE_URL: str = ""
+    """The queue the runs stream sends each notification delivery to. Unset, the queue
+    is found by its name under the stack prefix, which keeps it out of the function's
+    environment."""
+
+    PROJECTS_TABLE: str = ""
+    """The projects workspaces are grouped into. The default project is never stored."""
 
     REGISTRY_INGEST_QUEUE_URL: str = ""
     """The queue the webhook route sends each semantic version tag push to, for the

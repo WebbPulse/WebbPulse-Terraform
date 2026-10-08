@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from app.domains.runs import session_policy
+from app.common.runs import session_policy
 
 ACTION_PATTERN = re.compile(r"^[a-z0-9-]+:[A-Za-z0-9*?]+$")
 """What IAM accepts for an action other than the bare `*`.
@@ -35,6 +35,13 @@ def actions(document: dict[str, Any]) -> list[str]:
     return collected
 
 
+def plan_document(*args: Any) -> dict[str, Any]:
+    """A plan's inline document, asserting it has one."""
+    document = session_policy.plan_document(*args)
+    assert document is not None
+    return document
+
+
 SECRET_SIDS = ["PlanReadSecretValues", "PlanDecryptViaSecretsAndSsm"]
 
 READ_ONLY_ACTION = re.compile(r"^(secretsmanager:GetSecretValue|kms:Decrypt|sts:AssumeRole)$")
@@ -51,7 +58,7 @@ def test_the_plan_phase_is_read_only_access_plus_secret_reads() -> None:
 
 def test_the_plan_may_read_any_secret_value() -> None:
     """GetSecretValue covers every secret the run role reaches, and nothing else in Secrets Manager."""
-    statement = statements(session_policy.plan_document())["PlanReadSecretValues"]
+    statement = statements(plan_document())["PlanReadSecretValues"]
     assert statement == {
         "Sid": "PlanReadSecretValues",
         "Effect": "Allow",
@@ -62,7 +69,7 @@ def test_the_plan_may_read_any_secret_value() -> None:
 
 def test_the_plan_decrypts_only_through_secrets_manager_and_ssm() -> None:
     """kms:Decrypt carries a ViaService condition, so the plan cannot call KMS on ciphertext directly."""
-    statement = statements(session_policy.plan_document())["PlanDecryptViaSecretsAndSsm"]
+    statement = statements(plan_document())["PlanDecryptViaSecretsAndSsm"]
     assert statement["Action"] == "kms:Decrypt"
     assert statement["Condition"] == {
         "StringLike": {"kms:ViaService": ["secretsmanager.*.amazonaws.com", "ssm.*.amazonaws.com"]}
@@ -71,7 +78,7 @@ def test_the_plan_decrypts_only_through_secrets_manager_and_ssm() -> None:
 
 def test_the_plan_document_names_no_write_action() -> None:
     """Every action in the plan's inline document is a read or a reader assume, and each is a valid IAM action."""
-    document = session_policy.plan_document([READER])
+    document = plan_document([READER])
     for statement in document["Statement"]:
         assert statement["Effect"] == "Allow"
         assert "NotAction" not in statement and "NotResource" not in statement
@@ -82,9 +89,9 @@ def test_the_plan_document_names_no_write_action() -> None:
 
 def test_the_secret_statements_are_not_shared_mutable_state() -> None:
     """Editing one returned document leaves the next plan's untouched."""
-    first = session_policy.plan_document()
+    first = plan_document()
     first["Statement"][0]["Resource"] = "*"
-    assert session_policy.plan_document()["Statement"][0]["Resource"] == "arn:aws:secretsmanager:*:*:secret:*"
+    assert plan_document()["Statement"][0]["Resource"] == "arn:aws:secretsmanager:*:*:secret:*"
 
 
 def test_the_apply_phase_narrows_nothing() -> None:
@@ -223,3 +230,57 @@ def test_a_reader_arn_past_the_cap_is_refused() -> None:
     head = "arn:aws:iam::123456789012:role/"
     with pytest.raises(ValueError):
         validate_plan_assume_role_arns([head + "r" * (PLAN_ASSUME_ROLE_ARN_MAX_LENGTH - len(head) + 1)])
+
+
+SECRET = "arn:aws:secretsmanager:us-west-2:870550636948:secret:example-prod/app-*"
+
+
+def test_a_named_list_is_all_a_plan_reads() -> None:
+    """The secret statement names the list instead of every secret."""
+    policy = session_policy.for_phase("plan", plan_secret_arns=[SECRET, SECRET])
+    assert policy.document is not None
+    assert statements(policy.document)["PlanReadSecretValues"]["Resource"] == [SECRET]
+    assert list(statements(policy.document)) == SECRET_SIDS
+
+
+def test_an_empty_list_reads_no_secret() -> None:
+    """No secrets means neither the read nor the decrypt, and no document at all without readers."""
+    assert session_policy.for_phase("plan", plan_secret_arns=[]).document is None
+    document = session_policy.for_phase("plan", [READER], plan_secret_arns=[]).document
+    assert document is not None
+    assert list(statements(document)) == ["PlanAssumeReaderRoles"]
+
+
+@pytest.mark.parametrize(
+    ("listed", "speculative", "any_by_default", "expected"),
+    [
+        ([], False, True, None),
+        ([], True, True, None),
+        ([], False, False, None),
+        ([], True, False, []),
+        ([SECRET], False, True, [SECRET]),
+        ([SECRET], True, True, [SECRET]),
+        ([SECRET], True, False, [SECRET]),
+    ],
+)
+def test_which_secrets_a_plan_reads(
+    listed: list[str],
+    speculative: bool,
+    any_by_default: bool,
+    expected: list[str] | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A list bounds every plan; without one a plan reads any, and a speculative plan none once the default flips."""
+    monkeypatch.setattr(session_policy, "SPECULATIVE_PLANS_READ_ANY_SECRET", any_by_default)
+
+    assert session_policy.plan_secret_arns_for(listed, speculative=speculative) == expected
+
+
+def test_the_budget_check_covers_both_unlisted_shapes() -> None:
+    """The largest reader list fits beside the wildcard, and long secret patterns tip it over."""
+    head = "arn:aws:iam::123456789012:role/"
+    readers = [f"{head}{index:02d}{'r' * (140 - len(head) - 2)}" for index in range(10)]
+    secrets = [f"arn:aws:secretsmanager:us-west-2:870550636948:secret:{index}{'s' * 130}" for index in range(3)]
+    assert session_policy.plan_policy_fits(readers, [])
+    assert session_policy.plan_policy_fits([], secrets)
+    assert not session_policy.plan_policy_fits(readers, secrets)

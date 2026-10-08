@@ -101,6 +101,11 @@ locals {
       actions   = ["kms:Sign", "kms:GetPublicKey"]
       resources = module.identity.signing_key_arns
     },
+    {
+      sid       = "E2EFindNotificationReceiver"
+      actions   = ["lambda:GetFunctionUrlConfig"]
+      resources = [aws_lambda_function.e2e_notification_receiver[0].arn]
+    },
   ] : [])
 }
 

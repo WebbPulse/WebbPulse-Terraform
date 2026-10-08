@@ -37,6 +37,15 @@ import type {
   ModuleList,
   ModuleSync,
   ModuleVersionDetail,
+  NotificationConfiguration,
+  NotificationConfigurationCreate,
+  NotificationConfigurationList,
+  NotificationConfigurationUpdate,
+  NotificationDelivery,
+  Project,
+  ProjectCreate,
+  ProjectList,
+  ProjectUpdate,
   ManifestConversionRequest,
   ManifestStart,
   ManifestStartRequest,
@@ -63,6 +72,7 @@ import type {
   Workspace,
   WorkspaceCreate,
   WorkspaceList,
+  WorkspaceListQuery,
   WebhookConfig,
   WorkspaceUpdate,
 } from './types';
@@ -194,13 +204,80 @@ export class TerraformApi {
     return this.auth;
   }
 
-  /** Lists workspaces. */
-  async listWorkspaces(options: RequestOptions = {}): Promise<WorkspaceList> {
+  /** Lists workspaces, optionally one project's, matching a search, in a sort. */
+  async listWorkspaces(
+    options: RequestOptions = {},
+    query: WorkspaceListQuery = {}
+  ): Promise<WorkspaceList> {
+    const scope: Record<string, string> = {};
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null && value !== '') {
+        scope[key] = String(value);
+      }
+    }
     const response = await this.client.get<WorkspaceList>(
       '/workspaces',
+      Object.keys(scope).length === 0
+        ? options
+        : { ...options, query: { ...options.query, ...scope } }
+    );
+    return response.data;
+  }
+
+  /** Lists every project, the default first. */
+  async listProjects(options: RequestOptions = {}): Promise<ProjectList> {
+    const response = await this.client.get<ProjectList>('/projects', options);
+    return response.data;
+  }
+
+  /** Reads one project. `prj-default` is the default project. */
+  async getProject(
+    projectId: string,
+    options: RequestOptions = {}
+  ): Promise<Project> {
+    const response = await this.client.get<Project>(
+      `/projects/${encodeURIComponent(projectId)}`,
       options
     );
     return response.data;
+  }
+
+  /** Creates a project. Rejects with `PROJECT_NAME_TAKEN` for a name in use. */
+  async createProject(
+    body: ProjectCreate,
+    options: RequestOptions = {}
+  ): Promise<Project> {
+    const response = await this.client.post<Project>(
+      '/projects',
+      body,
+      options
+    );
+    return response.data;
+  }
+
+  /** Renames a project or changes its description. */
+  async updateProject(
+    projectId: string,
+    body: ProjectUpdate,
+    options: RequestOptions = {}
+  ): Promise<Project> {
+    const response = await this.client.patch<Project>(
+      `/projects/${encodeURIComponent(projectId)}`,
+      body,
+      options
+    );
+    return response.data;
+  }
+
+  /** Deletes an empty project. Rejects with `PROJECT_NOT_EMPTY` otherwise. */
+  async deleteProject(
+    projectId: string,
+    options: RequestOptions = {}
+  ): Promise<void> {
+    await this.client.delete(
+      `/projects/${encodeURIComponent(projectId)}`,
+      options
+    );
   }
 
   /** Creates a workspace. */
@@ -357,6 +434,84 @@ export class TerraformApi {
     );
   }
 
+  /** Lists a workspace's notification configurations, each with its last delivery. */
+  async listNotificationConfigurations(
+    workspaceId: string,
+    options: RequestOptions = {}
+  ): Promise<NotificationConfigurationList> {
+    const response = await this.client.get<NotificationConfigurationList>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations`,
+      options
+    );
+    return response.data;
+  }
+
+  /** Creates a notification configuration. Rejects with a 409 past 50 on one workspace. */
+  async createNotificationConfiguration(
+    workspaceId: string,
+    body: NotificationConfigurationCreate,
+    options: RequestOptions = {}
+  ): Promise<NotificationConfiguration> {
+    const response = await this.sudo(() =>
+      this.client.post<NotificationConfiguration>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations`,
+        body,
+        options
+      )
+    );
+    return response.data;
+  }
+
+  /** Edits a notification configuration. An absent field is unchanged. */
+  async updateNotificationConfiguration(
+    workspaceId: string,
+    notificationId: string,
+    body: NotificationConfigurationUpdate,
+    options: RequestOptions = {}
+  ): Promise<NotificationConfiguration> {
+    const response = await this.sudo(() =>
+      this.client.patch<NotificationConfiguration>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations/${encodeURIComponent(notificationId)}`,
+        body,
+        options
+      )
+    );
+    return response.data;
+  }
+
+  /** Deletes a notification configuration. */
+  async deleteNotificationConfiguration(
+    workspaceId: string,
+    notificationId: string,
+    options: RequestOptions = {}
+  ): Promise<void> {
+    await this.sudo(() =>
+      this.client.delete(
+        `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations/${encodeURIComponent(notificationId)}`,
+        options
+      )
+    );
+  }
+
+  /**
+   * Sends a test delivery now and returns its outcome. A receiver's refusal comes
+   * back as a `failed` delivery, and a 429 carries `Retry-After`.
+   */
+  async verifyNotificationConfiguration(
+    workspaceId: string,
+    notificationId: string,
+    options: RequestOptions = {}
+  ): Promise<NotificationDelivery> {
+    const response = await this.sudo(() =>
+      this.client.post<NotificationDelivery>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/notification-configurations/${encodeURIComponent(notificationId)}/actions/verify`,
+        undefined,
+        options
+      )
+    );
+    return response.data;
+  }
+
   /** Lists a workspace's configuration versions. */
   async listConfigVersions(
     workspaceId: string,
@@ -413,6 +568,9 @@ export class TerraformApi {
     const scope: Record<string, string | number> = {};
     if (query.workspace_id !== undefined && query.workspace_id !== null) {
       scope['workspace_id'] = query.workspace_id;
+    }
+    if (query.project_id !== undefined && query.project_id !== null) {
+      scope['project_id'] = query.project_id;
     }
     if (query.limit !== undefined && query.limit !== null) {
       scope['limit'] = query.limit;

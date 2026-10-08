@@ -28,6 +28,7 @@ from ...common.core.auth import (
     unauthenticated,
 )
 from ...common.workspaces import reads as workspace_reads
+from ...common.workspaces.projects import PROJECT_ID_PATTERN
 from . import phase_tasks, runner_tokens, service, vending
 from .actor import actor_from_claims
 from .schemas.run import (
@@ -157,6 +158,7 @@ def create_run(
 )
 def list_runs(
     workspace_id: Optional[str] = WorkspaceIdQuery,
+    project_id: Optional[str] = Query(default=None, max_length=64, pattern=PROJECT_ID_PATTERN),
     limit: Optional[int] = Query(default=None, ge=1, le=service.MAX_RUN_PAGE_SIZE),
     cursor: Optional[str] = Query(default=None, pattern=RUN_ID_PATTERN),
 ) -> dict[str, Any]:
@@ -168,10 +170,21 @@ def list_runs(
     to continue. `limit` and `cursor` page only the cross-workspace list, so they
     are refused alongside a workspace rather than ignored.
 
+    Naming `project_id` instead returns the newest `limit` runs across that project's
+    workspaces, with no cursor: it is a recent activity view, not a full history.
+
     Both modes need exactly `runs:read`, the only check the per-workspace list
     has ever made: there is no per-workspace ACL, so the cross-workspace list
     returns nothing the caller could not list one workspace at a time.
     """
+    if project_id is not None:
+        if workspace_id is not None or cursor is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="project_id takes neither workspace_id nor cursor.",
+            )
+        items = service.list_project_runs(project_id, limit=limit or service.DEFAULT_RUN_PAGE_SIZE)
+        return {"items": [service.render_run(item) for item in items], "next_cursor": None}
     if workspace_id is not None:
         if limit is not None or cursor is not None:
             raise HTTPException(

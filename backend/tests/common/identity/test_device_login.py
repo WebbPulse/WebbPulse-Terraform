@@ -148,7 +148,7 @@ def test_device_login_facts_come_from_code_not_the_environment(
     assert identity.device_grant_enabled
     assert identity.device_clients == {"wp-tf": "wp-tf CLI"}
     assert identity.device_scopes_supported == list(ALL_SCOPES)
-    assert identity.device_explicit_scopes == ["state:download", "state:write", "admin"]
+    assert identity.device_explicit_scopes == ["state:download", "state:write", "state:read-outputs", "admin"]
     assert identity.device_login_url == "https://terraform.example.test/sign-in"
     assert identity.device_audience == ""
     assert identity.webauthn_origins == ["https://terraform.example.test"]

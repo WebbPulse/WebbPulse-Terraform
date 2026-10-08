@@ -112,6 +112,36 @@ export type VariableWrite = Schemas['VariableWrite'];
 /** Every variable on a workspace, by key. */
 export type VariableList = Schemas['VariableList'];
 
+/**
+ * A notification configuration as the API returns it.
+ *
+ * The webhook URL and the generic token are write-only: reads carry
+ * `url_masked` and `has_token` instead.
+ */
+export type NotificationConfiguration = Schemas['NotificationConfiguration'];
+
+/** The body that creates a notification configuration. */
+export type NotificationConfigurationCreate =
+  Schemas['NotificationConfigurationCreate'];
+
+/** A partial edit of a notification configuration. An empty `token` clears it. */
+export type NotificationConfigurationUpdate =
+  Schemas['NotificationConfigurationUpdate'];
+
+/** Every notification configuration on a workspace. */
+export type NotificationConfigurationList =
+  Schemas['NotificationConfigurationList'];
+
+/** The outcome of one delivery attempt, a test send included. */
+export type NotificationDelivery = Schemas['NotificationDelivery'];
+
+/** Where a notification configuration delivers. */
+export type NotificationDestination =
+  NotificationConfiguration['destination_type'];
+
+/** A run event a notification configuration can fire on. */
+export type NotificationTrigger = NotificationConfiguration['triggers'][number];
+
 /** Where a configuration version is in its upload lifecycle. */
 export type ConfigVersionStatus = Schemas['ConfigVersion']['status'];
 
@@ -236,6 +266,29 @@ export type PlanMode = Schemas['PlanResourceChange']['mode'];
 
 /** The error envelope every failing route renders. */
 export type ErrorResponse = Schemas['ErrorResponse'];
+
+/** A project, the group workspaces are organised into. */
+export type Project = Schemas['Project'];
+
+/** Every project, the default first. */
+export type ProjectList = Schemas['ProjectList'];
+
+/** The body that creates a project. */
+export type ProjectCreate = Schemas['ProjectCreate'];
+
+/** A partial project edit. */
+export type ProjectUpdate = Schemas['ProjectUpdate'];
+
+/** The project every workspace is in until it is moved, which is never stored. */
+export const DEFAULT_PROJECT_ID = 'prj-default';
+
+/** The query the workspace list accepts: a project, a name search and a sort. */
+export type WorkspaceListQuery = NonNullable<
+  paths['/api/v1/workspaces']['get']['parameters']['query']
+>;
+
+/** The orders the workspace list can return. */
+export type WorkspaceSort = NonNullable<WorkspaceListQuery['sort']>;
 
 /** The query the runs list accepts, so a caller cannot invent a filter. */
 export type RunListQuery = NonNullable<

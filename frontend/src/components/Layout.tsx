@@ -19,6 +19,20 @@ const SECTIONS: readonly {
   icon: React.ReactNode;
 }[] = [
   {
+    to: '/projects',
+    label: 'Projects',
+    icon: (
+      <svg viewBox="0 0 16 16" className="size-4" fill="none">
+        <path
+          d="M2 4.5c0-.55.45-1 1-1h3.2l1.3 1.5H13c.55 0 1 .45 1 1v6c0 .55-.45 1-1 1H3c-.55 0-1-.45-1-1v-7.5Z"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
+  {
     to: '/workspaces',
     label: 'Workspaces',
     icon: (

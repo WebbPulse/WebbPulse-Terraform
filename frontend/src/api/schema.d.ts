@@ -711,6 +711,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Projects
+         * @description Every project with its workspace count, the default project first.
+         */
+        get: operations["list_projects_api_v1_projects_get"];
+        put?: never;
+        /**
+         * Create Project
+         * @description Create a project. The name has to be free, ignoring case.
+         */
+        post: operations["create_project_api_v1_projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Project
+         * @description One project with its workspace count. `prj-default` is the default project.
+         */
+        get: operations["get_project_api_v1_projects__project_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Project
+         * @description Delete an empty project. Move its workspaces out first; nothing is moved for you.
+         */
+        delete: operations["delete_project_api_v1_projects__project_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Project
+         * @description Rename a project or change its description. The default project is refused.
+         */
+        patch: operations["update_project_api_v1_projects__project_id__patch"];
+        trace?: never;
+    };
     "/api/v1/registry/modules": {
         parameters: {
             query?: never;
@@ -893,6 +945,9 @@ export interface paths {
          *     workspace's runs off the recency index; pass `next_cursor` back as `cursor`
          *     to continue. `limit` and `cursor` page only the cross-workspace list, so they
          *     are refused alongside a workspace rather than ignored.
+         *
+         *     Naming `project_id` instead returns the newest `limit` runs across that project's
+         *     workspaces, with no cursor: it is a recent activity view, not a full history.
          *
          *     Both modes need exactly `runs:read`, the only check the per-workspace list
          *     has ever made: there is no per-workspace ACL, so the cross-workspace list
@@ -1209,7 +1264,11 @@ export interface paths {
         };
         /**
          * List Workspaces
-         * @description Every workspace in this environment, each with its run role setup and newest run.
+         * @description Workspaces in this environment, each with its run role setup and newest run.
+         *
+         *     The filters and the sort compose, so a project's workspaces can be searched and
+         *     ordered in one request. A `project_id` naming a project that holds nothing, or none
+         *     at all, is an empty list. A run's API token sees only its own workspace.
          */
         get: operations["list_workspaces_api_v1_workspaces_get"];
         put?: never;
@@ -1225,10 +1284,13 @@ export interface paths {
          *     A `vcs_repo` is resolved through the environment's GitHub App: the id, the
          *     installation and the canonical name are recorded, and `tracked_branch` defaults to
          *     the repository's default branch. A repository the App is not installed on is a 422
-         *     carrying `VCS_REPO_NOT_INSTALLED`.
+         *     carrying `VCS_REPO_NOT_INSTALLED`, as is a `project_id` naming no project, carrying
+         *     `PROJECT_NOT_FOUND`.
          *
          *     Creating a workspace with `auto_apply` on lets anyone who can start a run apply
-         *     it, so it takes `admin` and the step-up, as turning it on later does.
+         *     it, so it takes `admin` and the step-up, as turning it on later does. Naming a
+         *     plan role, reader roles or plan secrets takes the same, as setting them later does,
+         *     and naming a run role takes the step-up.
          */
         post: operations["create_workspace_api_v1_workspaces_post"];
         delete?: never;
@@ -1279,8 +1341,15 @@ export interface paths {
          *     Connecting another `vcs_repo` resolves it through the GitHub App the way the
          *     create does, and a null disconnects the repository.
          *
-         *     Changing either run role field is the workspace's AWS connection, so a person has to
-         *     have signed in within the step-up window; resending the stored value is not a change.
+         *     Changing a run role, the plan role or the reader roles is the workspace's AWS
+         *     connection, so a person has to have signed in within the step-up window; resending
+         *     the stored value is not a change.
+         *
+         *     Changing `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns` decides what
+         *     every plan, a pull request plan included, may reach, so it takes `admin`, or a run
+         *     token holding the factory grant, as well as the step-up. The reader roles and the
+         *     plan secrets together must fit the plan's session policy, or the edit is a 422
+         *     `PLAN_SESSION_POLICY_TOO_LARGE`.
          *
          *     Changing `run_api_token_scopes` hands every later run of this workspace a key on
          *     this API, so it takes `admin` as well as the step-up.
@@ -1288,6 +1357,10 @@ export interface paths {
          *     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
          *     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
          *     takes the step-up, since it hands every later run's confirmation to the system.
+         *
+         *     `global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'
+         *     runs may read this workspace's non-sensitive outputs. Every named consumer has to
+         *     exist, or the edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`.
          */
         patch: operations["update_workspace_api_v1_workspaces__workspace_id__patch"];
         trace?: never;
@@ -1328,6 +1401,111 @@ export interface paths {
          * @description One config version by id, with the README its workspace's overview shows.
          */
         get: operations["get_config_version_api_v1_workspaces__workspace_id__config_versions__config_version_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/notification-configurations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Notification Configurations
+         * @description Every notification configuration on one workspace, with its last delivery.
+         */
+        get: operations["list_notification_configurations_api_v1_workspaces__workspace_id__notification_configurations_get"];
+        put?: never;
+        /**
+         * Create Notification Configuration
+         * @description Add a notification configuration.
+         *
+         *     `slack` takes an incoming webhook URL on `hooks.slack.com`, `discord` a channel
+         *     webhook URL on `discord.com`, and `generic` any HTTPS URL, which receives HCP
+         *     Terraform's version 1 payload signed with `token` in `X-TFE-Notification-Signature`.
+         *     A workspace holds at most 50.
+         */
+        post: operations["create_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Notification Configuration
+         * @description One notification configuration, with its last delivery.
+         */
+        get: operations["get_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Notification Configuration
+         * @description Delete a notification configuration.
+         */
+        delete: operations["delete_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Notification Configuration
+         * @description Edit, enable or disable a notification configuration. An absent field is unchanged.
+         */
+        patch: operations["update_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}/actions/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Notification Configuration
+         * @description Send a test delivery now, as HCP's Send test does, and return its outcome.
+         *
+         *     The delivery carries the trigger `verification` and no run. It is sent even when
+         *     the configuration is disabled. A receiver's refusal is reported in the body with
+         *     a 200, since the request itself succeeded; 20 a minute per configuration.
+         */
+        post: operations["verify_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__actions_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/outputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Workspace Outputs
+         * @description The non-sensitive outputs of a workspace's current state.
+         *
+         *     A run's API token reads only a workspace that is its own, shares globally, or
+         *     names the run's workspace as a consumer; anything else is a 403
+         *     `REMOTE_STATE_NOT_SHARED`. A workspace with no state yet answers an empty list.
+         */
+        get: operations["read_workspace_outputs_api_v1_workspaces__workspace_id__outputs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2356,6 +2534,114 @@ export interface components {
             version: components["schemas"]["ModuleVersion"];
         };
         /**
+         * NotificationConfiguration
+         * @description A stored configuration as the API renders it, with the URL masked.
+         */
+        NotificationConfiguration: {
+            /** Created At */
+            created_at: string;
+            /**
+             * Destination Type
+             * @enum {string}
+             */
+            destination_type: "slack" | "discord" | "generic";
+            /** Enabled */
+            enabled: boolean;
+            /** Has Token */
+            has_token: boolean;
+            /** Id */
+            id: string;
+            last_delivery?: components["schemas"]["NotificationDelivery"] | null;
+            /** Name */
+            name: string;
+            /** Triggers */
+            triggers: ("run:created" | "run:planning" | "run:needs_attention" | "run:applying" | "run:completed" | "run:errored")[];
+            /** Updated At */
+            updated_at: string;
+            /** Url Masked */
+            url_masked: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
+         * NotificationConfigurationCreate
+         * @description A new notification configuration.
+         */
+        NotificationConfigurationCreate: {
+            /**
+             * Destination Type
+             * @enum {string}
+             */
+            destination_type: "slack" | "discord" | "generic";
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled?: boolean;
+            /** Name */
+            name: string;
+            /** Token */
+            token?: string | null;
+            /** Triggers */
+            triggers?: ("run:created" | "run:planning" | "run:needs_attention" | "run:applying" | "run:completed" | "run:errored")[];
+            /**
+             * Url
+             * Format: password
+             */
+            url: string;
+        };
+        /**
+         * NotificationConfigurationList
+         * @description Every notification configuration on one workspace.
+         */
+        NotificationConfigurationList: {
+            /** Items */
+            items: components["schemas"]["NotificationConfiguration"][];
+        };
+        /**
+         * NotificationConfigurationUpdate
+         * @description A partial edit. An absent field is unchanged; a null or empty `token` clears it.
+         */
+        NotificationConfigurationUpdate: {
+            /** Destination Type */
+            destination_type?: ("slack" | "discord" | "generic") | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Name */
+            name?: string | null;
+            /** Token */
+            token?: string | null;
+            /** Triggers */
+            triggers?: ("run:created" | "run:planning" | "run:needs_attention" | "run:applying" | "run:completed" | "run:errored")[] | null;
+            /** Url */
+            url?: string | null;
+        };
+        /**
+         * NotificationDelivery
+         * @description The outcome of a configuration's newest delivery attempt.
+         */
+        NotificationDelivery: {
+            /** Attempted At */
+            attempted_at: string;
+            /** Attempts */
+            attempts: number;
+            /** Error */
+            error?: string | null;
+            /** Response Excerpt */
+            response_excerpt?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "failed" | "retrying";
+            /** Status Code */
+            status_code?: number | null;
+            /** Trigger */
+            trigger: string;
+        };
+        /**
          * PendingRunRoleCheck
          * @description What the runner's record says about the role waiting to replace the current one.
          */
@@ -2523,6 +2809,66 @@ export interface components {
             replace_paths?: (string | number)[][];
             /** Type */
             type: string;
+        };
+        /**
+         * Project
+         * @description A project and how many workspaces it holds.
+         */
+        Project: {
+            /** Created At */
+            created_at?: string | null;
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /**
+             * Is Default
+             * @default false
+             */
+            is_default?: boolean;
+            /** Name */
+            name: string;
+            /** Project Id */
+            project_id: string;
+            /** Updated At */
+            updated_at?: string | null;
+            /**
+             * Workspace Count
+             * @default 0
+             */
+            workspace_count?: number;
+        };
+        /**
+         * ProjectCreate
+         * @description A new project. Its name is unique across the environment, ignoring case.
+         */
+        ProjectCreate: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * ProjectList
+         * @description Every project, the default first and the rest by name.
+         */
+        ProjectList: {
+            /** Items */
+            items: components["schemas"]["Project"][];
+        };
+        /**
+         * ProjectUpdate
+         * @description A partial project edit. A null description clears it; the name cannot be cleared.
+         */
+        ProjectUpdate: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
         };
         /**
          * Provider
@@ -3522,6 +3868,11 @@ export interface components {
              * @default true
              */
             file_triggers_enabled?: boolean;
+            /**
+             * Global Remote State
+             * @default false
+             */
+            global_remote_state?: boolean;
             /** Name */
             name: string;
             /** Pending Run Role Arn */
@@ -3530,6 +3881,15 @@ export interface components {
             plan_assume_role_arns?: string[];
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Plan Secret Arns */
+            plan_secret_arns?: string[];
+            /**
+             * Project Id
+             * @default prj-default
+             */
+            project_id?: string;
+            /** Remote State Consumer Ids */
+            remote_state_consumer_ids?: string[];
             /** Run Api Token Scopes */
             run_api_token_scopes?: string[];
             /** Run Role Account Id */
@@ -3603,6 +3963,10 @@ export interface components {
             plan_assume_role_arns?: string[];
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Plan Secret Arns */
+            plan_secret_arns?: string[];
+            /** Project Id */
+            project_id?: string | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /**
@@ -3661,6 +4025,11 @@ export interface components {
              * @default true
              */
             file_triggers_enabled?: boolean;
+            /**
+             * Global Remote State
+             * @default false
+             */
+            global_remote_state?: boolean;
             /** Latest Change At */
             latest_change_at: string;
             latest_run?: components["schemas"]["LatestRun"] | null;
@@ -3672,6 +4041,15 @@ export interface components {
             plan_assume_role_arns?: string[];
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Plan Secret Arns */
+            plan_secret_arns?: string[];
+            /**
+             * Project Id
+             * @default prj-default
+             */
+            project_id?: string;
+            /** Remote State Consumer Ids */
+            remote_state_consumer_ids?: string[];
             /** Run Api Token Scopes */
             run_api_token_scopes?: string[];
             /** Run Role Account Id */
@@ -3712,6 +4090,37 @@ export interface components {
             workspace_id: string;
         };
         /**
+         * WorkspaceOutput
+         * @description One non-sensitive root output of a workspace's current state.
+         */
+        WorkspaceOutput: {
+            /** Detailed Type */
+            detailed_type?: unknown;
+            /** Name */
+            name: string;
+            /** Type */
+            type: string;
+            /** Value */
+            value?: unknown;
+        };
+        /**
+         * WorkspaceOutputs
+         * @description A workspace's non-sensitive outputs, as remote state sharing hands them to another workspace.
+         *
+         *     Sensitive outputs never appear with a value; only their names are listed, so a
+         *     consumer can tell a withheld output from a missing one.
+         */
+        WorkspaceOutputs: {
+            /** Outputs */
+            outputs?: components["schemas"]["WorkspaceOutput"][];
+            /** Sensitive Output Names */
+            sensitive_output_names?: string[];
+            /** State Version Id */
+            state_version_id?: string | null;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
          * WorkspaceUpdate
          * @description A partial workspace edit. The name and the id are not editable.
          *
@@ -3739,14 +4148,22 @@ export interface components {
             engine_version?: string | null;
             /** File Triggers Enabled */
             file_triggers_enabled?: boolean | null;
+            /** Global Remote State */
+            global_remote_state?: boolean | null;
             /** Pending Run Role Arn */
             pending_run_role_arn?: string | null;
             /** Plan Assume Role Arns */
             plan_assume_role_arns?: string[] | null;
             /** Plan Role Arn */
             plan_role_arn?: string | null;
+            /** Plan Secret Arns */
+            plan_secret_arns?: string[] | null;
+            /** Project Id */
+            project_id?: string | null;
+            /** Remote State Consumer Ids */
+            remote_state_consumer_ids?: string[] | null;
             /** Run Api Token Scopes */
-            run_api_token_scopes?: ("workspaces:read" | "workspaces:write" | "variables:read" | "variables:write" | "registry:read" | "registry:write")[] | null;
+            run_api_token_scopes?: ("workspaces:read" | "workspaces:write" | "variables:read" | "variables:write" | "registry:read" | "registry:write" | "workspaces:factory")[] | null;
             /** Run Role Arn */
             run_role_arn?: string | null;
             /** Speculative Plans */
@@ -5292,6 +5709,163 @@ export interface operations {
             };
         };
     };
+    list_projects_api_v1_projects_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_project_api_v1_projects_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_project_api_v1_projects__project_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_project_api_v1_projects__project_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_project_api_v1_projects__project_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_modules_api_v1_registry_modules_get: {
         parameters: {
             query?: never;
@@ -5718,6 +6292,7 @@ export interface operations {
         parameters: {
             query?: {
                 workspace_id?: string | null;
+                project_id?: string | null;
                 limit?: number | null;
                 cursor?: string | null;
             };
@@ -6183,7 +6758,14 @@ export interface operations {
     };
     list_workspaces_api_v1_workspaces_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only the workspaces in this project. `prj-default` is the default project. */
+                project_id?: string | null;
+                /** @description Only the workspaces whose name contains this, ignoring case. */
+                search?: string | null;
+                /** @description `name` or `-name`, `-latest_run` (newest run first, never run last), `-updated_at` (latest change first), `-created_at`, or `status` (runs that need attention first). Without it the list is oldest first. */
+                sort?: ("name" | "-name" | "-latest_run" | "-updated_at" | "-created_at" | "status") | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6426,6 +7008,233 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigVersionDetail"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_notification_configurations_api_v1_workspaces__workspace_id__notification_configurations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationConfigurationList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationConfigurationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationConfiguration"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationConfiguration"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationConfigurationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationConfiguration"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    verify_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__actions_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationDelivery"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_workspace_outputs_api_v1_workspaces__workspace_id__outputs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceOutputs"];
                 };
             };
             /** @description Request validation failed. */

@@ -26,13 +26,18 @@ from ...common.core.auth import (
     VARIABLES_WRITE,
     WORKSPACES_READ,
     WORKSPACES_WRITE,
+    bound_workspace_id,
     ensure_recent_auth,
+    holds_factory_grant,
+    run_api_workspace_binding,
     scopes,
     sudo,
 )
 from ...common.core.auth import claims as auth_claims
 from ...common.core.variable_cipher import MasterKeyUnavailable
+from ...common.runs import session_policy
 from ...common.workspaces import hcl, run_role_check
+from ...common.workspaces.projects import PROJECT_ID_PATTERN
 from . import quick_setup, service, state_versions
 from .schemas.workspace import (
     ConfigVersionCreate,
@@ -66,14 +71,26 @@ WORKSPACE_HAS_ACTIVE_RUN_CODE = "WORKSPACE_HAS_ACTIVE_RUN"
 VCS_REPO_NOT_INSTALLED_CODE = "VCS_REPO_NOT_INSTALLED"
 """The stable code a connect refuses with when the GitHub App cannot see the repository."""
 
+PROJECT_NOT_FOUND_CODE = "PROJECT_NOT_FOUND"
+"""The stable code a create or move refuses with when the named project does not exist."""
+
+REMOTE_STATE_CONSUMER_NOT_FOUND_CODE = "REMOTE_STATE_CONSUMER_NOT_FOUND"
+"""The stable code an edit refuses with when it shares outputs with a workspace that does not exist."""
+
 GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
 """The stable code a connect fails with when GitHub could not answer."""
 
 WORKSPACE_DELETE_EVENT = "workspaces.workspace.delete"
 """The log event a workspace delete is recorded under, naming the workspace and the mode."""
 
-RUN_ROLE_FIELDS = ("run_role_arn", "pending_run_role_arn")
-"""The PATCH fields that change which AWS role a workspace's runs assume, and so need a step-up."""
+PLAN_ACCESS_FIELDS = ("plan_role_arn", "plan_assume_role_arns", "plan_secret_arns")
+"""The fields that set what a plan, a pull request plan included, may reach, admin and step-up only."""
+
+RUN_ROLE_FIELDS = ("run_role_arn", "pending_run_role_arn", "plan_role_arn", "plan_assume_role_arns")
+"""The PATCH fields that change which AWS roles a workspace's runs assume, and so need a step-up."""
+
+PLAN_SESSION_POLICY_TOO_LARGE_CODE = "PLAN_SESSION_POLICY_TOO_LARGE"
+"""The stable code a create or edit refuses with when reader roles and secrets overflow the plan session policy."""
 
 RUN_API_TOKEN_FIELD = "run_api_token_scopes"
 """The PATCH field that grants a workspace's runs control plane API scopes, admin and step-up only."""
@@ -84,7 +101,7 @@ AUTO_APPLY_FIELD = "auto_apply"
 AUTO_APPLY_EVENT = "workspaces.workspace.auto_apply"
 """The log event a change to a workspace's auto-apply is recorded under, naming who and the new value."""
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(run_api_workspace_binding)])
 
 WorkspaceId = Path(min_length=4, max_length=64, pattern=r"^ws-[0-9A-HJKMNP-TV-Z]{26}$")
 ConfigVersionId = Path(min_length=4, max_length=64, pattern=r"^cv-[0-9A-HJKMNP-TV-Z]{26}$")
@@ -144,6 +161,14 @@ def _not_found(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
 
 
+def _project_not_found() -> HTTPException:
+    """The 422 a create or move into a project that does not exist raises."""
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"message": "No such project.", "error_code": PROJECT_NOT_FOUND_CODE},
+    )
+
+
 def _run_role_missing() -> HTTPException:
     """The 400 both run role check routes raise when no ARN is configured."""
     return HTTPException(
@@ -199,9 +224,39 @@ def _connect_errors() -> Iterator[None]:
     response_model=WorkspaceList,
     dependencies=[Depends(scopes(WORKSPACES_READ))],
 )
-def list_workspaces() -> dict[str, Any]:
-    """Every workspace in this environment, each with its run role setup and newest run."""
-    return {"items": service.list_workspace_items()}
+def list_workspaces(
+    request: Request,
+    project_id: Optional[str] = Query(
+        default=None,
+        max_length=64,
+        pattern=PROJECT_ID_PATTERN,
+        description="Only the workspaces in this project. `prj-default` is the default project.",
+    ),
+    search: Optional[str] = Query(
+        default=None,
+        max_length=90,
+        description="Only the workspaces whose name contains this, ignoring case.",
+    ),
+    sort: Optional[service.WorkspaceSort] = Query(
+        default=None,
+        description=(
+            "`name` or `-name`, `-latest_run` (newest run first, never run last), `-updated_at` "
+            "(latest change first), `-created_at`, or `status` (runs that need attention first). "
+            "Without it the list is oldest first."
+        ),
+    ),
+) -> dict[str, Any]:
+    """Workspaces in this environment, each with its run role setup and newest run.
+
+    The filters and the sort compose, so a project's workspaces can be searched and
+    ordered in one request. A `project_id` naming a project that holds nothing, or none
+    at all, is an empty list. A run's API token sees only its own workspace.
+    """
+    items = service.list_workspace_items(project_id=project_id, search=search or None, sort=sort)
+    bound = bound_workspace_id(request)
+    if bound is not None:
+        items = [item for item in items if str(item.get("workspace_id", "")) == bound]
+    return {"items": items}
 
 
 @router.post(
@@ -224,14 +279,21 @@ def create_workspace(
     A `vcs_repo` is resolved through the environment's GitHub App: the id, the
     installation and the canonical name are recorded, and `tracked_branch` defaults to
     the repository's default branch. A repository the App is not installed on is a 422
-    carrying `VCS_REPO_NOT_INSTALLED`.
+    carrying `VCS_REPO_NOT_INSTALLED`, as is a `project_id` naming no project, carrying
+    `PROJECT_NOT_FOUND`.
 
     Creating a workspace with `auto_apply` on lets anyone who can start a run apply
-    it, so it takes `admin` and the step-up, as turning it on later does.
+    it, so it takes `admin` and the step-up, as turning it on later does. Naming a
+    plan role, reader roles or plan secrets takes the same, as setting them later does,
+    and naming a run role takes the step-up.
     """
     if payload.auto_apply:
         _require_admin(current)
+    if any(getattr(payload, field, None) for field in PLAN_ACCESS_FIELDS):
+        _require_admin_or_factory(current)
+    if payload.auto_apply or any(getattr(payload, field, None) for field in (*RUN_ROLE_FIELDS, *PLAN_ACCESS_FIELDS)):
         ensure_recent_auth(current)
+    _ensure_plan_policy_fits(payload.plan_assume_role_arns, payload.plan_secret_arns)
     try:
         with _connect_errors():
             created = service.create_workspace(payload.model_dump())
@@ -240,6 +302,8 @@ def create_workspace(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A workspace named '{error}' already exists.",
         ) from error
+    except service.ProjectNotFound as error:
+        raise _project_not_found() from error
     if payload.auto_apply:
         record_auto_apply_change(current, workspace_id=str(created["workspace_id"]), previous=False, value=True)
     return service.render_workspace(created)
@@ -281,8 +345,15 @@ def update_workspace(
     Connecting another `vcs_repo` resolves it through the GitHub App the way the
     create does, and a null disconnects the repository.
 
-    Changing either run role field is the workspace's AWS connection, so a person has to
-    have signed in within the step-up window; resending the stored value is not a change.
+    Changing a run role, the plan role or the reader roles is the workspace's AWS
+    connection, so a person has to have signed in within the step-up window; resending
+    the stored value is not a change.
+
+    Changing `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns` decides what
+    every plan, a pull request plan included, may reach, so it takes `admin`, or a run
+    token holding the factory grant, as well as the step-up. The reader roles and the
+    plan secrets together must fit the plan's session policy, or the edit is a 422
+    `PLAN_SESSION_POLICY_TOO_LARGE`.
 
     Changing `run_api_token_scopes` hands every later run of this workspace a key on
     this API, so it takes `admin` as well as the step-up.
@@ -290,15 +361,26 @@ def update_workspace(
     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
     takes the step-up, since it hands every later run's confirmation to the system.
+
+    `global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'
+    runs may read this workspace's non-sensitive outputs. Every named consumer has to
+    exist, or the edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`.
     """
     changes = payload.model_dump(exclude_unset=True)
     auto_apply_from: Optional[bool] = None
     try:
-        if any(field in changes for field in (*RUN_ROLE_FIELDS, RUN_API_TOKEN_FIELD, AUTO_APPLY_FIELD)):
+        gated = (*RUN_ROLE_FIELDS, *PLAN_ACCESS_FIELDS, RUN_API_TOKEN_FIELD, AUTO_APPLY_FIELD)
+        if any(field in changes for field in gated):
             existing = service.get_workspace(workspace_id)
             if _changes(changes, existing, RUN_API_TOKEN_FIELD):
                 _require_admin(current)
                 ensure_recent_auth(current)
+            if any(_changes(changes, existing, field) for field in PLAN_ACCESS_FIELDS):
+                _require_admin_or_factory(current)
+                ensure_recent_auth(current)
+                _ensure_plan_policy_fits(
+                    _after(changes, existing, "plan_assume_role_arns"), _after(changes, existing, "plan_secret_arns")
+                )
             if any(_changes(changes, existing, field) for field in RUN_ROLE_FIELDS):
                 ensure_recent_auth(current)
             if AUTO_APPLY_FIELD in changes and bool(changes[AUTO_APPLY_FIELD]) != bool(existing.get(AUTO_APPLY_FIELD)):
@@ -310,6 +392,16 @@ def update_workspace(
             updated = service.update_workspace(workspace_id, changes)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
+    except service.ProjectNotFound as error:
+        raise _project_not_found() from error
+    except service.RemoteStateConsumerNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": f"No such workspace to share outputs with: {error}.",
+                "error_code": REMOTE_STATE_CONSUMER_NOT_FOUND_CODE,
+            },
+        ) from error
     if auto_apply_from is not None:
         record_auto_apply_change(
             current,
@@ -326,6 +418,37 @@ def _require_admin(current: AuthorizerClaims) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"message": forbidden(), "error_code": FORBIDDEN_ERROR_CODE},
+        )
+
+
+def _require_admin_or_factory(current: AuthorizerClaims) -> None:
+    """Refuse a caller holding neither `admin` nor the factory grant on its run's API token.
+
+    The factory already sets any workspace's run role, which reaches further than a
+    plan role, so it may set what plans reach too.
+    """
+    if not holds_factory_grant(current):
+        _require_admin(current)
+
+
+def _after(changes: dict[str, Any], existing: dict[str, Any], field: str) -> list[str]:
+    """A list field's value once the edit lands, a null clearing it."""
+    value = changes[field] if field in changes else existing.get(field)
+    return [str(item) for item in value or []]
+
+
+def _ensure_plan_policy_fits(plan_assume_role_arns: list[str], plan_secret_arns: list[str]) -> None:
+    """Refuse reader roles and plan secrets that would overflow a plan's session policy."""
+    if not session_policy.plan_policy_fits(plan_assume_role_arns, plan_secret_arns):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": (
+                    "The reader roles and plan secrets together are too long for a plan's session policy. "
+                    "Name fewer, or use a wildcard pattern for several secrets."
+                ),
+                "error_code": PLAN_SESSION_POLICY_TOO_LARGE_CODE,
+            },
         )
 
 

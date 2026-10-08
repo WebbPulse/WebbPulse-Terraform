@@ -11,18 +11,24 @@ query is what makes the ordinary case a clean 409.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Final
+from typing import Any, Callable, Final, Literal
 
 from boto3.dynamodb.conditions import Attr, Key
 from webbpulse.dynamodb import ConditionFailed, new_ulid, now_iso
 
 from ...common.composition.settings import Settings, get_settings
 from ...common.core import variable_cipher
+from ...common.core.auth import (
+    RUN_API_TOKEN_SCOPES_ATTRIBUTE,
+    RUN_API_TOKEN_SCOPES_VERSION,
+    RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE,
+)
 from ...common.db import repositories
 from ...common.db.tables import (
     CONFIG_VERSIONS_BY_WORKSPACE_INDEX,
     WORKSPACES_BY_NAME_INDEX,
 )
+from ...common.notifications import store as notification_store
 from ...common.runs.workspace_runs import (
     RunStillActive,
     delete_workspace_runs,
@@ -34,6 +40,7 @@ from ...common.runs.workspace_runs import (
 from ...common.workspaces import aws_connect, cleanup, hcl, reads
 from ...common.workspaces import readme as config_readme
 from ...common.workspaces import vcs as workspace_vcs
+from ...common.workspaces.projects import DEFAULT_PROJECT_ID, project_of
 from ...common.workspaces.reads import (
     CONFIG_VERSION_ID_PREFIX,
     WORKSPACE_ID_PREFIX,
@@ -48,6 +55,7 @@ from ...common.workspaces.reads import (
     list_variables,
     resolved_variables,
 )
+from . import projects as project_store
 from . import state_versions, vcs_connect
 from .schemas.workspace import CLEARABLE_WORKSPACE_FIELDS
 from .vcs_connect import RepositoryNotInstalled
@@ -59,6 +67,8 @@ __all__ = [
     "WORKSPACE_ID_PREFIX",
     "ConfigVersionNotFound",
     "HclNotAllowed",
+    "ProjectNotFound",
+    "RemoteStateConsumerNotFound",
     "RepositoryNotInstalled",
     "RunRoleMissing",
     "RunStillActive",
@@ -88,8 +98,16 @@ TFE_CONFIG_MAX_BYTES: Final = 250_000_000
 
 go-tfe sends no length up front, so it is checked against the object once it lands."""
 
-_PRIVATE_WORKSPACE_FIELDS: Final = frozenset({aws_connect.TOKEN_HASH_ATTRIBUTE, aws_connect.TOKEN_EXPIRES_ATTRIBUTE})
+_PRIVATE_WORKSPACE_FIELDS: Final = frozenset(
+    {aws_connect.TOKEN_HASH_ATTRIBUTE, aws_connect.TOKEN_EXPIRES_ATTRIBUTE, RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE}
+)
 """Row attributes no response carries, the connect token's hash above all."""
+
+GLOBAL_REMOTE_STATE_FIELD: Final = "global_remote_state"
+"""The workspace attribute sharing its non-sensitive outputs with every workspace's runs."""
+
+REMOTE_STATE_CONSUMERS_FIELD: Final = "remote_state_consumer_ids"
+"""The workspace attribute naming the workspaces whose runs may read its non-sensitive outputs."""
 
 IAM_ROLE_NAME_MAX_LENGTH: Final = 64
 """The IAM ceiling on a role name. The derived name has to fit inside it."""
@@ -97,6 +115,34 @@ IAM_ROLE_NAME_MAX_LENGTH: Final = 64
 
 class WorkspaceNameTaken(Exception):
     """Another workspace already holds this name."""
+
+
+class RemoteStateConsumerNotFound(Exception):
+    """A remote state sharing edit named a workspace that does not exist."""
+
+
+ProjectNotFound = project_store.ProjectNotFound
+"""A create or move named a project that does not exist."""
+
+WorkspaceSort = Literal["name", "-name", "-latest_run", "-updated_at", "-created_at", "status"]
+"""The orders the workspace list can return, a leading `-` meaning newest or last first.
+
+`-updated_at` is "last updated", the `latest_change_at` the list shows. `status` puts the
+runs that need someone first: waiting on a confirmation, then errored, then still going,
+then settled, and workspaces that never ran last."""
+
+_STATUS_ATTENTION: Final = {
+    "awaiting_confirmation": 0,
+    "planned": 0,
+    "errored": 1,
+    "pending": 2,
+    "planning": 2,
+    "applying": 2,
+}
+"""How urgently a latest run status needs someone, lower first. Any other status is settled."""
+
+_SETTLED_RANK: Final = 3
+_NEVER_RAN_RANK: Final = 4
 
 
 class HclNotAllowed(Exception):
@@ -136,6 +182,7 @@ def render_workspace(item: dict[str, Any], *, settings: Settings | None = None) 
     workspace_id = str(item["workspace_id"])
     rendered = {key: value for key, value in item.items() if key not in _PRIVATE_WORKSPACE_FIELDS}
     return rendered | {
+        "project_id": project_of(item),
         "run_role_setup": run_role_setup(workspace_id, settings=resolved),
         "run_role_reconnect_required": aws_connect.reconnect_required(item),
     }
@@ -172,13 +219,16 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
     """Store a new workspace, refusing a name another workspace holds.
 
     A `vcs_repo` is resolved through the GitHub App before anything is written, so a
-    repository the App cannot see is refused with `RepositoryNotInstalled`.
+    repository the App cannot see is refused with `RepositoryNotInstalled`, and a
+    `project_id` that names no project with `ProjectNotFound`.
     """
     resolved = settings or get_settings()
     repository = repositories.workspaces(resolved)
     name = str(payload["name"])
     if find_by_name(name, settings=resolved) is not None:
         raise WorkspaceNameTaken(name)
+    project_id = str(payload.get("project_id") or DEFAULT_PROJECT_ID)
+    project_store.require_project(project_id, settings=resolved)
 
     item: dict[str, Any] = {
         "workspace_id": f"{WORKSPACE_ID_PREFIX}{new_ulid()}",
@@ -193,8 +243,11 @@ def create_workspace(payload: dict[str, Any], *, settings: Settings | None = Non
         "file_triggers_enabled": bool(payload.get("file_triggers_enabled", True)),
         "auto_apply": bool(payload.get("auto_apply", False)),
         "plan_assume_role_arns": list(payload.get("plan_assume_role_arns") or []),
+        "plan_secret_arns": list(payload.get("plan_secret_arns") or []),
         "created_at": now_iso(),
     }
+    if project_id != DEFAULT_PROJECT_ID:
+        item["project_id"] = project_id
     if payload.get("plan_role_arn"):
         item["plan_role_arn"] = str(payload["plan_role_arn"])
     if payload.get("tracked_branch"):
@@ -234,14 +287,26 @@ def list_workspaces(*, settings: Settings | None = None) -> list[dict[str, Any]]
     return sorted(items, key=lambda item: str(item.get("workspace_id", "")))
 
 
-def list_workspace_items(*, settings: Settings | None = None) -> list[dict[str, Any]]:
-    """Every workspace rendered for the list, each with its newest run and latest change.
+def list_workspace_items(
+    *,
+    project_id: str | None = None,
+    search: str | None = None,
+    sort: WorkspaceSort | None = None,
+    settings: Settings | None = None,
+) -> list[dict[str, Any]]:
+    """Workspaces rendered for the list, each with its newest run and latest change.
 
-    The newest runs come from one walk of the runs table for the whole list, never a
-    read per workspace.
+    `project_id` keeps one project's workspaces and `search` those whose name holds it,
+    ignoring case. Without a `sort` the order stays oldest first. The newest runs come
+    from one walk of the runs table for the whole list, never a read per workspace.
     """
     resolved = settings or get_settings()
     items = list_workspaces(settings=resolved)
+    if project_id is not None:
+        items = [item for item in items if project_of(item) == project_id]
+    if search:
+        needle = search.casefold()
+        items = [item for item in items if needle in str(item.get("name", "")).casefold()]
     runs = latest_runs([str(item["workspace_id"]) for item in items], settings=resolved)
     rendered: list[dict[str, Any]] = []
     for item in items:
@@ -250,7 +315,44 @@ def list_workspace_items(*, settings: Settings | None = None) -> list[dict[str, 
         changed_at = latest["changed_at"] if latest else str(item.get("updated_at") or item.get("created_at") or "")
         extra: dict[str, Any] = {"latest_run": latest, "latest_change_at": changed_at}
         rendered.append(render_workspace(item, settings=resolved) | extra)
-    return rendered
+    return rendered if sort is None else sort_workspace_items(rendered, sort)
+
+
+def _attention_rank(item: dict[str, Any]) -> int:
+    """Where a workspace's newest run falls in the `status` order."""
+    latest = item.get("latest_run")
+    if not latest:
+        return _NEVER_RAN_RANK
+    return _STATUS_ATTENTION.get(str(latest.get("status", "")), _SETTLED_RANK)
+
+
+def _created_key(item: dict[str, Any]) -> tuple[str, str]:
+    """Creation time, with the time ordered id breaking a tie inside one second."""
+    return str(item.get("created_at", "")), str(item["workspace_id"])
+
+
+def sort_workspace_items(items: list[dict[str, Any]], sort: WorkspaceSort) -> list[dict[str, Any]]:
+    """The list items in one of the `WorkspaceSort` orders.
+
+    Every order ends on the name, so equal keys always come back the same way. Each
+    pass is a stable sort, which is what lets a descending key sit beside an ascending
+    tie break.
+    """
+    ordered = sorted(items, key=lambda item: (str(item.get("name", "")).casefold(), str(item["workspace_id"])))
+    if sort == "name":
+        return ordered
+    if sort == "-name":
+        return ordered[::-1]
+    if sort == "-created_at":
+        return sorted(ordered, key=_created_key, reverse=True)
+    if sort == "-updated_at":
+        return sorted(ordered, key=lambda item: str(item.get("latest_change_at", "")), reverse=True)
+    if sort == "-latest_run":
+        ran = [item for item in ordered if item.get("latest_run")]
+        never = [item for item in ordered if not item.get("latest_run")]
+        return sorted(ran, key=lambda item: str(item["latest_run"].get("created_at", "")), reverse=True) + never
+    by_change = sorted(ordered, key=lambda item: str(item.get("latest_change_at", "")), reverse=True)
+    return sorted(by_change, key=_attention_rank)
 
 
 def _stage_run_role(changes: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
@@ -297,14 +399,27 @@ def update_workspace(
     waiting connect token, since the person chose another role by hand, along with
     the plan role that stack created unless the edit names a plan role itself.
 
+    A `project_id` moves the workspace between projects and touches nothing else; the
+    default project's id or a null moves it back to the default.
+
     A change to `vcs_repo` rewrites the lowercased `vcs_repo_key` the binding
     index reads and resolves the repository through the GitHub App, which records
     its id, installation and canonical name, and fills `tracked_branch` with the
     default branch when the request carries no branch. Without an App the recorded
     id and installation are dropped instead, since they belonged to the previous
     repository. Clearing `vcs_repo` removes all of them.
+
+    A change to `run_api_token_scopes`, a clear included, stamps the grant's current
+    version, so the run API token's one-off factory migration never touches a grant an
+    admin chose since.
     """
     resolved = settings or get_settings()
+    if "project_id" in changes:
+        changes = _resolve_project_move(changes, settings=resolved)
+    if changes.get(REMOTE_STATE_CONSUMERS_FIELD):
+        changes = _resolve_remote_state_consumers(workspace_id, changes, settings=resolved)
+    if changes.get(GLOBAL_REMOTE_STATE_FIELD) is False:
+        changes = {**changes, GLOBAL_REMOTE_STATE_FIELD: None}
     staged: dict[str, Any] | None = None
     if "run_role_arn" in changes or "pending_run_role_arn" in changes:
         staged = get_workspace(workspace_id, settings=resolved)
@@ -318,6 +433,10 @@ def update_workspace(
     role_changed = "run_role_arn" in changes and changes["run_role_arn"] != existing.get("run_role_arn")
 
     assignments["updated_at"] = now_iso()
+    if RUN_API_TOKEN_SCOPES_ATTRIBUTE in changes and set(changes[RUN_API_TOKEN_SCOPES_ATTRIBUTE] or ()) != set(
+        existing.get(RUN_API_TOKEN_SCOPES_ATTRIBUTE) or ()
+    ):
+        assignments[RUN_API_TOKEN_SCOPES_VERSION_ATTRIBUTE] = RUN_API_TOKEN_SCOPES_VERSION
     removals = [*clears]
     if role_changed:
         removals.extend(("run_role_checked_at", "run_role_account_id"))
@@ -381,6 +500,36 @@ def update_workspace(
     return updated
 
 
+def _resolve_project_move(changes: dict[str, Any], *, settings: Settings) -> dict[str, Any]:
+    """The edit with a move to the default project read as a clear, and any other target checked.
+
+    The default project is the absence of `project_id`, so moving into it removes the
+    attribute rather than storing its id. A project that does not exist raises
+    `ProjectNotFound` before anything is written.
+    """
+    target = changes["project_id"]
+    if target is None or target == DEFAULT_PROJECT_ID:
+        return {**changes, "project_id": None}
+    project_store.require_project(str(target), settings=settings)
+    return changes
+
+
+def _resolve_remote_state_consumers(
+    workspace_id: str, changes: dict[str, Any], *, settings: Settings
+) -> dict[str, Any]:
+    """The edit with this workspace dropped from its consumers and every other one checked.
+
+    An emptied list becomes a clear. A consumer that does not exist raises
+    `RemoteStateConsumerNotFound` before anything is written.
+    """
+    consumers = [str(item) for item in changes[REMOTE_STATE_CONSUMERS_FIELD] if item != workspace_id]
+    repository = repositories.workspaces(settings)
+    missing = [item for item in consumers if repository.get({"workspace_id": item}) is None]
+    if missing:
+        raise RemoteStateConsumerNotFound(", ".join(missing))
+    return {**changes, REMOTE_STATE_CONSUMERS_FIELD: consumers or None}
+
+
 def _repository_changed(requested: Any, existing: dict[str, Any]) -> bool:
     """Whether a requested `vcs_repo` has to be written.
 
@@ -409,9 +558,9 @@ def delete_workspace(workspace_id: str, *, force: bool = False, settings: Settin
     The object purge (run artifacts, config tarballs, and every state version, delete
     marker and lock under the workspace's state prefix) is queued first, while the run
     ids are still readable, and waits for the workspace row to be gone. The rows then
-    go runs, config versions and variables first and the workspace row last, so a
-    failure part way leaves the workspace in place with its state intact and a retry
-    finishes the job. With no cleanup queue configured the purge runs inline at the end.
+    go runs, config versions, variables and notification configurations first and the
+    workspace row last, so a failure part way leaves the workspace in place with its
+    state intact and a retry finishes the job. With no cleanup queue configured the purge runs inline at the end.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
@@ -437,6 +586,7 @@ def delete_workspace(workspace_id: str, *, force: bool = False, settings: Settin
     ]
     if keys:
         variables_repository.delete_many(keys)
+    notification_store.delete_workspace_configurations(workspace_id, settings=resolved)
     repositories.workspaces(resolved).delete({"workspace_id": workspace_id})
     if not queued:
         cleanup.purge(workspace_id, run_ids, settings=resolved)
@@ -578,6 +728,7 @@ def create_tfe_config_version(
     *,
     speculative: bool,
     auto_queue_runs: bool,
+    provisional: bool = False,
     settings: Settings | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Store a pending config version for `tfe.v2` and mint its unbounded PUT.
@@ -585,7 +736,8 @@ def create_tfe_config_version(
     go-tfe uploads with `Content-Type: application/octet-stream`, no length known at
     create time and no Authorization header, so the URL signs neither a type nor a
     length. The row carries `max_bytes` instead, and the reconcile refuses an object
-    over it. `speculative` and `auto_queue_runs` are kept for the run that names it.
+    over it. `speculative` and `auto_queue_runs` are kept for the run that names it, and
+    `provisional`, which `terraform plan -out` sends, is kept so it reads back as sent.
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
@@ -604,6 +756,8 @@ def create_tfe_config_version(
         "auto_queue_runs": bool(auto_queue_runs),
         "created_at": now_iso(),
     }
+    if provisional:
+        item["provisional"] = True
     repositories.config_versions(resolved).put(item)
 
     import boto3

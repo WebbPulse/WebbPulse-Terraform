@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   aConfigVersion,
+  aDelivery,
+  aNotification,
   aRun,
   aVariable,
   aWorkspace,
@@ -188,6 +190,63 @@ describe('TerraformApi workspaces', () => {
   });
 });
 
+describe('TerraformApi workspace list query', () => {
+  it('sends the project, search and sort it was given and nothing empty', async () => {
+    const { api, transport } = apiOver({
+      'GET /api/v1/workspaces': { body: { items: [] } },
+    });
+    await api.listWorkspaces(
+      {},
+      { project_id: 'prj-default', search: '', sort: '-latest_run' }
+    );
+    const query = transport.requests[0]?.query;
+    expect(query?.get('project_id')).toBe('prj-default');
+    expect(query?.get('sort')).toBe('-latest_run');
+    expect(query?.has('search')).toBe(false);
+  });
+});
+
+describe('TerraformApi projects', () => {
+  const project = {
+    project_id: 'prj-01J000000000000000000001',
+    name: 'Platform',
+    description: '',
+    is_default: false,
+    workspace_count: 0,
+  };
+
+  it('lists projects', async () => {
+    const { api } = apiOver({
+      'GET /api/v1/projects': { body: { items: [project] } },
+    });
+    expect((await api.listProjects()).items[0]?.name).toBe('Platform');
+  });
+
+  it('creates a project, posting the body', async () => {
+    const { api, transport } = apiOver({
+      'POST /api/v1/projects': { status: 201, body: project },
+    });
+    await api.createProject({ name: 'Platform' });
+    expect(transport.requests[0]?.body).toEqual({ name: 'Platform' });
+  });
+
+  it('renames a project with a PATCH', async () => {
+    const { api, transport } = apiOver({
+      'PATCH /api/v1/projects/prj-01J000000000000000000001': { body: project },
+    });
+    await api.updateProject(project.project_id, { name: 'Platform' });
+    expect(transport.requests[0]?.method).toBe('PATCH');
+  });
+
+  it('deletes a project', async () => {
+    const { api, transport } = apiOver({
+      'DELETE /api/v1/projects/prj-01J000000000000000000001': { status: 204 },
+    });
+    await api.deleteProject(project.project_id);
+    expect(transport.requests[0]?.method).toBe('DELETE');
+  });
+});
+
 describe('TerraformApi variables', () => {
   it('lists variables and leaves a sensitive one without a value', async () => {
     const { api } = apiOver({
@@ -226,6 +285,49 @@ describe('TerraformApi variables', () => {
     });
     await api.deleteVariable('ws-1', 'region');
     expect(transport.requests[0]?.method).toBe('DELETE');
+  });
+});
+
+describe('TerraformApi notification configurations', () => {
+  const PATH = '/api/v1/workspaces/ws-1/notification-configurations';
+
+  it('lists and creates configurations on the workspace', async () => {
+    const { api, transport } = apiOver({
+      [`GET ${PATH}`]: { body: { items: [aNotification()] } },
+      [`POST ${PATH}`]: { status: 201, body: aNotification() },
+    });
+    const list = await api.listNotificationConfigurations('ws-1');
+    expect(list.items).toHaveLength(1);
+    await api.createNotificationConfiguration('ws-1', {
+      name: 'Team channel',
+      destination_type: 'slack',
+      url: 'https://hooks.slack.com/services/T/B/x',
+    });
+    expect(transport.requests[1]?.method).toBe('POST');
+    expect(transport.requests[1]?.body).toEqual({
+      name: 'Team channel',
+      destination_type: 'slack',
+      url: 'https://hooks.slack.com/services/T/B/x',
+    });
+  });
+
+  it('edits, deletes and test sends one configuration', async () => {
+    const { api, transport } = apiOver({
+      [`PATCH ${PATH}/nc-1`]: { body: aNotification({ enabled: false }) },
+      [`DELETE ${PATH}/nc-1`]: { status: 204 },
+      [`POST ${PATH}/nc-1/actions/verify`]: { body: aDelivery() },
+    });
+    await api.updateNotificationConfiguration('ws-1', 'nc-1', {
+      enabled: false,
+    });
+    await api.deleteNotificationConfiguration('ws-1', 'nc-1');
+    const delivery = await api.verifyNotificationConfiguration('ws-1', 'nc-1');
+    expect(transport.requests.map((request) => request.method)).toEqual([
+      'PATCH',
+      'DELETE',
+      'POST',
+    ]);
+    expect(delivery.status).toBe('succeeded');
   });
 });
 
@@ -284,6 +386,16 @@ describe('TerraformApi runs', () => {
     expect(query?.has('workspace_id')).toBe(false);
     expect(query?.get('limit')).toBe('10');
     expect(query?.get('cursor')).toBe('run-1');
+  });
+
+  it('lists the recent runs of one project through the query', async () => {
+    const { api, transport } = apiOver({
+      'GET /api/v1/runs': { body: { items: [], next_cursor: null } },
+    });
+    await api.listRuns({ project_id: 'prj-default', limit: 20 });
+    const query = transport.requests[0]?.query;
+    expect(query?.get('project_id')).toBe('prj-default');
+    expect(query?.get('limit')).toBe('20');
   });
 
   it('sends no query at all for the first cross-workspace page', async () => {

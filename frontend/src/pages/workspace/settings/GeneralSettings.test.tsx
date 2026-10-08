@@ -1,11 +1,11 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AuthClient } from '@webbpulse/auth';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 
 import { Layout } from '../../../components/Layout';
-import { aWorkspace } from '../../../test-helpers/fixtures';
+import { aListedWorkspace, aWorkspace } from '../../../test-helpers/fixtures';
 import {
   jsonResponse,
   renderWithAuth,
@@ -96,5 +96,111 @@ describe('GeneralSettings auto-apply', () => {
     expect(
       screen.getByText(/Only an admin can change this\./)
     ).toBeInTheDocument();
+  });
+});
+
+describe('GeneralSettings project', () => {
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+    apiMock.listConfigVersions.mockResolvedValue({ items: [] });
+    apiMock.listRuns.mockResolvedValue({ items: [] });
+    apiMock.listProjects.mockResolvedValue({
+      items: [
+        { project_id: 'prj-default', name: 'Default Project' },
+        { project_id: 'prj-01J000000000000000000001', name: 'Platform' },
+      ],
+    });
+    apiMock.updateWorkspace.mockResolvedValue(
+      aWorkspace({ project_id: 'prj-01J000000000000000000001' })
+    );
+  });
+
+  it('moves the workspace to another project and nothing else', async () => {
+    renderPage();
+
+    const picker = await screen.findByRole('combobox', { name: 'Project' });
+    expect(picker).toHaveValue('prj-default');
+    await userEvent.selectOptions(picker, 'prj-01J000000000000000000001');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Move workspace' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(WORKSPACE_ID, {
+      project_id: 'prj-01J000000000000000000001',
+    });
+  });
+});
+
+describe('GeneralSettings remote state sharing', () => {
+  const NETWORK_ID = 'ws-01J000000000000000000001';
+  const DNS_ID = 'ws-01J000000000000000000002';
+
+  beforeEach(() => {
+    resetApiMock();
+    apiMock.getWorkspace.mockResolvedValue(aWorkspace());
+    apiMock.listConfigVersions.mockResolvedValue({ items: [] });
+    apiMock.listRuns.mockResolvedValue({ items: [] });
+    apiMock.listWorkspaces.mockResolvedValue({
+      items: [
+        aListedWorkspace(aWorkspace()),
+        aListedWorkspace(aWorkspace({ workspace_id: DNS_ID, name: 'dns' })),
+        aListedWorkspace(
+          aWorkspace({ workspace_id: NETWORK_ID, name: 'network' })
+        ),
+      ],
+    });
+    apiMock.updateWorkspace.mockResolvedValue(aWorkspace());
+  });
+
+  it('shares with specific workspaces', async () => {
+    renderPage();
+
+    const form = await screen.findByRole('form', {
+      name: 'Remote state sharing',
+    });
+    const save = within(form).getByRole('button', {
+      name: 'Save remote state sharing',
+    });
+    expect(save).toBeDisabled();
+    expect(
+      within(form).queryByRole('checkbox', { name: 'platform' })
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      await within(form).findByRole('checkbox', { name: 'network' })
+    );
+    await userEvent.click(save);
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(WORKSPACE_ID, {
+      global_remote_state: false,
+      remote_state_consumer_ids: [NETWORK_ID],
+    });
+  });
+
+  it('shares with every workspace and hides the picker', async () => {
+    apiMock.getWorkspace.mockResolvedValue(
+      aWorkspace({ remote_state_consumer_ids: [DNS_ID] })
+    );
+    renderPage();
+
+    const form = await screen.findByRole('form', {
+      name: 'Remote state sharing',
+    });
+    await userEvent.click(
+      within(form).getByRole('checkbox', {
+        name: 'Share with all workspaces in this organization',
+      })
+    );
+    expect(
+      within(form).queryByRole('checkbox', { name: 'dns' })
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      within(form).getByRole('button', { name: 'Save remote state sharing' })
+    );
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith(WORKSPACE_ID, {
+      global_remote_state: true,
+      remote_state_consumer_ids: [DNS_ID],
+    });
   });
 });

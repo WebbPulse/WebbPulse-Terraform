@@ -8,6 +8,8 @@ import type {
 import type {
   ConfigVersion,
   LatestRun,
+  NotificationConfiguration,
+  NotificationDelivery,
   Run,
   RunRoleSetup,
   RunState,
@@ -100,6 +102,43 @@ export function aVariable(overrides: Partial<Variable> = {}): Variable {
     description: '',
     created_at: '2026-09-17T00:00:00Z',
     updated_at: null,
+    ...overrides,
+  };
+}
+
+/** A notification delivery, succeeded unless overridden. */
+export function aDelivery(
+  overrides: Partial<NotificationDelivery> = {}
+): NotificationDelivery {
+  return {
+    attempted_at: '2026-10-07T09:00:00Z',
+    attempts: 1,
+    status: 'succeeded',
+    status_code: 200,
+    trigger: 'verification',
+    error: null,
+    response_excerpt: null,
+    run_id: null,
+    ...overrides,
+  };
+}
+
+/** A Slack notification configuration, overridable field by field. */
+export function aNotification(
+  overrides: Partial<NotificationConfiguration> = {}
+): NotificationConfiguration {
+  return {
+    id: 'nc-01J000000000000000000000',
+    workspace_id: 'ws-01J000000000000000000000',
+    name: 'Team channel',
+    destination_type: 'slack',
+    url_masked: 'https://hooks.slack.com/****',
+    has_token: false,
+    enabled: true,
+    triggers: ['run:needs_attention', 'run:errored'],
+    last_delivery: null,
+    created_at: '2026-10-07T00:00:00Z',
+    updated_at: '2026-10-07T00:00:00Z',
     ...overrides,
   };
 }

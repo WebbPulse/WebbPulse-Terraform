@@ -14,6 +14,8 @@ from ..composition.settings import Settings, get_settings
 from .tables import (
     CONFIG_VERSIONS,
     GITHUB,
+    NOTIFICATION_CONFIGURATIONS,
+    PROJECTS,
     REGISTRY,
     RUNS,
     USERS,
@@ -100,6 +102,22 @@ def registry(settings: Settings | None = None) -> Repository:
     return _repository(REGISTRY, _name(resolved.REGISTRY_TABLE, REGISTRY, resolved), resolved)
 
 
+def notification_configurations(settings: Settings | None = None) -> Repository:
+    """Each workspace's run notification configurations."""
+    resolved = settings or get_settings()
+    return _repository(
+        NOTIFICATION_CONFIGURATIONS,
+        _name(resolved.NOTIFICATION_CONFIGURATIONS_TABLE, NOTIFICATION_CONFIGURATIONS, resolved),
+        resolved,
+    )
+
+
+def projects(settings: Settings | None = None) -> Repository:
+    """The projects table."""
+    resolved = settings or get_settings()
+    return _repository(PROJECTS, _name(resolved.PROJECTS_TABLE, PROJECTS, resolved), resolved)
+
+
 def physical_names(settings: Settings | None = None) -> dict[str, str]:
     """Every logical table paired with the physical name this environment uses."""
     resolved = settings or get_settings()
@@ -112,4 +130,8 @@ def physical_names(settings: Settings | None = None) -> dict[str, str]:
         GITHUB: _name(resolved.GITHUB_TABLE, GITHUB, resolved),
         VCS_UPLOADS: _name(resolved.VCS_UPLOADS_TABLE, VCS_UPLOADS, resolved),
         REGISTRY: _name(resolved.REGISTRY_TABLE, REGISTRY, resolved),
+        NOTIFICATION_CONFIGURATIONS: _name(
+            resolved.NOTIFICATION_CONFIGURATIONS_TABLE, NOTIFICATION_CONFIGURATIONS, resolved
+        ),
+        PROJECTS: _name(resolved.PROJECTS_TABLE, PROJECTS, resolved),
     }

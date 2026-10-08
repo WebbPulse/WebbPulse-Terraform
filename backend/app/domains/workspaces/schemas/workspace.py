@@ -5,12 +5,13 @@ from __future__ import annotations
 import posixpath
 import re
 from datetime import datetime
-from typing import Any, Final, Literal, Optional
+from typing import Annotated, Any, Final, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from ....common.core.auth import RUN_API_TOKEN_SCOPES
 from ....common.runs.workspace_runs import RunStatus
+from ....common.workspaces.projects import DEFAULT_PROJECT_ID, PROJECT_ID_PATTERN
 
 Engine = Literal["terraform", "tofu"]
 """Which binary runs this workspace. The runner image bundles both."""
@@ -41,6 +42,19 @@ statements and reader roles together, plus the `ReadOnlyAccess` ARN beside it,
 inside the 2,048 plaintext characters STS allows for session policies in total.
 It still leaves a 64 character role name a 45 character path.
 """
+
+
+PLAN_SECRET_ARN_PATTERN: Final = re.compile(
+    r"^arn:aws:secretsmanager:(\*|[a-z]{2}(-[a-z]+)+-[0-9]):[0-9]{12}:secret:[A-Za-z0-9/_+=.@*?-]+$"
+)
+"""A Secrets Manager ARN pattern pinned to one account. The region and the name may hold wildcards."""
+
+PLAN_SECRET_ARNS_MAX: Final = 10
+"""How many secret ARN patterns one workspace may name."""
+
+PLAN_SECRET_ARN_MAX_LENGTH: Final = 200
+"""The longest secret ARN pattern accepted. Together with the reader roles, the list
+must still fit the plan's session policy, which the create and the edit check."""
 
 
 def normalize_working_directory(value: str) -> str:
@@ -128,6 +142,28 @@ def validate_plan_assume_role_arns(values: list[str]) -> list[str]:
     return cleaned
 
 
+def validate_plan_secret_arns(values: list[str]) -> list[str]:
+    """Trimmed Secrets Manager ARN patterns, each pinned to one account, refusing oversized entries and repeats.
+
+    These bound which secret values a plan may read, so a pattern reaching past one
+    account would hand a speculative plan more than the person meant.
+    """
+    cleaned: list[str] = []
+    for value in values:
+        arn = value.strip()
+        if len(arn) > PLAN_SECRET_ARN_MAX_LENGTH:
+            raise ValueError(f"a plan secret ARN is longer than {PLAN_SECRET_ARN_MAX_LENGTH} characters")
+        if not PLAN_SECRET_ARN_PATTERN.match(arn):
+            raise ValueError(
+                "plan_secret_arns entries must be Secrets Manager ARNs of the form "
+                "arn:aws:secretsmanager:<region or *>:<12 digit account id>:secret:<name pattern>"
+            )
+        if arn in cleaned:
+            raise ValueError(f"plan_secret_arns repeats {arn}")
+        cleaned.append(arn)
+    return cleaned
+
+
 RunApiTokenScope = Literal[
     "workspaces:read",
     "workspaces:write",
@@ -135,8 +171,12 @@ RunApiTokenScope = Literal[
     "variables:write",
     "registry:read",
     "registry:write",
+    "workspaces:factory",
 ]
-"""A scope a workspace may grant its runs' API token. Never admin, runner or `runs:apply`."""
+"""A scope a workspace may grant its runs' API token. Never admin, runner or `runs:apply`.
+
+`workspaces:factory` lets the token reach every workspace and pass step-up, for the
+factory workspace that manages the others."""
 
 
 def normalize_run_api_token_scopes(values: list[str]) -> list[str] | None:
@@ -147,6 +187,21 @@ def normalize_run_api_token_scopes(values: list[str]) -> list[str] | None:
     chosen = set(values)
     ordered = [scope for scope in RUN_API_TOKEN_SCOPES if scope in chosen]
     return ordered or None
+
+
+WORKSPACE_ID_PATTERN: Final = r"^ws-[0-9A-HJKMNP-TV-Z]{26}$"
+"""A workspace id: `ws-` and a ULID."""
+
+WorkspaceIdValue = Annotated[str, StringConstraints(pattern=WORKSPACE_ID_PATTERN)]
+"""A string that has to be a workspace id."""
+
+REMOTE_STATE_CONSUMERS_MAX: Final = 100
+"""How many workspaces one workspace may share its outputs with by name."""
+
+
+def normalize_remote_state_consumer_ids(values: list[str]) -> list[str] | None:
+    """The consumers deduplicated and sorted, or `None` for an empty list, which clears them."""
+    return sorted(set(values)) or None
 
 
 class RunRoleSetup(BaseModel):
@@ -195,6 +250,9 @@ class WorkspaceBase(BaseModel):
     plan_assume_role_arns: list[str] = Field(default_factory=list, max_length=PLAN_ASSUME_ROLE_ARNS_MAX)
     """Exact role ARNs a plan session may assume beside its read only access, such as
     Route 53 reader roles. An apply is not limited by this list."""
+    plan_secret_arns: list[str] = Field(default_factory=list, max_length=PLAN_SECRET_ARNS_MAX)
+    """Secrets Manager ARN patterns every plan may read. Empty lets every plan read any
+    secret the role can, for now even a speculative plan. An apply is not limited by this list."""
     auto_apply: bool = False
     """Whether a successful plan with changes applies without a confirmation, like HCP
     Terraform's `auto-apply`. Plan only and pull request runs never apply. Admin only."""
@@ -204,6 +262,8 @@ class WorkspaceCreate(WorkspaceBase):
     """A new workspace. The name is unique across the environment."""
 
     name: str = Field(min_length=1, max_length=90, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    project_id: Optional[str] = Field(default=None, max_length=64, pattern=PROJECT_ID_PATTERN)
+    """The project the workspace starts in. Absent means the default project."""
 
     @field_validator("working_directory")
     @classmethod
@@ -229,6 +289,12 @@ class WorkspaceCreate(WorkspaceBase):
         """Accept exact role ARNs only."""
         return validate_plan_assume_role_arns(value)
 
+    @field_validator("plan_secret_arns")
+    @classmethod
+    def _validate_plan_secret_arns(cls, value: list[str]) -> list[str]:
+        """Accept account pinned Secrets Manager ARN patterns only."""
+        return validate_plan_secret_arns(value)
+
     @field_validator("plan_role_arn")
     @classmethod
     def _validate_plan_role_arn(cls, value: Optional[str]) -> Optional[str]:
@@ -248,7 +314,11 @@ CLEARABLE_WORKSPACE_FIELDS: Final = (
     "speculative_plans",
     "file_triggers_enabled",
     "plan_assume_role_arns",
+    "plan_secret_arns",
     "run_api_token_scopes",
+    "project_id",
+    "global_remote_state",
+    "remote_state_consumer_ids",
 )
 """The update fields an explicit JSON null clears.
 
@@ -295,10 +365,23 @@ class WorkspaceUpdate(BaseModel):
     file_triggers_enabled: Optional[bool] = None
     plan_assume_role_arns: Optional[list[str]] = Field(default=None, max_length=PLAN_ASSUME_ROLE_ARNS_MAX)
     """Replace the roles a plan may assume. Null or an empty list leaves none."""
+    plan_secret_arns: Optional[list[str]] = Field(default=None, max_length=PLAN_SECRET_ARNS_MAX)
+    """Replace the secrets every plan may read. Null or an empty list lets every plan read any
+    secret the role can, for now even a speculative plan. Admin and step-up only."""
     run_api_token_scopes: Optional[list[RunApiTokenScope]] = Field(default=None, max_length=12)
     """Grant each run a short lived API token with these scopes. Admin and step-up only; null or empty revokes."""
+    global_remote_state: Optional[bool] = None
+    """Share this workspace's non-sensitive outputs with every workspace's runs. Null turns it off."""
+    remote_state_consumer_ids: Optional[list[WorkspaceIdValue]] = Field(
+        default=None, max_length=REMOTE_STATE_CONSUMERS_MAX
+    )
+    """Replace the workspaces whose runs may read this workspace's non-sensitive outputs.
+    Each has to exist; this workspace itself is dropped. Null or an empty list shares with none."""
     auto_apply: Optional[bool] = None
     """Apply successful plans without a confirmation. Admin only, and audited."""
+    project_id: Optional[str] = Field(default=None, max_length=64, pattern=PROJECT_ID_PATTERN)
+    """Move the workspace to this project. Null or the default project's id moves it back to the
+    default. A move touches nothing but this field, so state, runs and variables stay as they are."""
 
     @field_validator("working_directory")
     @classmethod
@@ -324,11 +407,23 @@ class WorkspaceUpdate(BaseModel):
         """Accept exact role ARNs only."""
         return None if value is None else validate_plan_assume_role_arns(value)
 
+    @field_validator("plan_secret_arns")
+    @classmethod
+    def _validate_plan_secret_arns(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        """Accept account pinned Secrets Manager ARN patterns only."""
+        return None if value is None else validate_plan_secret_arns(value)
+
     @field_validator("run_api_token_scopes")
     @classmethod
     def _normalize_run_api_token_scopes(cls, value: Optional[list[str]]) -> Optional[list[str]]:
         """Store the grant in canonical order, with an empty one as a clear."""
         return None if value is None else normalize_run_api_token_scopes(value)
+
+    @field_validator("remote_state_consumer_ids")
+    @classmethod
+    def _normalize_remote_state_consumer_ids(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        """Store the consumers sorted and deduplicated, with an empty list as a clear."""
+        return None if value is None else normalize_remote_state_consumer_ids(value)
 
     @field_validator("plan_role_arn")
     @classmethod
@@ -405,6 +500,8 @@ class Workspace(WorkspaceBase):
 
     workspace_id: str
     name: str
+    project_id: str = DEFAULT_PROJECT_ID
+    """The project the workspace belongs to, `prj-default` unless it was moved."""
     created_at: str
     updated_at: Optional[str] = None
     run_role_setup: RunRoleSetup
@@ -430,6 +527,10 @@ class Workspace(WorkspaceBase):
     """The last Quick setup link's progress, or `None` when none was handed out."""
     run_api_token_scopes: list[str] = Field(default_factory=list)
     """The scopes each run's API token carries, read live on every request. Empty grants none."""
+    global_remote_state: bool = False
+    """Whether every workspace's runs may read this workspace's non-sensitive outputs."""
+    remote_state_consumer_ids: list[str] = Field(default_factory=list)
+    """The workspaces whose runs may read this workspace's non-sensitive outputs."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -739,3 +840,28 @@ class StateVersionDownload(BaseModel):
     download_url: str
     expires_in: int
     size_bytes: int
+
+
+class WorkspaceOutput(BaseModel):
+    """One non-sensitive root output of a workspace's current state."""
+
+    name: str
+    type: str
+    """The coarse JSON type: string, number, boolean, array, object or null."""
+    detailed_type: Any = None
+    """The cty type the state recorded for the value."""
+    value: Any = None
+
+
+class WorkspaceOutputs(BaseModel):
+    """A workspace's non-sensitive outputs, as remote state sharing hands them to another workspace.
+
+    Sensitive outputs never appear with a value; only their names are listed, so a
+    consumer can tell a withheld output from a missing one.
+    """
+
+    workspace_id: str
+    state_version_id: Optional[str] = None
+    """The S3 version of the state read, or null when the workspace has no state yet."""
+    outputs: list[WorkspaceOutput] = Field(default_factory=list)
+    sensitive_output_names: list[str] = Field(default_factory=list)

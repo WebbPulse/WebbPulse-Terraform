@@ -2,10 +2,13 @@
 
 HCP compatibility is proven the only way that counts: an unmodified CLI, configured with
 nothing but the cloud block and `TF_TOKEN_<SPA host>`, runs remote plans and applies with
-`-target`, `-replace` and `-destroy`, reads outputs and state, moves, removes and imports
-state through locked local operations, and clears a held lock with `force-unlock`, with no
-break-glass and no `wp-tf`. The configuration is `terraform_data` only, which is built into
-the CLI, so nothing is installed and nothing billable exists.
+`-var`, `-target`, `-replace` and `-destroy`, saves a plan with `plan -out` and applies the
+planfile, reads outputs and state, moves, removes and imports state through locked local
+operations, and clears a held lock with `force-unlock`, with no break-glass and no `wp-tf`.
+No remote run logs an error from the cost estimate, policy or task stage reads, and a cloud
+block naming a missing workspace fails saying where workspaces are created. The
+configuration is `terraform_data` only, which is built into the CLI, so nothing is
+installed and nothing billable exists.
 
 The key carries exactly the scopes a `terraform login` key carries, so the case proves
 what a person's login can do, and is revoked on teardown. Teardown also destroys whatever
@@ -48,6 +51,9 @@ KEY_SCOPES = [
     "registry:read",
 ]
 RUN_TIMEOUT_SECONDS = 1500
+STAGE_ERRORS = ("Failed to retrieve", "Error:")
+"""What the CLI prints when a stub it reads around a run, such as task stages or policy
+evaluations, answers something it cannot use."""
 LOCAL_TIMEOUT_SECONDS = 300
 HTTP_TIMEOUT_SECONDS = 30
 TAIL = 2500
@@ -61,6 +67,11 @@ CONFIGURATION = """terraform {{
       name = "{workspace}"
     }}
   }}
+}}
+
+variable "label" {{
+  type    = string
+  default = "unset"
 }}
 
 resource "terraform_data" "a" {{
@@ -77,6 +88,10 @@ output "a_id" {{
 
 output "b_id" {{
   value = terraform_data.b.id
+}}
+
+output "label" {{
+  value = var.label
 }}
 """
 
@@ -173,6 +188,18 @@ def _cli_version(binary: str) -> str:
     return str(json.loads(completed.stdout)["terraform_version"])
 
 
+def _remote(output: str) -> str:
+    """A remote run's output, failing on anything the CLI logged as an error around it."""
+    for marker in STAGE_ERRORS:
+        assert marker not in output, f"the run logged {marker!r}: {output[-TAIL:]}"
+    return output
+
+
+def _flat(output: str) -> str:
+    """Output with its whitespace collapsed, so a wrapped diagnostic reads as one line."""
+    return " ".join(output.split())
+
+
 def _lock(workspace_id: str, key: str) -> None:
     """Hold the workspace lock as a crashed local operation would leave it."""
     response = httpx.post(
@@ -191,7 +218,7 @@ def test_terraform_cli_drives_a_workspace_through_a_cloud_block(
     terraform_binary: str,
     tmp_path: Path,
 ) -> None:
-    """Init, apply, target, replace, outputs, state list/show/mv/rm, import, force-unlock and destroy."""
+    """Init, apply with -var, target, replace, saved plans, outputs, state ops, import, force-unlock, destroy."""
     workspace_id = str(workspace["workspace_id"])
     name = str(workspace["name"])
     version = _cli_version(terraform_binary)
@@ -209,42 +236,82 @@ def test_terraform_cli_drives_a_workspace_through_a_cloud_block(
         initialized = cli.ok("init", "-input=false", "-no-color")
         assert "successfully initialized" in initialized, initialized[-TAIL:]
 
-        created = cli.ok("apply", "-auto-approve", "-input=false", "-no-color", timeout=RUN_TIMEOUT_SECONDS)
+        created = _remote(
+            cli.ok(
+                "apply",
+                "-auto-approve",
+                "-input=false",
+                "-no-color",
+                "-var=label=from-var",
+                timeout=RUN_TIMEOUT_SECONDS,
+            )
+        )
         applied = True
         assert "Apply complete! Resources: 2 added, 0 changed, 0 destroyed." in created, created[-TAIL:]
         assert cli.addresses() == ["terraform_data.a", "terraform_data.b"]
         first = cli.outputs()
         assert first["a_id"] and first["b_id"] and first["a_id"] != first["b_id"]
+        assert first["label"] == "from-var", "the remote run did not take the -var value"
 
         shown = cli.ok("state", "show", "-no-color", "terraform_data.a")
         assert 'resource "terraform_data" "a"' in shown, "state show did not render the resource"
         assert first["a_id"] in shown, "state show rendered another instance"
 
-        targeted = cli.ok(
-            "plan",
-            "-input=false",
-            "-no-color",
-            "-target=terraform_data.a",
-            "-replace=terraform_data.a",
-            timeout=RUN_TIMEOUT_SECONDS,
+        targeted = _remote(
+            cli.ok(
+                "plan",
+                "-input=false",
+                "-no-color",
+                "-var=label=from-var",
+                "-target=terraform_data.a",
+                "-replace=terraform_data.a",
+                timeout=RUN_TIMEOUT_SECONDS,
+            )
         )
         assert "Plan: 1 to add, 0 to change, 1 to destroy." in targeted, targeted[-TAIL:]
         actions = targeted.split("Terraform will perform")[-1]
         assert "terraform_data.b" not in actions, "the targeted plan touched an untargeted resource"
         assert cli.outputs() == first, "a speculative plan changed the state"
 
-        replaced = cli.ok(
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            "-no-color",
-            "-replace=terraform_data.b",
-            timeout=RUN_TIMEOUT_SECONDS,
+        replaced = _remote(
+            cli.ok(
+                "apply",
+                "-auto-approve",
+                "-input=false",
+                "-no-color",
+                "-var=label=from-var",
+                "-replace=terraform_data.b",
+                timeout=RUN_TIMEOUT_SECONDS,
+            )
         )
         assert "Apply complete! Resources: 1 added, 0 changed, 1 destroyed." in replaced, replaced[-TAIL:]
         second = cli.outputs()
         assert second["a_id"] == first["a_id"], "the replace touched an untargeted resource"
         assert second["b_id"] != first["b_id"], "the replaced resource kept its id"
+
+        saved = _remote(
+            cli.ok(
+                "plan",
+                "-input=false",
+                "-no-color",
+                "-out=saved.tfplan",
+                "-var=label=saved",
+                "-replace=terraform_data.b",
+                timeout=RUN_TIMEOUT_SECONDS,
+            )
+        )
+        assert "Plan: 1 to add, 0 to change, 1 to destroy." in saved, saved[-TAIL:]
+        assert (workdir / "saved.tfplan").is_file(), "plan -out wrote no planfile"
+        assert cli.outputs() == second, "saving a plan changed the state"
+        from_file = _remote(cli.ok("apply", "-input=false", "-no-color", "saved.tfplan", timeout=RUN_TIMEOUT_SECONDS))
+        assert "Apply complete! Resources: 1 added, 0 changed, 1 destroyed." in from_file, from_file[-TAIL:]
+        third = cli.outputs()
+        assert third["label"] == "saved", "the saved plan's -var value did not apply"
+        assert third["b_id"] != second["b_id"], "the saved plan's replacement did not apply"
+        assert third["a_id"] == second["a_id"], "the saved plan touched an untargeted resource"
+        code, again = cli.run("apply", "-input=false", "-no-color", "saved.tfplan", timeout=RUN_TIMEOUT_SECONDS)
+        assert code != 0, "an applied saved plan applied a second time"
+        assert "Saved plan is already applied" in again, again[-TAIL:]
 
         moved = cli.ok("state", "mv", "-no-color", "terraform_data.a", "terraform_data.moved")
         assert "Successfully moved 1 object(s)." in moved, moved[-TAIL:]
@@ -265,8 +332,8 @@ def test_terraform_cli_drives_a_workspace_through_a_cloud_block(
         assert "Import successful!" in imported, imported[-TAIL:]
         assert cli.addresses() == ["terraform_data.a", "terraform_data.b"]
 
-        destroyed = cli.ok(
-            "apply", "-destroy", "-auto-approve", "-input=false", "-no-color", timeout=RUN_TIMEOUT_SECONDS
+        destroyed = _remote(
+            cli.ok("apply", "-destroy", "-auto-approve", "-input=false", "-no-color", timeout=RUN_TIMEOUT_SECONDS)
         )
         assert "Apply complete! Resources: 0 added, 0 changed, 2 destroyed." in destroyed, destroyed[-TAIL:]
         applied = False
@@ -275,3 +342,26 @@ def test_terraform_cli_drives_a_workspace_through_a_cloud_block(
         if applied:
             cli.run("force-unlock", "-force", "-no-color", f"{ORGANIZATION}/{name}")
             cli.run("apply", "-destroy", "-auto-approve", "-input=false", "-no-color", timeout=RUN_TIMEOUT_SECONDS)
+
+
+def test_a_cloud_block_naming_a_missing_workspace_says_where_to_create_it(
+    workspace: dict[str, Any],
+    cloud_key: str,
+    terraform_binary: str,
+    tmp_path: Path,
+) -> None:
+    """HCP creates a missing workspace; here the CLI fails with the reason and the fix."""
+    missing = f"{workspace['name']}-missing"
+    workdir = tmp_path / "missing"
+    workdir.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    (workdir / "main.tf").write_text(CONFIGURATION.format(host=SPA_HOST, organization=ORGANIZATION, workspace=missing))
+    cli = Cli(terraform_binary, workdir, home, cloud_key)
+    code, output = cli.run("init", "-input=false", "-no-color")
+    if code == 0:
+        code, output = cli.run("plan", "-input=false", "-no-color", timeout=RUN_TIMEOUT_SECONDS)
+    assert code != 0, "a cloud block naming a missing workspace went through"
+    flat = _flat(output)
+    assert f'Workspace "{missing}" does not exist.' in flat, output[-TAIL:]
+    assert "Create it in the WebbPulse Terraform UI" in flat, output[-TAIL:]

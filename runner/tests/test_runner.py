@@ -391,6 +391,45 @@ def test_an_ordinary_plan_is_not_a_destroy(
     assert "-destroy" not in lines[0].split()
 
 
+def test_an_ordinary_plan_takes_the_state_lock(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A run that may apply plans under the lock, waiting on it rather than skipping it."""
+    fake_engine()
+    recorder = ApiRecorder()
+    transport = make_transport(bundle_payload(run_role_arn), config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    [line] = plan_arguments(f"{RUN_ID}/plan")
+    assert "-lock-timeout=120s" in line.split()
+    assert "-lock=false" not in line.split()
+
+
+def test_a_plan_only_run_plans_without_the_state_lock(
+    aws: None,
+    run_role_arn: str,
+    config_tarball: bytes,
+    fake_engine: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A speculative plan reads state under `-lock=false`, so it can never hold up an apply."""
+    fake_engine()
+    recorder = ApiRecorder()
+    bundle = {**bundle_payload(run_role_arn), "plan_only": True}
+    transport = make_transport(bundle, config_tarball, recorder)
+
+    assert run(make_env("plan"), make_clients(transport), tmp_path) == 0
+
+    [line] = plan_arguments(f"{RUN_ID}/plan")
+    assert "-lock=false" in line.split()
+    assert "-lock-timeout=120s" not in line.split()
+
+
 def test_a_destroy_bundle_plans_with_destroy(
     aws: None,
     run_role_arn: str,

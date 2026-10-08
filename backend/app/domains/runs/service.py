@@ -2,10 +2,12 @@
 
 Two rules drive most of this module.
 
-Runs against one workspace are serial. A create either starts a state machine
-execution or, when that workspace already has a run in flight, stores the new run
-`pending` with `queued_behind` set and starts nothing. The run ahead of it starts
-it when it finishes, which is the only place a queued run is promoted.
+Runs that can apply are serial on their workspace. A create either starts a state
+machine execution or, when that workspace already has an applying run in flight,
+stores the new run `pending` with `queued_behind` set and starts nothing. The run
+ahead of it starts it when it finishes, which is the only place a queued run is
+promoted. A plan only run is speculative, as on HCP Terraform: it reads state
+without the lock, never queues and never blocks, so only the semaphore limits it.
 
 A run token is minted when an execution starts and revoked when the run finishes.
 It is a `wpk_` key whose subject is the run id and whose only scope is `runner`,
@@ -39,9 +41,11 @@ from ...common.db.tables import (
     RUNS_COLLECTION,
     SEMAPHORE_RUN_ID,
 )
+from ...common.runs import session_policy
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
+from ...common.workspaces.projects import project_workspace_ids
 from . import api_credentials, registry_credentials, run_options, vending
 from .schemas.run import Phase
 
@@ -60,8 +64,8 @@ EXECUTING_STATUSES: Final = frozenset({"planning", "planned", "awaiting_confirma
 included: a run on its way to `awaiting_confirmation` has state locked."""
 
 ACTIVE_STATUSES: Final = frozenset({"pending"}) | EXECUTING_STATUSES
-"""A run in one of these occupies its workspace's slot, queued runs included, so a
-new run queues behind the whole queue rather than racing its head."""
+"""An applying run in one of these occupies its workspace's slot, queued runs
+included, so a new run queues behind the whole queue rather than racing its head."""
 
 TERMINAL_STATUSES: Final = TERMINAL_RUN_STATUSES
 """A run in one of these is finished, so its token is dead and the next queued run
@@ -310,6 +314,11 @@ def prune_semaphore(*, settings: Settings | None = None) -> list[str]:
     return sorted(stale)
 
 
+def is_plan_only(run: Mapping[str, Any]) -> bool:
+    """Whether a run is speculative, so it neither queues nor blocks its workspace."""
+    return bool(run.get("plan_only", False))
+
+
 def active_run(
     workspace_id: str,
     *,
@@ -319,7 +328,8 @@ def active_run(
     """The run currently holding `workspace_id`'s slot, if any.
 
     Reads newest first and returns the first matching row, so a workspace with a
-    long history costs one page rather than a full partition scan.
+    long history costs one page rather than a full partition scan. A plan only run
+    never holds the slot, so it is passed over.
 
     `statuses` defaults to every status that occupies the slot, which is what a new
     run asks about. Promotion passes `EXECUTING_STATUSES` instead, because the runs
@@ -331,7 +341,7 @@ def active_run(
         index_name=RUNS_BY_WORKSPACE_INDEX,
         ascending=False,
     ):
-        if _is_run_row(item) and str(item.get("status", "")) in statuses:
+        if _is_run_row(item) and str(item.get("status", "")) in statuses and not is_plan_only(item):
             return item
     return None
 
@@ -360,6 +370,8 @@ def create_run(
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Create a run, starting it or queueing it behind the workspace's active one.
+
+    A plan only run never queues: it starts at once, limited only by the semaphore.
 
     Validates the workspace and the config version before writing anything, so a
     run never exists against a config version that was never uploaded.
@@ -417,10 +429,11 @@ def create_run(
     if str(config_version.get("status", "")) != "uploaded":
         raise ConfigVersionNotReady(config_version_id)
 
-    blocking = active_run(workspace_id, settings=resolved)
     run_id = run_id or f"{RUN_ID_PREFIX}{new_ulid()}"
     timestamp = now_iso()
     plan_only = role_check or bool(payload.get("plan_only", False))
+    blocking = None if plan_only else active_run(workspace_id, settings=resolved)
+    save_plan = not plan_only and bool(payload.get("save_plan", False))
     item: dict[str, Any] = {
         "run_id": run_id,
         "workspace_id": workspace_id,
@@ -430,6 +443,7 @@ def create_run(
         "plan_only": plan_only,
         "auto_apply": _requested_auto_apply(payload, workspace)
         and not plan_only
+        and not save_plan
         and not role_check
         and source in AUTO_APPLY_SOURCES,
         "is_destroy": not role_check and bool(payload.get("is_destroy", False)),
@@ -449,8 +463,10 @@ def create_run(
     item.update(run_options.stored(options, workspace_id=workspace_id, run_id=run_id, settings=resolved))
     if role_check:
         item["run_role_check"] = True
-    if not role_check and isinstance(payload.get("auto_apply"), bool):
+    if not role_check and (isinstance(payload.get("auto_apply"), bool) or save_plan):
         item[AUTO_APPLY_OVERRIDE_ATTRIBUTE] = True
+    if save_plan:
+        item["save_plan"] = True
     if vcs is not None:
         item["vcs"] = {key: value for key, value in vcs.items() if value is not None}
     if actor is not None:
@@ -633,6 +649,31 @@ def list_runs(workspace_id: str, *, settings: Settings | None = None) -> list[di
         )
         if _is_run_row(item)
     ]
+
+
+def list_project_runs(
+    project_id: str,
+    *,
+    limit: int = DEFAULT_RUN_PAGE_SIZE,
+    settings: Settings | None = None,
+) -> list[dict[str, Any]]:
+    """The newest runs across one project's workspaces, newest first, at most `limit`.
+
+    One bounded read per workspace in the project, merged by creation. A project
+    that holds nothing, or does not exist, has no runs.
+    """
+    resolved = settings or get_settings()
+    merged: list[dict[str, Any]] = []
+    for workspace_id in project_workspace_ids(project_id, settings=resolved):
+        page = _runs(resolved).query(
+            Key("workspace_id").eq(workspace_id),
+            index_name=RUNS_BY_WORKSPACE_INDEX,
+            limit=limit + 1,
+            ascending=False,
+        )
+        merged.extend(dict(item) for item in page.items if _is_run_row(item))
+    merged.sort(key=lambda item: (str(item.get("created_at", "")), str(item.get("run_id", ""))), reverse=True)
+    return merged[:limit]
 
 
 def list_all_runs(
@@ -1047,31 +1088,36 @@ def _revoke_run_token(run: dict[str, Any], *, settings: Settings) -> None:
 
 
 def _promote_queue(workspace_id: str, *, settings: Settings) -> None:
-    """Start the oldest run queued on this workspace, if nothing else is active.
+    """Start every plan only run queued on this workspace, then its oldest applying one.
+
+    A plan only run is queued only when it was stored before plan only runs stopped
+    queueing, so each one is started whatever else is going. The oldest applying run
+    starts only when no other applying run is executing, which is what keeps a chain
+    that ran through a plan only run moving.
 
     Best effort: a failure to start the next run must not fail the transition that
     finished the previous one, which would leave a run stuck non-terminal. It is
     logged rather than swallowed silently, because a promotion that never happens
     leaves a run `pending` with nothing left to start it.
     """
-    if active_run(workspace_id, statuses=EXECUTING_STATUSES, settings=settings) is not None:
-        return
     queued = _queued_runs(workspace_id, settings=settings)
-    if not queued:
-        return
-    next_run_id = str(queued[0]["run_id"])
-    try:
-        start_run(next_run_id, settings=settings)
-    except Exception as error:  # noqa: BLE001
-        _log.exception(
-            "Could not promote the next queued run.",
-            extra={
-                "event": "runs.promote.failed",
-                "run_id": next_run_id,
-                "workspace_id": workspace_id,
-                "error": type(error).__name__,
-            },
-        )
+    promoted = [str(run["run_id"]) for run in queued if is_plan_only(run)]
+    applying = [str(run["run_id"]) for run in queued if not is_plan_only(run)]
+    if applying and active_run(workspace_id, statuses=EXECUTING_STATUSES, settings=settings) is None:
+        promoted.append(applying[0])
+    for next_run_id in promoted:
+        try:
+            start_run(next_run_id, settings=settings)
+        except Exception as error:  # noqa: BLE001
+            _log.exception(
+                "Could not promote the next queued run.",
+                extra={
+                    "event": "runs.promote.failed",
+                    "run_id": next_run_id,
+                    "workspace_id": workspace_id,
+                    "error": type(error).__name__,
+                },
+            )
 
 
 def record_phase_result(
@@ -1095,6 +1141,9 @@ def record_phase_result(
     terraform plans under `-detailed-exitcode`. The runner already reports 0 for
     it; this keeps a runner that does not from erroring every plan with changes.
 
+    Whatever the plan's outcome, its API token is revoked here: a run left awaiting
+    confirmation holds none until the apply phase's bundle mints one.
+
     Raises:
         RunNotFound: No such run.
         PhaseMismatch: The reported phase is not the one the run is in.
@@ -1106,6 +1155,9 @@ def record_phase_result(
     expected = {"plan": "planning", "apply": "applying"}[phase]
     if status != expected:
         raise PhaseMismatch(f"{run_id} is {status}, not {expected}")
+
+    if phase == "plan":
+        api_credentials.revoke(run, settings=resolved)
 
     changes = dict(result.get("changes") or {"add": 0, "change": 0, "destroy": 0})
     exit_code = int(result.get("exit_code", 0))
@@ -1541,6 +1593,20 @@ def _plan_assume_role_arns(workspace: Mapping[str, Any]) -> list[str]:
     return [str(arn) for arn in workspace.get("plan_assume_role_arns") or [] if str(arn).strip()]
 
 
+def _plan_secret_arns(run: Mapping[str, Any], workspace: Mapping[str, Any]) -> list[str] | None:
+    """The secrets this run's plan may read, from the workspace's list and whether the run is speculative.
+
+    A `plan_only` run and a pull request plan are speculative: they never apply. A run
+    role check is not, since it plans the workspace's own configuration to prove a role
+    the workspace is about to apply with.
+    """
+    named = [str(arn) for arn in workspace.get("plan_secret_arns") or [] if str(arn).strip()]
+    speculative = not run.get("run_role_check") and (
+        bool(run.get("plan_only")) or str(run.get("source", "")) == "vcs_pr"
+    )
+    return session_policy.plan_secret_arns_for(named, speculative=speculative)
+
+
 def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Settings | None = None) -> dict[str, Any]:
     """A fresh pair of provider and state keys for a run still in `phase`.
 
@@ -1569,6 +1635,7 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         workspace_name=str(workspace.get("name", "")),
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
         plan_role_arn=_plan_role_arn(run, workspace),
+        plan_secret_arns=_plan_secret_arns(run, workspace),
     )
     identity = _workload_identity(
         workspace_reads.resolved_variables(workspace_id, settings=resolved)["env"],
@@ -1664,6 +1731,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         workspace_name=str(workspace.get("name", "")),
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
         plan_role_arn=plan_role_arn,
+        plan_secret_arns=_plan_secret_arns(run, workspace),
     )
     identity = _workload_identity(
         variables["env"], workspace_id, str(workspace.get("name", "")), run_id, phase, settings=resolved
@@ -1917,6 +1985,7 @@ __all__ = [
     "StateKmsKeyMissing",
     "TERMINAL_STATUSES",
     "active_run",
+    "is_plan_only",
     "artifact_upload",
     "auto_apply_eligible",
     "auto_confirm_run",

@@ -20,6 +20,8 @@ import {
   ModuleDetail,
   NewWorkspace,
   NotFound,
+  ProjectDetail,
+  Projects,
   ProviderDetail,
   Registry,
   RunDetail,
@@ -64,6 +66,8 @@ export function AppRoutes(): React.ReactElement {
         <Route path="/workspaces" element={<Workspaces />} />
         <Route path="/workspaces/new" element={<NewWorkspace />} />
         {workspaceRoutes()}
+        <Route path="/projects" element={<Projects />} />
+        <Route path="/projects/:projectId" element={<ProjectDetail />} />
         <Route path="/runs" element={<Runs />} />
         <Route path="/runs/:runId" element={<RunDetail />} />
         <Route path="/registry" element={<Registry />} />

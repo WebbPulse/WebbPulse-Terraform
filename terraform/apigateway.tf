@@ -31,9 +31,31 @@ locals {
       "POST /api/v1/workspaces/{workspace_id}/state-versions/{state_version_id}/download" = { integration = "workspaces" }
     },
     {
+      "GET /api/v1/workspaces/{workspace_id}/outputs" = { integration = "workspaces" }
+    },
+    {
       "POST /api/v1/workspaces/{workspace_id}/run-role/check"       = { integration = "workspaces" }
       "GET /api/v1/workspaces/{workspace_id}/run-role/check"        = { integration = "workspaces" }
       "POST /api/v1/workspaces/{workspace_id}/run-role/quick-setup" = { integration = "workspaces" }
+    },
+    {
+      "GET /api/v1/workspaces/{workspace_id}/notification-configurations"  = { integration = "workspaces" }
+      "POST /api/v1/workspaces/{workspace_id}/notification-configurations" = { integration = "workspaces" }
+    },
+    {
+      for method in ["GET", "PATCH", "DELETE"] :
+      "${method} /api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}" => { integration = "workspaces" }
+    },
+    {
+      "POST /api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}/actions/verify" = { integration = "workspaces" }
+    },
+    {
+      "GET /api/v1/projects"  = { integration = "workspaces" }
+      "POST /api/v1/projects" = { integration = "workspaces" }
+    },
+    {
+      for method in ["GET", "PATCH", "DELETE"] :
+      "${method} /api/v1/projects/{project_id}" => { integration = "workspaces" }
     },
     {
       "POST /api/v1/api-keys"            = { integration = "workspaces" }

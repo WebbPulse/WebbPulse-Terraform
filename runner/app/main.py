@@ -155,6 +155,7 @@ def _run_plan(
     *,
     destroy: bool = False,
     options: list[str] | None = None,
+    lock: bool = True,
     init_environment: dict[str, str] | None = None,
     user: isolation.EngineUser | None = None,
 ) -> tuple[int, Changes, bool, str]:
@@ -162,7 +163,8 @@ def _run_plan(
 
     `destroy` plans the removal of every managed resource, which the apply phase then
     applies from the saved plan like any other. `options` are the run's targeting,
-    replacement, refresh and run variable flags.
+    replacement, refresh and run variable flags. `lock` is off for a plan only run,
+    which reads state without taking the lock.
 
     The plan runs under `-detailed-exitcode`, so it exits 0 with no changes and 2
     with changes. Both are successful plans, so both return 0 and the change
@@ -175,7 +177,7 @@ def _run_plan(
     init_code = runner.init(init_environment)
     if init_code != 0:
         raise PhaseFailure("InitFailed", f"init exited {init_code}")
-    plan_code = runner.plan(destroy=destroy, options=options or [])
+    plan_code = runner.plan(destroy=destroy, options=options or [], lock=lock)
     if plan_code not in (engine.NO_CHANGES_EXIT, engine.CHANGES_EXIT):
         raise PhaseFailure("PlanFailed", f"plan exited {plan_code}")
     seal_plan(runner.directory / engine.PLAN_FILE, sealed_plan, user)
@@ -435,6 +437,7 @@ def _run_engine(
             sealed_plan,
             destroy=bundle.is_destroy,
             options=_plan_options(bundle),
+            lock=not bundle.plan_only,
             init_environment=init_environment,
             user=user,
         )

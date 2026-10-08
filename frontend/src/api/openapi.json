@@ -2006,6 +2006,349 @@
         "title": "ModuleVersionDetail",
         "type": "object"
       },
+      "NotificationConfiguration": {
+        "description": "A stored configuration as the API renders it, with the URL masked.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "destination_type": {
+            "enum": [
+              "slack",
+              "discord",
+              "generic"
+            ],
+            "title": "Destination Type",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "has_token": {
+            "title": "Has Token",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_delivery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NotificationDelivery"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "triggers": {
+            "items": {
+              "enum": [
+                "run:created",
+                "run:planning",
+                "run:needs_attention",
+                "run:applying",
+                "run:completed",
+                "run:errored"
+              ],
+              "type": "string"
+            },
+            "title": "Triggers",
+            "type": "array"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "url_masked": {
+            "title": "Url Masked",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "destination_type",
+          "enabled",
+          "triggers",
+          "url_masked",
+          "has_token",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "NotificationConfiguration",
+        "type": "object"
+      },
+      "NotificationConfigurationCreate": {
+        "additionalProperties": false,
+        "description": "A new notification configuration.",
+        "properties": {
+          "destination_type": {
+            "enum": [
+              "slack",
+              "discord",
+              "generic"
+            ],
+            "title": "Destination Type",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "triggers": {
+            "items": {
+              "enum": [
+                "run:created",
+                "run:planning",
+                "run:needs_attention",
+                "run:applying",
+                "run:completed",
+                "run:errored"
+              ],
+              "type": "string"
+            },
+            "title": "Triggers",
+            "type": "array"
+          },
+          "url": {
+            "format": "password",
+            "title": "Url",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "name",
+          "destination_type",
+          "url"
+        ],
+        "title": "NotificationConfigurationCreate",
+        "type": "object"
+      },
+      "NotificationConfigurationList": {
+        "description": "Every notification configuration on one workspace.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationConfiguration"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "NotificationConfigurationList",
+        "type": "object"
+      },
+      "NotificationConfigurationUpdate": {
+        "additionalProperties": false,
+        "description": "A partial edit. An absent field is unchanged; a null or empty `token` clears it.",
+        "properties": {
+          "destination_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "slack",
+                  "discord",
+                  "generic"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Type"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "triggers": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "run:created",
+                    "run:planning",
+                    "run:needs_attention",
+                    "run:applying",
+                    "run:completed",
+                    "run:errored"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggers"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "NotificationConfigurationUpdate",
+        "type": "object"
+      },
+      "NotificationDelivery": {
+        "description": "The outcome of a configuration's newest delivery attempt.",
+        "properties": {
+          "attempted_at": {
+            "title": "Attempted At",
+            "type": "string"
+          },
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "response_excerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Excerpt"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "retrying"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "trigger",
+          "attempts",
+          "attempted_at"
+        ],
+        "title": "NotificationDelivery",
+        "type": "object"
+      },
       "PendingRunRoleCheck": {
         "description": "What the runner's record says about the role waiting to replace the current one.",
         "properties": {
@@ -2346,6 +2689,138 @@
           "action"
         ],
         "title": "PlanResourceChange",
+        "type": "object"
+      },
+      "Project": {
+        "description": "A project and how many workspaces it holds.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "is_default": {
+            "default": false,
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project_id": {
+            "pattern": "^prj-(default|[0-9A-HJKMNP-TV-Z]{26})$",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "workspace_count": {
+            "default": 0,
+            "title": "Workspace Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "name"
+        ],
+        "title": "Project",
+        "type": "object"
+      },
+      "ProjectCreate": {
+        "additionalProperties": false,
+        "description": "A new project. Its name is unique across the environment, ignoring case.",
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9 _-]*$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectList": {
+        "description": "Every project, the default first and the rest by name.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ProjectList",
+        "type": "object"
+      },
+      "ProjectUpdate": {
+        "additionalProperties": false,
+        "description": "A partial project edit. A null description clears it; the name cannot be cleared.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9 _-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "ProjectUpdate",
         "type": "object"
       },
       "Provider": {
@@ -4552,6 +5027,11 @@
             "title": "File Triggers Enabled",
             "type": "boolean"
           },
+          "global_remote_state": {
+            "default": false,
+            "title": "Global Remote State",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -4587,6 +5067,26 @@
               }
             ],
             "title": "Plan Role Arn"
+          },
+          "plan_secret_arns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Plan Secret Arns",
+            "type": "array"
+          },
+          "project_id": {
+            "default": "prj-default",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "remote_state_consumer_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Remote State Consumer Ids",
+            "type": "array"
           },
           "run_api_token_scopes": {
             "items": {
@@ -4792,6 +5292,27 @@
             ],
             "title": "Plan Role Arn"
           },
+          "plan_secret_arns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Plan Secret Arns",
+            "type": "array"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "pattern": "^prj-(default|[0-9A-HJKMNP-TV-Z]{26})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
           "run_role_arn": {
             "anyOf": [
               {
@@ -4921,6 +5442,11 @@
             "title": "File Triggers Enabled",
             "type": "boolean"
           },
+          "global_remote_state": {
+            "default": false,
+            "title": "Global Remote State",
+            "type": "boolean"
+          },
           "latest_change_at": {
             "title": "Latest Change At",
             "type": "string"
@@ -4970,6 +5496,26 @@
               }
             ],
             "title": "Plan Role Arn"
+          },
+          "plan_secret_arns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Plan Secret Arns",
+            "type": "array"
+          },
+          "project_id": {
+            "default": "prj-default",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "remote_state_consumer_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Remote State Consumer Ids",
+            "type": "array"
           },
           "run_api_token_scopes": {
             "items": {
@@ -5115,6 +5661,70 @@
         "title": "WorkspaceListItem",
         "type": "object"
       },
+      "WorkspaceOutput": {
+        "description": "One non-sensitive root output of a workspace's current state.",
+        "properties": {
+          "detailed_type": {
+            "title": "Detailed Type"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "WorkspaceOutput",
+        "type": "object"
+      },
+      "WorkspaceOutputs": {
+        "description": "A workspace's non-sensitive outputs, as remote state sharing hands them to another workspace.\n\nSensitive outputs never appear with a value; only their names are listed, so a\nconsumer can tell a withheld output from a missing one.",
+        "properties": {
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceOutput"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "sensitive_output_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sensitive Output Names",
+            "type": "array"
+          },
+          "state_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State Version Id"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "WorkspaceOutputs",
+        "type": "object"
+      },
       "WorkspaceUpdate": {
         "additionalProperties": false,
         "description": "A partial workspace edit. The name and the id are not editable.\n\nA rename would break the state key, which is derived from the workspace id,\nand the `by_name` uniqueness claim at the same time, so the field is left out\nof the model and a body carrying it is refused as an unknown key.\n\nThe model separates \"absent\" from \"explicitly null\" by leaving every field\nunset by default and reading the body with `model_dump(exclude_unset=True)`,\nso a key only reaches the service when the request actually carried it. A null\non one of `CLEARABLE_WORKSPACE_FIELDS` then means clear, which the service\nturns into a DynamoDB REMOVE.\n\nEvery unknown key is a 422 rather than dropped, so a field this server cannot\nstore never reads back to the caller as a successful change.",
@@ -5180,6 +5790,17 @@
             ],
             "title": "File Triggers Enabled"
           },
+          "global_remote_state": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Global Remote State"
+          },
           "pending_run_role_arn": {
             "anyOf": [
               {
@@ -5221,6 +5842,50 @@
             ],
             "title": "Plan Role Arn"
           },
+          "plan_secret_arns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Secret Arns"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "pattern": "^prj-(default|[0-9A-HJKMNP-TV-Z]{26})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "remote_state_consumer_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remote State Consumer Ids"
+          },
           "run_api_token_scopes": {
             "anyOf": [
               {
@@ -5231,7 +5896,8 @@
                     "variables:read",
                     "variables:write",
                     "registry:read",
-                    "registry:write"
+                    "registry:write",
+                    "workspaces:factory"
                   ],
                   "type": "string"
                 },
@@ -6868,6 +7534,215 @@
         ]
       }
     },
+    "/api/v1/projects": {
+      "get": {
+        "description": "Every project with its workspace count, the default project first.",
+        "operationId": "list_projects_api_v1_projects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Projects",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "description": "Create a project. The name has to be free, ignoring case.",
+        "operationId": "create_project_api_v1_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Create Project",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}": {
+      "delete": {
+        "description": "Delete an empty project. Move its workspaces out first; nothing is moved for you.",
+        "operationId": "delete_project_api_v1_projects__project_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^prj-(default|[0-9A-HJKMNP-TV-Z]{26})$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Delete Project",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "get": {
+        "description": "One project with its workspace count. `prj-default` is the default project.",
+        "operationId": "get_project_api_v1_projects__project_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^prj-(default|[0-9A-HJKMNP-TV-Z]{26})$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Project",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "patch": {
+        "description": "Rename a project or change its description. The default project is refused.",
+        "operationId": "update_project_api_v1_projects__project_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^prj-(default|[0-9A-HJKMNP-TV-Z]{26})$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Update Project",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
     "/api/v1/registry/modules": {
       "get": {
         "description": "Every module and every version, with pending and failed versions shown.",
@@ -7481,7 +8356,7 @@
     },
     "/api/v1/runs": {
       "get": {
-        "description": "Runs, newest first, in one workspace or across every workspace.\n\nNaming `workspace_id` returns that workspace's runs in full and 404s for a\nworkspace that does not exist, unchanged. Omitting it returns a page of every\nworkspace's runs off the recency index; pass `next_cursor` back as `cursor`\nto continue. `limit` and `cursor` page only the cross-workspace list, so they\nare refused alongside a workspace rather than ignored.\n\nBoth modes need exactly `runs:read`, the only check the per-workspace list\nhas ever made: there is no per-workspace ACL, so the cross-workspace list\nreturns nothing the caller could not list one workspace at a time.",
+        "description": "Runs, newest first, in one workspace or across every workspace.\n\nNaming `workspace_id` returns that workspace's runs in full and 404s for a\nworkspace that does not exist, unchanged. Omitting it returns a page of every\nworkspace's runs off the recency index; pass `next_cursor` back as `cursor`\nto continue. `limit` and `cursor` page only the cross-workspace list, so they\nare refused alongside a workspace rather than ignored.\n\nNaming `project_id` instead returns the newest `limit` runs across that project's\nworkspaces, with no cursor: it is a recent activity view, not a full history.\n\nBoth modes need exactly `runs:read`, the only check the per-workspace list\nhas ever made: there is no per-workspace ACL, so the cross-workspace list\nreturns nothing the caller could not list one workspace at a time.",
         "operationId": "list_runs_api_v1_runs_get",
         "parameters": [
           {
@@ -7501,6 +8376,24 @@
                 }
               ],
               "title": "Workspace Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "pattern": "^prj-(default|[0-9A-HJKMNP-TV-Z]{26})$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
             }
           },
           {
@@ -8251,8 +9144,75 @@
     },
     "/api/v1/workspaces": {
       "get": {
-        "description": "Every workspace in this environment, each with its run role setup and newest run.",
+        "description": "Workspaces in this environment, each with its run role setup and newest run.\n\nThe filters and the sort compose, so a project's workspaces can be searched and\nordered in one request. A `project_id` naming a project that holds nothing, or none\nat all, is an empty list. A run's API token sees only its own workspace.",
         "operationId": "list_workspaces_api_v1_workspaces_get",
+        "parameters": [
+          {
+            "description": "Only the workspaces in this project. `prj-default` is the default project.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "pattern": "^prj-(default|[0-9A-HJKMNP-TV-Z]{26})$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the workspaces in this project. `prj-default` is the default project.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Only the workspaces whose name contains this, ignoring case.",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 90,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the workspaces whose name contains this, ignoring case.",
+              "title": "Search"
+            }
+          },
+          {
+            "description": "`name` or `-name`, `-latest_run` (newest run first, never run last), `-updated_at` (latest change first), `-created_at`, or `status` (runs that need attention first). Without it the list is oldest first.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "name",
+                    "-name",
+                    "-latest_run",
+                    "-updated_at",
+                    "-created_at",
+                    "status"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`name` or `-name`, `-latest_run` (newest run first, never run last), `-updated_at` (latest change first), `-created_at`, or `status` (runs that need attention first). Without it the list is oldest first.",
+              "title": "Sort"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -8281,7 +9241,7 @@
         ]
       },
       "post": {
-        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.\n\nA `vcs_repo` is resolved through the environment's GitHub App: the id, the\ninstallation and the canonical name are recorded, and `tracked_branch` defaults to\nthe repository's default branch. A repository the App is not installed on is a 422\ncarrying `VCS_REPO_NOT_INSTALLED`.\n\nCreating a workspace with `auto_apply` on lets anyone who can start a run apply\nit, so it takes `admin` and the step-up, as turning it on later does.",
+        "description": "Create a workspace. The name has to be free.\n\nThe run role is optional here on purpose: its trust policy names the workspace\nid as the external id, so the role cannot exist until the workspace does. The\nresponse's `run_role_setup` carries everything needed to build it, and\n`PATCH /workspaces/{id}` attaches it afterwards.\n\nA `vcs_repo` is resolved through the environment's GitHub App: the id, the\ninstallation and the canonical name are recorded, and `tracked_branch` defaults to\nthe repository's default branch. A repository the App is not installed on is a 422\ncarrying `VCS_REPO_NOT_INSTALLED`, as is a `project_id` naming no project, carrying\n`PROJECT_NOT_FOUND`.\n\nCreating a workspace with `auto_apply` on lets anyone who can start a run apply\nit, so it takes `admin` and the step-up, as turning it on later does. Naming a\nplan role, reader roles or plan secrets takes the same, as setting them later does,\nand naming a run role takes the step-up.",
         "operationId": "create_workspace_api_v1_workspaces_post",
         "requestBody": {
           "content": {
@@ -8416,7 +9376,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging either run role field is the workspace's AWS connection, so a person has to\nhave signed in within the step-up window; resending the stored value is not a change.\n\nChanging `run_api_token_scopes` hands every later run of this workspace a key on\nthis API, so it takes `admin` as well as the step-up.\n\nChanging `auto_apply` turns `runs:write` into the power to apply, so it takes\n`admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also\ntakes the step-up, since it hands every later run's confirmation to the system.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging a run role, the plan role or the reader roles is the workspace's AWS\nconnection, so a person has to have signed in within the step-up window; resending\nthe stored value is not a change.\n\nChanging `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns` decides what\nevery plan, a pull request plan included, may reach, so it takes `admin`, or a run\ntoken holding the factory grant, as well as the step-up. The reader roles and the\nplan secrets together must fit the plan's session policy, or the edit is a 422\n`PLAN_SESSION_POLICY_TOO_LARGE`.\n\nChanging `run_api_token_scopes` hands every later run of this workspace a key on\nthis API, so it takes `admin` as well as the step-up.\n\nChanging `auto_apply` turns `runs:write` into the power to apply, so it takes\n`admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also\ntakes the step-up, since it hands every later run's confirmation to the system.\n\n`global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'\nruns may read this workspace's non-sensitive outputs. Every named consumer has to\nexist, or the edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {
@@ -8623,6 +9583,383 @@
           }
         },
         "summary": "Get Config Version",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/notification-configurations": {
+      "get": {
+        "description": "Every notification configuration on one workspace, with its last delivery.",
+        "operationId": "list_notification_configurations_api_v1_workspaces__workspace_id__notification_configurations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfigurationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Notification Configurations",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "description": "Add a notification configuration.\n\n`slack` takes an incoming webhook URL on `hooks.slack.com`, `discord` a channel\nwebhook URL on `discord.com`, and `generic` any HTTPS URL, which receives HCP\nTerraform's version 1 payload signed with `token` in `X-TFE-Notification-Signature`.\nA workspace holds at most 50.",
+        "operationId": "create_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationConfigurationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Create Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}": {
+      "delete": {
+        "description": "Delete a notification configuration.",
+        "operationId": "delete_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^nc-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Delete Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "get": {
+        "description": "One notification configuration, with its last delivery.",
+        "operationId": "get_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^nc-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Get Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "patch": {
+        "description": "Edit, enable or disable a notification configuration. An absent field is unchanged.",
+        "operationId": "update_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^nc-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationConfigurationUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Update Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/notification-configurations/{notification_id}/actions/verify": {
+      "post": {
+        "description": "Send a test delivery now, as HCP's Send test does, and return its outcome.\n\nThe delivery carries the trigger `verification` and no run. It is sent even when\nthe configuration is disabled. A receiver's refusal is reported in the body with\na 200, since the request itself succeeded; 20 a minute per configuration.",
+        "operationId": "verify_notification_configuration_api_v1_workspaces__workspace_id__notification_configurations__notification_id__actions_verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^nc-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDelivery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Verify Notification Configuration",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/outputs": {
+      "get": {
+        "description": "The non-sensitive outputs of a workspace's current state.\n\nA run's API token reads only a workspace that is its own, shares globally, or\nnames the run's workspace as a consumer; anything else is a 403\n`REMOTE_STATE_NOT_SHARED`. A workspace with no state yet answers an empty list.",
+        "operationId": "read_workspace_outputs_api_v1_workspaces__workspace_id__outputs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 4,
+              "pattern": "^ws-[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceOutputs"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Read Workspace Outputs",
         "tags": [
           "workspaces"
         ]

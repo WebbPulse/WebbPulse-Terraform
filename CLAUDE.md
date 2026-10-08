@@ -165,8 +165,8 @@ under `/v1/modules` and `/v1/providers` (a `wpk_` key only), the `tfe.v2` API un
 `/api/v2` (a `wpk_` key only), `POST /v1/oauth/token` (a PKCE code) and the anonymous
 identity documents do not.
 The scopes are `workspaces:{read,write}`, `variables:{read,write}`,
-`configs:{read,write}`, `runs:{read,write,apply}`, `state:download`, `state:write` and
-`registry:{read,write}`. A key's stored scopes are intersected per request with
+`configs:{read,write}`, `runs:{read,write,apply}`, `state:download`, `state:write`,
+`state:read-outputs` and `registry:{read,write}`. A key's stored scopes are intersected per request with
 its owner's current ones (`key_owner_scopes`, so every domain function reads the
 `users` table), and a new key expires in 90 days by default, 365 at most for a
 dated expiry, or never with `no_expiry: true` (`expires_at: null`).
@@ -217,10 +217,8 @@ POST gives the same answer and stamps `run_role_checked_at` and
 Credentials are vended per phase by the runs function when it serves the bundle
 (`app/domains/runs/vending.py`): the runs function role assumes the vending role,
 which assumes the workspace's run role (external id = workspace id; a plan passes
-`ReadOnlyAccess` as its session policy ARN plus an inline document granting
-`secretsmanager:GetSecretValue` and `kms:Decrypt` via Secrets Manager or SSM, so
-refresh and ephemeral reads of secrets and SecureString parameters work, an apply
-none; the session name is
+`ReadOnlyAccess` as its session policy ARN plus an inline document built by
+`app/common/runs/session_policy.py`, an apply none; the session name is
 `<run>-<phase>@<workspace name>`, cut to 64) and the state role
 `<prefix>-run-state`, narrowed by `session_policy.state_policy` to
 `workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last
@@ -232,6 +230,19 @@ The staging e2e run role (`terraform/e2e_run_role.tf`) trusts only sessions name
 once the run has left that phase or its task token no longer resolves.
 A refused run role is a 409 `RUN_ROLE_ASSUME_FAILED` on the bundle, which the
 runner reports as `AssumeRoleFailed`.
+
+A plan's inline document grants `secretsmanager:GetSecretValue` and `kms:Decrypt`
+via Secrets Manager or SSM, so refresh and ephemeral reads of secrets and
+SecureString parameters work, on the secret ARN patterns in the workspace's
+`plan_secret_arns` (at most 10, 200 characters each, `*` and `?` allowed in the
+region and name, null or `[]` clears). With none named, every plan reads any
+secret. For a speculative plan (`plan_only` or `vcs_pr`, a run role check excepted)
+that is transitional: `session_policy.SPECULATIVE_PLANS_READ_ANY_SECRET` flips it to
+none once every prod workspace lists its secrets through the factory (TF-86). Readers and secrets together must
+fit STS's limit, or the edit is a 422 `PLAN_SESSION_POLICY_TOO_LARGE`. Setting
+`plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns`, on create or
+PATCH, takes `admin` (or a factory run token) plus step-up, since it decides what
+every plan reaches.
 
 `ReadOnlyAccess` holds no `sts:AssumeRole`, so a plan whose providers assume
 roles elsewhere (Route 53 writers in a zone account, say) is denied. A workspace
@@ -338,20 +349,50 @@ with the redactor.
 
 A configuration that uses the WebbPulse provider (the Platform factory) gets HCP's run
 scoped API token the same way. An admin who passed step-up sets the workspace's
-`run_api_token_scopes` (a subset of `workspaces:{read,write}`, `variables:{read,write}`
-and `registry:{read,write}`, PATCH only, null or `[]` clears), and each bundle then
-carries `api` (`app/domains/runs/api_credentials.py`): a `wpk_` key of kind `run_api`
-with the run as its subject and the workspace in its metadata, lasting its phase's
-timeout. Its scopes are the workspace's current grant intersected with the grant it
-was minted under, read on every request (`key_owner_scopes`), so the registry function
-reads `workspaces` too. The run keeps its hash in `api_token_hash`, and a newer bundle
-or the run's ending revokes it. Behind the access gate the runs function reads the
+`run_api_token_scopes` (a subset of `workspaces:{read,write}`, `variables:{read,write}`,
+`registry:{read,write}` and `workspaces:factory`, PATCH only, null or `[]` clears), and
+each bundle then carries `api` (`app/domains/runs/api_credentials.py`): a `wpk_` key of
+kind `run_api` with the run as its subject and the workspace in its metadata, lasting
+its phase's timeout. The plan phase's key carries the grant less its write scopes and
+is revoked by the plan's phase result, so only the apply writes. A `plan_only` or
+`vcs_pr` run always gets that read-only plan key, like HCP's speculative plans. A grant
+stored before `workspaces:factory` existed (no `run_api_token_scopes_version`) that
+holds every write scope gains `workspaces:factory` on its first mint, once and
+conditionally, since write scopes alone reached every workspace then; any admin change
+of the grant stamps the version, so a grant set since is never touched. Its
+scopes are the workspace's current grant intersected with the grant it was minted
+under, read on every request (`key_owner_scopes`), so the registry function reads
+`workspaces` too. The run keeps its hash in `api_token_hash`, and a newer bundle, the
+plan's end or the run's ending revokes it.
+
+The key is bound to its own workspace by `run_api_workspace_binding` in
+`app/common/core/auth.py`, a router dependency on the workspaces, notifications,
+projects, registry and `tfe.v2` workspace routers: another workspace in the path is a
+403 `RUN_TOKEN_WORKSPACE_BOUND`, a write naming no workspace (creating a workspace or a
+project, connecting a registry module) is refused the same way, and listings show only
+its own workspace. It never passes step-up (403 `RUN_TOKEN_STEP_UP_REFUSED`), so it
+cannot set sensitive variables or change a run role. `workspaces:factory` lifts all of
+that, for the WebbPulse-Platform workspace whose factory manages every other workspace,
+and survives into the plan phase and speculative plans so their refresh can read them;
+it adds no write scope by itself. Behind the access gate the runs function reads the
 gate's `x-origin-verify` from SSM (`ORIGIN_VERIFY_PARAMETER`) into the bundle; the
 runner task role never holds that read. The runner exports `WEBBPULSE_TF_HOST`,
 `WEBBPULSE_TF_TOKEN` and `WEBBPULSE_TF_ORIGIN_VERIFY` to every subcommand, after
 workspace variables, and redacts the token and the gate value. The provider block must
 leave `host`, `token` and `origin_verify` unset, since its config wins over the
 environment.
+
+Remote state sharing follows HCP's. A workspace's `global_remote_state` and
+`remote_state_consumer_ids` (PATCH with `workspaces:write`, each id must exist or the
+edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`, null or `[]` clears) decide which
+workspaces' runs may read `GET /api/v1/workspaces/{id}/outputs`
+(`app/domains/workspaces/outputs_router.py`): the current state's non-sensitive outputs
+with values, sensitive ones by name only. It needs `workspaces:read` and
+`state:read-outputs`; a run API token carries the latter whenever its grant holds
+`workspaces:read` (`effective_run_api_scopes`), and is refused with a 403
+`REMOTE_STATE_NOT_SHARED` unless the source is its own workspace, shares globally or
+names it. Admins hold the scope and read any; device logins get it only when named.
+The provider's `webbpulse_workspace_outputs` data source reads it.
 
 Publishing follows HCP's tag based "Publish module from VCS". `POST
 /api/v1/registry/modules` (`registry:write`) connects a module to a repository the
@@ -648,7 +689,10 @@ with a message saying which.
 
 Google and Azure get HCP style workload identity. The control plane is an OIDC issuer
 (`terraform/oidc_issuer.tf`, `oidc.<stage host>`, anonymous discovery and JWKS from a
-KMS RSA key only the runs function may sign with). A workspace setting
+KMS RSA key only the runs function may sign with). Terraform reads the public keys at
+deploy time into the issuer Lambda's `SIGNING_KEYS`, so a JWKS request makes no AWS
+call: Entra abandons a JWKS fetch after about five seconds (AADSTS50166) and a cold
+boto3 import plus `kms:GetPublicKey` took six (TF-75). A workspace setting
 `TFC_GCP_PROVIDER_AUTH` (with `TFC_GCP_WORKLOAD_PROVIDER_NAME`, optionally
 `TFC_GCP_RUN_SERVICE_ACCOUNT_EMAIL`) or `TFC_AZURE_PROVIDER_AUTH` (with
 `TFC_AZURE_RUN_CLIENT_ID`) gets a one hour RS256 token per cloud in the bundle and on

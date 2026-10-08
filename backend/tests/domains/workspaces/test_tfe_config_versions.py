@@ -63,6 +63,16 @@ def test_create_renders_the_hcp_resource_with_an_upload_url(auth_client, workspa
     assert data["relationships"]["ingress-attributes"] == {"data": None}
 
 
+def test_a_provisional_version_reads_back_provisional(auth_client, workspace):
+    """`terraform plan -out` uploads a provisional, non speculative version."""
+    response = _create(auth_client, workspace["workspace_id"], speculative=False, provisional=True)
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["attributes"]["provisional"] is True
+    assert data["attributes"]["speculative"] is False
+    assert _row(data["id"])["provisional"] is True
+
+
 def test_create_writes_the_existing_config_version_row(auth_client, workspace):
     """The row is the same one `/api/v1` reads, keyed by the contract layout."""
     workspace_id = workspace["workspace_id"]

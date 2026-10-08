@@ -15,6 +15,17 @@ locals {
       ]
     }
 
+    projects = {
+      hash_key = "project_id"
+      attributes = [
+        { name = "project_id", type = "S" },
+        { name = "name_key", type = "S" },
+      ]
+      global_secondary_indexes = [
+        { name = "by_name", hash_key = "name_key", projection_type = "ALL" },
+      ]
+    }
+
     runs = {
       hash_key = "run_id"
       attributes = [
@@ -89,6 +100,15 @@ locals {
       attributes = [
         { name = "pk", type = "S" },
         { name = "sk", type = "S" },
+      ]
+    }
+
+    "notification-configurations" = {
+      hash_key  = "workspace_id"
+      range_key = "notification_id"
+      attributes = [
+        { name = "workspace_id", type = "S" },
+        { name = "notification_id", type = "S" },
       ]
     }
 

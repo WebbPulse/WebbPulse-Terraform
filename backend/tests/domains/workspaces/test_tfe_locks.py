@@ -55,11 +55,17 @@ def _engine_lock(workspace_id: str) -> None:
     )
 
 
-def _seed_run(workspace_id: str, status: str) -> str:
+def _seed_run(workspace_id: str, status: str, *, plan_only: bool = False) -> str:
     """Write one run row, as the runs domain would, and return its id."""
     run_id = "run-01JBQ0000000000000000000RA"
     repositories.runs().put(
-        {"run_id": run_id, "workspace_id": workspace_id, "status": status, "created_at": "2026-10-01T00:00:00Z"}
+        {
+            "run_id": run_id,
+            "workspace_id": workspace_id,
+            "status": status,
+            "plan_only": plan_only,
+            "created_at": "2026-10-01T00:00:00Z",
+        }
     )
     return run_id
 
@@ -111,6 +117,14 @@ def test_lock_is_refused_while_a_run_is_going(auth_client, workspace):
     assert response.status_code == 409
     assert run_id in _detail(response)
     assert _lockfile(workspace_id) is None
+
+
+def test_a_plan_only_run_going_does_not_refuse_a_lock(auth_client, workspace):
+    """A plan only run reads state under `-lock=false`, so it never stands in the CLI's way."""
+    workspace_id = workspace["workspace_id"]
+    _seed_run(workspace_id, "planning", plan_only=True)
+    assert _action(auth_client, workspace_id, "lock").status_code == 200
+    assert _lockfile(workspace_id) is not None
 
 
 def test_unlock_by_the_holder_removes_the_lock(auth_client, workspace):
@@ -176,6 +190,15 @@ def test_force_unlock_is_refused_while_a_run_is_going(auth_client, workspace):
     response = _action(auth_client, workspace_id, "force-unlock")
     assert response.status_code == 409
     assert _lockfile(workspace_id) is not None
+
+
+def test_force_unlock_is_allowed_while_only_a_plan_only_run_is_going(auth_client, workspace):
+    """A plan only run holds no lock, so a lock left behind may still be cleared."""
+    workspace_id = workspace["workspace_id"]
+    _engine_lock(workspace_id)
+    _seed_run(workspace_id, "planning", plan_only=True)
+    assert _action(auth_client, workspace_id, "force-unlock").status_code == 200
+    assert _lockfile(workspace_id) is None
 
 
 def test_force_unlock_without_a_lock_is_409(auth_client, workspace):
