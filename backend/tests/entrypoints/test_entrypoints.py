@@ -107,7 +107,7 @@ def test_the_service_names_follow_the_template():
 
 def test_the_domain_header_names_the_serving_domain(settings):
     """A response says which domain served it, which is what makes a log traceable."""
-    from app.common.core.middleware import DOMAIN_HEADER
+    from webbpulse.http import DOMAIN_HEADER
 
     with TestClient(build_domain_app("runs", settings=settings)) as client:
         response = client.get("/health")

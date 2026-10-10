@@ -6196,7 +6196,7 @@
             "description": "Request validation failed."
           },
           "429": {
-            "description": "Too many attempts from this address"
+            "description": "Too many attempts from this address, or the account is locked"
           }
         },
         "summary": "Complete Totp Login",
@@ -6650,7 +6650,7 @@
             "description": "Request validation failed."
           },
           "429": {
-            "description": "Too many attempts from this address"
+            "description": "Too many attempts from this address, or the account is locked"
           }
         },
         "summary": "Regenerate Recovery Codes",
@@ -6949,7 +6949,7 @@
             "description": "Request validation failed."
           },
           "429": {
-            "description": "Too many attempts from this address"
+            "description": "Too many attempts from this address, or the account is locked"
           }
         },
         "summary": "Disable Totp",
