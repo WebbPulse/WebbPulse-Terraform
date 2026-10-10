@@ -4408,7 +4408,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Too many attempts from this address */
+            /** @description Too many attempts from this address, or the account is locked */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -4881,7 +4881,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Too many attempts from this address */
+            /** @description Too many attempts from this address, or the account is locked */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5225,7 +5225,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Too many attempts from this address */
+            /** @description Too many attempts from this address, or the account is locked */
             429: {
                 headers: {
                     [name: string]: unknown;
