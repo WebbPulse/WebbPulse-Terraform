@@ -21,7 +21,7 @@ locals {
 
   plane_resource_patterns = concat(
     [for service in local.plane_regional_services : "arn:aws:${service}:*:*:*${local.prefix}*"],
-    ["arn:aws:iam::*:*${local.prefix}*"],
+    [for kind in ["role", "policy"] : "arn:aws:iam::*:${kind}/*${local.prefix}*"],
     [
       "arn:aws:s3:::${local.prefix}-*",
       "arn:aws:s3:::${local.prefix}-*/*",
