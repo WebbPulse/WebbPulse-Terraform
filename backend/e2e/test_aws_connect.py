@@ -28,6 +28,7 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 import pytest
+from botocore.exceptions import WaiterError
 
 ACCOUNT_VARIABLE = "E2E_AWS_CONNECT_ACCOUNT"
 ROLE_VARIABLE = "E2E_AWS_CONNECT_ROLE_ARN"
@@ -168,6 +169,43 @@ def assert_the_plane_is_out_of_reach(session: Any, role_arns: list[str]) -> None
     assert decision(result) == "allowed", "the boundary also denies an unrelated resource"
 
 
+def remove_role(iam: Any, name: str) -> None:
+    """Delete one role the stack could not, with its policies, tolerating a role that is already gone."""
+    try:
+        for attached in iam.list_attached_role_policies(RoleName=name)["AttachedPolicies"]:
+            iam.detach_role_policy(RoleName=name, PolicyArn=attached["PolicyArn"])
+        for policy_name in iam.list_role_policies(RoleName=name)["PolicyNames"]:
+            iam.delete_role_policy(RoleName=name, PolicyName=policy_name)
+        iam.delete_role(RoleName=name)
+    except iam.exceptions.NoSuchEntityException:
+        return
+
+
+def delete_the_stack(session: Any, stack_name: str) -> None:
+    """Delete the stack, and if CloudFormation cannot, remove its roles directly and fail with the reason.
+
+    A stack stuck in DELETE_FAILED would otherwise leave its roles behind in the plane's account, so the
+    roles it could not delete are removed by hand, the stack is deleted retaining them, and the test fails.
+    """
+    client = session.client("cloudformation")
+    client.delete_stack(StackName=stack_name)
+    try:
+        client.get_waiter("stack_delete_complete").wait(StackName=stack_name)
+        return
+    except WaiterError:
+        pass
+    resources = client.describe_stack_resources(StackName=stack_name)["StackResources"]
+    stuck = [resource for resource in resources if resource["ResourceStatus"] == "DELETE_FAILED"]
+    iam = session.client("iam")
+    for resource in stuck:
+        if resource["ResourceType"] == "AWS::IAM::Role" and resource.get("PhysicalResourceId"):
+            remove_role(iam, role_name(str(resource["PhysicalResourceId"])))
+    client.delete_stack(StackName=stack_name, RetainResources=[resource["LogicalResourceId"] for resource in stuck])
+    client.get_waiter("stack_delete_complete").wait(StackName=stack_name)
+    reasons = "; ".join(f"{r['LogicalResourceId']}: {r.get('ResourceStatusReason', '')}" for r in stuck)
+    pytest.fail(f"CloudFormation could not delete {stack_name}, its roles were removed directly: {reasons}")
+
+
 def wait_for_connection(api: Any, workspace_id: str, status: str, timeout: int) -> dict[str, Any]:
     """The workspace's connection record once it reaches `status`."""
     deadline = time.monotonic() + timeout
@@ -237,7 +275,6 @@ def test_a_stack_connects_and_disconnects_the_workspace(api: Any, unconnected_wo
         assert run["plan_role_arn"] == connection["plan_role_arn"]
         assert_the_plane_is_out_of_reach(session, [str(connection["role_arn"]), str(connection["plan_role_arn"])])
     finally:
-        client.delete_stack(StackName=stack_name)
-        client.get_waiter("stack_delete_complete").wait(StackName=stack_name)
+        delete_the_stack(session, stack_name)
 
     wait_for_connection(api, workspace_id, "disconnected", DISCONNECT_TIMEOUT_SECONDS)
