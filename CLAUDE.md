@@ -235,10 +235,10 @@ A plan's inline document grants `secretsmanager:GetSecretValue` and `kms:Decrypt
 via Secrets Manager or SSM, so refresh and ephemeral reads of secrets and
 SecureString parameters work, on the secret ARN patterns in the workspace's
 `plan_secret_arns` (at most 10, 200 characters each, `*` and `?` allowed in the
-region and name, null or `[]` clears). With none named, every plan reads any
-secret. For a speculative plan (`plan_only` or `vcs_pr`, a run role check excepted)
-that is transitional: `session_policy.SPECULATIVE_PLANS_READ_ANY_SECRET` flips it to
-none once every prod workspace lists its secrets through the factory (TF-86). Readers and secrets together must
+region and name, null or `[]` clears). With none named, a confirmable plan reads any
+secret and a speculative plan (`plan_only` or `vcs_pr`, a run role check excepted)
+reads none, so every prod workspace with PR or plan only plans lists its secrets
+through the factory. Readers and secrets together must
 fit STS's limit, or the edit is a 422 `PLAN_SESSION_POLICY_TOO_LARGE`. Setting
 `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns`, on create or
 PATCH, takes `admin` (or a factory run token) plus step-up, since it decides what

@@ -72,13 +72,14 @@ def _workspaces_routers() -> "list[APIRouter]":
     minting it.
     """
     from app.domains.workspaces.api_keys_router import router as api_keys_router
+    from app.domains.workspaces.audit_router import router as audit_router
     from app.domains.workspaces.notifications_router import router as notifications_router
     from app.domains.workspaces.outputs_router import router as outputs_router
     from app.domains.workspaces.projects_router import router as projects_router
     from app.domains.workspaces.router import router
     from app.domains.workspaces.terraform_login_router import router as login_router
 
-    return [router, outputs_router, projects_router, api_keys_router, login_router, notifications_router]
+    return [router, outputs_router, projects_router, api_keys_router, login_router, notifications_router, audit_router]
 
 
 def _workspaces_unprefixed_routers(settings: Settings) -> "list[APIRouter]":
@@ -212,7 +213,7 @@ def build_domain_app(domain: Domain | str, *, settings: Settings | None = None) 
     Both roots go through here, so the middleware stack is identical locally, in
     the suite and in each deployed function.
     """
-    from ..core.middleware import DomainHeaderMiddleware, TrailingSlashMiddleware
+    from webbpulse.http import DomainHeaderMiddleware, TrailingSlashMiddleware
 
     resolved_domain = DOMAINS[domain] if isinstance(domain, str) else domain
     resolved = settings if settings is not None else get_settings()

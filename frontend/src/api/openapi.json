@@ -355,6 +355,175 @@
         "title": "Artifacts",
         "type": "object"
       },
+      "AuditEvent": {
+        "description": "One recorded change: who made it, when, to what, and what moved.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "actor_kind": {
+            "title": "Actor Kind",
+            "type": "string"
+          },
+          "actor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Name"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "amr": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Amr",
+            "type": "array"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "ip": {
+            "title": "Ip",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          },
+          "target_label": {
+            "title": "Target Label",
+            "type": "string"
+          },
+          "target_type": {
+            "title": "Target Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "action",
+          "label",
+          "occurred_at",
+          "actor_id",
+          "actor_kind",
+          "source",
+          "ip",
+          "amr",
+          "target_type",
+          "target_id",
+          "target_label",
+          "payload"
+        ],
+        "title": "AuditEvent",
+        "type": "object"
+      },
+      "AuditEventList": {
+        "description": "One page of the trail, newest first.",
+        "properties": {
+          "event_types": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEventType"
+            },
+            "title": "Event Types",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEvent"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "event_types"
+        ],
+        "title": "AuditEventList",
+        "type": "object"
+      },
+      "AuditEventType": {
+        "description": "One action the trail records, for a filter.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "label"
+        ],
+        "title": "AuditEventType",
+        "type": "object"
+      },
       "AwsConnection": {
         "description": "What the last Quick setup link and its stack reported, for the UI to follow live.",
         "properties": {
@@ -6196,7 +6365,7 @@
             "description": "Request validation failed."
           },
           "429": {
-            "description": "Too many attempts from this address"
+            "description": "Too many attempts from this address, or the account is locked"
           }
         },
         "summary": "Complete Totp Login",
@@ -6650,7 +6819,7 @@
             "description": "Request validation failed."
           },
           "429": {
-            "description": "Too many attempts from this address"
+            "description": "Too many attempts from this address, or the account is locked"
           }
         },
         "summary": "Regenerate Recovery Codes",
@@ -6949,7 +7118,7 @@
             "description": "Request validation failed."
           },
           "429": {
-            "description": "Too many attempts from this address"
+            "description": "Too many attempts from this address, or the account is locked"
           }
         },
         "summary": "Disable Totp",
@@ -7107,6 +7276,327 @@
           }
         },
         "summary": "Revoke Api Key",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/audit-events": {
+      "get": {
+        "description": "One page of the audit trail newest first. Admin only.\n\n`next_cursor` continues the listing under the same filters; a cursor from another\nlisting or a changed filter is a 422.",
+        "operationId": "list_audit_events_api_v1_audit_events_get",
+        "parameters": [
+          {
+            "description": "Only events at or after this time.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events at or after this time.",
+              "title": "Since"
+            }
+          },
+          {
+            "description": "Only events at or before this time.",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events at or before this time.",
+              "title": "Until"
+            }
+          },
+          {
+            "description": "Only events this subject made.",
+            "in": "query",
+            "name": "actor_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events this subject made.",
+              "title": "Actor Id"
+            }
+          },
+          {
+            "description": "Only this action, such as `workspace.updated`.",
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this action, such as `workspace.updated`.",
+              "title": "Action"
+            }
+          },
+          {
+            "description": "With `target_id`, only events on this target.",
+            "in": "query",
+            "name": "target_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "With `target_id`, only events on this target.",
+              "title": "Target Type"
+            }
+          },
+          {
+            "description": "With `target_type`, only events on this target.",
+            "in": "query",
+            "name": "target_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "With `target_type`, only events on this target.",
+              "title": "Target Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditEventList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Audit Events",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/v1/audit-events/export": {
+      "get": {
+        "description": "The matching events as CSV newest first, at most 5000 rows. Admin only.\n\nEvery cell is guarded against spreadsheet formula injection.",
+        "operationId": "export_audit_events_api_v1_audit_events_export_get",
+        "parameters": [
+          {
+            "description": "Only events at or after this time.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events at or after this time.",
+              "title": "Since"
+            }
+          },
+          {
+            "description": "Only events at or before this time.",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events at or before this time.",
+              "title": "Until"
+            }
+          },
+          {
+            "description": "Only events this subject made.",
+            "in": "query",
+            "name": "actor_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events this subject made.",
+              "title": "Actor Id"
+            }
+          },
+          {
+            "description": "Only this action, such as `workspace.updated`.",
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this action, such as `workspace.updated`.",
+              "title": "Action"
+            }
+          },
+          {
+            "description": "With `target_id`, only events on this target.",
+            "in": "query",
+            "name": "target_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "With `target_id`, only events on this target.",
+              "title": "Target Type"
+            }
+          },
+          {
+            "description": "With `target_type`, only events on this target.",
+            "in": "query",
+            "name": "target_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "With `target_type`, only events on this target.",
+              "title": "Target Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {}
+            },
+            "description": "The matching events as CSV."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Export Audit Events",
         "tags": [
           "workspaces"
         ]
@@ -9376,7 +9866,7 @@
         ]
       },
       "patch": {
-        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging a run role, the plan role or the reader roles is the workspace's AWS\nconnection, so a person has to have signed in within the step-up window; resending\nthe stored value is not a change.\n\nChanging `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns` decides what\nevery plan, a pull request plan included, may reach, so it takes `admin`, or a run\ntoken holding the factory grant, as well as the step-up. The reader roles and the\nplan secrets together must fit the plan's session policy, or the edit is a 422\n`PLAN_SESSION_POLICY_TOO_LARGE`.\n\nChanging `run_api_token_scopes` hands every later run of this workspace a key on\nthis API, so it takes `admin` as well as the step-up.\n\nChanging `auto_apply` turns `runs:write` into the power to apply, so it takes\n`admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also\ntakes the step-up, since it hands every later run's confirmation to the system.\n\n`global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'\nruns may read this workspace's non-sensitive outputs. Every named consumer has to\nexist, or the edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`.",
+        "description": "Edit one workspace. The name and the id are not editable.\n\nThe body is JSON Merge Patch: an omitted key leaves the stored value exactly\nas it was, and an explicit null on any field but `engine` and `engine_version`\nclears it. `model_dump(exclude_unset=True)` is what keeps the two apart, so a\nfield is only touched when the request carried its key.\n\nChanging or clearing `run_role_arn` drops the recorded check outcome, so the\nrole reads as unchecked until `run-role/check` says otherwise.\n\nConnecting another `vcs_repo` resolves it through the GitHub App the way the\ncreate does, and a null disconnects the repository.\n\nChanging a run role, the plan role or the reader roles is the workspace's AWS\nconnection, so a person has to have signed in within the step-up window; resending\nthe stored value is not a change.\n\nChanging `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns` decides what\nevery plan, a pull request plan included, may reach, so it takes `admin`, or a run\ntoken holding the factory grant, as well as the step-up. The reader roles and the\nplan secrets together must fit the plan's session policy, or the edit is a 422\n`PLAN_SESSION_POLICY_TOO_LARGE`.\n\nChanging `run_api_token_scopes` hands every later run of this workspace a key on\nthis API, so it takes `admin` as well as the step-up.\n\nChanging `auto_apply` turns `runs:write` into the power to apply, so it takes\n`admin` and is recorded as the `workspace.auto_apply_changed` audit event. Turning it on also\ntakes the step-up, since it hands every later run's confirmation to the system.\n\n`global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'\nruns may read this workspace's non-sensitive outputs. Every named consumer has to\nexist, or the edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`.",
         "operationId": "update_workspace_api_v1_workspaces__workspace_id__patch",
         "parameters": [
           {

@@ -21,6 +21,9 @@ import type {
   ApiKeyCreate,
   ApiKeyCreated,
   ApiKeyList,
+  AuditEventList,
+  AuditEventQuery,
+  AuditExportQuery,
   ConfigVersionCreate,
   ConfigVersionDetail,
   ConfigVersionList,
@@ -121,6 +124,19 @@ export function describeError(error: unknown): string {
 export type StepUpWrapper = <TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<TResult>
 ) => (...args: TArgs) => Promise<TResult>;
+
+/** A query's set values only, so an unset filter is left off the URL. */
+function presentQuery(
+  query: Record<string, string | number | null | undefined>
+): Record<string, string | number> {
+  const present: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== '') {
+      present[key] = value;
+    }
+  }
+  return present;
+}
 
 /** The gate used while no step-up prompt is mounted: the call as it is. */
 const passThrough: StepUpWrapper = (fn) => fn;
@@ -836,6 +852,34 @@ export class TerraformApi {
         options
       )
     );
+    return response.data;
+  }
+
+  /**
+   * Lists one page of the audit trail, newest first. Admin only.
+   *
+   * `next_cursor` continues the listing under the same filters.
+   */
+  async listAuditEvents(
+    query: AuditEventQuery = {},
+    options: RequestOptions = {}
+  ): Promise<AuditEventList> {
+    const response = await this.client.get<AuditEventList>('/audit-events', {
+      ...options,
+      query: { ...options.query, ...presentQuery(query) },
+    });
+    return response.data;
+  }
+
+  /** The audit trail under the same filters as CSV, at most 5000 rows. Admin only. */
+  async exportAuditEvents(
+    query: AuditExportQuery = {},
+    options: RequestOptions = {}
+  ): Promise<string> {
+    const response = await this.client.get<string>('/audit-events/export', {
+      ...options,
+      query: { ...options.query, ...presentQuery(query) },
+    });
     return response.data;
   }
 

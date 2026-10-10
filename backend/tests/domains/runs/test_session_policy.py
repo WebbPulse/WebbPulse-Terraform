@@ -252,27 +252,16 @@ def test_an_empty_list_reads_no_secret() -> None:
 
 
 @pytest.mark.parametrize(
-    ("listed", "speculative", "any_by_default", "expected"),
+    ("listed", "speculative", "expected"),
     [
-        ([], False, True, None),
-        ([], True, True, None),
-        ([], False, False, None),
-        ([], True, False, []),
-        ([SECRET], False, True, [SECRET]),
-        ([SECRET], True, True, [SECRET]),
-        ([SECRET], True, False, [SECRET]),
+        ([], False, None),
+        ([], True, []),
+        ([SECRET], False, [SECRET]),
+        ([SECRET], True, [SECRET]),
     ],
 )
-def test_which_secrets_a_plan_reads(
-    listed: list[str],
-    speculative: bool,
-    any_by_default: bool,
-    expected: list[str] | None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A list bounds every plan; without one a plan reads any, and a speculative plan none once the default flips."""
-    monkeypatch.setattr(session_policy, "SPECULATIVE_PLANS_READ_ANY_SECRET", any_by_default)
-
+def test_which_secrets_a_plan_reads(listed: list[str], speculative: bool, expected: list[str] | None) -> None:
+    """A list bounds every plan; without one a confirmable plan reads any and a speculative plan none."""
     assert session_policy.plan_secret_arns_for(listed, speculative=speculative) == expected
 
 

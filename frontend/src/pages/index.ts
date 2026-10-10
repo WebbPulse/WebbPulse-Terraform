@@ -19,6 +19,7 @@ export { GitHubCreated } from './settings/GitHubCreated';
 export { GitHubSettings } from './settings/GitHubSettings';
 export { GitHubSetup } from './settings/GitHubSetup';
 export { ApiKeys } from './settings/ApiKeys';
+export { Audit } from './settings/Audit';
 export { Security } from './settings/Security';
 export {
   ConnectModule,

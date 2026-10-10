@@ -196,6 +196,26 @@ const SETTINGS_SECTIONS: readonly {
       </svg>
     ),
   },
+  {
+    to: '/settings/audit',
+    label: 'Audit log',
+    icon: (
+      <svg viewBox="0 0 16 16" className="size-4" fill="none">
+        <path
+          d="M4 2.5h6l2.5 2.5v8.5h-8.5z"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M6.5 7.5h4M6.5 10h4"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
 ];
 
 /** The email on the session, if the user record carries one. */

@@ -1,5 +1,6 @@
 /** Where sign-in sends a visitor back to. */
 
+import { identityReturnUrl, safeReturnPath } from '@webbpulse/auth';
 import type { Location } from 'react-router-dom';
 
 /** The router state that carries where an anonymous visitor was headed. */
@@ -10,16 +11,12 @@ export interface ReturnState {
 /**
  * Where to send a visitor once signed in: the page they were sent away from,
  * such as a `terraform login` approval with its query, or the workspaces list.
- * Only an in-app path is honoured.
+ * Only an in-app path other than the sign-in page is honoured.
  */
 export function returnPath(state: unknown): string {
   const from = (state as ReturnState | null)?.from;
   const path = `${from?.pathname ?? ''}${from?.search ?? ''}`;
-  return path.startsWith('/') &&
-    !path.startsWith('//') &&
-    from?.pathname !== '/sign-in'
-    ? path
-    : '/workspaces';
+  return safeReturnPath(path, '/workspaces', { excludePaths: ['/sign-in'] });
 }
 
 /** Where the identity service serves the `wp-tf login` approval page. */
@@ -47,30 +44,16 @@ export function deviceHandOff(
   pageOrigin: string = window.location.origin
 ): DeviceHandOff | null {
   const params = new URLSearchParams(search);
-  const raw = params.get('returnTo');
-  if (!raw) {
-    return null;
-  }
-  let target: URL;
-  let expected: URL;
-  try {
-    target = new URL(raw);
-    expected = new URL(identityOrigin || pageOrigin, pageOrigin);
-  } catch {
-    return null;
-  }
-  if (
-    target.origin !== expected.origin ||
-    target.protocol !== expected.protocol ||
-    target.pathname !== DEVICE_APPROVAL_PATH ||
-    target.username !== '' ||
-    target.password !== '' ||
-    target.hash !== ''
-  ) {
+  const returnTo = identityReturnUrl(params.get('returnTo'), {
+    identityOrigin,
+    path: DEVICE_APPROVAL_PATH,
+    pageOrigin,
+  });
+  if (returnTo === null) {
     return null;
   }
   return {
-    returnTo: target.href,
+    returnTo,
     reauthenticate: params.get('prompt') === 'login',
   };
 }

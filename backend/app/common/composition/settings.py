@@ -42,6 +42,7 @@ STACK_TABLE_FIELDS = {
     "REGISTRY_TABLE": tables.REGISTRY,
     "NOTIFICATION_CONFIGURATIONS_TABLE": tables.NOTIFICATION_CONFIGURATIONS,
     "PROJECTS_TABLE": tables.PROJECTS,
+    "AUDIT_TABLE": tables.AUDIT,
 }
 """Each table setting and the logical name the stack prefixes to name that table."""
 
@@ -88,6 +89,9 @@ class Settings(BaseServiceSettings):
 
     PROJECTS_TABLE: str = ""
     """The projects workspaces are grouped into. The default project is never stored."""
+
+    AUDIT_TABLE: str = ""
+    """The durable audit trail of workspace, token, variable, state and run decisions."""
 
     REGISTRY_INGEST_QUEUE_URL: str = ""
     """The queue the webhook route sends each semantic version tag push to, for the

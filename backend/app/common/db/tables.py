@@ -19,6 +19,7 @@ VCS_UPLOADS: Final = "vcs-uploads"
 REGISTRY: Final = "registry"
 NOTIFICATION_CONFIGURATIONS: Final = "notification-configurations"
 PROJECTS: Final = "projects"
+AUDIT: Final = "audit"
 
 WORKSPACES_BY_NAME_INDEX: Final = "by_name"
 """The GSI enforcing one workspace per name, and resolving a name to a workspace."""
@@ -56,6 +57,12 @@ CONFIG_VERSIONS_BY_WORKSPACE_INDEX: Final = "by_workspace"
 
 USERS_BY_EMAIL_INDEX: Final = "email_lower-index"
 """The GSI resolving a lowercased address to its user, which is how sign-in looks one up."""
+
+AUDIT_TARGET_INDEX: Final = "target_key-event_id-index"
+"""The GSI listing one target's audit events, newest last by `event_id`, as `webbpulse.audit` names it."""
+
+AUDIT_TTL_ATTRIBUTE: Final = "expires_at"
+"""The epoch seconds attribute DynamoDB expires an audit event on. Terraform enables it."""
 
 SEMAPHORE_RUN_ID: Final = "run-semaphore"
 """The runs table row holding the environment-wide concurrency count.
@@ -218,6 +225,28 @@ _SPECS: Final[dict[str, dict[str, Any]]] = {
             {"AttributeName": "notification_id", "AttributeType": "S"},
         ],
     },
+    AUDIT: {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+            {"AttributeName": "tenant_id", "KeyType": "HASH"},
+            {"AttributeName": "event_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "tenant_id", "AttributeType": "S"},
+            {"AttributeName": "event_id", "AttributeType": "S"},
+            {"AttributeName": "target_key", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": AUDIT_TARGET_INDEX,
+                "KeySchema": [
+                    {"AttributeName": "target_key", "KeyType": "HASH"},
+                    {"AttributeName": "event_id", "KeyType": "RANGE"},
+                ],
+                "Projection": {"ProjectionType": "ALL"},
+            }
+        ],
+    },
 }
 
 GITHUB_TTL_ATTRIBUTE: Final = "expires_at"
@@ -235,6 +264,7 @@ ALL_TABLES: Final = (
     REGISTRY,
     NOTIFICATION_CONFIGURATIONS,
     PROJECTS,
+    AUDIT,
 )
 """Every logical table, in creation order. The suite and the local script walk it."""
 

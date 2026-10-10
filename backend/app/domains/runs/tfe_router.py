@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from webbpulse.identity.scopes import claims_scopes
 
+from ...common import audit
 from ...common.composition.settings import get_settings
 from ...common.core import variable_cipher
 from ...common.core.auth import RUNS_APPLY, RUNS_READ, RUNS_WRITE, scopes
@@ -232,31 +233,35 @@ def list_run_events(
 
 @router.post("/runs/{run_id}/actions/apply", status_code=202)
 def apply_run(
+    request: Request,
     run_id: str = RunId,
     current: "AuthorizerClaims" = Depends(scopes(RUNS_APPLY)),
 ) -> Response:
     """Confirm a planned run, which is what answering `yes` at the CLI's prompt sends."""
     try:
-        service.confirm_run(run_id, actor=actor_from_claims(current))
+        confirmed = service.confirm_run(run_id, actor=actor_from_claims(current))
     except service.RunNotFound as error:
         raise not_found("run") from error
     except service.RunNotConfirmable as error:
         raise conflict("This run is not awaiting a confirmation.") from error
+    audit.record_run_decision(audit.RUN_CONFIRMED, request=request, claims=current, run=confirmed)
     return Response(status_code=202)
 
 
 @router.post("/runs/{run_id}/actions/discard", status_code=202)
 def discard_run(
+    request: Request,
     run_id: str = RunId,
     current: "AuthorizerClaims" = Depends(scopes(RUNS_WRITE)),
 ) -> Response:
     """Discard a planned run, which is what answering anything else at the prompt sends."""
     try:
-        service.discard_run(run_id, actor=actor_from_claims(current))
+        discarded = service.discard_run(run_id, actor=actor_from_claims(current))
     except service.RunNotFound as error:
         raise not_found("run") from error
     except service.RunNotDiscardable as error:
         raise conflict("This run has no plan awaiting a decision.") from error
+    audit.record_run_decision(audit.RUN_DISCARDED, request=request, claims=current, run=discarded)
     return Response(status_code=202)
 
 

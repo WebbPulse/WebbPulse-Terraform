@@ -78,37 +78,10 @@ jobs:
 
       - name: Resolve the dependency resolution stamp
         id: stamp
-        env:
-          FRESH_DEPENDENCIES: ${{ inputs.fresh-dependencies }}
-          RUN_ID: ${{ github.run_id }}
-          CODEARTIFACT_DOMAIN_OWNER: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
-        run: |
-          set -euo pipefail
-          if [ "$FRESH_DEPENDENCIES" = "true" ]; then
-            STAMP="$RUN_ID"
-            echo "fresh-dependencies was requested, so the dependency layer rebuilds."
-          else
-            if [ -z "$CODEARTIFACT_DOMAIN_OWNER" ]; then
-              echo "vars.CODEARTIFACT_DOMAIN_OWNER is not set, so the newest webbpulse version cannot be resolved."
-              exit 1
-            fi
-            STAMP="$(aws codeartifact list-package-versions \
-              --domain webbpulse \
-              --domain-owner "$CODEARTIFACT_DOMAIN_OWNER" \
-              --repository python \
-              --format pypi \
-              --package webbpulse \
-              --status Published \
-              --sort-by PUBLISHED_TIME \
-              --query 'versions[0].version' \
-              --output text)"
-            if [ -z "$STAMP" ] || [ "$STAMP" = "None" ]; then
-              echo "No Published webbpulse version resolved from CodeArtifact, so the dependency layer cannot be keyed."
-              exit 1
-            fi
-          fi
-          echo "Dependency resolution stamp: ${STAMP}"
-          echo "dependency-stamp=${STAMP}" >> "$GITHUB_OUTPUT"
+        uses: WebbPulse/.github/actions/webbpulse-dependency-stamp@v3
+        with:
+          fresh-dependencies: ${{ inputs.fresh-dependencies }}
+          domain-owner: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
 
   affected:
     name: Resolve the affected domains
