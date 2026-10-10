@@ -63,9 +63,9 @@ function renderPage(): void {
 describe('Audit helpers', () => {
   it('builds the query from the filters', () => {
     const now = Date.parse('2026-10-09T00:00:00Z');
-    expect(
-      auditQuery({ action: '', workspaceId: '', days: 1 }, now)
-    ).toEqual({ since: '2026-10-08T00:00:00.000Z' });
+    expect(auditQuery({ action: '', workspaceId: '', days: 1 }, now)).toEqual({
+      since: '2026-10-08T00:00:00.000Z',
+    });
     expect(
       auditQuery(
         { action: 'variable.written', workspaceId: 'ws-1', days: 7 },

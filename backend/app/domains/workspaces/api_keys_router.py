@@ -57,6 +57,7 @@ def _key_target(record: service.ApiKeyRecord) -> AuditTarget:
     """A key as an audit target: its stored hash, labelled by its name."""
     return AuditTarget(type=audit.API_KEY, id=record.key_hash, label=record.name)
 
+
 KeyId = Path(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
 """A key id is the stored SHA-256 hash, so it is exactly 64 lowercase hex characters."""
 

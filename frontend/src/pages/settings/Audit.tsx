@@ -76,10 +76,14 @@ export function formatValue(value: unknown): string {
   if (Array.isArray(value)) {
     return value.length === 0 ? 'none' : value.map(formatValue).join(', ');
   }
-  if (typeof value === 'object') {
-    return JSON.stringify(value);
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return String(value);
   }
-  return String(value);
+  return JSON.stringify(value);
 }
 
 /** What an event changed, one line per field: `before -> after` for an edit, the payload otherwise. */
@@ -167,7 +171,12 @@ export function Audit(): React.ReactElement {
       ),
     {
       intervalMs: 60_000,
-      queryKey: ['audit-events', filters.action, filters.workspaceId, filters.days],
+      queryKey: [
+        'audit-events',
+        filters.action,
+        filters.workspaceId,
+        filters.days,
+      ],
       auth,
     }
   );
@@ -178,7 +187,8 @@ export function Audit(): React.ReactElement {
 
   const first = events.data?.items ?? [];
   const items = older === null ? first : appendPage(first, older.items);
-  const cursor = older === null ? (events.data?.next_cursor ?? null) : older.cursor;
+  const cursor =
+    older === null ? (events.data?.next_cursor ?? null) : older.cursor;
   const eventTypes = events.data?.event_types ?? [];
   const workspaceNames = new Map(
     (workspaces.data?.items ?? []).map((workspace) => [
@@ -283,7 +293,10 @@ export function Audit(): React.ReactElement {
           >
             <option value="">All workspaces</option>
             {(workspaces.data?.items ?? []).map((workspace) => (
-              <option key={workspace.workspace_id} value={workspace.workspace_id}>
+              <option
+                key={workspace.workspace_id}
+                value={workspace.workspace_id}
+              >
                 {workspace.name}
               </option>
             ))}
