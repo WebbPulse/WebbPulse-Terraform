@@ -19,7 +19,7 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
     condition {
       test     = "StringLike"
       variable = "sts:ExternalId"
-      values   = ["ws-*"]
+      values   = ["ws-??????????????????????????"]
     }
 
     condition {

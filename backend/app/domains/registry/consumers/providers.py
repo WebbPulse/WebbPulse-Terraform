@@ -243,7 +243,9 @@ def _ingest(
         if manifest_name in names:
             manifest = _fetch_small(fetch, names, manifest_name, folder / "manifest")
             expected = listed.get(manifest_name)
-            if expected is not None and hashlib.sha256(manifest).hexdigest() != expected:
+            if expected is None:
+                raise InvalidRelease("the manifest is not listed in SHA256SUMS")
+            if hashlib.sha256(manifest).hexdigest() != expected:
                 raise InvalidRelease("the manifest does not match its SHA256SUMS entry")
         protocols = _protocols(manifest)
         platforms: list[dict[str, str]] = []

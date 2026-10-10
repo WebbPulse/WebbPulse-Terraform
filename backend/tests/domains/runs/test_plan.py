@@ -305,6 +305,56 @@ def test_a_non_object_before_survives():
     assert RunPlan.model_validate(summary).resource_changes[0].before == "a bare string"
 
 
+def test_marks_that_do_not_match_the_value_withhold_it():
+    """A mark of the wrong shape fails closed rather than passing the value through."""
+    summary = runs_service.summarise_plan(
+        "run-x",
+        {
+            "resource_changes": [
+                resource_change(
+                    "aws_s3_bucket.a",
+                    ["update"],
+                    change={
+                        "actions": ["update"],
+                        "before": "hunter2",
+                        "before_sensitive": {"password": True},
+                        "after": {"password": "hunter2", "name": "a"},
+                        "after_sensitive": [True],
+                    },
+                )
+            ]
+        },
+    )
+    entry = summary["resource_changes"][0]
+    assert entry["before"] == runs_service.REDACTED
+    assert entry["after"] == runs_service.REDACTED
+
+
+def test_an_empty_mark_leaves_the_value_alone():
+    """`{}` and `[]` mark nothing, which is how Terraform writes an unmarked object."""
+    summary = runs_service.summarise_plan(
+        "run-x",
+        {
+            "resource_changes": [
+                resource_change(
+                    "aws_s3_bucket.a",
+                    ["update"],
+                    change={
+                        "actions": ["update"],
+                        "before": "plain",
+                        "before_sensitive": {},
+                        "after": {"name": "a"},
+                        "after_sensitive": [],
+                    },
+                )
+            ]
+        },
+    )
+    entry = summary["resource_changes"][0]
+    assert entry["before"] == "plain"
+    assert entry["after"] == {"name": "a"}
+
+
 def test_a_non_object_marked_sensitive_is_still_redacted():
     """Redaction reaches a scalar and a list, not only an object's keys."""
     summary = runs_service.summarise_plan(

@@ -313,6 +313,37 @@ def test_terraform_cli_drives_a_workspace_through_a_cloud_block(
         assert code != 0, "an applied saved plan applied a second time"
         assert "Saved plan is already applied" in again, again[-TAIL:]
 
+        stale = _remote(
+            cli.ok(
+                "plan",
+                "-input=false",
+                "-no-color",
+                "-out=stale.tfplan",
+                "-var=label=saved",
+                "-replace=terraform_data.b",
+                timeout=RUN_TIMEOUT_SECONDS,
+            )
+        )
+        assert "Plan: 1 to add, 0 to change, 1 to destroy." in stale, stale[-TAIL:]
+        overtaken = _remote(
+            cli.ok(
+                "apply",
+                "-auto-approve",
+                "-input=false",
+                "-no-color",
+                "-var=label=saved",
+                "-replace=terraform_data.a",
+                timeout=RUN_TIMEOUT_SECONDS,
+            )
+        )
+        assert "Apply complete! Resources: 1 added, 0 changed, 1 destroyed." in overtaken, overtaken[-TAIL:]
+        fourth = cli.outputs()
+        assert fourth["a_id"] != third["a_id"], "the run behind a saved plan did not apply"
+        code, refused = cli.run("apply", "-input=false", "-no-color", "stale.tfplan", timeout=RUN_TIMEOUT_SECONDS)
+        assert code != 0, "a saved plan applied over a state that moved on"
+        assert "Saved plan is discarded" in refused or "stale" in refused.lower(), refused[-TAIL:]
+        assert cli.outputs() == fourth, "a stale saved plan changed the state"
+
         moved = cli.ok("state", "mv", "-no-color", "terraform_data.a", "terraform_data.moved")
         assert "Successfully moved 1 object(s)." in moved, moved[-TAIL:]
         assert cli.addresses() == ["terraform_data.b", "terraform_data.moved"]

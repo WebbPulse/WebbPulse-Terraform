@@ -19,6 +19,7 @@ vi.mock('../api/client', () => apiClientModuleMock());
 const { Projects } = await import('./Projects');
 
 const CMP = 'prj-01J000000000000000000001';
+const PORTFOLIO = 'prj-01J000000000000000000003';
 
 /** Mounts the projects page. */
 function renderProjects(entry = '/projects'): void {
@@ -48,6 +49,12 @@ describe('Projects', () => {
           description: 'The car site.',
           is_default: false,
           workspace_count: 2,
+        },
+        {
+          project_id: PORTFOLIO,
+          name: 'Portfolio',
+          is_default: false,
+          workspace_count: 0,
         },
       ],
     });
@@ -100,6 +107,61 @@ describe('Projects', () => {
     ).toBeInTheDocument();
     expect(cells.getByText('2 workspaces')).toBeInTheDocument();
     expect(screen.getByText('No workspaces yet')).toBeInTheDocument();
+  });
+
+  it('leaves out the default project while it has no workspaces', async () => {
+    renderProjects();
+
+    expect(
+      await screen.findByRole('link', { name: 'CarModPicker' })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Default Project' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Portfolio' })).toBeInTheDocument();
+    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+  });
+
+  it('lists the default project again once it holds a workspace', async () => {
+    apiMock.listProjects.mockResolvedValue({
+      items: [
+        {
+          project_id: 'prj-default',
+          name: 'Default Project',
+          is_default: true,
+          workspace_count: 1,
+        },
+      ],
+    });
+    apiMock.listWorkspaces.mockResolvedValue({
+      items: [aListedWorkspace()],
+    });
+    renderProjects();
+
+    expect(
+      await screen.findByRole('link', { name: 'Default Project' })
+    ).toHaveAttribute('href', '/projects/prj-default');
+    expect(screen.getByText('1 workspace')).toBeInTheDocument();
+  });
+
+  it('says there are no projects yet when only the empty default exists', async () => {
+    apiMock.listProjects.mockResolvedValue({
+      items: [
+        {
+          project_id: 'prj-default',
+          name: 'Default Project',
+          is_default: true,
+          workspace_count: 0,
+        },
+      ],
+    });
+    apiMock.listWorkspaces.mockResolvedValue({ items: [] });
+    renderProjects();
+
+    expect(await screen.findByText('No projects yet.')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Default Project' })
+    ).not.toBeInTheDocument();
   });
 
   it('filters the projects by the search the address holds', async () => {

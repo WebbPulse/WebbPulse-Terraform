@@ -8,6 +8,9 @@ stores the new run `pending` with `queued_behind` set and starts nothing. The ru
 ahead of it starts it when it finishes, which is the only place a queued run is
 promoted. A plan only run is speculative, as on HCP Terraform: it reads state
 without the lock, never queues and never blocks, so only the semaphore limits it.
+A saved plan (`terraform plan -out`) holds the queue only while it plans. Parked
+awaiting its apply it blocks nothing, and it records the state serial and lineage
+it planned against, so an apply after the state moved on is refused as stale.
 
 A run token is minted when an execution starts and revoked when the run finishes.
 It is a `wpk_` key whose subject is the run id and whose only scope is `runner`,
@@ -86,6 +89,26 @@ plan to drop and a cancel is the right verb; later the apply already ran."""
 AUTO_APPLY_ACTOR: Final = {"kind": "system", "id": "auto-apply", "display_name": "Auto-apply"}
 """Who an auto-applied run's confirmation is recorded as: the control plane, never a person."""
 
+STALE_PLAN_ACTOR: Final = {"kind": "system", "id": "stale-plan", "display_name": "Stale plan check"}
+"""Who a saved plan discarded for being stale is recorded as."""
+
+STALE_PLAN_COMMENT: Final = (
+    "The state changed after this plan was created, so it can no longer be applied. Run terraform plan again."
+)
+"""The comment on a stale saved plan's discard, in Terraform's own wording."""
+
+SAVED_PLAN_STALE_MESSAGE: Final = (
+    "Saved plan is stale: the state changed after this plan was created, so it can no longer be applied. "
+    "Run terraform plan again."
+)
+"""What a refused apply of a stale saved plan says, after Terraform's own message."""
+
+WORKSPACE_BUSY_MESSAGE: Final = "Another run is in progress on this workspace. Apply the saved plan once it finishes."
+"""What a refused apply of a saved plan says while another run executes on its workspace."""
+
+STATE_READ_CEILING: Final = 64 * 1024 * 1024
+"""The largest state body read to lift its serial and lineage; a larger one is compared by version id."""
+
 AUTO_APPLY_EVENT: Final = "runs.run.auto_applied"
 """The log event an auto-apply confirmation is recorded under."""
 
@@ -159,6 +182,14 @@ class StateKmsKeyMissing(Exception):
 
 class RunNotConfirmable(Exception):
     """The run is not waiting for a confirmation."""
+
+
+class SavedPlanStale(RunNotConfirmable):
+    """The saved plan was made against a state that has since changed, so it was discarded."""
+
+
+class WorkspaceBusy(RunNotConfirmable):
+    """Another run is executing on the workspace, so a saved plan cannot apply yet."""
 
 
 class RunNotCancellable(Exception):
@@ -319,6 +350,11 @@ def is_plan_only(run: Mapping[str, Any]) -> bool:
     return bool(run.get("plan_only", False))
 
 
+def is_parked_saved_plan(run: Mapping[str, Any]) -> bool:
+    """Whether a run is a saved plan waiting for its apply, which holds neither the queue nor the lock."""
+    return bool(run.get("save_plan", False)) and str(run.get("status", "")) in CONFIRMABLE_STATUSES
+
+
 def active_run(
     workspace_id: str,
     *,
@@ -329,7 +365,7 @@ def active_run(
 
     Reads newest first and returns the first matching row, so a workspace with a
     long history costs one page rather than a full partition scan. A plan only run
-    never holds the slot, so it is passed over.
+    and a parked saved plan never hold the slot, so both are passed over.
 
     `statuses` defaults to every status that occupies the slot, which is what a new
     run asks about. Promotion passes `EXECUTING_STATUSES` instead, because the runs
@@ -341,7 +377,12 @@ def active_run(
         index_name=RUNS_BY_WORKSPACE_INDEX,
         ascending=False,
     ):
-        if _is_run_row(item) and str(item.get("status", "")) in statuses and not is_plan_only(item):
+        if (
+            _is_run_row(item)
+            and str(item.get("status", "")) in statuses
+            and not is_plan_only(item)
+            and not is_parked_saved_plan(item)
+        ):
             return item
     return None
 
@@ -734,9 +775,14 @@ def confirm_run(
     but only after the caller was told it succeeded. The decision, with its actor
     and optional comment, is written in the same conditional update.
 
+    A saved plan is checked first: one whose state moved on is discarded, and one
+    whose workspace has another run executing waits for it.
+
     Raises:
         RunNotFound: No such run.
         RunNotConfirmable: The run is not awaiting a confirmation.
+        SavedPlanStale: The saved plan's state changed, so it was discarded.
+        WorkspaceBusy: Another run is executing on the saved plan's workspace.
     """
     resolved = settings or get_settings()
     run = get_run(run_id, settings=resolved)
@@ -745,6 +791,11 @@ def confirm_run(
     token = str(run.get("confirm_task_token", ""))
     if not token:
         raise RunNotConfirmable(run_id)
+    if is_parked_saved_plan(run):
+        if discard_if_stale(run, settings=resolved) is not None:
+            raise SavedPlanStale(run_id)
+        if active_run(str(run["workspace_id"]), statuses=EXECUTING_STATUSES, settings=resolved) is not None:
+            raise WorkspaceBusy(run_id)
 
     try:
         updated = _update_run(
@@ -922,6 +973,102 @@ def discard_run(
     return finish_run(run_id, "discarded", extra={"decision": decision("discarded", actor, comment)}, settings=resolved)
 
 
+def state_identity(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any]:
+    """The serial and lineage of the workspace's current state, which a saved plan is checked against.
+
+    No state reads as `{"absent": True}`. A state too large or unreadable to parse
+    falls back to its S3 version id, so any write to it still reads as a change.
+    """
+    from botocore.exceptions import ClientError
+
+    resolved = settings or get_settings()
+    try:
+        obj = _s3(resolved).get_object(Bucket=resolved.STATE_BUCKET, Key=state_key(workspace_id))
+    except ClientError as error:
+        if str(error.response.get("Error", {}).get("Code", "")) in {"NoSuchKey", "404", "NotFound"}:
+            return {"absent": True}
+        raise
+    with obj["Body"] as body:
+        content = body.read(STATE_READ_CEILING + 1)
+    parsed: Any = None
+    if len(content) <= STATE_READ_CEILING:
+        try:
+            parsed = json.loads(content.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            parsed = None
+    if isinstance(parsed, dict):
+        serial, lineage = parsed.get("serial"), parsed.get("lineage")
+        if isinstance(serial, int) and not isinstance(serial, bool) and isinstance(lineage, str):
+            return {"serial": serial, "lineage": lineage}
+    return {"version_id": str(obj.get("VersionId") or "")}
+
+
+def saved_plan_is_stale(run: Mapping[str, Any], *, settings: Settings | None = None) -> bool:
+    """Whether a parked saved plan's recorded state no longer matches the workspace's.
+
+    A run without a recorded state, or a state that cannot be read, is not called
+    stale here; Terraform's own check at apply still refuses a plan that is.
+    """
+    recorded = run.get("plan_state")
+    if not is_parked_saved_plan(run) or not isinstance(recorded, Mapping):
+        return False
+    try:
+        current = state_identity(str(run["workspace_id"]), settings=settings)
+    except Exception as error:  # noqa: BLE001
+        _log.warning(
+            "Could not read the state a saved plan is checked against.",
+            extra={
+                "event": "runs.saved_plan.check_failed",
+                "run_id": str(run.get("run_id", "")),
+                "error": type(error).__name__,
+            },
+        )
+        return False
+    return dict(recorded) != current
+
+
+def discard_if_stale(run: Mapping[str, Any], *, settings: Settings | None = None) -> dict[str, Any] | None:
+    """Discard a parked saved plan whose state moved on, returning it discarded, or None when it stands."""
+    resolved = settings or get_settings()
+    if not saved_plan_is_stale(run, settings=resolved):
+        return None
+    run_id = str(run["run_id"])
+    try:
+        discarded = discard_run(run_id, actor=STALE_PLAN_ACTOR, comment=STALE_PLAN_COMMENT, settings=resolved)
+    except RunNotDiscardable:
+        return None
+    _log.info(
+        "Discarded a stale saved plan.",
+        extra={"event": "runs.saved_plan.stale", "run_id": run_id, "workspace_id": str(run.get("workspace_id", ""))},
+    )
+    return discarded
+
+
+def _discard_stale_saved_plans(workspace_id: str, *, settings: Settings) -> None:
+    """Discard every parked saved plan on the workspace whose state moved on, best effort."""
+    try:
+        parked = [
+            item
+            for item in _runs(settings).iter_query(
+                Key("workspace_id").eq(workspace_id),
+                index_name=RUNS_BY_WORKSPACE_INDEX,
+                ascending=False,
+            )
+            if _is_run_row(item) and is_parked_saved_plan(item)
+        ]
+        for item in parked:
+            discard_if_stale(item, settings=settings)
+    except Exception as error:  # noqa: BLE001
+        _log.exception(
+            "Could not check the workspace's saved plans after a run applied.",
+            extra={
+                "event": "runs.saved_plan.sweep_failed",
+                "workspace_id": workspace_id,
+                "error": type(error).__name__,
+            },
+        )
+
+
 def finish_run(
     run_id: str,
     status: str,
@@ -1033,7 +1180,9 @@ def _after_ending(run: dict[str, Any], ended: dict[str, Any], *, settings: Setti
     """Everything a run's ending sets off, whoever wrote it.
 
     `run` is the row as it was read before the ending, which still carries the
-    token hash, and `ended` the row as it stands after.
+    token hash, and `ended` the row as it stands after. A run that was confirmed
+    may have written state, so the workspace's parked saved plans are checked and
+    the stale ones discarded before the queue moves.
     """
     _revoke_run_token(run, settings=settings)
     for row in (run, ended):
@@ -1041,7 +1190,16 @@ def _after_ending(run: dict[str, Any], ended: dict[str, Any], *, settings: Setti
         api_credentials.revoke(row, settings=settings)
     _record_run_role(str(run["workspace_id"]), settings=settings)
     _record_verification(ended, settings=settings)
+    if _reached_apply(ended):
+        _discard_stale_saved_plans(str(run["workspace_id"]), settings=settings)
     _promote_queue(str(run["workspace_id"]), settings=settings)
+
+
+def _reached_apply(run: Mapping[str, Any]) -> bool:
+    """Whether a finished run got as far as its apply, which is when it may have written state."""
+    recorded = run.get("decision")
+    confirmed = isinstance(recorded, Mapping) and recorded.get("action") == "confirmed"
+    return str(run.get("status", "")) == "applied" or confirmed
 
 
 def _record_verification(run: dict[str, Any], *, settings: Settings) -> None:
@@ -1144,6 +1302,9 @@ def record_phase_result(
     Whatever the plan's outcome, its API token is revoked here: a run left awaiting
     confirmation holds none until the apply phase's bundle mints one.
 
+    A saved plan awaiting its apply records the state identity it planned against
+    as `plan_state`, read while it still holds the queue, then releases the queue.
+
     Raises:
         RunNotFound: No such run.
         PhaseMismatch: The reported phase is not the one the run is in.
@@ -1180,12 +1341,25 @@ def record_phase_result(
     if bool(run.get("plan_only", False)) or not has_changes:
         return finish_run(run_id, "planned_and_finished", changes=changes, settings=resolved)
 
-    return _update_run(
+    changes_update: dict[str, Any] = {"status": "awaiting_confirmation", "changes": changes}
+    saved = bool(run.get("save_plan", False))
+    if saved:
+        try:
+            changes_update["plan_state"] = state_identity(str(run["workspace_id"]), settings=resolved)
+        except Exception as error:  # noqa: BLE001
+            _log.warning(
+                "Could not record the state a saved plan was made against.",
+                extra={"event": "runs.saved_plan.record_failed", "run_id": run_id, "error": type(error).__name__},
+            )
+    parked = _update_run(
         run_id,
-        {"status": "awaiting_confirmation", "changes": changes},
+        changes_update,
         settings=resolved,
         expected_statuses=frozenset({"planning"}),
     )
+    if saved:
+        _promote_queue(str(run["workspace_id"]), settings=resolved)
+    return parked
 
 
 def store_confirm_task_token(
@@ -1390,17 +1564,22 @@ def _redact(value: Any, sensitive: Any) -> Any:
     """Replace every part of `value` that `sensitive` marks, recursively.
 
     `sensitive` mirrors the shape of `value`: `True` redacts the whole branch, a
-    dict marks keys of an object and a list marks elements of a list. Anything
-    else leaves the branch alone, so a shape the plan format does not produce
-    fails open to unredacted rather than to a crash.
+    dict marks keys of an object and a list marks elements of a list. No mark, or
+    an empty one, leaves the branch alone. Marks whose shape does not match the
+    value, a shape the plan format does not produce, withhold the whole branch, so
+    an unexpected plan fails closed rather than leaking what it marked.
     """
     if sensitive is True:
         return REDACTED
+    if sensitive is None or sensitive is False or value is None:
+        return value
+    if isinstance(sensitive, (dict, list)) and not sensitive:
+        return value
     if isinstance(sensitive, dict) and isinstance(value, dict):
         return {key: _redact(item, sensitive.get(key)) for key, item in value.items()}
     if isinstance(sensitive, list) and isinstance(value, list):
         return [_redact(item, sensitive[index]) if index < len(sensitive) else item for index, item in enumerate(value)]
-    return value
+    return REDACTED
 
 
 def _resource_change(raw: dict[str, Any]) -> dict[str, Any]:
@@ -1982,10 +2161,19 @@ __all__ = [
     "RunNotConfirmable",
     "RunNotDiscardable",
     "RunNotFound",
+    "SAVED_PLAN_STALE_MESSAGE",
+    "STALE_PLAN_ACTOR",
+    "WORKSPACE_BUSY_MESSAGE",
+    "SavedPlanStale",
     "StateKmsKeyMissing",
     "TERMINAL_STATUSES",
+    "WorkspaceBusy",
     "active_run",
+    "discard_if_stale",
+    "is_parked_saved_plan",
     "is_plan_only",
+    "saved_plan_is_stale",
+    "state_identity",
     "artifact_upload",
     "auto_apply_eligible",
     "auto_confirm_run",

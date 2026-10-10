@@ -104,6 +104,12 @@ PHASE_MISMATCH_CODE = "PHASE_MISMATCH"
 PHASE_TASK_ENDED_CODE = "PHASE_TASK_ENDED"
 """The code a heartbeat carries when the phase's state no longer waits on its task token."""
 
+SAVED_PLAN_STALE_CODE = "SAVED_PLAN_STALE"
+"""The code a confirm carries when the saved plan's state changed and the plan was discarded."""
+
+WORKSPACE_BUSY_CODE = "WORKSPACE_BUSY"
+"""The code a confirm carries when another run is executing on the saved plan's workspace."""
+
 
 @router.post(
     "/runs",
@@ -235,6 +241,10 @@ def confirm_run(
         confirmed = service.confirm_run(run_id, actor=actor_from_claims(current), comment=comment)
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
+    except service.SavedPlanStale as error:
+        raise _conflict(service.SAVED_PLAN_STALE_MESSAGE, error_code=SAVED_PLAN_STALE_CODE) from error
+    except service.WorkspaceBusy as error:
+        raise _conflict(service.WORKSPACE_BUSY_MESSAGE, error_code=WORKSPACE_BUSY_CODE) from error
     except service.RunNotConfirmable as error:
         raise _conflict("That run is not awaiting a confirmation.") from error
     audit.record_run_decision(audit.RUN_CONFIRMED, request=request, claims=current, run=confirmed)

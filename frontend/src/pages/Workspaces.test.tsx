@@ -304,4 +304,52 @@ describe('Workspaces', () => {
       within(carModPicker).getByRole('link', { name: 'CarModPicker' })
     ).toHaveAttribute('href', '/projects/prj-01J000000000000000000001');
   });
+
+  it('leaves an empty default project out of the groups and keeps other empty projects', async () => {
+    apiMock.listWorkspaces.mockResolvedValue({
+      items: [
+        aListedWorkspace(
+          aFreshWorkspace({
+            workspace_id: 'ws-2',
+            name: 'cmp-prod',
+            project_id: 'prj-01J000000000000000000001',
+          })
+        ),
+      ],
+    });
+    apiMock.listProjects.mockResolvedValue({
+      items: [
+        {
+          project_id: 'prj-default',
+          name: 'Default Project',
+          is_default: true,
+          workspace_count: 0,
+        },
+        {
+          project_id: 'prj-01J000000000000000000001',
+          name: 'CarModPicker',
+          is_default: false,
+          workspace_count: 1,
+        },
+        {
+          project_id: 'prj-01J000000000000000000002',
+          name: 'Portfolio',
+          is_default: false,
+          workspace_count: 0,
+        },
+      ],
+    });
+
+    renderList('/workspaces?group=project');
+
+    expect(
+      await screen.findByRole('region', { name: 'Project CarModPicker' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('region', { name: 'Project Portfolio' })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('region', { name: 'Project Default Project' })
+    ).not.toBeInTheDocument();
+  });
 });
