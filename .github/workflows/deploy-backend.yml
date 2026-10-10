@@ -101,7 +101,8 @@ jobs:
               --status Published \
               --sort-by PUBLISHED_TIME \
               --query 'versions[0].version' \
-              --output text)"
+              --no-paginate \
+              --output text | head -n 1)"
             if [ -z "$STAMP" ] || [ "$STAMP" = "None" ]; then
               echo "No Published webbpulse version resolved from CodeArtifact, so the dependency layer cannot be keyed."
               exit 1
