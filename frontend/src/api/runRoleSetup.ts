@@ -6,7 +6,7 @@
  * person can paste, plus the predicates the setup UI reads.
  */
 
-import { ApiError, getWebbPulseError } from '@webbpulse/api-client';
+import { getErrorCode } from '@webbpulse/api-client';
 
 import type {
   AwsConnection,
@@ -25,10 +25,7 @@ export const RUN_ROLE_MISSING_MESSAGE =
 
 /** Whether a thrown error is the API refusing for want of a run role. */
 export function isRunRoleMissing(error: unknown): boolean {
-  return (
-    error instanceof ApiError &&
-    getWebbPulseError(error).errorCode === RUN_ROLE_MISSING_CODE
-  );
+  return getErrorCode(error) === RUN_ROLE_MISSING_CODE;
 }
 
 /**

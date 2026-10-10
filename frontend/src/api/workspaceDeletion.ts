@@ -3,7 +3,7 @@
  * and the predicates the deletion settings read to pick what to show.
  */
 
-import { ApiError, getWebbPulseError } from '@webbpulse/api-client';
+import { getErrorCode } from '@webbpulse/api-client';
 
 /** The code a safe delete answers while the current state tracks resources. */
 export const WORKSPACE_MANAGES_RESOURCES_CODE = 'WORKSPACE_MANAGES_RESOURCES';
@@ -13,9 +13,7 @@ export const WORKSPACE_HAS_ACTIVE_RUN_CODE = 'WORKSPACE_HAS_ACTIVE_RUN';
 
 /** Whether a thrown error is an API refusal carrying the given code. */
 function hasErrorCode(error: unknown, code: string): boolean {
-  return (
-    error instanceof ApiError && getWebbPulseError(error).errorCode === code
-  );
+  return getErrorCode(error) === code;
 }
 
 /** Whether a safe delete was refused because state still tracks resources. */
