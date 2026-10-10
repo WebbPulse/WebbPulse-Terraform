@@ -135,16 +135,17 @@ state; see `terraform/README.md`.
 - **Root B**, `app/domains/<name>/entrypoint.py`, builds one application per
   deployed function and carries only that domain's routes.
 
-Both go through `build_domain_app` in `app/common/composition/wiring.py`, so the
-middleware stack and the route surface are identical locally, in the suite and in
+Both go through `build_domain_app` in `app/common/composition/wiring.py`, a thin
+wrapper over `webbpulse.composition.build_domain_app` that adds this product's
+middleware, so the middleware stack and the route surface are identical locally, in the suite and in
 each function. Composition is `include_router`, never `mount`, and everything
 mounts under `/api/v1`.
 
 ### The domain registry
 
 `app/common/composition/wiring.py` is the only place a domain is declared. The
-`DOMAINS` map carries `workspaces`, `runs`, `github` and `registry`. Adding one is a package under
-`app/domains/`, one entry in the map, a two line entrypoint and the matching
+`DOMAINS` `DomainRegistry` of `webbpulse.composition.Domain` rows carries `workspaces`, `runs`, `github` and `registry`. Adding one is a package under
+`app/domains/`, one entry in the map, a `domain_entrypoint` entrypoint and the matching
 Terraform entry. Loaders are lazy, so importing the registry imports no endpoint
 module and each image carries only its own code.
 

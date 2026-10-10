@@ -1,46 +1,17 @@
-"""The runs domain's entrypoint, which is what this domain's Lambda runs."""
+"""The runs domain's entrypoint, which is what this domain's Lambda runs.
 
-from typing import TYPE_CHECKING
+`webbpulse.composition.domain_entrypoint` configures logging, then tracing, runs
+the startup secrets check and serves the application this domain builds.
+"""
 
-from webbpulse.lambda_entry import run_uvicorn
-from webbpulse.logging import configure_logging
-from webbpulse.otel import configure_tracing, resolve_sample_ratio
+from webbpulse.composition import domain_entrypoint
 
 from app.common.composition.settings import get_settings
 from app.common.composition.wiring import DOMAINS, build_domain_app
 
-if TYPE_CHECKING:  # pragma: no cover
-    from fastapi import FastAPI
-
 DOMAIN = DOMAINS["runs"]
 
-
-def build_app() -> "FastAPI":
-    """This domain's application: its routers and nothing else."""
-    return build_domain_app(DOMAIN)
-
-
-def main() -> None:
-    """Configure logging and tracing, then serve this domain until killed.
-
-    Logging first, then tracing, so a misconfigured function fails at cold start
-    with the failure already in JSON. Tracing precedes the build because
-    `create_app` instruments the app, and that instrumentation is skipped unless
-    tracing is already enabled.
-    """
-    settings = get_settings()
-    configure_logging(
-        level=settings.log_level,
-        service=DOMAIN.service_name,
-        environment=settings.environment,
-    )
-    configure_tracing(
-        DOMAIN.service_name,
-        environment=settings.environment,
-        sample_ratio=resolve_sample_ratio(),
-    )
-    run_uvicorn(build_app())
-
+build_app, main = domain_entrypoint(DOMAIN, build=build_domain_app, settings=get_settings)
 
 if __name__ == "__main__":
     main()
