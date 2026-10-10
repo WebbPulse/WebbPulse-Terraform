@@ -12,6 +12,7 @@ import {
 } from './components';
 import {
   ApiKeys,
+  Audit,
   ConnectModule,
   ConnectProvider,
   GitHubCreated,
@@ -83,6 +84,7 @@ export function AppRoutes(): React.ReactElement {
         />
         <Route path="/settings/api-keys" element={<ApiKeys />} />
         <Route path="/settings/security" element={<Security />} />
+        <Route path="/settings/audit" element={<Audit />} />
         <Route path="/settings/github" element={<GitHubSettings />} />
         <Route path="/settings/github/created" element={<GitHubCreated />} />
         <Route path="/settings/github/setup" element={<GitHubSetup />} />

@@ -12,6 +12,7 @@ from webbpulse.dynamodb import Repository
 
 from ..composition.settings import Settings, get_settings
 from .tables import (
+    AUDIT,
     CONFIG_VERSIONS,
     GITHUB,
     NOTIFICATION_CONFIGURATIONS,
@@ -118,6 +119,12 @@ def projects(settings: Settings | None = None) -> Repository:
     return _repository(PROJECTS, _name(resolved.PROJECTS_TABLE, PROJECTS, resolved), resolved)
 
 
+def audit(settings: Settings | None = None) -> Repository:
+    """The audit trail table."""
+    resolved = settings or get_settings()
+    return _repository(AUDIT, _name(resolved.AUDIT_TABLE, AUDIT, resolved), resolved)
+
+
 def physical_names(settings: Settings | None = None) -> dict[str, str]:
     """Every logical table paired with the physical name this environment uses."""
     resolved = settings or get_settings()
@@ -134,4 +141,5 @@ def physical_names(settings: Settings | None = None) -> dict[str, str]:
             resolved.NOTIFICATION_CONFIGURATIONS_TABLE, NOTIFICATION_CONFIGURATIONS, resolved
         ),
         PROJECTS: _name(resolved.PROJECTS_TABLE, PROJECTS, resolved),
+        AUDIT: _name(resolved.AUDIT_TABLE, AUDIT, resolved),
     }

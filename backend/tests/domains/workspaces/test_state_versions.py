@@ -380,11 +380,14 @@ def test_download_checks_the_version_belongs_to_the_workspace_before_signing(aut
 
 
 def test_download_records_the_access(auth_client, versioned_state, caplog):
-    """A state download leaves a line naming who reached which version.
+    """A state download leaves an audit event and a log line naming who reached which version.
 
-    The repository has no audit store, so this asserts the structured log the
-    route writes instead, and that the URL itself never appears in it.
+    The URL itself never appears in either.
     """
+    from webbpulse.audit import AuditQuery
+
+    from app.common import audit
+
     workspace_id = versioned_state["workspace_id"]
     version = versioned_state["versions"][0]
 
@@ -400,6 +403,11 @@ def test_download_records_the_access(auth_client, versioned_state, caplog):
     assert getattr(recorded[0], "state_version_id") == version
     assert getattr(recorded[0], "subject")
     assert "X-Amz-Signature" not in caplog.text
+    events = audit.store().list_events(audit.AUDIT_TENANT, AuditQuery(action=audit.STATE_DOWNLOADED)).events
+    assert len(events) == 1
+    assert events[0].target.id == workspace_id
+    assert events[0].payload == {"state_version_id": version}
+    assert events[0].actor.kind == "api_key"
 
 
 def test_page_size_is_bounded(auth_client, versioned_state):

@@ -345,6 +345,25 @@ export type ApiKeyCreated = Schemas['ApiKeyCreated'];
 /** The caller's API keys, newest first. */
 export type ApiKeyList = Schemas['ApiKeyList'];
 
+/** One recorded change in the audit trail: who, when, what and what moved. */
+export type AuditEvent = Schemas['AuditEvent'];
+
+/** One action the audit trail records, for the action filter. */
+export type AuditEventType = Schemas['AuditEventType'];
+
+/** One page of the audit trail, newest first, with every action it records. */
+export type AuditEventList = Schemas['AuditEventList'];
+
+/** The audit trail's filters and paging. */
+export type AuditEventQuery = NonNullable<
+  paths['/api/v1/audit-events']['get']['parameters']['query']
+>;
+
+/** The audit trail's filters, which the CSV export shares. */
+export type AuditExportQuery = NonNullable<
+  paths['/api/v1/audit-events/export']['get']['parameters']['query']
+>;
+
 /** One private registry module with every version published or attempted. */
 export type Module = Schemas['Module'];
 

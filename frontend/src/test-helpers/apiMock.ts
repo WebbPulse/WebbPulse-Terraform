@@ -70,6 +70,8 @@ export function createApiMock(): ApiMock {
     'removeGitHubInstallation',
     'listGitHubRepositories',
     'listApiKeys',
+    'listAuditEvents',
+    'exportAuditEvents',
     'createApiKey',
     'revokeApiKey',
     'listModules',

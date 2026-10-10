@@ -14,9 +14,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, status
 from webbpulse.identity.claims import AuthorizerClaims
 
+from ...common import audit
 from ...common.core.auth import (
     RUNS_APPLY,
     RUNS_READ,
@@ -220,6 +221,7 @@ def get_run(run_id: str = RunId) -> dict[str, Any]:
     dependencies=[Depends(scopes(RUNS_APPLY))],
 )
 def confirm_run(
+    request: Request,
     run_id: str = RunId,
     payload: Optional[RunDecisionRequest] = Body(default=None),
     current: AuthorizerClaims = Depends(claims),
@@ -230,11 +232,13 @@ def confirm_run(
     """
     comment = payload.comment if payload is not None else ""
     try:
-        return service.render_run(service.confirm_run(run_id, actor=actor_from_claims(current), comment=comment))
+        confirmed = service.confirm_run(run_id, actor=actor_from_claims(current), comment=comment)
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
     except service.RunNotConfirmable as error:
         raise _conflict("That run is not awaiting a confirmation.") from error
+    audit.record_run_decision(audit.RUN_CONFIRMED, request=request, claims=current, run=confirmed)
+    return service.render_run(confirmed)
 
 
 @router.post(
@@ -258,6 +262,7 @@ def cancel_run(run_id: str = RunId) -> dict[str, Any]:
     dependencies=[Depends(scopes(RUNS_WRITE))],
 )
 def discard_run(
+    request: Request,
     run_id: str = RunId,
     payload: Optional[RunDecisionRequest] = Body(default=None),
     current: AuthorizerClaims = Depends(claims),
@@ -268,11 +273,13 @@ def discard_run(
     """
     comment = payload.comment if payload is not None else ""
     try:
-        return service.render_run(service.discard_run(run_id, actor=actor_from_claims(current), comment=comment))
+        discarded = service.discard_run(run_id, actor=actor_from_claims(current), comment=comment)
     except service.RunNotFound as error:
         raise _not_found("No such run.") from error
     except service.RunNotDiscardable as error:
         raise _conflict("That run has no plan awaiting a decision.") from error
+    audit.record_run_decision(audit.RUN_DISCARDED, request=request, claims=current, run=discarded)
+    return service.render_run(discarded)
 
 
 @router.get(

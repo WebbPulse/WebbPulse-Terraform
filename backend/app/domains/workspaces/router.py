@@ -17,6 +17,7 @@ from webbpulse.identity.scopes import FORBIDDEN_ERROR_CODE, missing_scopes
 from webbpulse.integrations.github import GitHubError, GitHubRateLimited
 from webbpulse.messages import forbidden
 
+from ...common import audit
 from ...common.core.auth import (
     ADMIN,
     CONFIGS_READ,
@@ -80,9 +81,6 @@ REMOTE_STATE_CONSUMER_NOT_FOUND_CODE = "REMOTE_STATE_CONSUMER_NOT_FOUND"
 GITHUB_UNAVAILABLE_CODE = "GITHUB_UNAVAILABLE"
 """The stable code a connect fails with when GitHub could not answer."""
 
-WORKSPACE_DELETE_EVENT = "workspaces.workspace.delete"
-"""The log event a workspace delete is recorded under, naming the workspace and the mode."""
-
 PLAN_ACCESS_FIELDS = ("plan_role_arn", "plan_assume_role_arns", "plan_secret_arns")
 """The fields that set what a plan, a pull request plan included, may reach, admin and step-up only."""
 
@@ -97,9 +95,6 @@ RUN_API_TOKEN_FIELD = "run_api_token_scopes"
 
 AUTO_APPLY_FIELD = "auto_apply"
 """The field that lets a plan apply without a confirmation, admin only."""
-
-AUTO_APPLY_EVENT = "workspaces.workspace.auto_apply"
-"""The log event a change to a workspace's auto-apply is recorded under, naming who and the new value."""
 
 router = APIRouter(dependencies=[Depends(run_api_workspace_binding)])
 
@@ -119,14 +114,11 @@ VariableKey = Path(min_length=1, max_length=256, pattern=r"^[A-Za-z_][A-Za-z0-9_
 _log = logging.getLogger(__name__)
 
 STATE_DOWNLOAD_EVENT = "workspaces.state_version.download"
-"""The log event a state download is recorded under.
+"""The log event a state download is also logged under.
 
-The repository has no audit store, so this is a structured log line on the
-function's own group rather than a durable audit record, and it is the weakest
-part of this feature: it inherits the group's 7 day retention and nothing
-enforces that it is written. It is recorded anyway because a state download is
-the event most worth reconstructing later, and it names who asked, which
-workspace and which version. A real audit trail is a separate decision.
+The durable record is the `state_version.downloaded` audit event. This line stays as
+a second signal on the function's own log group, because a state download is the
+event most worth reconstructing later and the audit write is best effort.
 """
 
 
@@ -140,10 +132,17 @@ def record_state_download(
     """Record an authorized download attempt before validation and signing.
 
     Written ahead of the signing rather than after it so that a failure between
-    the two leaves a line that overstates access rather than one that misses it.
-    The URL itself is never logged: it is a bearer credential, and a log holding
-    it would be a second copy of the thing being protected.
+    the two leaves a record that overstates access rather than one that misses it.
+    The URL itself is never recorded: it is a bearer credential, and a record
+    holding it would be a second copy of the thing being protected.
     """
+    audit.record(
+        audit.STATE_DOWNLOADED,
+        request=request,
+        claims=claims,
+        target=audit.workspace_target(workspace_id),
+        payload={"state_version_id": state_version_id},
+    )
     _log.info(
         "Requested a state version download URL.",
         extra={
@@ -266,6 +265,7 @@ def list_workspaces(
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
 def create_workspace(
+    request: Request,
     payload: WorkspaceCreate,
     current: AuthorizerClaims = Depends(auth_claims),
 ) -> dict[str, Any]:
@@ -304,8 +304,13 @@ def create_workspace(
         ) from error
     except service.ProjectNotFound as error:
         raise _project_not_found() from error
-    if payload.auto_apply:
-        record_auto_apply_change(current, workspace_id=str(created["workspace_id"]), previous=False, value=True)
+    audit.record(
+        audit.WORKSPACE_CREATED,
+        request=request,
+        claims=current,
+        target=audit.workspace_target(str(created["workspace_id"]), str(created.get("name", ""))),
+        payload=payload.model_dump(mode="json"),
+    )
     return service.render_workspace(created)
 
 
@@ -328,6 +333,7 @@ def get_workspace(workspace_id: str = WorkspaceId) -> dict[str, Any]:
     dependencies=[Depends(scopes(WORKSPACES_WRITE))],
 )
 def update_workspace(
+    request: Request,
     payload: WorkspaceUpdate,
     workspace_id: str = WorkspaceId,
     current: AuthorizerClaims = Depends(auth_claims),
@@ -359,7 +365,7 @@ def update_workspace(
     this API, so it takes `admin` as well as the step-up.
 
     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
-    `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
+    `admin` and is recorded as the `workspace.auto_apply_changed` audit event. Turning it on also
     takes the step-up, since it hands every later run's confirmation to the system.
 
     `global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'
@@ -367,11 +373,10 @@ def update_workspace(
     exist, or the edit is a 422 `REMOTE_STATE_CONSUMER_NOT_FOUND`.
     """
     changes = payload.model_dump(exclude_unset=True)
-    auto_apply_from: Optional[bool] = None
     try:
+        existing = service.get_workspace(workspace_id)
         gated = (*RUN_ROLE_FIELDS, *PLAN_ACCESS_FIELDS, RUN_API_TOKEN_FIELD, AUTO_APPLY_FIELD)
         if any(field in changes for field in gated):
-            existing = service.get_workspace(workspace_id)
             if _changes(changes, existing, RUN_API_TOKEN_FIELD):
                 _require_admin(current)
                 ensure_recent_auth(current)
@@ -387,7 +392,6 @@ def update_workspace(
                 _require_admin(current)
                 if changes[AUTO_APPLY_FIELD]:
                     ensure_recent_auth(current)
-                auto_apply_from = bool(existing.get(AUTO_APPLY_FIELD))
         with _connect_errors():
             updated = service.update_workspace(workspace_id, changes)
     except service.WorkspaceNotFound as error:
@@ -402,13 +406,15 @@ def update_workspace(
                 "error_code": REMOTE_STATE_CONSUMER_NOT_FOUND_CODE,
             },
         ) from error
-    if auto_apply_from is not None:
-        record_auto_apply_change(
-            current,
-            workspace_id=workspace_id,
-            previous=auto_apply_from,
-            value=bool(updated.get(AUTO_APPLY_FIELD)),
-        )
+    audit.record_workspace_changes(
+        request=request,
+        claims=current,
+        workspace_id=workspace_id,
+        name=str(updated.get("name", "")),
+        before=existing,
+        after=updated,
+        fields=changes,
+    )
     return service.render_workspace(updated)
 
 
@@ -450,26 +456,6 @@ def _ensure_plan_policy_fits(plan_assume_role_arns: list[str], plan_secret_arns:
                 "error_code": PLAN_SESSION_POLICY_TOO_LARGE_CODE,
             },
         )
-
-
-def record_auto_apply_change(
-    current: AuthorizerClaims,
-    *,
-    workspace_id: str,
-    previous: bool,
-    value: bool,
-) -> None:
-    """Record who turned a workspace's auto-apply on or off, after the write landed."""
-    _log.info(
-        "Changed a workspace's auto-apply.",
-        extra={
-            "event": AUTO_APPLY_EVENT,
-            "workspace_id": workspace_id,
-            "subject": str(current.get("sub", "") or "") or None,
-            "previous": previous,
-            "auto_apply": value,
-        },
-    )
 
 
 def _changes(changes: dict[str, Any], existing: dict[str, Any], field: str) -> bool:
@@ -569,11 +555,13 @@ def start_run_role_quick_setup(payload: RunRoleQuickSetupCreate, workspace_id: s
     dependencies=[Depends(sudo(WORKSPACES_WRITE))],
 )
 def delete_workspace(
+    request: Request,
     workspace_id: str = WorkspaceId,
     force: bool = Query(
         False,
         description="Skip the managed resources check and delete even though state still tracks resources.",
     ),
+    current: AuthorizerClaims = Depends(auth_claims),
 ) -> None:
     """Delete one workspace with its finished runs, current state and variables.
 
@@ -584,6 +572,7 @@ def delete_workspace(
     has not finished. Nothing is removed on a refusal.
     """
     try:
+        name = str(service.get_workspace(workspace_id).get("name", ""))
         service.delete_workspace(workspace_id, force=force)
     except service.WorkspaceNotFound as error:
         raise _not_found("No such workspace.") from error
@@ -609,9 +598,12 @@ def delete_workspace(
                 "error_code": WORKSPACE_MANAGES_RESOURCES_CODE,
             },
         ) from error
-    _log.info(
-        "Deleted a workspace.",
-        extra={"event": WORKSPACE_DELETE_EVENT, "workspace_id": workspace_id, "force": force},
+    audit.record(
+        audit.WORKSPACE_DELETED,
+        request=request,
+        claims=current,
+        target=audit.workspace_target(workspace_id, name),
+        payload={"force": force},
     )
 
 
@@ -648,6 +640,7 @@ def get_variable(workspace_id: str = WorkspaceId, key: str = VariableKey) -> dic
     dependencies=[Depends(scopes(VARIABLES_WRITE))],
 )
 def put_variable(
+    request: Request,
     payload: VariableWrite,
     workspace_id: str = WorkspaceId,
     key: str = VariableKey,
@@ -686,6 +679,13 @@ def put_variable(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Sensitive variables cannot be stored: no encryption key is configured.",
         ) from error
+    audit.record(
+        audit.VARIABLE_WRITTEN,
+        request=request,
+        claims=current,
+        target=audit.workspace_target(workspace_id),
+        payload={"key": key, "category": payload.category},
+    )
     return service.render_variable(stored)
 
 
@@ -695,17 +695,29 @@ def put_variable(
     dependencies=[Depends(scopes(VARIABLES_WRITE))],
 )
 def delete_variable(
+    request: Request,
     workspace_id: str = WorkspaceId,
     key: str = VariableKey,
     current: AuthorizerClaims = Depends(auth_claims),
 ) -> None:
     """Delete one variable. A sensitive one needs a login within the step-up window."""
-    if _is_sensitive(workspace_id, key):
+    try:
+        existing = service.get_variable(workspace_id, key)
+    except service.VariableNotFound as error:
+        raise _not_found("No such variable.") from error
+    if existing.get("sensitive"):
         ensure_recent_auth(current)
     try:
         service.delete_variable(workspace_id, key)
     except service.VariableNotFound as error:
         raise _not_found("No such variable.") from error
+    audit.record(
+        audit.VARIABLE_DELETED,
+        request=request,
+        claims=current,
+        target=audit.workspace_target(workspace_id),
+        payload={"key": key, "category": existing.get("category", "")},
+    )
 
 
 @router.post(
