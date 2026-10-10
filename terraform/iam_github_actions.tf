@@ -111,11 +111,25 @@ locals {
 
 module "github_actions_role" {
   source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "~> 2.33"
+  version = "~> 2.39"
 
   role_name = "${local.prefix}-github-actions-deploy"
 
   subjects = ["${local.github_subject_prefix}:environment:${var.environment}"]
+
+  lambda_image_deploy = {
+    function_arns = local.lambda_domain_function_arns
+  }
+
+  ecr_push = {
+    repository_arns      = module.registry.repository_arns_list
+    pull_repository_arns = [local.shared_base_image_repository_arn]
+  }
+
+  spa_deploy = {
+    bucket_arns       = [module.frontend.bucket_arn]
+    distribution_arns = [module.frontend.distribution_arn]
+  }
 
   policy_statements = concat([
     {
@@ -155,7 +169,7 @@ module "github_actions_role" {
       resources = [module.frontend.distribution_arn]
     },
     {
-      sid       = "EcrAuth"
+      sid       = "EcrAuthToken"
       actions   = ["ecr:GetAuthorizationToken"]
       resources = ["*"]
     },
@@ -189,7 +203,7 @@ module "github_actions_role" {
 
 module "github_actions_ci_role" {
   source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "~> 2.33"
+  version = "~> 2.39"
 
   role_name        = "${local.prefix}-github-actions-ci"
   role_description = "Read-only CodeArtifact access for pull request CI in WebbPulse/WebbPulse-Terraform. Deploy permissions live on the separate github-actions-deploy role."
