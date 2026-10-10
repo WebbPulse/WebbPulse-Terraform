@@ -283,6 +283,21 @@ class Settings(BaseServiceSettings):
         return [self.RUN_CREDENTIALS_ROLE_ARN] if self.RUN_CREDENTIALS_ROLE_ARN else []
 
     @property
+    def plane_account_id(self) -> str:
+        """The AWS account the control plane runs in, read from the vending role's ARN."""
+        parts = self.RUN_CREDENTIALS_ROLE_ARN.split(":")
+        return parts[4] if len(parts) > 5 and parts[4] else ""
+
+    @property
+    def run_role_permissions_boundary_arn(self) -> str:
+        """The boundary every run role in the plane's own account carries, so no role
+        the plane can vend there can reach the plane's own resources. Terraform names it
+        `<run role prefix>boundary`."""
+        if not self.plane_account_id or not self.RUN_ROLE_NAME_PREFIX:
+            return ""
+        return f"arn:aws:iam::{self.plane_account_id}:policy/{self.RUN_ROLE_NAME_PREFIX}boundary"
+
+    @property
     def run_credentials_duration_seconds(self) -> int:
         """The vended session length, within what STS accepts for a chained role."""
         return max(900, min(3600, self.RUN_CREDENTIALS_DURATION_SECONDS))

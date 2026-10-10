@@ -57,7 +57,8 @@ resource "aws_iam_role" "e2e_run_role" {
   name        = local.e2e_run_role_name
   description = "The only apply boundary the e2e suite ever uses. It holds no permissions beyond assuming the two permissionless e2e plan reader roles: the suite's applies are random_pet only, and state goes through the control plane's per run state credentials, so nothing billable can be created through it."
 
-  assume_role_policy = data.aws_iam_policy_document.e2e_run_role_trust[0].json
+  assume_role_policy   = data.aws_iam_policy_document.e2e_run_role_trust[0].json
+  permissions_boundary = aws_iam_policy.run_role_boundary.arn
 
   tags = { Component = "e2e" }
 }
@@ -90,7 +91,8 @@ resource "aws_iam_role" "e2e_plan_reader" {
   name        = each.value
   description = "Permissionless target for the e2e plan_assume_role_arns proof. The e2e suite lists the listed role on a workspace and not the unlisted one, so the plan session policy is the only difference between an assume that succeeds and one that is denied."
 
-  assume_role_policy = data.aws_iam_policy_document.e2e_plan_reader_trust[0].json
+  assume_role_policy   = data.aws_iam_policy_document.e2e_plan_reader_trust[0].json
+  permissions_boundary = aws_iam_policy.run_role_boundary.arn
 
   tags = { Component = "e2e" }
 }
