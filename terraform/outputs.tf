@@ -178,16 +178,6 @@ output "workspace_cleanup_queue_url" {
   value       = module.workspace_cleanup.queue_url
 }
 
-output "provider_signing_key_secret_arn" {
-  description = "ARN of the secret holding the private provider release signing key, whose name the provider repository environments carry as SIGNING_KEY_SECRET_ID"
-  value       = aws_secretsmanager_secret.provider_signing_key.arn
-}
-
-output "provider_signing_keygen_role_arn" {
-  description = "ARN of the role the provider repository's key generation workflow assumes, set as SIGNING_KEY_ROLE_ARN on its <env>-signing-key environment"
-  value       = module.provider_signing_keygen_role.role_arn
-}
-
 output "provider_release_role_arn" {
   description = "ARN of the role the provider repository's release workflow assumes, set as SIGNING_KEY_ROLE_ARN on its <env> environment"
   value       = module.provider_release_role.role_arn
