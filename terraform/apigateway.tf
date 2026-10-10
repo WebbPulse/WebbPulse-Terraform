@@ -62,6 +62,10 @@ locals {
       "GET /api/v1/api-keys"             = { integration = "workspaces" }
       "DELETE /api/v1/api-keys/{key_id}" = { integration = "workspaces" }
     },
+    {
+      "GET /api/v1/audit-events"        = { integration = "workspaces" }
+      "GET /api/v1/audit-events/export" = { integration = "workspaces" }
+    },
   )
 
   runs_routes = {

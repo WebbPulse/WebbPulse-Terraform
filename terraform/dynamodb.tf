@@ -120,6 +120,19 @@ locals {
       ttl_attribute          = "expires_at"
       point_in_time_recovery = false
     }
+    audit = {
+      hash_key      = "tenant_id"
+      range_key     = "event_id"
+      ttl_attribute = "expires_at"
+      attributes = [
+        { name = "tenant_id", type = "S" },
+        { name = "event_id", type = "S" },
+        { name = "target_key", type = "S" },
+      ]
+      global_secondary_indexes = [
+        { name = "target_key-event_id-index", hash_key = "target_key", range_key = "event_id", projection_type = "ALL" },
+      ]
+    }
   }
 }
 

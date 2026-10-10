@@ -290,18 +290,24 @@ def test_turning_it_on_takes_the_step_up(app, workspace):
     assert response.status_code == 401, response.text
 
 
-def test_an_admin_change_is_audited(app, workspace, caplog):
+def test_an_admin_change_is_audited(app, workspace):
     """The change names who made it and both values."""
-    with _person(app, admin=True) as client, caplog.at_level(logging.INFO):
+    from webbpulse.audit import AuditQuery
+
+    from app.common import audit
+
+    with _person(app, admin=True) as client:
         response = client.patch(f"/api/v1/workspaces/{workspace['workspace_id']}", json={"auto_apply": True})
 
     assert response.status_code == 200, response.text
     assert response.json()["auto_apply"] is True
-    audits = [record for record in caplog.records if getattr(record, "event", "") == "workspaces.workspace.auto_apply"]
-    assert len(audits) == 1
-    assert getattr(audits[0], "subject") == PERSON
-    assert getattr(audits[0], "previous") is False
-    assert getattr(audits[0], "auto_apply") is True
+    page = audit.store().list_events(audit.AUDIT_TENANT, AuditQuery(action=audit.AUTO_APPLY_CHANGED))
+    assert len(page.events) == 1
+    event = page.events[0]
+    assert event.actor.id == PERSON
+    assert event.target.id == workspace["workspace_id"]
+    assert not (event.before or {}).get("auto_apply")
+    assert event.after == {"auto_apply": True}
 
 
 def test_null_is_not_a_value(auth_client, workspace):

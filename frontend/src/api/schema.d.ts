@@ -504,6 +504,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Audit Events
+         * @description One page of the audit trail newest first. Admin only.
+         *
+         *     `next_cursor` continues the listing under the same filters; a cursor from another
+         *     listing or a changed filter is a 422.
+         */
+        get: operations["list_audit_events_api_v1_audit_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit-events/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Audit Events
+         * @description The matching events as CSV newest first, at most 5000 rows. Admin only.
+         *
+         *     Every cell is guarded against spreadsheet formula injection.
+         */
+        get: operations["export_audit_events_api_v1_audit_events_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/github/app": {
         parameters: {
             query?: never;
@@ -1355,7 +1400,7 @@ export interface paths {
          *     this API, so it takes `admin` as well as the step-up.
          *
          *     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
-         *     `admin` and is recorded under `workspaces.workspace.auto_apply`. Turning it on also
+         *     `admin` and is recorded as the `workspace.auto_apply_changed` audit event. Turning it on also
          *     takes the step-up, since it hands every later run's confirmation to the system.
          *
          *     `global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'
@@ -1878,6 +1923,75 @@ export interface components {
             plan_get_url: string;
             /** Workdir Get Url */
             workdir_get_url?: string | null;
+        };
+        /**
+         * AuditEvent
+         * @description One recorded change: who made it, when, to what, and what moved.
+         */
+        AuditEvent: {
+            /** Action */
+            action: string;
+            /** Actor Id */
+            actor_id: string;
+            /** Actor Kind */
+            actor_kind: string;
+            /** Actor Name */
+            actor_name?: string | null;
+            /** After */
+            after?: {
+                [key: string]: unknown;
+            } | null;
+            /** Amr */
+            amr: string[];
+            /** Before */
+            before?: {
+                [key: string]: unknown;
+            } | null;
+            /** Event Id */
+            event_id: string;
+            /** Ip */
+            ip: string;
+            /** Label */
+            label: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Source */
+            source: string;
+            /** Target Id */
+            target_id: string;
+            /** Target Label */
+            target_label: string;
+            /** Target Type */
+            target_type: string;
+        };
+        /**
+         * AuditEventList
+         * @description One page of the trail, newest first.
+         */
+        AuditEventList: {
+            /** Event Types */
+            event_types: components["schemas"]["AuditEventType"][];
+            /** Items */
+            items: components["schemas"]["AuditEvent"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
+        /**
+         * AuditEventType
+         * @description One action the trail records, for a filter.
+         */
+        AuditEventType: {
+            /** Action */
+            action: string;
+            /** Label */
+            label: string;
         };
         /**
          * AwsConnection
@@ -5357,6 +5471,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiKey"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_audit_events_api_v1_audit_events_get: {
+        parameters: {
+            query?: {
+                /** @description Only events at or after this time. */
+                since?: string | null;
+                /** @description Only events at or before this time. */
+                until?: string | null;
+                /** @description Only events this subject made. */
+                actor_id?: string | null;
+                /** @description Only this action, such as `workspace.updated`. */
+                action?: string | null;
+                /** @description With `target_id`, only events on this target. */
+                target_type?: string | null;
+                /** @description With `target_type`, only events on this target. */
+                target_id?: string | null;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditEventList"];
+                };
+            };
+            /** @description Request validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    export_audit_events_api_v1_audit_events_export_get: {
+        parameters: {
+            query?: {
+                /** @description Only events at or after this time. */
+                since?: string | null;
+                /** @description Only events at or before this time. */
+                until?: string | null;
+                /** @description Only events this subject made. */
+                actor_id?: string | null;
+                /** @description Only this action, such as `workspace.updated`. */
+                action?: string | null;
+                /** @description With `target_id`, only events on this target. */
+                target_type?: string | null;
+                /** @description With `target_type`, only events on this target. */
+                target_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The matching events as CSV. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": unknown;
                 };
             };
             /** @description Request validation failed. */

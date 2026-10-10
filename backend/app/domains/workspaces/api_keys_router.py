@@ -20,9 +20,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from webbpulse.audit import AuditTarget
 from webbpulse.identity.scopes import is_api_key_actor
 
+from ...common import audit
 from ...common.core.auth import claims, recent_auth
 from . import api_keys_service as service
 from .schemas.api_key import ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyList
@@ -49,6 +51,11 @@ KEY_LIMIT_CODE: Final = "API_KEY_LIMIT_REACHED"
 """The code for a caller who already holds the maximum number of live keys."""
 
 router = APIRouter()
+
+
+def _key_target(record: service.ApiKeyRecord) -> AuditTarget:
+    """A key as an audit target: its stored hash, labelled by its name."""
+    return AuditTarget(type=audit.API_KEY, id=record.key_hash, label=record.name)
 
 KeyId = Path(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
 """A key id is the stored SHA-256 hash, so it is exactly 64 lowercase hex characters."""
@@ -82,7 +89,9 @@ def _caller(current: "AuthorizerClaims") -> tuple[str, tuple[str, ...], bool]:
     response_model=ApiKeyCreated,
     status_code=status.HTTP_201_CREATED,
 )
-def create_api_key(payload: ApiKeyCreate, current: "AuthorizerClaims" = Depends(recent_auth)) -> dict[str, Any]:
+def create_api_key(
+    request: Request, payload: ApiKeyCreate, current: "AuthorizerClaims" = Depends(recent_auth)
+) -> dict[str, Any]:
     """Mint one key and return its plaintext, once.
 
     The response body is the only place the plaintext ever exists outside the
@@ -119,6 +128,17 @@ def create_api_key(payload: ApiKeyCreate, current: "AuthorizerClaims" = Depends(
             detail={"message": str(error), "error_code": KEY_LIMIT_CODE},
         ) from error
 
+    audit.record(
+        audit.API_KEY_CREATED,
+        request=request,
+        claims=current,
+        target=_key_target(minted.record),
+        payload={
+            "scopes": list(minted.record.scopes),
+            "expires_at": minted.record.expires_at or None,
+            "no_expiry": payload.no_expiry,
+        },
+    )
     return {**service.render_key(minted.record), "key": minted.plaintext}
 
 
@@ -135,7 +155,9 @@ def list_api_keys(current: "AuthorizerClaims" = Depends(claims)) -> dict[str, An
 
 
 @router.delete("/api-keys/{key_id}", response_model=ApiKey)
-def revoke_api_key(key_id: str = KeyId, current: "AuthorizerClaims" = Depends(recent_auth)) -> dict[str, Any]:
+def revoke_api_key(
+    request: Request, key_id: str = KeyId, current: "AuthorizerClaims" = Depends(recent_auth)
+) -> dict[str, Any]:
     """Revoke one key, taking effect on the caller's next request.
 
     Returns the key as it was rather than 204, so the caller can render what it
@@ -150,4 +172,11 @@ def revoke_api_key(key_id: str = KeyId, current: "AuthorizerClaims" = Depends(re
         revoked = service.revoke_key(key_id, user_id=user_id, is_admin=is_admin)
     except service.KeyNotFound as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such API key.") from error
+    audit.record(
+        audit.API_KEY_REVOKED,
+        request=request,
+        claims=current,
+        target=_key_target(revoked),
+        payload={"owner_id": revoked.user_id},
+    )
     return service.render_key(revoked)
