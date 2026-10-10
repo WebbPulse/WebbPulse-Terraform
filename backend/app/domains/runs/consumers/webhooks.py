@@ -33,7 +33,6 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
-import tarfile
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -47,7 +46,9 @@ from webbpulse.integrations.github import PullRequest
 
 from ....common.composition.settings import Settings, get_settings
 from ....common.db import repositories
+from ....common.github import repack as shared_repack
 from ....common.github.archive import TarballUnavailable, download_tarball
+from ....common.github.repack import ArchiveRejected
 from ....common.github.webhooks import PUSH, WEBHOOK_KIND, parse_message
 from ....common.workspaces import vcs as workspace_vcs
 from .. import reporting
@@ -65,7 +66,8 @@ in the function's temporary storage."""
 MERGEABLE_ATTEMPTS: Final = 4
 MERGEABLE_WAIT_SECONDS: Final = 2.0
 
-EXCLUDED_PARTS: Final = frozenset({".git", ".terraform"})
+RESERVED_PARTS: Final = frozenset({".webbpulse"})
+"""Top level directories the repack writes itself, so a repository's own are left out."""
 
 sleep: Callable[[float], None] = time.sleep
 """How the merge state wait pauses. The seam the tests replace."""
@@ -176,53 +178,27 @@ def _tracked(workspaces: Iterable[Mapping[str, Any]], branch: str) -> bool:
     return any(str(workspace.get("tracked_branch") or "") == branch for workspace in workspaces if branch)
 
 
-def _relative(name: str) -> Optional[str]:
-    """The member's path under GitHub's top level directory, or `None` to leave it out."""
-    parts = [part for part in name.split("/")[1:] if part]
-    if not parts or any(part in ("..", ".") for part in parts):
-        return None
-    if parts[0] == ".webbpulse" or any(part in EXCLUDED_PARTS for part in parts):
-        return None
-    if parts[-1].endswith(".tfstate") or ".tfstate." in parts[-1]:
-        return None
-    return "/".join(parts)
-
-
-def _member(name: str, *, size: int = 0, directory: bool = False) -> tarfile.TarInfo:
-    """A normalized archive entry, owner and time stripped the way the workflow built them."""
-    info = tarfile.TarInfo(name)
-    info.type = tarfile.DIRTYPE if directory else tarfile.REGTYPE
-    info.mode = 0o755 if directory else 0o644
-    info.size = 0 if directory else size
-    info.mtime = 0
-    info.uid = info.gid = 0
-    info.uname = info.gname = ""
-    return info
-
-
 def repack(source: Path, target: Path, paths: Optional[list[str]]) -> None:
     """Rewrite GitHub's archive into the layout the runner unpacks.
 
     The top level `owner-repo-sha/` directory is stripped so the configuration sits
     at the root, links are left out since the runner refuses them, and
-    `.webbpulse/changed-paths.txt` is added, `*` meaning every path.
+    `.webbpulse/changed-paths.txt` is added, `*` meaning every path. The member
+    count and unpacked size limits are the registry's.
+
+    Raises:
+        ArchiveRejected: A path escapes the root or a limit is passed.
     """
     listing = ("*\n" if paths is None else "".join(f"{path}\n" for path in paths)).encode()
-    with tarfile.open(source, "r|gz") as incoming, tarfile.open(target, "w:gz", format=tarfile.PAX_FORMAT) as outgoing:
-        outgoing.addfile(_member(".webbpulse", directory=True))
-        outgoing.addfile(_member(ingest.CHANGED_PATHS_MEMBER, size=len(listing)), io.BytesIO(listing))
-        for member in incoming:
-            name = _relative(member.name)
-            if name is None:
-                continue
-            if member.isdir():
-                outgoing.addfile(_member(name, directory=True))
-            elif member.isfile():
-                handle = incoming.extractfile(member)
-                if handle is not None:
-                    info = _member(name, size=member.size)
-                    info.mode = 0o755 if member.mode & 0o111 else 0o644
-                    outgoing.addfile(info, handle)
+    shared_repack.repack(
+        source,
+        target,
+        reserved=RESERVED_PARTS,
+        prelude=[
+            (shared_repack.entry(".webbpulse", directory=True), None),
+            (shared_repack.entry(ingest.CHANGED_PATHS_MEMBER, size=len(listing)), io.BytesIO(listing)),
+        ],
+    )
 
 
 def _s3(settings: Settings) -> Any:
@@ -336,7 +312,14 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
                 reporting.report_upload(item, [], settings=resolved_settings)
             _log.info("No bound workspace runs on a delivery.", extra={"event": "runs.webhook.no_match", **extra})
             return upload_id
-        _ingest(reader, item, resolved["paths"], resolved_settings)
+        try:
+            _ingest(reader, item, resolved["paths"], resolved_settings)
+        except ArchiveRejected as error:
+            _log.warning(
+                "Dropped a delivery whose archive the repack refused.",
+                extra={"event": "runs.webhook.rejected", "reason": str(error), **extra},
+            )
+            return None
     _log.info(
         "Ingested a delivery.",
         extra={"event": "runs.webhook.ingested", "vcs_event": message["event"], "size": item["size_bytes"], **extra},
@@ -346,6 +329,7 @@ def handle_record(record: Mapping[str, Any], *, settings: Settings | None = None
 
 __all__ = [
     "KIND",
+    "ArchiveRejected",
     "MAX_TARBALL_BYTES",
     "MergeStatePending",
     "TarballUnavailable",

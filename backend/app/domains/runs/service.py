@@ -1390,17 +1390,22 @@ def _redact(value: Any, sensitive: Any) -> Any:
     """Replace every part of `value` that `sensitive` marks, recursively.
 
     `sensitive` mirrors the shape of `value`: `True` redacts the whole branch, a
-    dict marks keys of an object and a list marks elements of a list. Anything
-    else leaves the branch alone, so a shape the plan format does not produce
-    fails open to unredacted rather than to a crash.
+    dict marks keys of an object and a list marks elements of a list. No mark, or
+    an empty one, leaves the branch alone. Marks whose shape does not match the
+    value, a shape the plan format does not produce, withhold the whole branch, so
+    an unexpected plan fails closed rather than leaking what it marked.
     """
     if sensitive is True:
         return REDACTED
+    if sensitive is None or sensitive is False or value is None:
+        return value
+    if isinstance(sensitive, (dict, list)) and not sensitive:
+        return value
     if isinstance(sensitive, dict) and isinstance(value, dict):
         return {key: _redact(item, sensitive.get(key)) for key, item in value.items()}
     if isinstance(sensitive, list) and isinstance(value, list):
         return [_redact(item, sensitive[index]) if index < len(sensitive) else item for index, item in enumerate(value)]
-    return value
+    return REDACTED
 
 
 def _resource_change(raw: dict[str, Any]) -> dict[str, Any]:

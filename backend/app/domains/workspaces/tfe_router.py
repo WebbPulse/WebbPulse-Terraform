@@ -302,6 +302,8 @@ def unlock_workspace(
         raise conflict("Unable to unlock workspace. The workspace is locked by Run.") from error
     except locks.LockedByOther as error:
         raise conflict(f"Unable to unlock workspace. The workspace is locked by User {error.holder}.") from error
+    except locks.LockChanged as error:
+        raise conflict("Unable to unlock workspace. The workspace is locked by Run.") from error
     return document(workspace_resource(item, claims_scopes(current), locked=False))
 
 
@@ -322,4 +324,6 @@ def force_unlock_workspace(
         raise conflict("Unable to force-unlock workspace. The workspace is not locked.") from error
     except locks.LockedByRun as error:
         raise conflict(f"Unable to force-unlock workspace. Run {error} is still going.") from error
+    except locks.LockChanged as error:
+        raise conflict("Unable to force-unlock workspace. The lock changed, so it was left in place.") from error
     return document(workspace_resource(item, claims_scopes(current), locked=False))

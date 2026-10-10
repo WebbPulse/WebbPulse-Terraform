@@ -307,6 +307,23 @@ def test_a_zip_that_does_not_match_its_checksum_fails(
     assert "does not match" in _row(settings)["error"]
 
 
+def test_a_manifest_missing_from_the_checksums_fails(
+    settings: Any, provider: dict[str, Any], releases: Releases, signing_parameters: SigningKey
+) -> None:
+    """An unsigned manifest could change the protocols Terraform is told to speak."""
+    files = build_release(signing_parameters)
+    files[f"{STEM}manifest.json"] = json.dumps({"version": 1, "metadata": {"protocol_versions": ["5.0"]}}).encode()
+    sums = b"".join(
+        line + b"\n" for line in files[f"{STEM}SHA256SUMS"].splitlines() if not line.endswith(b"manifest.json")
+    )
+    files[f"{STEM}SHA256SUMS"] = sums
+    files[f"{STEM}SHA256SUMS.sig"] = signing_parameters.sign(sums)
+    releases.add(TAG, files)
+
+    assert consumer.handle_release(release_record(), settings=settings) == {"WebbPulse/webbpulse": "failed"}
+    assert "not listed" in _row(settings)["error"]
+
+
 def test_a_release_without_checksums_fails(
     settings: Any, provider: dict[str, Any], releases: Releases, signing_parameters: SigningKey
 ) -> None:

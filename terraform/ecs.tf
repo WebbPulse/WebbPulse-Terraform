@@ -3,7 +3,7 @@ locals {
 
   workspace_run_role_arns = concat([
     "arn:aws:iam::*:role/${local.prefix}-workspace-*",
-    "arn:aws:iam::*:role/${local.example_run_role_name}",
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.example_run_role_name}",
   ], var.external_run_role_arns)
 
   runner_task_statements = [

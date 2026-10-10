@@ -206,6 +206,39 @@ def test_force_unlock_without_a_lock_is_409(auth_client, workspace):
     assert _action(auth_client, workspace["workspace_id"], "force-unlock").status_code == 409
 
 
+def _swap_after_read(monkeypatch, workspace_id: str) -> None:
+    """Make an engine lock replace the lockfile right after the lock module reads it."""
+    original = locks._read
+
+    def read_then_swap(workspace_id_arg, settings):
+        """Read as usual, then let a run's engine take the lock."""
+        result = original(workspace_id_arg, settings)
+        _engine_lock(workspace_id)
+        return result
+
+    monkeypatch.setattr(locks, "_read", read_then_swap)
+
+
+def test_unlock_leaves_a_lock_taken_between_read_and_delete(monkeypatch, auth_client, workspace):
+    """The delete is conditional on the ETag read, so a run's newer lock survives."""
+    workspace_id = workspace["workspace_id"]
+    _action(auth_client, workspace_id, "lock")
+    _swap_after_read(monkeypatch, workspace_id)
+    response = _action(auth_client, workspace_id, "unlock")
+    assert response.status_code == 409
+    assert (_lockfile(workspace_id) or {}).get("ID") == "engine-lock"
+
+
+def test_force_unlock_leaves_a_lock_taken_between_read_and_delete(monkeypatch, auth_client, workspace):
+    """Force-unlock removes only the lockfile it saw, never one written after."""
+    workspace_id = workspace["workspace_id"]
+    _action(auth_client, workspace_id, "lock")
+    _swap_after_read(monkeypatch, workspace_id)
+    response = _action(auth_client, workspace_id, "force-unlock")
+    assert response.status_code == 409
+    assert (_lockfile(workspace_id) or {}).get("ID") == "engine-lock"
+
+
 def test_lock_actions_require_state_write(scoped_client, workspace):
     """Locking touches state, so a key without `state:write` gets the JSON:API 403."""
     client = scoped_client(WORKSPACES_READ)

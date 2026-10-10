@@ -206,6 +206,14 @@
         "ExpressionAttributeNames": { "#status": "status" },
         "ExpressionAttributeValues": { ":status": { "S": "applied" } }
       },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
       "ResultPath": null,
       "Next": "ReleaseSemaphore"
     },
@@ -220,6 +228,14 @@
         "ExpressionAttributeNames": { "#status": "status" },
         "ExpressionAttributeValues": { ":status": { "S": "planned_and_finished" } }
       },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
       "ResultPath": null,
       "Next": "ReleaseSemaphore"
     },
@@ -244,6 +260,18 @@
           ":discarded": { "S": "discarded" }
         }
       },
+      "Retry": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "MaxAttempts": 0
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
       "ResultPath": null,
       "Next": "ReleaseSemaphoreAfterFailure",
       "Catch": [
@@ -362,6 +390,18 @@
           ":discarded": { "S": "discarded" }
         }
       },
+      "Retry": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "MaxAttempts": 0
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
       "ResultPath": null,
       "Next": "ReleaseSemaphoreAfterFailure",
       "Catch": [
@@ -393,6 +433,18 @@
           ":discarded": { "S": "discarded" }
         }
       },
+      "Retry": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "MaxAttempts": 0
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
       "ResultPath": null,
       "Next": "Failed",
       "Catch": [
