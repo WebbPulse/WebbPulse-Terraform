@@ -86,6 +86,9 @@ class QuickSetupUnavailable(Exception):
     """This deployment cannot render a template: no runner principals or no bucket."""
 
 
+PLANE_ACCOUNT_CONDITION: Final = "InPlaneAccount"
+"""The template condition that is true when the stack is in the control plane's own account."""
+
 CONNECTION_RESOURCE_TYPE: Final = "Custom::WebbPulseTerraformConnection"
 """The custom resource that reports the stack back to this environment."""
 
@@ -133,6 +136,29 @@ def _report_back(template: dict[str, Any], topic_arn: str) -> dict[str, Any]:
         "Conditions": conditions,
         "Resources": resources,
     }
+
+
+def _bounded_in_plane_account(template: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """The template with the plane's permissions boundary on both roles in the plane's own account.
+
+    A stack created in the account the control plane runs in would otherwise give a
+    role the plane can vend whatever policy was picked, including over the plane's own
+    resources. The boundary is attached only there, since it exists in no other account.
+    """
+    boundary = settings.run_role_permissions_boundary_arn
+    if not boundary:
+        return template
+    conditions = template["Conditions"] | {
+        PLANE_ACCOUNT_CONDITION: {"Fn::Equals": [{"Ref": "AWS::AccountId"}, settings.plane_account_id]},
+    }
+    attached = {"Fn::If": [PLANE_ACCOUNT_CONDITION, boundary, {"Ref": "AWS::NoValue"}]}
+    resources = {
+        name: resource | {"Properties": resource["Properties"] | {"PermissionsBoundary": attached}}
+        if resource["Type"] == "AWS::IAM::Role"
+        else resource
+        for name, resource in template["Resources"].items()
+    }
+    return template | {"Conditions": conditions, "Resources": resources}
 
 
 def template_body(settings: Settings) -> dict[str, Any]:
@@ -270,6 +296,7 @@ def template_body(settings: Settings) -> dict[str, Any]:
             },
         },
     }
+    template = _bounded_in_plane_account(template, settings)
     if settings.AWS_CONNECT_TOPIC_ARN:
         return _report_back(template, settings.AWS_CONNECT_TOPIC_ARN)
     return template

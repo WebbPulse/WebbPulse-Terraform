@@ -30,7 +30,8 @@ resource "aws_iam_role" "example_run_role" {
   name        = local.example_run_role_name
   description = "Run role for the first end to end staging run. It holds no permissions; state goes through the per run state credentials"
 
-  assume_role_policy = data.aws_iam_policy_document.example_run_role_trust[0].json
+  assume_role_policy   = data.aws_iam_policy_document.example_run_role_trust[0].json
+  permissions_boundary = aws_iam_policy.run_role_boundary.arn
 
   tags = { Component = "example-run" }
 }

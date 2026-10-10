@@ -329,3 +329,25 @@ def test_a_plan_role_can_be_set_and_cleared_by_hand(auth_client):
 
     assert auth_client.patch(f"{BASE}/{workspace_id}", json={"plan_role_arn": arn}).json()["plan_role_arn"] == arn
     assert auth_client.patch(f"{BASE}/{workspace_id}", json={"plan_role_arn": None}).json()["plan_role_arn"] is None
+
+
+def test_roles_carry_the_plane_boundary_only_in_the_plane_account(settings):
+    """A stack in the plane's own account bounds both roles, and one elsewhere is left as it was."""
+    template = quick_setup.template_body(settings)
+    account = RUN_CREDENTIALS_ROLE_ARN.split(":")[4]
+    boundary = f"arn:aws:iam::{account}:policy/{RUN_ROLE_NAME_PREFIX}boundary"
+
+    assert settings.run_role_permissions_boundary_arn == boundary
+    assert template["Conditions"][quick_setup.PLANE_ACCOUNT_CONDITION] == {
+        "Fn::Equals": [{"Ref": "AWS::AccountId"}, account]
+    }
+    expected = {"Fn::If": [quick_setup.PLANE_ACCOUNT_CONDITION, boundary, {"Ref": "AWS::NoValue"}]}
+    for name in ("RunRole", "PlanRole"):
+        assert template["Resources"][name]["Properties"]["PermissionsBoundary"] == expected
+    assert "PermissionsBoundary" not in template["Resources"].get("Connection", {}).get("Properties", {})
+
+
+def test_no_boundary_without_a_vending_role_account(settings):
+    """With no vending role ARN to read the account from, no boundary is named."""
+    unvended = settings.model_copy(update={"RUN_CREDENTIALS_ROLE_ARN": ""})
+    assert unvended.run_role_permissions_boundary_arn == ""
