@@ -322,6 +322,14 @@ connection's verification and promote the queue. A run's phase comes from its st
 phase gets a read-only IAM session policy and the apply phase an unrestricted
 one.
 
+A saved plan (`terraform plan -out`, `save_plan` on the row) holds the queue only while it
+plans. Once parked awaiting its apply it records the state's serial and lineage as
+`plan_state`, promotes the queue, and is passed over by `active_run` and the lock check.
+Any run that reached its apply discards the workspace's stale saved plans, and a read or
+confirm of one rechecks it, so `terraform apply <planfile>` after the state moved reads
+`discarded` (409 `SAVED_PLAN_STALE` on a direct confirm). Confirming one while another run
+executes is a 409 `WORKSPACE_BUSY`. Its execution still holds a semaphore slot while parked.
+
 A Step Functions DynamoDB integration cannot carry a task token, so a
 confirmation is sent to the `run-confirmations` SQS queue instead and consumed by
 the runs function through an event source mapping. That route mounts at the root
@@ -518,7 +526,7 @@ carries `max_bytes` (250 MB) instead, and `GET /api/v2/configuration-versions/{i
 Remote plans and applies are the runs function's `tfe_router` over the runs service
 (`runs/tfe_runs.py` renders them). `POST /api/v2/runs` (`runs:write`) is plan only on a
 speculative config version, maps `target-addrs`, `replace-addrs`, `refresh`, `refresh-only`
-and `variables` to the run options, refuses `save-plan`, and takes `auto-apply` (the CLI's
+and `variables` to the run options, keeps `save-plan` (see Runs), and takes `auto-apply` (the CLI's
 `-auto-approve`, which needs `runs:apply`) as a per run override of the workspace setting.
 Plans and applies have no rows: `plan-<ulid>` and `apply-<ulid>` are derived from the run,
 and a plan reads `running` until the run holds its confirmation token, or the CLI would find
