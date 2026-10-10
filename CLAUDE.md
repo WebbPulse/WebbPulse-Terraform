@@ -803,11 +803,32 @@ its own login user per run through `/api/auth/e2e/users`, which is gated by
 `ephemeral_users_enabled` and so exists outside production only.
 
 `WebbPulse/webbpulse-terraform-staging-e2e` (repository id 1389889459, public) is
-the staging end-to-end test repository, part of the staging environment in the
-same way as the `webbpulse-terraform-staging-e2e` AWS account. It is declared in
-the WebbPulse-Platform repository factory with the topics `webbpulse-terraform`,
-`staging` and `e2e`, is load bearing for staging e2e; its `registry-proof` branch and `v0.1.0` tag are the durable registry fixture `backend/e2e/test_registry.py` installs, published before tag webhook publishing and connected to no module. Its `registry-backfill-fixture` branch (a root `main.tf` only) carries the `v0.2.0` tag and the non-semver `registry-backfill-fixture` tag that `backend/e2e/test_registry_backfill.py` imports on connect and on resync; keep both tags where they are.
+the staging end-to-end test repository, part of the staging environment. It is
+declared in the WebbPulse-Platform repository factory (`locals_github.tf`, adopted
+by import in `adoption.tf`) with the topics `webbpulse-terraform`, `staging` and
+`e2e`, and its ruleset requires the `webbpulse-terraform` aggregate pinned to the
+staging App (`local.webbpulse_terraform_staging_app_id`, 5090187, installation
+165274032). It is load bearing for staging e2e; its `registry-proof` branch and `v0.1.0` tag are the durable registry fixture `backend/e2e/test_registry.py` installs, published before tag webhook publishing and connected to no module. Its `registry-backfill-fixture` branch (a root `main.tf` only) carries the `v0.2.0` tag and the non-semver `registry-backfill-fixture` tag that `backend/e2e/test_registry_backfill.py` imports on connect and on resync; keep both tags where they are.
 The staging GitHub App is installed on it and not on this repository, it carries
 the caller workflow and a copy of `examples/first-run`, and the staging
 `first-run` workspace is bound to it. VCS runs, check runs and the pull request
 comment are proven there, and `E2E_VCS_CONNECT_REPO` names it.
+
+There is no separate e2e AWS account. AWS e2e runs in the WebbPulse-Terraform
+staging account (870550636948), and staging must never manage itself: the prod
+plane manages the staging plane through its `WebbPulse-Terraform-staging`
+workspace. Every role
+the plane can vend in its own account carries the `<prefix>-workspace-boundary`
+permissions boundary (`terraform/run_role_boundary.tf`), which denies the plane's
+resources by name and by its `Project` and `Environment` tags, apart from
+`sts:AssumeRole`, and denies creating or freeing an unbounded principal. That
+covers the e2e run role, the plan readers, the example run role and every role a
+Quick setup stack creates in the plane's account, since the template adds the
+boundary when the stack's account is the plane's. `test_aws_connect.py` creates
+the stack as `<prefix>-e2e-quick-setup` (`terraform/e2e_quick_setup.tf`, staging
+only), which the staging deploy role assumes. That role can only create bounded
+workspace roles and attach only ReadOnlyAccess, and no workspace can vend it. The
+test proves the deny with IAM simulations and always deletes the stack. Its
+variables are `E2E_AWS_CONNECT_ACCOUNT`, `E2E_AWS_CONNECT_ROLE_ARN` and
+`E2E_RUN_ROLE_BOUNDARY_ARN`, set with `gh variable set --env staging`. The
+`e2e-local` job sees none of them, so the test skips there.
