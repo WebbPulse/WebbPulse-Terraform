@@ -6,6 +6,7 @@ import { useQueryAuth } from '@webbpulse/auth/react';
 
 import {
   api,
+  DEFAULT_PROJECT_ID,
   type Project,
   type ProjectList,
   type WorkspaceList,
@@ -205,7 +206,9 @@ function ProjectGroups({
   searching: boolean;
 }): React.ReactElement {
   const groups = groupByProject(workspaces, projects).filter(
-    (group) => !searching || group.workspaces.length > 0
+    (group) =>
+      group.workspaces.length > 0 ||
+      (!searching && group.project_id !== DEFAULT_PROJECT_ID)
   );
   return (
     <div className="space-y-6">
