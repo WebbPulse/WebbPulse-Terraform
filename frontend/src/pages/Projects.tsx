@@ -33,6 +33,7 @@ import {
 } from '../components';
 import { RunStatusCell } from './workspaceListing';
 import {
+  browsableProjects,
   groupByProject,
   matchingName,
   withParam,
@@ -56,7 +57,8 @@ export function Projects(): React.ReactElement {
     ({ signal }) => api.listWorkspaces({ signal }, { sort: 'name' }),
     { intervalMs: 30_000, queryKey: [WORKSPACES_KEY, 'name'], auth }
   );
-  const shown = matchingName(projects.data?.items ?? [], search);
+  const listed = browsableProjects(projects.data?.items ?? []);
+  const shown = matchingName(listed, search);
   const groups = new Map(
     groupByProject(workspaces.data?.items ?? [], shown).map((group) => [
       group.project_id,
@@ -118,12 +120,14 @@ export function Projects(): React.ReactElement {
               className={`${INPUT_CLASS} mt-0! max-w-xs`}
             />
             <span className="text-xs text-text-faint">
-              {shown.length} of {projects.data?.items.length ?? 0}
+              {shown.length} of {listed.length}
             </span>
           </div>
           {shown.length === 0 ? (
             <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm text-text-faint">
-              No projects match that name.
+              {search.trim() === ''
+                ? 'No projects yet.'
+                : 'No projects match that name.'}
             </p>
           ) : (
             <Table label="Projects">

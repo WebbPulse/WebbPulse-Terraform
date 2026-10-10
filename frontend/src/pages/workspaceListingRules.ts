@@ -95,3 +95,22 @@ export function groupByProject(
   }
   return [...groups.values()];
 }
+
+/**
+ * Whether a project is the default one while it holds no workspaces, which the
+ * browsing menus leave out. Pickers that place a workspace still offer it.
+ */
+export function isEmptyDefault(
+  project: Pick<Project, 'project_id' | 'is_default' | 'workspace_count'>
+): boolean {
+  const isDefault =
+    project.is_default === true || project.project_id === DEFAULT_PROJECT_ID;
+  return isDefault && (project.workspace_count ?? 0) === 0;
+}
+
+/** The projects a browsing menu lists: all of them but an empty default. */
+export function browsableProjects<
+  T extends Pick<Project, 'project_id' | 'is_default' | 'workspace_count'>,
+>(projects: readonly T[]): T[] {
+  return projects.filter((project) => !isEmptyDefault(project));
+}
