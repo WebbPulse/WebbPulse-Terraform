@@ -123,4 +123,10 @@ describe('returnPath', () => {
       '/workspaces'
     );
   });
+
+  it('refuses a backslash path that browsers read as another origin', () => {
+    expect(
+      returnPath({ from: { pathname: '/\\evil.example', search: '' } })
+    ).toBe('/workspaces');
+  });
 });

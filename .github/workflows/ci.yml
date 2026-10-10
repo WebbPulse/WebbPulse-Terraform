@@ -75,29 +75,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Resolve the base commit
-        id: base
-        env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          set -euo pipefail
-          BASE="${PR_BASE_SHA:-$PUSH_BEFORE_SHA}"
-          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
-            BASE=""
-          fi
-          if [ -n "$BASE" ] && ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-            git fetch --no-tags --depth=1 origin "$BASE" || true
-          fi
-          echo "Base: ${BASE:-none, so every domain}"
-          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
-
       - name: Work out the affected domains
         id: affected
         uses: WebbPulse/.github/actions/affected-domains@v3
         with:
           working-directory: backend
-          base: ${{ steps.base.outputs.base }}
+          base-from-event: "true"
           head: ${{ github.sha }}
           mode: ci
 
