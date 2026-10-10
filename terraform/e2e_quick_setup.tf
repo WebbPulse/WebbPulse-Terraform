@@ -6,7 +6,7 @@ locals {
 
   e2e_quick_setup_role_arns = [
     "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.prefix}-workspace-${local.e2e_quick_setup_ulid}",
-    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.prefix}-workspace-plan/plan-${local.e2e_quick_setup_ulid}",
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*plan-${local.e2e_quick_setup_ulid}",
   ]
 
   e2e_quick_setup_policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
@@ -93,7 +93,7 @@ data "aws_iam_policy_document" "e2e_quick_setup" {
     sid       = "InspectWorkspaceRoles"
     effect    = "Allow"
     actions   = ["iam:GetRole", "iam:SimulatePrincipalPolicy"]
-    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.prefix}-workspace-*"]
+    resources = concat(["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.prefix}-workspace-*"], local.e2e_quick_setup_role_arns)
   }
 
   statement {
