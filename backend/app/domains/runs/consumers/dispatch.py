@@ -33,7 +33,17 @@ from webbpulse.events import batch_item_failures, event_records, record_id, regi
 
 from ....common.composition.settings import Settings
 from ....common.workspaces import cleanup
-from . import aws_connect, confirmations, endings, ingest, notifications, reports, task_failures, webhooks
+from . import (
+    aws_connect,
+    confirmations,
+    endings,
+    execution_endings,
+    ingest,
+    notifications,
+    reports,
+    task_failures,
+    webhooks,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -83,6 +93,7 @@ def _webhook(record: Mapping[str, Any], settings: Settings | None) -> None:
 HANDLERS: dict[str, Handler] = {
     confirmations.CONFIRMATION_KIND: lambda record, settings: confirmations.handle_record(record, settings=settings),
     task_failures.TASK_FAILURE_KIND: lambda record, settings: task_failures.handle_record(record, settings=settings),
+    execution_endings.KIND: lambda record, settings: execution_endings.handle_record(record, settings=settings),
     ingest.INGEST_KIND: lambda record, settings: _ingest(record, settings),
     cleanup.CLEANUP_KIND: lambda record, settings: cleanup.handle_record(record, settings=settings),
     webhooks.KIND: lambda record, settings: _webhook(record, settings),

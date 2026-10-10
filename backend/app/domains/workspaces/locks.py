@@ -48,6 +48,10 @@ class LockedByRun(Exception):
     """A run holds the lock, or is executing, so the CLI may not take or drop it."""
 
 
+class LockChanged(Exception):
+    """The lockfile changed between reading and removing it, so nothing was removed."""
+
+
 class LockedByOther(Exception):
     """Another subject took the CLI lock, so this caller may not unlock it."""
 
@@ -88,24 +92,29 @@ def _error_code(error: Exception) -> str:
     return f"{code}:{status}"
 
 
-def read_lock(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any] | None:
-    """The lockfile's body, `{}` when it is there but unreadable, or None when absent."""
+def _read(workspace_id: str, settings: Settings) -> tuple[dict[str, Any] | None, str | None]:
+    """The lockfile's body and ETag, `({}, etag)` when unreadable, or `(None, None)` when absent."""
     from botocore.exceptions import ClientError
 
-    resolved = settings or get_settings()
     try:
-        response = _s3(resolved).get_object(Bucket=_bucket(resolved), Key=lock_key(workspace_id))
+        response = _s3(settings).get_object(Bucket=_bucket(settings), Key=lock_key(workspace_id))
     except ClientError as error:
         code = _error_code(error)
         if code.startswith(("NoSuchKey:", "404:")) or code.endswith(":404"):
-            return None
+            return None, None
         raise
+    etag = response.get("ETag")
     body = response["Body"].read(LOCK_READ_CEILING)
     try:
         parsed = json.loads(body)
     except ValueError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+        return {}, etag
+    return (parsed if isinstance(parsed, dict) else {}), etag
+
+
+def read_lock(workspace_id: str, *, settings: Settings | None = None) -> dict[str, Any] | None:
+    """The lockfile's body, `{}` when it is there but unreadable, or None when absent."""
+    return _read(workspace_id, settings or get_settings())[0]
 
 
 def is_locked(workspace_id: str, *, settings: Settings | None = None) -> bool:
@@ -173,9 +182,25 @@ def lock(workspace_id: str, subject: str, reason: str, *, settings: Settings | N
         raise
 
 
-def _delete(workspace_id: str, settings: Settings) -> None:
-    """Remove the lockfile. The bucket is versioned, so this leaves a delete marker."""
-    _s3(settings).delete_object(Bucket=_bucket(settings), Key=lock_key(workspace_id))
+def _delete(workspace_id: str, settings: Settings, etag: str | None) -> None:
+    """Remove the lockfile only if it is still the one read, leaving a delete marker.
+
+    The delete is conditional on the ETag read, so a lock a run took in between is
+    never removed: a changed lockfile is `LockChanged` and a vanished one
+    `WorkspaceNotLocked`.
+    """
+    from botocore.exceptions import ClientError
+
+    condition: dict[str, str] = {"IfMatch": etag} if etag else {}
+    try:
+        _s3(settings).delete_object(Bucket=_bucket(settings), Key=lock_key(workspace_id), **condition)
+    except ClientError as error:
+        code = _error_code(error)
+        if code.startswith(("NoSuchKey:", "404:")) or code.endswith(":404"):
+            raise WorkspaceNotLocked(workspace_id) from error
+        if code.startswith(("PreconditionFailed:", "ConditionalRequestConflict:")) or code.endswith((":412", ":409")):
+            raise LockChanged(workspace_id) from error
+        raise
 
 
 def unlock(workspace_id: str, subject: str, *, settings: Settings | None = None) -> None:
@@ -186,7 +211,7 @@ def unlock(workspace_id: str, subject: str, *, settings: Settings | None = None)
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
-    held = read_lock(workspace_id, settings=resolved)
+    held, etag = _read(workspace_id, resolved)
     if held is None:
         raise WorkspaceNotLocked(workspace_id)
     holder = held.get(LOCK_OWNER_FIELD)
@@ -194,7 +219,7 @@ def unlock(workspace_id: str, subject: str, *, settings: Settings | None = None)
         raise LockedByRun(str(held.get("ID") or ""))
     if str(holder) != subject:
         raise LockedByOther(str(holder))
-    _delete(workspace_id, resolved)
+    _delete(workspace_id, resolved, etag)
 
 
 def force_unlock(workspace_id: str, *, settings: Settings | None = None) -> None:
@@ -206,13 +231,14 @@ def force_unlock(workspace_id: str, *, settings: Settings | None = None) -> None
     """
     resolved = settings or get_settings()
     get_workspace(workspace_id, settings=resolved)
-    if read_lock(workspace_id, settings=resolved) is None:
+    held, etag = _read(workspace_id, resolved)
+    if held is None:
         raise WorkspaceNotLocked(workspace_id)
     try:
         require_no_active_run(workspace_id, ignore_plan_only=True, settings=resolved)
     except RunStillActive as error:
         raise LockedByRun(error.run_id) from error
-    _delete(workspace_id, resolved)
+    _delete(workspace_id, resolved, etag)
 
 
 def lock_holder(workspace_id: str, *, settings: Settings | None = None) -> str | None:

@@ -41,6 +41,38 @@ resource "aws_cloudwatch_event_target" "runner_task_failed_to_start" {
   }
 }
 
+resource "aws_cloudwatch_event_rule" "run_execution_ended" {
+  name        = "${local.prefix}-run-execution-ended"
+  description = "Run executions that failed, timed out or were stopped, so a run the execution left live is finished"
+
+  event_pattern = jsonencode({
+    source      = ["aws.states"]
+    detail-type = ["Step Functions Execution Status Change"]
+    detail = {
+      stateMachineArn = [module.run_state_machine.arn]
+      status          = ["FAILED", "TIMED_OUT", "ABORTED"]
+    }
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_event_target" "run_execution_ended" {
+  rule      = aws_cloudwatch_event_rule.run_execution_ended.name
+  target_id = "run-task-failures-queue"
+  arn       = module.run_task_failures.queue_arn
+
+  input_transformer {
+    input_paths = {
+      detail = "$.detail"
+    }
+
+    input_template = <<-EOT
+      {"kind":"run_execution_ended","detail":<detail>}
+    EOT
+  }
+}
+
 data "aws_iam_policy_document" "run_task_failures_queue" {
   statement {
     sid       = "LetEventBridgeDeliverTaskStops"
@@ -56,7 +88,10 @@ data "aws_iam_policy_document" "run_task_failures_queue" {
     condition {
       test     = "ArnEquals"
       variable = "aws:SourceArn"
-      values   = [aws_cloudwatch_event_rule.runner_task_failed_to_start.arn]
+      values = [
+        aws_cloudwatch_event_rule.runner_task_failed_to_start.arn,
+        aws_cloudwatch_event_rule.run_execution_ended.arn,
+      ]
     }
   }
 }
