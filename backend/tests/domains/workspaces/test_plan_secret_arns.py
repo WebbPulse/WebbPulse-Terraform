@@ -1,8 +1,7 @@
 """The workspace setting naming which secrets a plan may read, and the admin gate on every plan access field.
 
-A plan of a workspace naming no secrets reads any secret its role can. For a speculative
-plan, `plan_only` or from a pull request, that is transitional: with
-`SPECULATIVE_PLANS_READ_ANY_SECRET` off it reads none. Naming secrets bounds every plan to them.
+A confirmable plan of a workspace naming no secrets reads any secret its role can; a
+speculative plan, `plan_only` or from a pull request, reads none. Naming secrets bounds every plan to them.
 """
 
 from __future__ import annotations
@@ -178,17 +177,8 @@ def test_a_confirmable_plan_with_no_list_reads_any_secret(app, created_run, sts_
     assert _secret_resource(app, created_run, sts_requests) == session_policy.ANY_SECRET_ARN
 
 
-def test_a_speculative_plan_with_no_list_still_reads_any_secret(app, plan_only_run, sts_requests):
-    """Until every workspace names its plan secrets, an empty list keeps pull request plans working."""
-    assert _secret_resource(app, plan_only_run, sts_requests) == session_policy.ANY_SECRET_ARN
-
-
-def test_a_speculative_plan_with_no_list_reads_no_secret_once_the_default_flips(
-    app, plan_only_run, sts_requests, monkeypatch
-):
-    """With the transitional default off, a plan only run gets no secret read and no decrypt."""
-    monkeypatch.setattr(session_policy, "SPECULATIVE_PLANS_READ_ANY_SECRET", False)
-
+def test_a_speculative_plan_with_no_list_reads_no_secret(app, plan_only_run, sts_requests):
+    """A plan only run on a workspace naming no secrets gets no secret read and no decrypt."""
     assert _secret_resource(app, plan_only_run, sts_requests) is None
 
 
@@ -217,10 +207,8 @@ def test_a_confirmable_plan_reads_only_its_allowlist(app, auth_client, workspace
     ],
     ids=["pull request", "pull request not plan only", "pull request with a list", "push", "run role check"],
 )
-def test_which_runs_are_speculative(run, listed, expected, monkeypatch):
+def test_which_runs_are_speculative(run, listed, expected):
     """A pull request plan is speculative whatever its flags; a run role check plans the real configuration."""
-    monkeypatch.setattr(session_policy, "SPECULATIVE_PLANS_READ_ANY_SECRET", False)
-
     assert runs_service._plan_secret_arns(run, {"plan_secret_arns": listed}) == expected
 
 

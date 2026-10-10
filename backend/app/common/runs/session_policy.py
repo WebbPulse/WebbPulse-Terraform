@@ -28,11 +28,9 @@ document.
 
 Which secrets the grant reaches depends on the run. A workspace may name secret
 ARN patterns in `plan_secret_arns`; when it does, every plan of it reads those
-secrets and no others. When it names none, a plan reads any secret the run role
-can. For a confirmable plan that is the end state, because its apply holds the
-role's full rights anyway. For a speculative plan, a `plan_only` run or a pull
-request plan, it is transitional (`SPECULATIVE_PLANS_READ_ANY_SECRET`, TF-86):
-once every workspace names its plan secrets, an empty list will let one read none.
+secrets and no others. When it names none, a confirmable plan reads any secret
+the run role can, because its apply holds the role's full rights anyway, and a
+speculative plan, a `plan_only` run or a pull request plan, reads none.
 State is not the run role's business. The S3 backend gets its own credentials,
 from the control plane's state role narrowed by `state_policy` to one workspace's
 prefix, so a run can reach its own state and nothing else in the bucket, and a
@@ -103,19 +101,12 @@ def plan_secret_statements(secret_arns: Sequence[str] | None) -> tuple[dict[str,
     )
 
 
-SPECULATIVE_PLANS_READ_ANY_SECRET: Final = True
-"""Whether a speculative plan on a workspace naming no plan secrets still reads any secret.
-
-On while workspaces have no `plan_secret_arns`, so pull request plans keep refreshing
-what they did before. TF-86 sets the lists through the factory and then turns it off."""
-
-
 def plan_secret_arns_for(secret_arns: Sequence[str], *, speculative: bool) -> list[str] | None:
-    """The secrets one plan may read: the workspace's list, else any, unless speculative plans default to none."""
+    """The secrets one plan may read: the workspace's list, else none when speculative and any otherwise."""
     named = [arn for arn in secret_arns if arn]
     if named:
         return named
-    return [] if speculative and not SPECULATIVE_PLANS_READ_ANY_SECRET else None
+    return [] if speculative else None
 
 
 def plan_assume_statement(role_arns: Sequence[str]) -> dict[str, Any] | None:
@@ -262,7 +253,6 @@ __all__ = [
     "LOCK_FILE_SUFFIX",
     "PLAN_SESSION_POLICY_ARNS",
     "SESSION_POLICY_PLAINTEXT_LIMIT",
-    "SPECULATIVE_PLANS_READ_ANY_SECRET",
     "SessionPolicy",
     "encode",
     "for_phase",
