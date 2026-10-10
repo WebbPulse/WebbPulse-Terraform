@@ -16,7 +16,7 @@ from app.common.core.auth import RUNS_READ, RUNS_WRITE
 from app.domains.runs import run_options, tfe_runs
 from app.domains.runs import service as runs_service
 from app.domains.workspaces import service as workspaces_service
-from tests.conftest import ARTIFACTS_BUCKET, REGION
+from tests.conftest import ARTIFACTS_BUCKET, REGION, STATE_BUCKET
 from tests.domains.runs.test_logs import write_events
 
 API = "/api/v2"
@@ -207,6 +207,124 @@ def test_a_confirmable_saved_plan_reads_planned_and_saved(auth_client, awaiting_
     response = auth_client.post(f"{API}/runs/{run_id}/actions/apply", content=b"{}")
     assert response.status_code == 202, response.text
     assert runs_service.get_run(run_id)["status"] == "applying"
+
+
+def _write_state(workspace_id: str, serial: int, lineage: str = "lineage-a") -> None:
+    """Write the workspace's state object the way a run's engine would."""
+    body = json.dumps({"version": 4, "serial": serial, "lineage": lineage, "resources": []})
+    boto3.client("s3", region_name=REGION).put_object(
+        Bucket=STATE_BUCKET, Key=runs_service.state_key(workspace_id), Body=body.encode()
+    )
+
+
+def _plan_with_changes(run_id: str) -> None:
+    """Report a successful plan with changes for the run."""
+    runs_service.record_phase_result(
+        run_id, {"phase": "plan", "exit_code": 0, "changes": {"add": 1, "change": 0, "destroy": 0}, "error": ""}
+    )
+
+
+def _parked_saved_plan(auth_client, workspace_id: str) -> str:
+    """A saved plan that planned with changes and holds its confirmation token."""
+    config_version_id = _config_version(auth_client, workspace_id, speculative=False)
+    response = _create(auth_client, workspace_id, config_version_id, **{"save-plan": True})
+    assert response.status_code == 201, response.text
+    run_id = response.json()["data"]["id"]
+    _plan_with_changes(run_id)
+    runs_service.store_confirm_task_token(run_id, f"token-{run_id}")
+    return run_id
+
+
+def _applying_run(auth_client, workspace_id: str) -> dict:
+    """A run created behind whatever the workspace holds."""
+    config_version_id = _config_version(auth_client, workspace_id, speculative=False)
+    response = _create(auth_client, workspace_id, config_version_id)
+    assert response.status_code == 201, response.text
+    return runs_service.get_run(response.json()["data"]["id"])
+
+
+def test_a_parked_saved_plan_releases_the_queue(auth_client, workspace, state_machine):
+    """A run queued behind a saved plan starts once the plan parks, and a later run never queues."""
+    workspace_id = workspace["workspace_id"]
+    _write_state(workspace_id, 3)
+    config_version_id = _config_version(auth_client, workspace_id, speculative=False)
+    saved = _create(auth_client, workspace_id, config_version_id, **{"save-plan": True}).json()["data"]["id"]
+    queued = _applying_run(auth_client, workspace_id)
+    assert queued["status"] == "pending"
+    assert queued["queued_behind"] == saved
+
+    _plan_with_changes(saved)
+
+    row = runs_service.get_run(saved)
+    assert row["status"] == "awaiting_confirmation"
+    assert row["plan_state"] == {"serial": 3, "lineage": "lineage-a"}
+    assert runs_service.get_run(queued["run_id"])["status"] == "planning"
+    assert runs_service.active_run(workspace_id)["run_id"] == queued["run_id"]
+
+
+def test_a_current_saved_plan_still_applies(auth_client, workspace, state_machine):
+    """A saved plan whose state has not moved applies through `actions/apply`."""
+    workspace_id = workspace["workspace_id"]
+    _write_state(workspace_id, 3)
+    run_id = _parked_saved_plan(auth_client, workspace_id)
+    data = auth_client.get(f"{API}/runs/{run_id}").json()["data"]
+    assert data["attributes"]["status"] == "planned_and_saved"
+    response = auth_client.post(f"{API}/runs/{run_id}/actions/apply", content=b"{}")
+    assert response.status_code == 202, response.text
+    assert runs_service.get_run(run_id)["status"] == "applying"
+
+
+def test_a_stale_saved_plan_reads_discarded(auth_client, workspace, state_machine):
+    """A saved plan whose state moved on is discarded when the CLI reads it."""
+    workspace_id = workspace["workspace_id"]
+    run_id = _parked_saved_plan(auth_client, workspace_id)
+    assert runs_service.get_run(run_id)["plan_state"] == {"absent": True}
+    _write_state(workspace_id, 1)
+    data = auth_client.get(f"{API}/runs/{run_id}").json()["data"]
+    assert data["attributes"]["status"] == "discarded"
+    assert data["attributes"]["actions"]["is-confirmable"] is False
+    row = runs_service.get_run(run_id)
+    assert row["decision"]["actor"]["id"] == runs_service.STALE_PLAN_ACTOR["id"]
+
+
+def test_applying_a_stale_saved_plan_is_a_conflict(auth_client, workspace, state_machine):
+    """Confirming a saved plan made against an older serial is refused and discards it."""
+    workspace_id = workspace["workspace_id"]
+    _write_state(workspace_id, 3)
+    run_id = _parked_saved_plan(auth_client, workspace_id)
+    _write_state(workspace_id, 4)
+    response = auth_client.post(f"{API}/runs/{run_id}/actions/apply", content=b"{}")
+    assert response.status_code == 409, response.text
+    assert "stale" in response.json()["errors"][0]["detail"]
+    assert runs_service.get_run(run_id)["status"] == "discarded"
+
+
+def test_a_saved_plan_waits_for_an_executing_run(auth_client, workspace, state_machine):
+    """A saved plan cannot apply while another run executes on its workspace."""
+    workspace_id = workspace["workspace_id"]
+    run_id = _parked_saved_plan(auth_client, workspace_id)
+    other = _applying_run(auth_client, workspace_id)
+    assert other["status"] == "planning"
+    response = auth_client.post(f"{API}/runs/{run_id}/actions/apply", content=b"{}")
+    assert response.status_code == 409, response.text
+    assert runs_service.get_run(run_id)["status"] == "awaiting_confirmation"
+
+
+def test_an_applied_run_discards_the_stale_saved_plans(auth_client, workspace, state_machine):
+    """A run applying after a saved plan parked leaves that plan discarded."""
+    workspace_id = workspace["workspace_id"]
+    _write_state(workspace_id, 3)
+    saved = _parked_saved_plan(auth_client, workspace_id)
+    other = _applying_run(auth_client, workspace_id)["run_id"]
+    _plan_with_changes(other)
+    runs_service.store_confirm_task_token(other, f"token-{other}")
+    runs_service.confirm_run(other)
+    _write_state(workspace_id, 4)
+    runs_service.record_phase_result(
+        other, {"phase": "apply", "exit_code": 0, "changes": {"add": 1, "change": 0, "destroy": 0}, "error": ""}
+    )
+    assert runs_service.get_run(other)["status"] == "applied"
+    assert runs_service.get_run(saved)["status"] == "discarded"
 
 
 def test_stage_includes_read_as_empty(auth_client, awaiting_confirmation):

@@ -80,6 +80,11 @@ def workspace_run_ids(workspace_id: str, *, settings: Settings | None = None) ->
     return [str(item["run_id"]) for item in _workspace_runs(workspace_id, settings=resolved)]
 
 
+def _parked_saved_plan(item: dict[str, Any]) -> bool:
+    """Whether a run is a saved plan awaiting its apply, which holds no lock."""
+    return bool(item.get("save_plan", False)) and str(item.get("status", "")) == "awaiting_confirmation"
+
+
 def require_no_active_run(
     workspace_id: str, *, ignore_plan_only: bool = False, settings: Settings | None = None
 ) -> None:
@@ -87,12 +92,13 @@ def require_no_active_run(
 
     A status outside `TERMINAL_RUN_STATUSES` counts as still going, including one
     this module does not know, so a new status fails closed. `ignore_plan_only`
-    passes over plan only runs, which read state without its lock, for a caller that
-    only cares about the lock.
+    passes over plan only runs, which read state without its lock, and saved plans
+    parked awaiting their apply, which hold no lock, for a caller that only cares
+    about the lock.
     """
     resolved = settings or get_settings()
     for item in _workspace_runs(workspace_id, settings=resolved):
-        if ignore_plan_only and bool(item.get("plan_only", False)):
+        if ignore_plan_only and (bool(item.get("plan_only", False)) or _parked_saved_plan(item)):
             continue
         status = str(item.get("status", ""))
         if status not in TERMINAL_RUN_STATUSES:

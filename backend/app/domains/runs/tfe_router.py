@@ -197,9 +197,14 @@ def read_run(
     run_id: str = RunId,
     current: "AuthorizerClaims" = Depends(scopes(RUNS_READ)),
 ) -> Response:
-    """One run, with the workspace, plan and apply it names when `include` asks for them."""
+    """One run, with the workspace, plan and apply it names when `include` asks for them.
+
+    A saved plan whose state moved on is discarded here first, so `terraform apply
+    <planfile>` reads it as discarded rather than confirmable.
+    """
     held = claims_scopes(current)
     run = _run_or_404(run_id)
+    run = service.discard_if_stale(run) or run
     return document(tfe_runs.run_resource(run, held), included=_included(run, request, held))
 
 
@@ -242,6 +247,10 @@ def apply_run(
         confirmed = service.confirm_run(run_id, actor=actor_from_claims(current))
     except service.RunNotFound as error:
         raise not_found("run") from error
+    except service.SavedPlanStale as error:
+        raise conflict(service.SAVED_PLAN_STALE_MESSAGE) from error
+    except service.WorkspaceBusy as error:
+        raise conflict(service.WORKSPACE_BUSY_MESSAGE) from error
     except service.RunNotConfirmable as error:
         raise conflict("This run is not awaiting a confirmation.") from error
     audit.record_run_decision(audit.RUN_CONFIRMED, request=request, claims=current, run=confirmed)
