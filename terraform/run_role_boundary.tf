@@ -2,17 +2,12 @@ locals {
   run_role_boundary_name = "${local.prefix}-workspace-boundary"
   run_role_boundary_arn  = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${local.run_role_boundary_name}"
 
-  plane_named_services = [
-    "apigateway",
-    "cloudfront",
+  plane_regional_services = [
     "cloudwatch",
-    "cognito-idp",
     "dynamodb",
     "ecr",
     "ecs",
     "events",
-    "execute-api",
-    "iam",
     "kms",
     "lambda",
     "logs",
@@ -22,11 +17,11 @@ locals {
     "sqs",
     "ssm",
     "states",
-    "xray",
   ]
 
   plane_resource_patterns = concat(
-    [for service in local.plane_named_services : "arn:aws:${service}:*:*:*${local.prefix}*"],
+    [for service in local.plane_regional_services : "arn:aws:${service}:*:*:*${local.prefix}*"],
+    ["arn:aws:iam::*:*${local.prefix}*"],
     [
       "arn:aws:s3:::${local.prefix}-*",
       "arn:aws:s3:::${local.prefix}-*/*",
