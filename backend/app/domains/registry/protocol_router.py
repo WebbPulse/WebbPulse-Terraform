@@ -55,6 +55,7 @@ AUDIENCE_ENV: Final = "IDENTITY_AUDIENCE"
 DEVICE_AUDIENCE_ENV: Final = "IDENTITY_DEVICE_AUDIENCE"
 """An explicit device token audience; unset means the package default, `<issuer>/device`."""
 
+
 def is_run_registry_credential(request: Request) -> bool:
     """Whether the bearer is a live registry credential a run was given."""
     presented = bearer_credential(request)
