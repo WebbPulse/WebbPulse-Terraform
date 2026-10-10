@@ -343,16 +343,6 @@ locals {
         Action   = ["ssm:GetParameter"]
         Resource = [one(module.access_gate[*].origin_verify_ssm_parameter_arn)]
       },
-      ] : [], local.access_gate_enabled ? [
-      {
-        Sid      = "DecryptTheGateHeaderForRunApiTokens"
-        Effect   = "Allow"
-        Action   = ["kms:Decrypt"]
-        Resource = [data.aws_kms_alias.ssm.target_key_arn]
-        Condition = {
-          StringEquals = { "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com" }
-        }
-      },
     ] : [])
   }
 }
@@ -368,18 +358,6 @@ resource "aws_iam_role_policy" "lambda_domain" {
     Statement = concat(
       [
         {
-          Sid      = "WriteOwnLogs"
-          Effect   = "Allow"
-          Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-          Resource = "${module.lambda_domain[each.key].log_group_arn}:*"
-        },
-        {
-          Sid      = "WriteSpansToTheXRayOTLPEndpoint"
-          Effect   = "Allow"
-          Action   = ["xray:PutSpans", "xray:PutSpansForIndexing"]
-          Resource = "*"
-        },
-        {
           Sid      = "ReadWriteOwnTables"
           Effect   = "Allow"
           Action   = local.dynamodb_write_actions
@@ -394,7 +372,6 @@ resource "aws_iam_role_policy" "lambda_domain" {
           Resource = local.lambda_domain_read_arns[each.key]
         },
       ] : [],
-      [module.app_secrets.read_policy_statement],
       each.value.buckets ? local.bucket_statements["State"] : [],
       each.value.buckets ? local.bucket_statements["Artifacts"] : [],
       local.lambda_domain_extra_statements[each.key],
