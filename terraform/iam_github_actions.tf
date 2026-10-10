@@ -131,74 +131,7 @@ module "github_actions_role" {
     distribution_arns = [module.frontend.distribution_arn]
   }
 
-  policy_statements = concat([
-    {
-      sid = "UpdateDomainFunctions"
-      actions = [
-        "lambda:UpdateFunctionCode",
-        "lambda:GetFunction",
-        "lambda:GetFunctionConfiguration",
-        "lambda:PublishVersion",
-      ]
-      resources = local.lambda_domain_function_arns
-    },
-    {
-      sid       = "SmokeInvokeDomainFunctions"
-      actions   = ["lambda:InvokeFunction"]
-      resources = local.lambda_domain_function_arns
-    },
-    {
-      sid = "PublishFrontendAssets"
-      actions = [
-        "s3:PutObject",
-        "s3:GetObject",
-        "s3:DeleteObject",
-        "s3:ListBucket",
-      ]
-      resources = [
-        module.frontend.bucket_arn,
-        "${module.frontend.bucket_arn}/*",
-      ]
-    },
-    {
-      sid = "InvalidateFrontendCache"
-      actions = [
-        "cloudfront:CreateInvalidation",
-        "cloudfront:GetInvalidation",
-      ]
-      resources = [module.frontend.distribution_arn]
-    },
-    {
-      sid       = "EcrAuthToken"
-      actions   = ["ecr:GetAuthorizationToken"]
-      resources = ["*"]
-    },
-    {
-      sid = "EcrPushDomainAndRunnerImages"
-      actions = [
-        "ecr:BatchCheckLayerAvailability",
-        "ecr:InitiateLayerUpload",
-        "ecr:UploadLayerPart",
-        "ecr:CompleteLayerUpload",
-        "ecr:PutImage",
-        "ecr:BatchGetImage",
-        "ecr:DescribeImages",
-        "ecr:GetDownloadUrlForLayer",
-        "ecr:GetRepositoryPolicy",
-        "ecr:SetRepositoryPolicy",
-      ]
-      resources = module.registry.repository_arns_list
-    },
-    {
-      sid = "SharedBaseImagePull"
-      actions = [
-        "ecr:BatchGetImage",
-        "ecr:DescribeImages",
-        "ecr:GetDownloadUrlForLayer",
-      ]
-      resources = [local.shared_base_image_repository_arn]
-    },
-  ], local.github_actions_codeartifact_statements, local.github_actions_gate_statements, local.github_actions_e2e_statements)
+  policy_statements = concat(local.github_actions_codeartifact_statements, local.github_actions_gate_statements, local.github_actions_e2e_statements)
 }
 
 module "github_actions_ci_role" {
