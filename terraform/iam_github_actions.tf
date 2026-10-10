@@ -111,85 +111,32 @@ locals {
 
 module "github_actions_role" {
   source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "~> 2.33"
+  version = "~> 2.39"
 
   role_name = "${local.prefix}-github-actions-deploy"
 
   subjects = ["${local.github_subject_prefix}:environment:${var.environment}"]
 
-  policy_statements = concat([
-    {
-      sid = "UpdateDomainFunctions"
-      actions = [
-        "lambda:UpdateFunctionCode",
-        "lambda:GetFunction",
-        "lambda:GetFunctionConfiguration",
-        "lambda:PublishVersion",
-      ]
-      resources = local.lambda_domain_function_arns
-    },
-    {
-      sid       = "SmokeInvokeDomainFunctions"
-      actions   = ["lambda:InvokeFunction"]
-      resources = local.lambda_domain_function_arns
-    },
-    {
-      sid = "PublishFrontendAssets"
-      actions = [
-        "s3:PutObject",
-        "s3:GetObject",
-        "s3:DeleteObject",
-        "s3:ListBucket",
-      ]
-      resources = [
-        module.frontend.bucket_arn,
-        "${module.frontend.bucket_arn}/*",
-      ]
-    },
-    {
-      sid = "InvalidateFrontendCache"
-      actions = [
-        "cloudfront:CreateInvalidation",
-        "cloudfront:GetInvalidation",
-      ]
-      resources = [module.frontend.distribution_arn]
-    },
-    {
-      sid       = "EcrAuth"
-      actions   = ["ecr:GetAuthorizationToken"]
-      resources = ["*"]
-    },
-    {
-      sid = "EcrPushDomainAndRunnerImages"
-      actions = [
-        "ecr:BatchCheckLayerAvailability",
-        "ecr:InitiateLayerUpload",
-        "ecr:UploadLayerPart",
-        "ecr:CompleteLayerUpload",
-        "ecr:PutImage",
-        "ecr:BatchGetImage",
-        "ecr:DescribeImages",
-        "ecr:GetDownloadUrlForLayer",
-        "ecr:GetRepositoryPolicy",
-        "ecr:SetRepositoryPolicy",
-      ]
-      resources = module.registry.repository_arns_list
-    },
-    {
-      sid = "SharedBaseImagePull"
-      actions = [
-        "ecr:BatchGetImage",
-        "ecr:DescribeImages",
-        "ecr:GetDownloadUrlForLayer",
-      ]
-      resources = [local.shared_base_image_repository_arn]
-    },
-  ], local.github_actions_codeartifact_statements, local.github_actions_gate_statements, local.github_actions_e2e_statements)
+  lambda_image_deploy = {
+    function_arns = local.lambda_domain_function_arns
+  }
+
+  ecr_push = {
+    repository_arns      = module.registry.repository_arns_list
+    pull_repository_arns = [local.shared_base_image_repository_arn]
+  }
+
+  spa_deploy = {
+    bucket_arns       = [module.frontend.bucket_arn]
+    distribution_arns = [module.frontend.distribution_arn]
+  }
+
+  policy_statements = concat(local.github_actions_codeartifact_statements, local.github_actions_gate_statements, local.github_actions_e2e_statements)
 }
 
 module "github_actions_ci_role" {
   source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/github-actions-role"
-  version = "~> 2.33"
+  version = "~> 2.39"
 
   role_name        = "${local.prefix}-github-actions-ci"
   role_description = "Read-only CodeArtifact access for pull request CI in WebbPulse/WebbPulse-Terraform. Deploy permissions live on the separate github-actions-deploy role."

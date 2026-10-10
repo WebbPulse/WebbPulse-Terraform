@@ -21,12 +21,19 @@ from webbpulse.identity.crypto import (
     SealedSecret,
     SecretMasterKeyCipher,
 )
+from webbpulse.security import derive_key as _hkdf
 
 from ..composition.settings import Settings, get_settings
 
 VARIABLE_PURPOSE: Final = "terraform-variable"
 """The `purpose` half of the encryption context, so a sealed variable value can
 never be replayed as a TOTP seed and the reverse."""
+
+DERIVED_KEY_INFO_PREFIX: Final = "webbpulse-terraform/"
+"""The HKDF info prefix for `derive_key`. Changing it changes every derived key."""
+
+DERIVED_KEY_BYTES: Final = 32
+"""The length of a key `derive_key` returns."""
 
 CIPHERTEXT_FIELDS: Final = ("secret_ciphertext", "secret_nonce", "wrapped_data_key", "secret_scheme")
 """The stored attributes a sealed value occupies. None is a secret on its own."""
@@ -68,19 +75,17 @@ def cipher(settings: Settings | None = None) -> SecretMasterKeyCipher:
 def derive_key(purpose: str, settings: Settings | None = None) -> bytes:
     """A 32 byte key for one named purpose, derived by HKDF-SHA256 from the master key.
 
-    For a MAC rather than a seal, such as the signed `tfe.v2` log URLs. The purpose is
-    the HKDF info, so no derived key equals another or any sealing key.
+    For a MAC rather than a seal, such as the signed `tfe.v2` log URLs. The purpose,
+    behind `DERIVED_KEY_INFO_PREFIX`, is the HKDF info, so no derived key equals
+    another or any sealing key. The salt is empty, which RFC 5869 reads as
+    `HASH_LENGTH` zero bytes, so every key derived before the move onto
+    `webbpulse.security.derive_key` is unchanged.
 
     Raises:
         MasterKeyUnavailable: No usable master key is configured.
     """
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-
     master = _master_key(settings or get_settings())
-    return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=f"webbpulse-terraform/{purpose}".encode()).derive(
-        master
-    )
+    return _hkdf(master, f"{DERIVED_KEY_INFO_PREFIX}{purpose}", length=DERIVED_KEY_BYTES)
 
 
 def _context_subject(workspace_id: str, key: str) -> str:
@@ -123,6 +128,8 @@ def open_sealed(item: Any, *, workspace_id: str, key: str, settings: Settings | 
 
 __all__ = [
     "CIPHERTEXT_FIELDS",
+    "DERIVED_KEY_BYTES",
+    "DERIVED_KEY_INFO_PREFIX",
     "VARIABLE_PURPOSE",
     "EnvelopeDecryptionFailed",
     "MasterKeyUnavailable",
