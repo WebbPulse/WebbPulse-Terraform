@@ -212,7 +212,7 @@ def build_domain_app(domain: Domain | str, *, settings: Settings | None = None) 
     Both roots go through here, so the middleware stack is identical locally, in
     the suite and in each deployed function.
     """
-    from ..core.middleware import DomainHeaderMiddleware, TrailingSlashMiddleware
+    from webbpulse.http import DomainHeaderMiddleware, TrailingSlashMiddleware
 
     resolved_domain = DOMAINS[domain] if isinstance(domain, str) else domain
     resolved = settings if settings is not None else get_settings()

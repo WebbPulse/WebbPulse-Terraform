@@ -24,11 +24,11 @@ rather than this API's.
 from __future__ import annotations
 
 import os
-import threading
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from fastapi.responses import JSONResponse
+from webbpulse.identity import cached_verifier
 from webbpulse.identity.api_keys import is_api_key, verify
 from webbpulse.identity.claims import AuthorizerClaims
 from webbpulse.identity.device_grant import DEVICE_GRANT_CLAIM
@@ -55,10 +55,6 @@ AUDIENCE_ENV: Final = "IDENTITY_AUDIENCE"
 DEVICE_AUDIENCE_ENV: Final = "IDENTITY_DEVICE_AUDIENCE"
 """An explicit device token audience; unset means the package default, `<issuer>/device`."""
 
-_VERIFIERS: dict[tuple[str, str, str], JwksVerifier] = {}
-_VERIFIERS_LOCK = threading.Lock()
-
-
 def is_run_registry_credential(request: Request) -> bool:
     """Whether the bearer is a live registry credential a run was given."""
     presented = bearer_credential(request)
@@ -84,14 +80,7 @@ def access_token_verifier() -> JwksVerifier | None:
     device_audience = ""
     if settings.IDENTITY_DEVICE_GRANT_ENABLED:
         device_audience = os.environ.get(DEVICE_AUDIENCE_ENV, "").strip() or f"{issuer}/device"
-    key = (issuer, audience, device_audience)
-    with _VERIFIERS_LOCK:
-        verifier = _VERIFIERS.get(key)
-        if verifier is None:
-            audiences = [audience, device_audience] if device_audience else [audience]
-            verifier = JwksVerifier(issuer=issuer, audience=audiences)
-            _VERIFIERS[key] = verifier
-    return verifier
+    return cached_verifier(issuer, [audience, device_audience])
 
 
 def access_token_claims(token: str) -> AuthorizerClaims:

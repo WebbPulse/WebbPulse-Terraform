@@ -13,10 +13,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from webbpulse.http import create_app
+from webbpulse.http import MONOLITH_DOMAIN, DomainHeaderMiddleware, TrailingSlashMiddleware, create_app
 from webbpulse.identity import LOCAL_ENVIRONMENT, LocalAuthorizerMiddleware
 
-from ..core.middleware import MONOLITH_DOMAIN, DomainHeaderMiddleware, TrailingSlashMiddleware
 from ..identity.package_glue import build_identity_settings
 from ..version import VERSION
 from .settings import Settings, get_settings
