@@ -1,11 +1,9 @@
-resource "random_password" "secret_key" {
-  length           = 64
-  special          = true
-  override_special = null
-  min_special      = 0
-  min_numeric      = 0
-  min_upper        = 0
-  min_lower        = 0
+removed {
+  from = random_password.secret_key
+
+  lifecycle {
+    destroy = false
+  }
 }
 
 module "app_secrets" {
@@ -22,10 +20,13 @@ module "app_secrets" {
       version     = 3
 
       json_preserve_unmanaged = true
-      json = {
-        SECRET_KEY = random_password.secret_key.result
-      }
       json_generate = {
+        SECRET_KEY = {
+          format  = "password"
+          length  = 64
+          special = true
+          keep    = true
+        }
         variables_master_key = {
           format = "bytes32-base64"
           keep   = true
