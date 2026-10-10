@@ -193,6 +193,11 @@ output "provider_release_role_arn" {
   value       = module.provider_release_role.role_arn
 }
 
+output "provider_signing_kms_key_alias_arn" {
+  description = "ARN of the alias of the KMS key that signs provider releases, set as SIGNING_KMS_KEY_ID on the provider repository's <env> environment"
+  value       = aws_kms_alias.provider_signing.arn
+}
+
 output "provider_signing_public_key_parameters" {
   description = "SSM parameter names holding the public half of the provider release signing key, keyed public_key (ASCII armor) and key_id (long key id), for the registry to serve"
   value       = local.provider_signing_parameters
