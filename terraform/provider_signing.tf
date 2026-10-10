@@ -59,11 +59,58 @@ resource "aws_secretsmanager_secret_policy" "provider_signing_key" {
   policy     = data.aws_iam_policy_document.provider_signing_key.json
 }
 
+data "aws_iam_policy_document" "provider_signing_kms_key" {
+  statement {
+    sid       = "AccountAdministersTheKey"
+    effect    = "Allow"
+    actions   = ["kms:*"]
+    resources = ["*"]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+  }
+
+  statement {
+    sid       = "OnlyTheReleaseWorkflowSigns"
+    effect    = "Deny"
+    actions   = ["kms:Sign"]
+    resources = ["*"]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "ArnNotEquals"
+      variable = "aws:PrincipalArn"
+      values   = [module.provider_release_role.role_arn]
+    }
+  }
+}
+
+resource "aws_kms_key" "provider_signing" {
+  description              = "Signs terraform-provider-webbpulse release checksums for ${local.prefix} as an OpenPGP key. The private half never leaves KMS and only the provider release role may sign"
+  key_usage                = "SIGN_VERIFY"
+  customer_master_key_spec = "RSA_4096"
+  deletion_window_in_days  = 30
+  policy                   = data.aws_iam_policy_document.provider_signing_kms_key.json
+
+  tags = { Component = "provider-signing" }
+}
+
+resource "aws_kms_alias" "provider_signing" {
+  name          = "alias/${local.prefix}-provider-signing"
+  target_key_id = aws_kms_key.provider_signing.key_id
+}
+
 resource "aws_ssm_parameter" "provider_signing" {
   for_each = local.provider_signing_parameters
 
   name           = each.value
-  description    = "Public ${replace(each.key, "_", " ")} of the terraform-provider-webbpulse release signing key, written by the key generation workflow and served by the registry"
+  description    = "Public ${replace(each.key, "_", " ")} of the terraform-provider-webbpulse release signing key, written by the release workflow from the KMS signing key and served by the registry"
   type           = "String"
   tier           = "Standard"
   insecure_value = "pending"
@@ -106,7 +153,7 @@ module "provider_release_role" {
   version = "~> 2.33"
 
   role_name        = "${local.prefix}-provider-release"
-  role_description = "Reads the provider release signing key and uploads signed builds to the registry. Assumable only from the ${var.environment} environment of WebbPulse/terraform-provider-webbpulse."
+  role_description = "Signs provider releases with the KMS signing key, publishes its public key and uploads signed builds to the registry. Assumable only from the ${var.environment} environment of WebbPulse/terraform-provider-webbpulse."
 
   create_oidc_provider = false
   oidc_provider_arn    = module.github_actions_role.oidc_provider_arn
@@ -120,6 +167,16 @@ module "provider_release_role" {
       sid       = "ReadSigningKey"
       actions   = ["secretsmanager:GetSecretValue"]
       resources = [aws_secretsmanager_secret.provider_signing_key.arn]
+    },
+    {
+      sid       = "SignWithTheKmsKey"
+      actions   = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"]
+      resources = [aws_kms_key.provider_signing.arn]
+    },
+    {
+      sid       = "PublishThePublicKey"
+      actions   = ["ssm:GetParameter", "ssm:PutParameter"]
+      resources = [for parameter in aws_ssm_parameter.provider_signing : parameter.arn]
     },
     {
       sid       = "UploadSignedBuilds"
