@@ -122,7 +122,7 @@ def test_template_trusts_only_the_vending_role_with_the_external_id(auth_client,
     role = template["Resources"]["RunRole"]["Properties"]
     (statement,) = role["AssumeRolePolicyDocument"]["Statement"]
     assert statement["Effect"] == "Allow"
-    assert statement["Action"] == "sts:AssumeRole"
+    assert statement["Action"] == ["sts:AssumeRole", "sts:TagSession"]
     assert statement["Principal"] == {"AWS": [RUN_CREDENTIALS_ROLE_ARN]}
     assert not set(statement["Principal"]["AWS"]) & set(RUNNER_TASK_ROLE_ARNS)
     assert statement["Condition"] == {"StringEquals": {"sts:ExternalId": {"Ref": "ExternalId"}}}

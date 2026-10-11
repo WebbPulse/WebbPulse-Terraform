@@ -178,7 +178,7 @@ def template_body(settings: Settings) -> dict[str, Any]:
                 "Sid": "WebbPulseTerraformCredentialVending",
                 "Effect": "Allow",
                 "Principal": {"AWS": principals},
-                "Action": "sts:AssumeRole",
+                "Action": ["sts:AssumeRole", "sts:TagSession"],
                 "Condition": {"StringEquals": {"sts:ExternalId": {"Ref": "ExternalId"}}},
             }
         ],
