@@ -313,8 +313,8 @@ function ReconnectNotice({
       <p className="font-medium text-warning">Reconnect required</p>
       <p className="max-w-prose text-text-muted">
         This role was created from an older AWS CloudFormation template whose
-        trust is looser than the current one, or that runs can no longer
-        assume. Delete the stack
+        trust is looser than the current one, or that runs can no longer assume.
+        Delete the stack
         {account === null ? null : (
           <>
             {' '}
