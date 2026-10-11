@@ -19,7 +19,12 @@ export {
   type AttributeKind,
 } from './planDiff';
 export { PlanSummaryLine, type PlanSummaryLineProps } from './PlanSummaryLine';
-export { PlanView, type PlanViewProps } from './PlanView';
+export {
+  PlanSummary,
+  PlanView,
+  type PlanSummaryProps,
+  type PlanViewProps,
+} from './PlanView';
 export {
   ResourceChangeList,
   type ResourceChangeListProps,
