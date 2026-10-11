@@ -125,7 +125,13 @@ def test_template_trusts_only_the_vending_role_with_the_external_id(auth_client,
     assert statement["Action"] == "sts:AssumeRole"
     assert statement["Principal"] == {"AWS": [RUN_CREDENTIALS_ROLE_ARN]}
     assert not set(statement["Principal"]["AWS"]) & set(RUNNER_TASK_ROLE_ARNS)
-    assert statement["Condition"] == {"StringEquals": {"sts:ExternalId": {"Ref": "ExternalId"}}}
+    assert statement["Condition"] == {
+        "StringEquals": {
+            "sts:ExternalId": {"Ref": "ExternalId"},
+            "aws:RequestTag/workspace": {"Ref": "ExternalId"},
+            "aws:RequestTag/run_phase": {"Fn::If": ["CreatePlanRole", ["apply"], ["plan", "apply"]]},
+        }
+    }
     assert tagging["Effect"] == "Allow"
     assert tagging["Action"] == "sts:TagSession"
     assert tagging["Principal"] == {"AWS": [RUN_CREDENTIALS_ROLE_ARN]}

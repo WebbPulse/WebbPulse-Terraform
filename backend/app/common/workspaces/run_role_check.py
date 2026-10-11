@@ -14,6 +14,10 @@ The answer is one of three:
 - `unverified`: no run with a verdict has used this ARN yet, so a plan only run is
   the check.
 
+A workspace with a plan role never assumes its run role during a plan, so for it a
+plan only run proves the plan role that travels with the run role, and the first
+apply proves the run role itself.
+
 A role staged as `pending_run_role_arn` is held to more: its verification run has
 to finish its plan, not merely get past AssumeRole, because a role the runner can
 assume but cannot plan with (a state backend it cannot reach, say) would break
