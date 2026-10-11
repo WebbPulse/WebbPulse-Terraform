@@ -9,7 +9,7 @@ data "aws_iam_policy_document" "example_run_role_trust" {
   statement {
     sid     = "RunCredentialsVendingAssumes"
     effect  = "Allow"
-    actions = ["sts:AssumeRole", "sts:TagSession"]
+    actions = ["sts:AssumeRole"]
 
     principals {
       type        = "AWS"
@@ -19,6 +19,23 @@ data "aws_iam_policy_document" "example_run_role_trust" {
     condition {
       test     = "StringEquals"
       variable = "sts:ExternalId"
+      values   = [var.example_workspace_id]
+    }
+  }
+
+  statement {
+    sid     = "TagWorkspaceSessions"
+    effect  = "Allow"
+    actions = ["sts:TagSession"]
+
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.run_credentials.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/workspace"
       values   = [var.example_workspace_id]
     }
   }

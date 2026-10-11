@@ -21,6 +21,7 @@ import {
   Field,
   INPUT_CLASS,
   PageHeader,
+  PlanSummary,
   PlanView,
   RelativeTime,
   RunLogs,
@@ -101,7 +102,10 @@ export function RunDetail(): React.ReactElement {
  *
  * The layout follows the hosted product this replaces: what the run is at the
  * top, how far it has got down the left, and the plan itself in the main
- * column with the raw log a tab away.
+ * column with the raw log a tab away. A run waiting on confirmation puts that
+ * decision at the top of the main column, under the plan's counts and above
+ * its resources, so a large plan cannot bury it; every other decision sits
+ * under the plan.
  */
 function RunBody({
   run,
@@ -114,6 +118,8 @@ function RunBody({
 }): React.ReactElement {
   const [tab, setTab] = useState<BodyTab>('plan');
   const plan = planPhaseStatus(run);
+  const waiting = run.status === 'awaiting_confirmation';
+  const decision = <ConfirmationPanel run={run} onDone={onChanged} />;
 
   return (
     <div className="space-y-5">
@@ -145,11 +151,18 @@ function RunBody({
             ]}
           />
           {tab === 'plan' ? (
-            <PlanPanel run={run} planStatus={plan} />
+            <PlanPanel
+              run={run}
+              planStatus={plan}
+              decision={waiting ? decision : null}
+            />
           ) : (
-            <RunLogs run={run} />
+            <>
+              {waiting ? decision : null}
+              <RunLogs run={run} />
+            </>
           )}
-          <ConfirmationPanel run={run} onDone={onChanged} />
+          {waiting ? null : decision}
         </div>
       </div>
     </div>
@@ -266,13 +279,22 @@ function RunFacts({ run }: { run: Run }): React.ReactElement {
   );
 }
 
-/** The plan, once the run has one to show. */
+/**
+ * The plan, once the run has one to show.
+ *
+ * `decision` sits under the plan's counts and above its resources, or above
+ * whatever stands in for the plan while it loads or cannot be read. It keeps
+ * one place in the tree through all of those, so the plan arriving never
+ * remounts it and a dialog it opened stays open.
+ */
 function PlanPanel({
   run,
   planStatus,
+  decision,
 }: {
   run: Run;
   planStatus: ReturnType<typeof planPhaseStatus>;
+  decision: React.ReactNode;
 }): React.ReactElement {
   const [plan, setPlan] = useState<RunPlan | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -307,8 +329,10 @@ function PlanPanel({
     };
   }, [runId, ready, applied]);
 
+  const shown = ready ? plan : null;
+  let body: React.ReactNode;
   if (!ready) {
-    return (
+    body = (
       <p
         data-testid="plan-pending"
         className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-text-faint"
@@ -320,17 +344,15 @@ function PlanPanel({
             : 'This run has no finished plan to show. The raw log has what the engine printed.'}
       </p>
     );
-  }
-  if (loading && plan === null) {
-    return (
+  } else if (shown === null && loading) {
+    body = (
       <div className="flex items-center gap-2 text-sm text-text-faint">
         <Spinner label="Loading the plan" className="size-4" />
         Loading the plan
       </div>
     );
-  }
-  if (plan === null) {
-    return (
+  } else if (shown === null) {
+    body = (
       <div className="space-y-2">
         <ErrorNotice error={error} />
         <p className="text-sm text-text-faint">
@@ -339,13 +361,29 @@ function PlanPanel({
         </p>
       </div>
     );
+  } else {
+    body = (
+      <PlanView
+        plan={shown}
+        applyChanges={run.apply_changes}
+        isDestroy={run.is_destroy}
+        showSummary={false}
+      />
+    );
   }
+
   return (
-    <PlanView
-      plan={plan}
-      applyChanges={run.apply_changes}
-      isDestroy={run.is_destroy}
-    />
+    <div className="space-y-5">
+      {shown === null ? null : (
+        <PlanSummary
+          plan={shown}
+          applyChanges={run.apply_changes}
+          isDestroy={run.is_destroy}
+        />
+      )}
+      {decision}
+      {body}
+    </div>
   );
 }
 
@@ -353,11 +391,15 @@ function PlanPanel({
 type Decision = 'confirm' | 'discard';
 
 /**
- * Confirm and apply, or discard, below the plan.
+ * Confirm and apply, or discard, the run's plan.
  *
- * Cancel lives here too while a phase is running, so every decision about the
- * run is in one place, under what it is a decision about. Confirm and discard
- * open a dialog with an optional comment, as the hosted product does.
+ * While the run waits on confirmation this is the page's call to action: a
+ * tinted banner at the top of the plan, red for a destroy, with the buttons
+ * beside the explanation on a wide screen and full width under it on a phone.
+ * Otherwise it is the quiet panel under the plan, where cancel also lives while
+ * a phase is running, so every decision about the run is in one place. Confirm
+ * and discard open a dialog with an optional comment, as the hosted product
+ * does.
  */
 function ConfirmationPanel({
   run,
@@ -396,79 +438,149 @@ function ConfirmationPanel({
 
   const waiting = run.status === 'awaiting_confirmation';
   const destroy = isDestroyRun(run);
+  const buttonWidth = waiting ? 'flex-1 sm:flex-none' : '';
+
+  const buttons = (
+    <>
+      {allowConfirm ? (
+        <Button
+          variant={destroy ? 'danger' : 'primary'}
+          disabled={busy}
+          className={buttonWidth}
+          onClick={() => {
+            setAsking('confirm');
+          }}
+        >
+          {destroy ? 'Confirm & destroy' : 'Confirm & apply'}
+        </Button>
+      ) : null}
+      {allowDiscard ? (
+        <Button
+          disabled={busy}
+          className={buttonWidth}
+          onClick={() => {
+            setAsking('discard');
+          }}
+        >
+          Discard run
+        </Button>
+      ) : null}
+      {allowCancel ? (
+        <Button
+          variant="danger"
+          disabled={busy}
+          busy={busy}
+          busyLabel="Working"
+          onClick={() => {
+            void cancel();
+          }}
+        >
+          Cancel run
+        </Button>
+      ) : null}
+    </>
+  );
+
+  const dialog =
+    asking === null ? null : (
+      <DecisionDialog
+        run={run}
+        decision={asking}
+        onClose={closeDialog}
+        onDone={() => {
+          setAsking(null);
+          onDone();
+        }}
+      />
+    );
+
+  if (waiting) {
+    return (
+      <section
+        data-testid="confirmation-panel"
+        data-placement="top"
+        data-tone={destroy ? 'destroy' : 'apply'}
+        aria-labelledby="run-decision"
+        className={`rounded-lg border shadow-sm ${
+          destroy
+            ? 'border-danger-line bg-danger-soft'
+            : 'border-warning-line bg-warning-soft'
+        }`}
+      >
+        <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <span
+              aria-hidden="true"
+              className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border bg-panel ${
+                destroy
+                  ? 'border-danger-line text-danger'
+                  : 'border-warning-line text-warning'
+              }`}
+            >
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                className="size-3.5"
+              >
+                <path d="M8 4.5v4.25" />
+                <path d="M8 11.5h.01" />
+              </svg>
+            </span>
+            <div className="min-w-0 space-y-1">
+              <h3
+                id="run-decision"
+                className="text-sm font-semibold text-text-strong"
+              >
+                {allowConfirm
+                  ? destroy
+                    ? 'This destroy plan needs confirmation'
+                    : 'This plan needs confirmation'
+                  : 'This plan cannot be applied'}
+              </h3>
+              <p className="max-w-prose text-sm text-text-muted">
+                {allowConfirm
+                  ? destroy
+                    ? 'Review the plan below. Confirm to destroy every resource it lists in your AWS account, or discard it to keep them.'
+                    : 'Review the plan below. Confirm to apply it to your AWS account, or discard it to throw it away.'
+                  : 'This is a plan only run, so nothing is applied. Discard it once you have read the plan below.'}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
+            {buttons}
+          </div>
+        </div>
+        {error === null ? null : (
+          <div className="px-4 pb-4">
+            <ErrorNotice error={error} />
+          </div>
+        )}
+        {dialog}
+      </section>
+    );
+  }
 
   return (
     <section
       data-testid="confirmation-panel"
+      data-placement="bottom"
       aria-labelledby="run-decision"
-      className={`space-y-3 rounded-lg border p-4 ${
-        waiting ? 'border-warning-line bg-warning-soft' : 'border-line bg-panel'
-      }`}
+      className="space-y-3 rounded-lg border border-line bg-panel p-4"
     >
       <h3 id="run-decision" className="text-sm font-semibold text-text-strong">
-        {waiting
-          ? 'This plan needs confirmation'
-          : allowCancel
-            ? 'Stop this run'
-            : 'Decide on this plan'}
+        {allowCancel ? 'Stop this run' : 'Decide on this plan'}
       </h3>
       <p className="max-w-prose text-sm text-text-muted">
-        {waiting
-          ? destroy
-            ? 'Confirm to destroy every resource listed above in your AWS account, or discard the plan to keep them.'
-            : 'Confirm to apply the plan above to your AWS account, or discard it to throw it away.'
-          : allowCancel
-            ? 'Cancelling stops the phase that is running. Anything already applied stays applied.'
-            : 'The plan finished. Confirmation opens once the run is ready for it.'}
+        {allowCancel
+          ? 'Cancelling stops the phase that is running. Anything already applied stays applied.'
+          : 'The plan finished. Confirmation opens once the run is ready for it.'}
       </p>
-      <div className="flex flex-wrap items-center gap-2">
-        {allowConfirm ? (
-          <Button
-            variant={destroy ? 'danger' : 'primary'}
-            disabled={busy}
-            onClick={() => {
-              setAsking('confirm');
-            }}
-          >
-            {destroy ? 'Confirm & destroy' : 'Confirm & apply'}
-          </Button>
-        ) : null}
-        {allowDiscard ? (
-          <Button
-            disabled={busy}
-            onClick={() => {
-              setAsking('discard');
-            }}
-          >
-            Discard run
-          </Button>
-        ) : null}
-        {allowCancel ? (
-          <Button
-            variant="danger"
-            disabled={busy}
-            busy={busy}
-            busyLabel="Working"
-            onClick={() => {
-              void cancel();
-            }}
-          >
-            Cancel run
-          </Button>
-        ) : null}
-      </div>
+      <div className="flex flex-wrap items-center gap-2">{buttons}</div>
       <ErrorNotice error={error} />
-      {asking === null ? null : (
-        <DecisionDialog
-          run={run}
-          decision={asking}
-          onClose={closeDialog}
-          onDone={() => {
-            setAsking(null);
-            onDone();
-          }}
-        />
-      )}
+      {dialog}
     </section>
   );
 }

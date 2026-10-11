@@ -9,7 +9,7 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
   statement {
     sid     = "E2ESuiteWorkspaces"
     effect  = "Allow"
-    actions = ["sts:AssumeRole", "sts:TagSession"]
+    actions = ["sts:AssumeRole"]
 
     principals {
       type        = "AWS"
@@ -35,7 +35,7 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
     content {
       sid     = "DurableE2EWorkspaces"
       effect  = "Allow"
-      actions = ["sts:AssumeRole", "sts:TagSession"]
+      actions = ["sts:AssumeRole"]
 
       principals {
         type        = "AWS"
@@ -47,6 +47,23 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
         variable = "sts:ExternalId"
         values   = var.e2e_run_role_workspace_ids
       }
+    }
+  }
+
+  statement {
+    sid     = "TagWorkspaceSessions"
+    effect  = "Allow"
+    actions = ["sts:TagSession"]
+
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.run_credentials.arn]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/workspace"
+      values   = ["ws-??????????????????????????"]
     }
   }
 }

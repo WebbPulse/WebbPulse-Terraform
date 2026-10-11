@@ -178,9 +178,16 @@ def template_body(settings: Settings) -> dict[str, Any]:
                 "Sid": "WebbPulseTerraformCredentialVending",
                 "Effect": "Allow",
                 "Principal": {"AWS": principals},
-                "Action": ["sts:AssumeRole", "sts:TagSession"],
+                "Action": "sts:AssumeRole",
                 "Condition": {"StringEquals": {"sts:ExternalId": {"Ref": "ExternalId"}}},
-            }
+            },
+            {
+                "Sid": "WebbPulseTerraformSessionTags",
+                "Effect": "Allow",
+                "Principal": {"AWS": principals},
+                "Action": "sts:TagSession",
+                "Condition": {"StringEquals": {"aws:RequestTag/workspace": {"Ref": "ExternalId"}}},
+            },
         ],
     }
     tags = [{"Key": WORKSPACE_TAG_KEY, "Value": {"Ref": "ExternalId"}}]

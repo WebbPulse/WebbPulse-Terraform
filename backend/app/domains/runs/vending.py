@@ -17,6 +17,14 @@ a role that can write. The run role is still assumed during the plan, under the
 plan's read only session policy, and its keys are dropped at once: that keeps a
 plan proving the apply role's trust, which is what the run role check reads.
 
+Every run role and plan role session carries four session tags, `run_phase`,
+`organization`, `project` and `workspace`, which a trust can require through
+`aws:RequestTag/<key>` the way an HCP trust matches its OIDC subject. A role whose
+trust does not yet allow `sts:TagSession` refuses a tagged request, so that request
+is retried once untagged and the fallback is logged: the retry grants nothing a
+tag requiring trust would accept, and it keeps roles working while their trusts
+catch up.
+
 Both sessions last at most an hour, the role chaining ceiling, which a long
 phase outlives. The runner therefore asks for a fresh pair before they expire
 through `POST /runs/{id}/credentials`, which vends again exactly as the bundle
@@ -44,6 +52,7 @@ from typing import Any, Final
 
 from ...common.composition.settings import Settings
 from ...common.runs import session_policy
+from ...common.tfe.resources import ORGANIZATION
 from .schemas.run import Phase
 
 VENDING_SESSION_NAME: Final = "webbpulse-terraform-vending"
@@ -51,6 +60,9 @@ VENDING_SESSION_NAME: Final = "webbpulse-terraform-vending"
 
 PROOF_DURATION_SECONDS: Final = 900
 """The shortest session STS grants, for the run role assume that only proves its trust."""
+
+TAG_FALLBACK_ERROR_CODES: Final = frozenset({"AccessDenied", "PackedPolicyTooLarge"})
+"""The `AssumeRole` errors after which a tagged request is retried untagged."""
 
 _log = logging.getLogger(__name__)
 
@@ -173,6 +185,41 @@ def run_role_request(
     return request
 
 
+def session_tags(workspace_id: str, phase: Phase, project_id: str) -> list[dict[str, str]]:
+    """The session tags of a run role or plan role session, which trusts may require."""
+    tags = {"run_phase": phase, "organization": ORGANIZATION, "project": project_id, "workspace": workspace_id}
+    return [{"Key": key, "Value": value} for key, value in tags.items() if value]
+
+
+def _error_code(error: Exception) -> str:
+    """A botocore failure's error code, or an empty string for anything else."""
+    from botocore.exceptions import ClientError
+
+    if isinstance(error, ClientError):
+        return str(error.response.get("Error", {}).get("Code", ""))
+    return ""
+
+
+def _assume_tagged(client: Any, request: dict[str, Any], tags: list[dict[str, str]], *, run_id: str) -> Any:
+    """`AssumeRole` with session tags, retried untagged when the role's trust refuses the tags."""
+    try:
+        return client.assume_role(**request, Tags=tags)
+    except Exception as error:
+        if _error_code(error) not in TAG_FALLBACK_ERROR_CODES:
+            raise
+        response = client.assume_role(**request)
+        _log.warning(
+            "A role took an untagged session after refusing a tagged one.",
+            extra={
+                "event": "runs.credentials.untagged_fallback",
+                "run_id": run_id,
+                "role_arn": request["RoleArn"],
+                "error_code": _error_code(error),
+            },
+        )
+        return response
+
+
 def state_role_request(workspace_id: str, run_id: str, phase: Phase, *, settings: Settings) -> dict[str, Any]:
     """The `AssumeRole` request for the state role, narrowed to one workspace's prefix."""
     return {
@@ -196,12 +243,14 @@ def vend(
     plan_assume_role_arns: Sequence[str] = (),
     plan_role_arn: str = "",
     plan_secret_arns: Sequence[str] | None = None,
+    project_id: str = "",
 ) -> tuple[VendedCredentials, VendedCredentials]:
     """The provider and state credentials for one phase of one run.
 
     `plan_assume_role_arns` are the reader roles a plan session may assume, and
     `plan_secret_arns` the secrets it may read (any for None, none when empty);
-    an apply ignores both. `workspace_name` is carried in the run role's session name.
+    an apply ignores both. `workspace_name` is carried in the run role's session name,
+    and `project_id` in the `project` session tag.
     A `plan_role_arn` is what a plan's provider keys come from; the run role is
     then only assumed to prove its trust.
 
@@ -226,9 +275,11 @@ def vend(
         raise VendingUnavailable(f"the vending role could not be assumed: {_error_text(error)}") from error
     client = _sts(settings, vending)
     separate = phase == "plan" and bool(plan_role_arn)
+    tags = session_tags(workspace_id, phase, project_id)
     try:
-        run_role_session = client.assume_role(
-            **run_role_request(
+        run_role_session = _assume_tagged(
+            client,
+            run_role_request(
                 role_arn,
                 workspace_id,
                 run_id,
@@ -237,7 +288,9 @@ def vend(
                 workspace_name=workspace_name,
                 plan_assume_role_arns=() if separate else plan_assume_role_arns,
                 plan_secret_arns=[] if separate else plan_secret_arns,
-            )
+            ),
+            tags,
+            run_id=run_id,
         )
     except Exception as error:
         raise RunRoleAssumeFailed(f"assume role failed: {_error_text(error)}") from error
@@ -245,8 +298,9 @@ def vend(
         del run_role_session
         try:
             provider = _credentials(
-                client.assume_role(
-                    **run_role_request(
+                _assume_tagged(
+                    client,
+                    run_role_request(
                         plan_role_arn,
                         workspace_id,
                         run_id,
@@ -255,7 +309,9 @@ def vend(
                         workspace_name=workspace_name,
                         plan_assume_role_arns=plan_assume_role_arns,
                         plan_secret_arns=plan_secret_arns,
-                    )
+                    ),
+                    tags,
+                    run_id=run_id,
                 )
             )
         except Exception as error:
@@ -468,6 +524,7 @@ __all__ = [
     "mint_workload_identity",
     "run_role_request",
     "session_name",
+    "session_tags",
     "sign_token",
     "state_role_request",
     "vend",
