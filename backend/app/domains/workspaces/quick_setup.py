@@ -24,8 +24,11 @@ token. The account id is then optional: the stack's own ARN names the account, s
 the person only clicks the link. See `app.common.workspaces.aws_connect`.
 
 By default the stack also creates a read only plan role beside the run role, under
-the IAM path `/<role prefix>plan/`, with the same trust. Plans then assume it, so a
-plan never holds keys that could apply, and applies keep the run role.
+the IAM path `/<role prefix>plan/`. Both trusts require the session tags the vending
+role sends: `workspace` equal to the external id on both, `run_phase` `plan` on the
+plan role and `apply` on the run role beside it. Plans then assume the plan role, so a
+plan never holds keys that could apply, and applies keep the run role. A stack made
+without a plan role lets its run role take both phases.
 """
 
 from __future__ import annotations
@@ -161,17 +164,15 @@ def _bounded_in_plane_account(template: dict[str, Any], settings: Settings) -> d
     return template | {"Conditions": conditions, "Resources": resources}
 
 
-def template_body(settings: Settings) -> dict[str, Any]:
-    """The CloudFormation template for this environment's run roles.
+def _trust(principals: list[str], phases: Any) -> dict[str, Any]:
+    """A role trust for the vending role, holding the session tags to this workspace and `phases`.
 
-    Raises:
-        QuickSetupUnavailable: No credential vending role is configured to trust.
+    STS checks `sts:TagSession` without the external id, so tagging needs its own
+    statement. The assume itself requires the `workspace` tag to be the external id
+    and the `run_phase` tag to be one of `phases`, so a plan session can never be a
+    run role session where a plan role exists, nor the other way round.
     """
-    principals = settings.run_role_principal_arns
-    if not principals or not settings.RUN_ROLE_NAME_PREFIX:
-        raise QuickSetupUnavailable("No credential vending role is configured for this environment.")
-    policy_values = [arn for arn in PERMISSIONS_POLICY_ARNS.values() if arn is not None]
-    trust = {
+    return {
         "Version": "2012-10-17",
         "Statement": [
             {
@@ -179,7 +180,13 @@ def template_body(settings: Settings) -> dict[str, Any]:
                 "Effect": "Allow",
                 "Principal": {"AWS": principals},
                 "Action": "sts:AssumeRole",
-                "Condition": {"StringEquals": {"sts:ExternalId": {"Ref": "ExternalId"}}},
+                "Condition": {
+                    "StringEquals": {
+                        "sts:ExternalId": {"Ref": "ExternalId"},
+                        "aws:RequestTag/workspace": {"Ref": "ExternalId"},
+                        "aws:RequestTag/run_phase": phases,
+                    }
+                },
             },
             {
                 "Sid": "WebbPulseTerraformSessionTags",
@@ -190,6 +197,20 @@ def template_body(settings: Settings) -> dict[str, Any]:
             },
         ],
     }
+
+
+def template_body(settings: Settings) -> dict[str, Any]:
+    """The CloudFormation template for this environment's run roles.
+
+    Raises:
+        QuickSetupUnavailable: No credential vending role is configured to trust.
+    """
+    principals = settings.run_role_principal_arns
+    if not principals or not settings.RUN_ROLE_NAME_PREFIX:
+        raise QuickSetupUnavailable("No credential vending role is configured for this environment.")
+    policy_values = [arn for arn in PERMISSIONS_POLICY_ARNS.values() if arn is not None]
+    run_trust = _trust(principals, {"Fn::If": ["CreatePlanRole", ["apply"], ["plan", "apply"]]})
+    plan_trust = _trust(principals, ["plan"])
     tags = [{"Key": WORKSPACE_TAG_KEY, "Value": {"Ref": "ExternalId"}}]
     plan_prefix = aws_connect.PLAN_ROLE_NAME_PREFIX
     template: dict[str, Any] = {
@@ -254,7 +275,7 @@ def template_body(settings: Settings) -> dict[str, Any]:
                     "RoleName": {"Ref": "RoleName"},
                     "Description": {"Fn::Sub": "Assumed by WebbPulse Terraform runs for workspace ${ExternalId}"},
                     "MaxSessionDuration": MAX_SESSION_DURATION,
-                    "AssumeRolePolicyDocument": trust,
+                    "AssumeRolePolicyDocument": run_trust,
                     "ManagedPolicyArns": {
                         "Fn::If": ["AttachPolicy", [{"Ref": "PermissionsPolicyArn"}], {"Ref": "AWS::NoValue"}]
                     },
@@ -269,7 +290,7 @@ def template_body(settings: Settings) -> dict[str, Any]:
                     "Path": aws_connect.plan_role_path(settings=settings),
                     "Description": {"Fn::Sub": "Assumed by WebbPulse Terraform plans for workspace ${ExternalId}"},
                     "MaxSessionDuration": MAX_SESSION_DURATION,
-                    "AssumeRolePolicyDocument": trust,
+                    "AssumeRolePolicyDocument": plan_trust,
                     "ManagedPolicyArns": [PLAN_ROLE_POLICY_ARN],
                     "Policies": [
                         {
