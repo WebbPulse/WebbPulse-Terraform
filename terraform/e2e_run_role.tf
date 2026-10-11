@@ -9,7 +9,7 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
   statement {
     sid     = "E2ESuiteWorkspaces"
     effect  = "Allow"
-    actions = ["sts:AssumeRole"]
+    actions = ["sts:AssumeRole", "sts:TagSession"]
 
     principals {
       type        = "AWS"
@@ -35,7 +35,7 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
     content {
       sid     = "DurableE2EWorkspaces"
       effect  = "Allow"
-      actions = ["sts:AssumeRole"]
+      actions = ["sts:AssumeRole", "sts:TagSession"]
 
       principals {
         type        = "AWS"
