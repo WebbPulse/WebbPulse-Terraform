@@ -768,16 +768,19 @@ def _config_of(auth_client, run_id: str) -> str:
 
 
 def test_template_offers_a_read_only_plan_role(settings):
-    """The plan role is optional, read only, trusted like the run role, and reported back."""
+    """The plan role is optional, read only, trusted only for plan sessions, and reported back."""
     template = quick_setup.template_body(settings)
     plan_role = template["Resources"]["PlanRole"]
     assert plan_role["Condition"] == "CreatePlanRole"
     assert plan_role["Properties"]["Path"] == f"/{RUN_ROLE_NAME_PREFIX}plan/"
     assert plan_role["Properties"]["ManagedPolicyArns"] == [quick_setup.PLAN_ROLE_POLICY_ARN]
-    assert (
-        plan_role["Properties"]["AssumeRolePolicyDocument"]
-        == template["Resources"]["RunRole"]["Properties"]["AssumeRolePolicyDocument"]
-    )
+    plan_assume = plan_role["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]
+    run_assume = template["Resources"]["RunRole"]["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]
+    assert plan_assume["Principal"] == run_assume["Principal"]
+    assert plan_assume["Condition"]["StringEquals"]["aws:RequestTag/run_phase"] == ["plan"]
+    assert run_assume["Condition"]["StringEquals"]["aws:RequestTag/run_phase"] == {
+        "Fn::If": ["CreatePlanRole", ["apply"], ["plan", "apply"]]
+    }
     assert template["Parameters"]["PlanRoleName"]["Default"] == ""
     assert template["Outputs"]["PlanRoleArn"]["Condition"] == "CreatePlanRole"
     reported = template["Resources"]["Connection"]["Properties"]["PlanRoleArn"]

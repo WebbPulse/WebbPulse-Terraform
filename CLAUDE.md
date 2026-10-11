@@ -227,8 +227,10 @@ which assumes the workspace's run role (external id = workspace id; a plan passe
 `workspaces/<id>/` (a plan may write only `*.tflock`). Both sessions last
 `run_credentials_duration_seconds` (default and chained-role cap 3600, floor 900).
 The staging e2e run role (`terraform/e2e_run_role.tf`) trusts only sessions named
-`run-*@e2e-*`, the suite's own workspaces, plus the durable ids in
-`e2e_run_role_workspace_ids` (the `first-run` workspace).
+`run-*@e2e-*` tagged with the `e2e` project (`prj-01M4MMMBY4YNCV5C3WNBEBQJQD`, a
+row the same file writes, which the suite's `workspace` fixture creates its
+workspaces in), plus the durable ids in `e2e_run_role_workspace_ids` (the
+`first-run` workspace) tagged with their own workspace id.
 `POST /runs/{id}/credentials` (run token, `{phase}`) vends the same pair again, refused
 once the run has left that phase or its task token no longer resolves.
 A refused run role is a 409 `RUN_ROLE_ASSUME_FAILED` on the bundle, which the
@@ -298,13 +300,18 @@ it. The workspace's `aws_connection` records what the UI shows, and its
 settled when a run on that role ends: a clean finish verifies it, and an error or
 a cancel fails it. A staged role is only switched to once its run finished its
 plan. The `Connection` resource carries `TrustVersion` (`aws_connect.TRUST_VERSION`,
-"2" since vending), recorded on the connection; a Quick setup role whose
+"3" since the session tags are required), recorded on the connection; a Quick setup role whose
 connection lacks the current version is `run_role_reconnect_required`, and the UI
 asks for the stack to be deleted and connected again, or updated in place.
 
 A workspace may also carry `plan_role_arn`, a read only role a plan assumes for
-its provider keys; the plan still assumes the run role first (900 seconds, keys
-discarded) so the run role check keeps its evidence, and applies ignore it.
+its provider keys; a plan then never assumes the run role, so for such a
+workspace the plan only check proves the plan role and the first apply proves the
+run role, and applies ignore it. Every assume carries the session tags
+`run_phase`, `organization`, `project` and `workspace`, and trusts require them:
+`workspace` equal to the external id on both roles, `run_phase` `apply` on a run
+role with a plan role beside it and `plan` on the plan role. A trust without the
+TagSession statement is refused, never retried untagged.
 Quick setup creates it by default (`plan_role`, `PlanRoleName` parameter) at
 `role/<run role prefix>plan/plan-<ulid>`, a path because the run role name is
 already 64 characters; the existing `<prefix>-workspace-*` vending grant covers

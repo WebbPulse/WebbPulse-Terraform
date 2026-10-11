@@ -294,9 +294,9 @@ export function ConnectAccountPanel({
 }
 
 /**
- * The role came from a stack whose trust predates credential vending, so runs
- * can no longer assume it. The stack name is the role name, so a second stack
- * cannot be created beside it: the old one is deleted first.
+ * The role came from a stack whose trust is older than the current template.
+ * The stack name is the role name, so a second stack cannot be created beside
+ * it: the old one is deleted first.
  */
 function ReconnectNotice({
   connection,
@@ -312,10 +312,9 @@ function ReconnectNotice({
     >
       <p className="font-medium text-warning">Reconnect required</p>
       <p className="max-w-prose text-text-muted">
-        This role was created from an older AWS CloudFormation template that
-        trusts the runner directly. Runs now get their credentials from
-        WebbPulse Terraform, so they can no longer assume this role. Delete the
-        stack
+        This role was created from an older AWS CloudFormation template whose
+        trust is looser than the current one, or that runs can no longer assume.
+        Delete the stack
         {account === null ? null : (
           <>
             {' '}

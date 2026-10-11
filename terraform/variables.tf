@@ -199,7 +199,7 @@ variable "example_workspace_id" {
 }
 
 variable "e2e_run_role_workspace_ids" {
-  description = "Durable workspace ids the e2e run role trusts besides the suite's own. The suite's workspaces are matched by name instead: the vending session name ends `@<workspace name>` and the role trusts only `run-*@e2e-*`. Ignored where the e2e run role does not exist."
+  description = "Durable workspace ids the e2e run role trusts besides the suite's own. Each must be tagged with its own id. The suite's workspaces are matched by name and project instead: the vending session name ends `@<workspace name>` and the role trusts only `run-*@e2e-*` sessions tagged with the e2e project. Ignored where the e2e run role does not exist."
   type        = list(string)
   default     = []
 

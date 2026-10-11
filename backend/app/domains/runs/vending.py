@@ -12,18 +12,17 @@ workspace run role trusts, and from there assumes two roles:
   workspace's state prefix, whose keys only the S3 backend reads.
 
 A workspace with a separate plan role, which Quick setup creates beside the run
-role, gets that role's keys for a plan instead, so a plan never holds a session of
-a role that can write. The run role is still assumed during the plan, under the
-plan's read only session policy, and its keys are dropped at once: that keeps a
-plan proving the apply role's trust, which is what the run role check reads.
+role, gets that role's keys for a plan instead, and the run role is not assumed at
+all during the plan, so a plan never holds a session of a role that can write and a
+run role's trust can admit apply sessions alone. A plan then proves the plan role's
+trust and the first apply proves the run role's.
 
 Every run role and plan role session carries four session tags, `run_phase`,
-`organization`, `project` and `workspace`, which a trust can require through
-`aws:RequestTag/<key>` the way an HCP trust matches its OIDC subject. A role whose
-trust does not yet allow `sts:TagSession` refuses a tagged request, so that request
-is retried once untagged and the fallback is logged: the retry grants nothing a
-tag requiring trust would accept, and it keeps roles working while their trusts
-catch up.
+`organization`, `project` and `workspace`, which a trust requires through
+`aws:RequestTag/<key>` the way an HCP trust matches its OIDC subject: the workspace
+on every role, `apply` on a run role that has a plan role beside it, and `plan` on
+the plan role. A role whose trust does not allow `sts:TagSession` refuses the
+request, and nothing is retried untagged.
 
 Both sessions last at most an hour, the role chaining ceiling, which a long
 phase outlives. The runner therefore asks for a fresh pair before they expire
@@ -57,12 +56,6 @@ from .schemas.run import Phase
 
 VENDING_SESSION_NAME: Final = "webbpulse-terraform-vending"
 """The session name the runs function holds the vending role under."""
-
-PROOF_DURATION_SECONDS: Final = 900
-"""The shortest session STS grants, for the run role assume that only proves its trust."""
-
-TAG_FALLBACK_ERROR_CODES: Final = frozenset({"AccessDenied", "PackedPolicyTooLarge"})
-"""The `AssumeRole` errors after which a tagged request is retried untagged."""
 
 _log = logging.getLogger(__name__)
 
@@ -191,35 +184,6 @@ def session_tags(workspace_id: str, phase: Phase, project_id: str) -> list[dict[
     return [{"Key": key, "Value": value} for key, value in tags.items() if value]
 
 
-def _error_code(error: Exception) -> str:
-    """A botocore failure's error code, or an empty string for anything else."""
-    from botocore.exceptions import ClientError
-
-    if isinstance(error, ClientError):
-        return str(error.response.get("Error", {}).get("Code", ""))
-    return ""
-
-
-def _assume_tagged(client: Any, request: dict[str, Any], tags: list[dict[str, str]], *, run_id: str) -> Any:
-    """`AssumeRole` with session tags, retried untagged when the role's trust refuses the tags."""
-    try:
-        return client.assume_role(**request, Tags=tags)
-    except Exception as error:
-        if _error_code(error) not in TAG_FALLBACK_ERROR_CODES:
-            raise
-        response = client.assume_role(**request)
-        _log.warning(
-            "A role took an untagged session after refusing a tagged one.",
-            extra={
-                "event": "runs.credentials.untagged_fallback",
-                "run_id": run_id,
-                "role_arn": request["RoleArn"],
-                "error_code": _error_code(error),
-            },
-        )
-        return response
-
-
 def state_role_request(workspace_id: str, run_id: str, phase: Phase, *, settings: Settings) -> dict[str, Any]:
     """The `AssumeRole` request for the state role, narrowed to one workspace's prefix."""
     return {
@@ -251,12 +215,13 @@ def vend(
     `plan_secret_arns` the secrets it may read (any for None, none when empty);
     an apply ignores both. `workspace_name` is carried in the run role's session name,
     and `project_id` in the `project` session tag.
-    A `plan_role_arn` is what a plan's provider keys come from; the run role is
-    then only assumed to prove its trust.
+    A `plan_role_arn` is what a plan's provider keys come from, and the run role
+    is then not assumed during the plan at all.
 
     Raises:
         VendingUnavailable: No vending or state role is configured.
-        RunRoleAssumeFailed: The workspace's run role is unset or refused the vending role.
+        RunRoleAssumeFailed: The workspace's run role is unset, or the role the phase
+            assumes refused the vending role.
         StateCredentialsFailed: The vending role could not reach the state role.
     """
     if not settings.RUN_CREDENTIALS_ROLE_ARN or not settings.RUN_STATE_ROLE_ARN:
@@ -275,49 +240,21 @@ def vend(
         raise VendingUnavailable(f"the vending role could not be assumed: {_error_text(error)}") from error
     client = _sts(settings, vending)
     separate = phase == "plan" and bool(plan_role_arn)
-    tags = session_tags(workspace_id, phase, project_id)
+    request = run_role_request(
+        plan_role_arn if separate else role_arn,
+        workspace_id,
+        run_id,
+        phase,
+        duration_seconds=settings.run_credentials_duration_seconds,
+        workspace_name=workspace_name,
+        plan_assume_role_arns=plan_assume_role_arns,
+        plan_secret_arns=plan_secret_arns,
+    )
     try:
-        run_role_session = _assume_tagged(
-            client,
-            run_role_request(
-                role_arn,
-                workspace_id,
-                run_id,
-                phase,
-                duration_seconds=PROOF_DURATION_SECONDS if separate else settings.run_credentials_duration_seconds,
-                workspace_name=workspace_name,
-                plan_assume_role_arns=() if separate else plan_assume_role_arns,
-                plan_secret_arns=[] if separate else plan_secret_arns,
-            ),
-            tags,
-            run_id=run_id,
-        )
+        provider = _credentials(client.assume_role(**request, Tags=session_tags(workspace_id, phase, project_id)))
     except Exception as error:
-        raise RunRoleAssumeFailed(f"assume role failed: {_error_text(error)}") from error
-    if separate:
-        del run_role_session
-        try:
-            provider = _credentials(
-                _assume_tagged(
-                    client,
-                    run_role_request(
-                        plan_role_arn,
-                        workspace_id,
-                        run_id,
-                        phase,
-                        duration_seconds=settings.run_credentials_duration_seconds,
-                        workspace_name=workspace_name,
-                        plan_assume_role_arns=plan_assume_role_arns,
-                        plan_secret_arns=plan_secret_arns,
-                    ),
-                    tags,
-                    run_id=run_id,
-                )
-            )
-        except Exception as error:
-            raise RunRoleAssumeFailed(f"assume plan role failed: {_error_text(error)}") from error
-    else:
-        provider = _credentials(run_role_session)
+        refused = "assume plan role failed" if separate else "assume role failed"
+        raise RunRoleAssumeFailed(f"{refused}: {_error_text(error)}") from error
     try:
         state = _credentials(client.assume_role(**state_role_request(workspace_id, run_id, phase, settings=settings)))
     except Exception as error:

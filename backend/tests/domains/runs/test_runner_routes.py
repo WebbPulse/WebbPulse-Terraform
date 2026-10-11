@@ -596,33 +596,33 @@ def test_run_role_sessions_carry_the_session_tags(runner_client, created_run, wo
 class TagRefusingSTS(RecordingSTS):
     """Refuses any tagged request for one role, as a trust without `sts:TagSession` does."""
 
-    def __init__(self, requests: list[dict[str, Any]], untagged_only: str) -> None:
+    def __init__(self, requests: list[dict[str, Any]], refuses_tags: str) -> None:
         super().__init__(requests)
-        self.untagged_only = untagged_only
+        self.refuses_tags = refuses_tags
 
     def assume_role(self, **kwargs: Any) -> dict[str, Any]:
         """Refuse a tagged request for the role, answer everything else."""
         from botocore.exceptions import ClientError
 
-        if kwargs["RoleArn"] == self.untagged_only and "Tags" in kwargs:
+        if kwargs["RoleArn"] == self.refuses_tags and "Tags" in kwargs:
             self.requests.append(kwargs)
             raise ClientError({"Error": {"Code": "AccessDenied", "Message": "not trusted"}}, "AssumeRole")
         return super().assume_role(**kwargs)
 
 
-def test_a_trust_without_tag_session_falls_back_to_an_untagged_session(
+def test_a_trust_without_tag_session_is_refused_without_an_untagged_retry(
     runner_client, created_run, workspace, monkeypatch
 ):
-    """A role whose trust predates session tags still gets its run, through one untagged retry."""
+    """A role whose trust refuses session tags fails the run role check rather than taking an untagged session."""
     requests: list[dict[str, Any]] = []
-    refusing = TagRefusingSTS(requests, untagged_only=workspace["run_role_arn"])
+    refusing = TagRefusingSTS(requests, refuses_tags=workspace["run_role_arn"])
     monkeypatch.setattr(vending, "_sts", lambda settings, credentials=None: refusing)
     response = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle")
-    assert response.status_code == 200, response.text
-    tagged, untagged = [request for request in requests if request["RoleArn"] == workspace["run_role_arn"]]
-    assert "Tags" in tagged
-    assert "Tags" not in untagged
-    assert {key: value for key, value in tagged.items() if key != "Tags"} == untagged
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "RUN_ROLE_ASSUME_FAILED"
+    attempts = [request for request in requests if request["RoleArn"] == workspace["run_role_arn"]]
+    assert len(attempts) == 1
+    assert "Tags" in attempts[0]
 
 
 def test_vending_without_a_vending_role_raises(created_run, settings, monkeypatch):
