@@ -23,6 +23,8 @@ export interface PlanViewProps {
   applyChanges?: PlanChanges | null | undefined;
   /** Whether the run destroyed everything, which the apply summary names as such. */
   isDestroy?: boolean | undefined;
+  /** What the reader has to act on, placed between the counts and the resource list. */
+  beforeResources?: React.ReactNode;
 }
 
 /**
@@ -33,11 +35,14 @@ export interface PlanViewProps {
  * what comes out the other side. Once the run applied, the apply's own summary
  * sits under the plan's and the outputs show their applied values. The
  * resources open on only those that change, with every resource a click away.
+ * Anything the reader must decide on goes straight under the counts, so a long
+ * resource list never pushes it out of sight.
  */
 export function PlanView({
   plan,
   applyChanges,
   isDestroy = false,
+  beforeResources = null,
 }: PlanViewProps): React.ReactElement {
   const outputChanges = plan.output_changes ?? [];
   return (
@@ -62,6 +67,8 @@ export function PlanView({
           </p>
         )}
       </div>
+
+      {beforeResources}
 
       <ResourceSection plan={plan} />
 

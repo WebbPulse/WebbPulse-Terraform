@@ -55,6 +55,13 @@ async function openRawLog(): Promise<void> {
   await userEvent.click(screen.getByRole('tab', { name: 'Raw log' }));
 }
 
+/** Whether `first` comes before `second` in document order. */
+function precedes(first: Element, second: Element): boolean {
+  return Boolean(
+    first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
+  );
+}
+
 /** Mounts the run detail page on a route carrying the run id. */
 function renderRun(): void {
   renderWithAuth(
@@ -385,6 +392,89 @@ describe('RunDetail', () => {
       'The plan is running'
     );
     expect(fetchRunPlan).not.toHaveBeenCalled();
+  });
+
+  it('puts the confirmation under the plan counts and above the resources and outputs', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
+
+    renderRun();
+
+    const panel = await screen.findByTestId('confirmation-panel');
+    expect(panel).toHaveAttribute('data-placement', 'top');
+    expect(panel).toHaveAttribute('data-tone', 'apply');
+    const summary = await screen.findByTestId('plan-summary-line');
+    const resources = screen.getByTestId('resource-section');
+    const outputs = screen.getByRole('heading', { name: 'Outputs' });
+    expect(precedes(summary, panel)).toBe(true);
+    expect(precedes(panel, resources)).toBe(true);
+    expect(precedes(panel, outputs)).toBe(true);
+    expect(
+      within(panel).getByRole('heading', {
+        name: 'This plan needs confirmation',
+      })
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByRole('button', { name: 'Confirm & apply' })
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByRole('button', { name: 'Discard run' })
+    ).toBeInTheDocument();
+  });
+
+  it('tints the confirmation as a destroy on a destroy run', async () => {
+    apiMock.getRun.mockResolvedValue(
+      aRun('awaiting_confirmation', { is_destroy: true })
+    );
+
+    renderRun();
+
+    const panel = await screen.findByTestId('confirmation-panel');
+    expect(panel).toHaveAttribute('data-placement', 'top');
+    expect(panel).toHaveAttribute('data-tone', 'destroy');
+    expect(
+      within(panel).getByRole('heading', {
+        name: 'This destroy plan needs confirmation',
+      })
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the confirmation above the raw log', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
+
+    renderRun();
+
+    await screen.findByTestId('plan-summary-line');
+    await openRawLog();
+    const panel = screen.getByTestId('confirmation-panel');
+    const logs = await screen.findByTestId('run-logs');
+    expect(panel).toHaveAttribute('data-placement', 'top');
+    expect(precedes(panel, logs)).toBe(true);
+  });
+
+  it('keeps the confirmation above the notice when the plan cannot be read', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
+    fetchRunPlan.mockRejectedValue(new Error('The plan could not be read.'));
+
+    renderRun();
+
+    const notice = await screen.findByText(
+      /structured plan could not be read/
+    );
+    const panel = screen.getByTestId('confirmation-panel');
+    expect(precedes(panel, notice)).toBe(true);
+  });
+
+  it('leaves the decision under the plan when the run is not awaiting confirmation', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('planned'));
+
+    renderRun();
+
+    const view = await screen.findByTestId('plan-view');
+    const panel = screen.getByTestId('confirmation-panel');
+    expect(panel).toHaveAttribute('data-placement', 'bottom');
+    expect(panel).not.toHaveAttribute('data-tone');
+    expect(precedes(view, panel)).toBe(true);
+    expect(view).not.toContainElement(panel);
   });
 
   it('asks for an optional comment before confirming, in an in-app dialog', async () => {
