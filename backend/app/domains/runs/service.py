@@ -48,7 +48,7 @@ from ...common.runs import session_policy
 from ...common.runs.workspace_runs import TERMINAL_RUN_STATUSES
 from ...common.workspaces import aws_connect, run_role_check
 from ...common.workspaces import reads as workspace_reads
-from ...common.workspaces.projects import project_workspace_ids
+from ...common.workspaces.projects import project_of, project_workspace_ids
 from . import api_credentials, registry_credentials, run_options, vending
 from .schemas.run import Phase
 
@@ -1815,6 +1815,7 @@ def refresh_credentials(run: Mapping[str, Any], phase: Phase, *, settings: Setti
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
         plan_role_arn=_plan_role_arn(run, workspace),
         plan_secret_arns=_plan_secret_arns(run, workspace),
+        project_id=project_of(workspace),
     )
     identity = _workload_identity(
         workspace_reads.resolved_variables(workspace_id, settings=resolved)["env"],
@@ -1911,6 +1912,7 @@ def run_bundle(run_id: str, *, settings: Settings | None = None) -> dict[str, An
         plan_assume_role_arns=_plan_assume_role_arns(workspace),
         plan_role_arn=plan_role_arn,
         plan_secret_arns=_plan_secret_arns(run, workspace),
+        project_id=project_of(workspace),
     )
     identity = _workload_identity(
         variables["env"], workspace_id, str(workspace.get("name", "")), run_id, phase, settings=resolved
