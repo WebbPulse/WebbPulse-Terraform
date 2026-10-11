@@ -9,7 +9,7 @@ data "aws_iam_policy_document" "example_run_role_trust" {
   statement {
     sid     = "RunCredentialsVendingAssumes"
     effect  = "Allow"
-    actions = ["sts:AssumeRole"]
+    actions = ["sts:AssumeRole", "sts:TagSession"]
 
     principals {
       type        = "AWS"

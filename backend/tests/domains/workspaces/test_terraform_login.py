@@ -9,9 +9,11 @@ from urllib.parse import parse_qs, urlsplit
 import boto3
 import pytest
 from fastapi.testclient import TestClient
+from webbpulse.audit import AuditQuery
 from webbpulse.identity.oauth import pkce_challenge
 from webbpulse.identity.oauth_server_storage import AUTHORIZATION_CODES_TABLE, OAUTH_SERVER_TABLES
 
+from app.common import audit
 from app.common.core.auth import (
     ALL_SCOPES,
     REGISTRY_READ,
@@ -100,6 +102,20 @@ def test_login_mints_a_scoped_ninety_day_key(app, client):
 
     listed = client.get("/api/v1/workspaces", headers={"Authorization": f"Bearer {body['access_token']}"})
     assert listed.status_code == 200
+
+
+def test_the_login_key_mint_is_audited_as_the_person_on_the_cli(app, client):
+    """The exchange records the key's creation against the approving person, never its plaintext."""
+    response = exchange(client, approve(app))
+    assert response.status_code == 200, response.text
+
+    events = audit.store().list_events(audit.AUDIT_TENANT, AuditQuery(action=audit.API_KEY_CREATED), limit=10).events
+    [event] = [event for event in events if event.target.label == terraform_login.KEY_NAME]
+    assert event.actor.id == USER_ID
+    assert event.actor.kind == "user"
+    assert event.actor.source == "cli"
+    assert RUNS_APPLY in event.payload["scopes"]
+    assert response.json()["access_token"] not in repr(event)
 
 
 def test_the_client_id_may_arrive_as_basic_auth(app, client):

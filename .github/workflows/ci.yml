@@ -47,6 +47,7 @@ jobs:
               - '.github/workflows/ci.yml'
             terraform:
               - 'terraform/**'
+              - '.github/scripts/check_ungated_routes.py'
               - '.github/workflows/ci.yml'
             api-contract:
               - 'backend/app/**'
@@ -294,6 +295,9 @@ jobs:
       - name: terraform fmt -recursive -check
         working-directory: terraform
         run: terraform fmt -recursive -check -diff
+
+      - name: Every ungated route is allowlisted
+        run: python3 .github/scripts/check_ungated_routes.py
 
   all-checks-passed:
     name: all-checks-passed

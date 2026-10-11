@@ -59,7 +59,7 @@ data "aws_iam_policy_document" "run_credentials" {
   statement {
     sid       = "AssumeWorkspaceRunRoles"
     effect    = "Allow"
-    actions   = ["sts:AssumeRole"]
+    actions   = ["sts:AssumeRole", "sts:TagSession"]
     resources = local.workspace_run_role_arns
   }
 
