@@ -579,6 +579,52 @@ def test_a_run_role_that_refuses_the_vending_role_is_409(runner_client, created_
     assert "secret" not in response.text
 
 
+def test_run_role_sessions_carry_the_session_tags(runner_client, created_run, workspace, sts_requests):
+    """The run role session is tagged with the phase, organization, project and workspace; the others are not."""
+    runner_client.get(f"{BASE}/{created_run['run_id']}/bundle")
+    vending_request, run_role_request, state_request = sts_requests
+    assert run_role_request["Tags"] == [
+        {"Key": "run_phase", "Value": "plan"},
+        {"Key": "organization", "Value": "WebbPulse"},
+        {"Key": "project", "Value": "prj-default"},
+        {"Key": "workspace", "Value": workspace["workspace_id"]},
+    ]
+    assert "Tags" not in vending_request
+    assert "Tags" not in state_request
+
+
+class TagRefusingSTS(RecordingSTS):
+    """Refuses any tagged request for one role, as a trust without `sts:TagSession` does."""
+
+    def __init__(self, requests: list[dict[str, Any]], untagged_only: str) -> None:
+        super().__init__(requests)
+        self.untagged_only = untagged_only
+
+    def assume_role(self, **kwargs: Any) -> dict[str, Any]:
+        """Refuse a tagged request for the role, answer everything else."""
+        from botocore.exceptions import ClientError
+
+        if kwargs["RoleArn"] == self.untagged_only and "Tags" in kwargs:
+            self.requests.append(kwargs)
+            raise ClientError({"Error": {"Code": "AccessDenied", "Message": "not trusted"}}, "AssumeRole")
+        return super().assume_role(**kwargs)
+
+
+def test_a_trust_without_tag_session_falls_back_to_an_untagged_session(
+    runner_client, created_run, workspace, monkeypatch
+):
+    """A role whose trust predates session tags still gets its run, through one untagged retry."""
+    requests: list[dict[str, Any]] = []
+    refusing = TagRefusingSTS(requests, untagged_only=workspace["run_role_arn"])
+    monkeypatch.setattr(vending, "_sts", lambda settings, credentials=None: refusing)
+    response = runner_client.get(f"{BASE}/{created_run['run_id']}/bundle")
+    assert response.status_code == 200, response.text
+    tagged, untagged = [request for request in requests if request["RoleArn"] == workspace["run_role_arn"]]
+    assert "Tags" in tagged
+    assert "Tags" not in untagged
+    assert {key: value for key, value in tagged.items() if key != "Tags"} == untagged
+
+
 def test_vending_without_a_vending_role_raises(created_run, settings, monkeypatch):
     """The service refuses outright, so no code path falls back to the runner's own role."""
     monkeypatch.setattr(settings, "RUN_CREDENTIALS_ROLE_ARN", "")
