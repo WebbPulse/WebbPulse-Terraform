@@ -7,8 +7,9 @@ one phase at a time. The API is FastAPI behind a Lambda Web Adapter, one
 container image per domain, with DynamoDB for records, S3 for state and
 artifacts, and a React SPA in front. This file is the contract the four slices
 share. `terraform/README.md` holds the bootstrap sequence and the workspace
-variables, and `TFC-REPLACEMENT.md` at the WebbPulse root holds the replacement
-plan and current status.
+variables, and the Standupless document "Terraform plane agent notes" (id
+`01M4MERJW1XV5D79VDF213GY5V`, read through the standupless MCP `get_document`
+tool) holds the design, runbooks and gotchas.
 
 ## Environments
 
