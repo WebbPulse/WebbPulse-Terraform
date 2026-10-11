@@ -90,15 +90,14 @@ PLAN_ROLE_ARN = "arn:aws:iam::488386929690:role/terraform/plan-reader"
 def test_a_plan_with_a_plan_role_vends_only_the_plan_role(
     auth_client, runner_client, created_run, workspace, sts_requests, settings
 ):
-    """The run role is assumed briefly to prove its trust, and the plan's keys come from the plan role."""
+    """The plan never assumes the run role; its keys come from the plan role, tagged with the plan phase."""
     auth_client.patch(f"/api/v1/workspaces/{workspace['workspace_id']}", json={"plan_role_arn": PLAN_ROLE_ARN})
 
     body = runner_client.get(f"/api/v1/runs/{created_run['run_id']}/bundle").json()
 
-    _vending_request, proof_request, plan_request, _state_request = sts_requests
-    assert proof_request["RoleArn"] == FACTORY_ROLE_ARN
-    assert proof_request["DurationSeconds"] == vending.PROOF_DURATION_SECONDS
-    assert proof_request["PolicyArns"] == READ_ONLY
+    _vending_request, plan_request, _state_request = sts_requests
+    assert all(request["RoleArn"] != FACTORY_ROLE_ARN for request in sts_requests)
+    assert {"Key": "run_phase", "Value": "plan"} in plan_request["Tags"]
     assert plan_request["RoleArn"] == PLAN_ROLE_ARN
     assert plan_request["ExternalId"] == workspace["workspace_id"]
     assert plan_request["PolicyArns"] == READ_ONLY

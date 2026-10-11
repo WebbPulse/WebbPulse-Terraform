@@ -30,6 +30,12 @@ JOURNEY_RUN_ROLE_ARN_VARIABLE = "E2E_JOURNEY_RUN_ROLE_ARN"
 
 STALE_SECONDS = 3600
 
+E2E_PROJECT_NAME = "e2e"
+"""The project every workspace the suite creates lives in.
+
+The staging e2e run role trusts only sessions tagged with this project, a row the
+environment's Terraform writes, so a run of a workspace outside it is refused."""
+
 _DOCUMENT_ENVIRONMENT = {
     "ENVIRONMENT": "staging",
     "IDENTITY_ENVIRONMENT": "local",
@@ -415,11 +421,42 @@ def step_up_again(user_session: Any, credentials: Any) -> Callable[[], Any]:
     return again
 
 
+@pytest.fixture(scope="session")
+def e2e_project_id(api: Any) -> str:
+    """The id of the `e2e` project, created where the environment has none, as on a local stack.
+
+    Workers start at once under xdist, so a create that loses the race to another
+    worker reads the project back rather than failing.
+    """
+
+    def find() -> str:
+        """The project's id, or an empty string when there is none."""
+        listed = api.get("/api/v1/projects")
+        if listed.status_code != 200:
+            pytest.fail(f"listing projects answered {listed.status_code}: {listed.text[:400]}")
+        for project in listed.json().get("items", []):
+            if str(project.get("name", "")).casefold() == E2E_PROJECT_NAME:
+                return str(project["project_id"])
+        return ""
+
+    found = find()
+    if found:
+        return found
+    created = api.post("/api/v1/projects", json={"name": E2E_PROJECT_NAME})
+    if created.status_code in (200, 201):
+        return str(created.json()["project_id"])
+    found = find()
+    if created.status_code == 409 and found:
+        return found
+    pytest.fail(f"creating the e2e project answered {created.status_code}: {created.text[:400]}")
+
+
 @pytest.fixture
 def workspace(
     api: Any,
     e2e_env: Any,
     run_role_arn: str,
+    e2e_project_id: str,
     created_resources: list[Any],
     step_up_again: Callable[[], Any],
 ) -> Iterator[dict[str, Any]]:
@@ -435,6 +472,7 @@ def workspace(
         "engine": "terraform",
         "engine_version": "1.11.0",
         "run_role_arn": run_role_arn,
+        "project_id": e2e_project_id,
     }
     response = api.post("/api/v1/workspaces", json=body)
     if response.status_code not in (200, 201):

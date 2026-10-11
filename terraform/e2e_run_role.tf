@@ -1,6 +1,25 @@
 locals {
   e2e_run_role_count = local.ephemeral_users_enabled ? 1 : 0
   e2e_run_role_name  = "${local.prefix}-workspace-e2e"
+  e2e_project_id     = "prj-01M4MMMBY4YNCV5C3WNBEBQJQD"
+  e2e_project_name   = "e2e"
+  workspace_id_glob  = "ws-??????????????????????????"
+}
+
+resource "aws_dynamodb_table_item" "e2e_project" {
+  count = local.e2e_run_role_count
+
+  table_name = module.dynamodb.table_names["projects"]
+  hash_key   = "project_id"
+
+  item = jsonencode({
+    project_id  = { S = local.e2e_project_id }
+    name        = { S = local.e2e_project_name }
+    name_key    = { S = local.e2e_project_name }
+    description = { S = "Workspaces the e2e suite creates. The e2e run role trusts only sessions tagged with this project." }
+    created_at  = { S = "2026-10-11T05:00:00Z" }
+    updated_at  = { S = "2026-10-11T05:00:00Z" }
+  })
 }
 
 data "aws_iam_policy_document" "e2e_run_role_trust" {
@@ -19,13 +38,31 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
     condition {
       test     = "StringLike"
       variable = "sts:ExternalId"
-      values   = ["ws-??????????????????????????"]
+      values   = [local.workspace_id_glob]
     }
 
     condition {
       test     = "StringLike"
       variable = "sts:RoleSessionName"
       values   = ["run-*@e2e-*"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/project"
+      values   = [local.e2e_project_id]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/workspace"
+      values   = [local.workspace_id_glob]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/run_phase"
+      values   = ["plan", "apply"]
     }
   }
 
@@ -47,11 +84,23 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
         variable = "sts:ExternalId"
         values   = var.e2e_run_role_workspace_ids
       }
+
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/workspace"
+        values   = var.e2e_run_role_workspace_ids
+      }
+
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/run_phase"
+        values   = ["plan", "apply"]
+      }
     }
   }
 
   statement {
-    sid     = "TagWorkspaceSessions"
+    sid     = "TagE2ESuiteSessions"
     effect  = "Allow"
     actions = ["sts:TagSession"]
 
@@ -61,9 +110,36 @@ data "aws_iam_policy_document" "e2e_run_role_trust" {
     }
 
     condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/project"
+      values   = [local.e2e_project_id]
+    }
+
+    condition {
       test     = "StringLike"
       variable = "aws:RequestTag/workspace"
-      values   = ["ws-??????????????????????????"]
+      values   = [local.workspace_id_glob]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = length(var.e2e_run_role_workspace_ids) > 0 ? [1] : []
+
+    content {
+      sid     = "TagDurableE2ESessions"
+      effect  = "Allow"
+      actions = ["sts:TagSession"]
+
+      principals {
+        type        = "AWS"
+        identifiers = [aws_iam_role.run_credentials.arn]
+      }
+
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/workspace"
+        values   = var.e2e_run_role_workspace_ids
+      }
     }
   }
 }

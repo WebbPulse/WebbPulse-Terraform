@@ -21,6 +21,18 @@ data "aws_iam_policy_document" "example_run_role_trust" {
       variable = "sts:ExternalId"
       values   = [var.example_workspace_id]
     }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/workspace"
+      values   = [var.example_workspace_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/run_phase"
+      values   = ["plan", "apply"]
+    }
   }
 
   statement {

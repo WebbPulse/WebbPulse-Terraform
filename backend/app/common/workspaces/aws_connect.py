@@ -48,12 +48,13 @@ TOKEN_HASH_ATTRIBUTE: Final = "aws_connect_token_hash"
 TOKEN_EXPIRES_ATTRIBUTE: Final = "aws_connect_token_expires_at"
 CONNECTION_ATTRIBUTE: Final = "aws_connection"
 
-TRUST_VERSION: Final = "2"
+TRUST_VERSION: Final = "3"
 """The run role trust a Quick setup template grants, carried on its `Connection`.
 
-Version 2 trusts only the credential vending role. A connection recorded with an
-older or no version was made by a stack that trusts the runner task roles, which
-can no longer assume anything, so the workspace shows that it must reconnect."""
+Version 2 trusts only the credential vending role. Version 3 also requires the
+`workspace` and `run_phase` session tags on the assume. A connection recorded with
+an older or no version was made by a stack whose trust is looser than the current
+one, so the workspace shows that it should reconnect."""
 
 TRUST_VERSION_FIELD: Final = "trust_version"
 
