@@ -141,10 +141,13 @@ def build_router(settings: "Settings") -> "APIRouter":
 
     With `device_grant_enabled` on, the device stores back `wp-tf login`, and the same
     stores sit on `IdentityStores` so the purge removes a deleted user's device grants.
+    The grants store records each new grant in the audit trail.
     """
     from webbpulse.dynamodb import Repository
     from webbpulse.identity import (
         CREDENTIALS_TABLE,
+        DEVICE_CODES_TABLE,
+        DEVICE_GRANTS_TABLE,
         IDENTITY_TOKENS_TABLE,
         LOGIN_ATTEMPTS_TABLE,
         OAUTH_LINKS_TABLE,
@@ -154,7 +157,9 @@ def build_router(settings: "Settings") -> "APIRouter":
         REFRESH_TOKENS_TABLE,
         TOTP_FACTORS_TABLE,
         WEBAUTHN_CHALLENGES_TABLE,
+        DeviceGrantStores,
         DynamoCredentialStore,
+        DynamoDeviceCodeStore,
         DynamoIdentityTokenStore,
         DynamoLoginAttemptStore,
         DynamoOAuthLinkStore,
@@ -166,12 +171,12 @@ def build_router(settings: "Settings") -> "APIRouter":
         DynamoWebAuthnChallengeStore,
         IdentityStores,
         build_identity_router,
-        dynamo_device_grant_stores,
         signing_client,
     )
     from webbpulse.identity.api_keys import API_KEYS_TABLE, DynamoApiKeyStore
 
     from app.common.db.identity_tables import identity_table_prefix
+    from app.common.identity.audited_device_grants import AuditedDeviceGrantStore
     from app.common.identity.identity_hooks import ControlPlaneIdentityHooks
 
     prefix = identity_table_prefix(settings)
@@ -192,10 +197,9 @@ def build_router(settings: "Settings") -> "APIRouter":
 
     identity_settings = build_identity_settings(settings)
     device_stores = (
-        dynamo_device_grant_stores(
-            prefix,
-            region_name=settings.AWS_REGION_NAME or None,
-            endpoint_url=settings.dynamodb_endpoint_url,
+        DeviceGrantStores(
+            codes=DynamoDeviceCodeStore(repository(DEVICE_CODES_TABLE)),
+            grants=AuditedDeviceGrantStore(repository(DEVICE_GRANTS_TABLE)),
         )
         if identity_settings.device_grant_enabled
         else None

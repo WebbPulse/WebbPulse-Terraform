@@ -94,7 +94,7 @@ locals {
     github = {
       memory            = 256
       timeout           = local.lambda_domain_timeout
-      tables            = ["github"]
+      tables            = ["github", "audit"]
       read_tables       = ["users"]
       buckets           = false
       own_image_tag     = true

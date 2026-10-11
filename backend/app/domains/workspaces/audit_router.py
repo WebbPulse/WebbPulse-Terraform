@@ -29,7 +29,7 @@ MAX_PAGE_SIZE: Final = 100
 EXPORT_LIMIT: Final = 5000
 """The most rows one CSV export carries. A wider range is narrowed with the time filters."""
 
-TARGET_TYPES: Final = (audit.WORKSPACE, audit.API_KEY)
+TARGET_TYPES: Final = (audit.WORKSPACE, audit.API_KEY, audit.DEVICE_GRANT, audit.GITHUB_APP)
 
 
 def _query(

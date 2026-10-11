@@ -15,7 +15,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
+from webbpulse.audit import AuditTarget
 from webbpulse.identity.claims import AuthorizerClaims
 from webbpulse.integrations.github import (
     GitHubError,
@@ -26,6 +27,7 @@ from webbpulse.integrations.github import (
 )
 from webbpulse.ops.config import ConfigToolError
 
+from ...common import audit
 from ...common.core.auth import ADMIN, claims, recent_auth, scopes
 from . import service
 from .schemas.github import (
@@ -67,6 +69,16 @@ def _actor(current: Optional[AuthorizerClaims]) -> Optional[str]:
     """The caller's subject, recorded on what they create."""
     subject = str((current or {}).get("sub", "") or "").strip()
     return subject or None
+
+
+def _app_target(app: Optional[dict[str, Any]] = None) -> AuditTarget:
+    """This environment's App as an audit target, labelled by its slug where known."""
+    current = app or {}
+    return AuditTarget(
+        type=audit.GITHUB_APP,
+        id=str(current.get("app_id") or "github-app"),
+        label=str(current.get("slug") or ""),
+    )
 
 
 @contextmanager
@@ -126,21 +138,32 @@ def start_manifest(
 @router.post("/app/conversions", response_model=GitHubAppStatus)
 def convert_manifest(
     payload: ManifestConversionRequest,
+    request: Request,
     current: AuthorizerClaims = Depends(claims),
 ) -> dict[str, Any]:
     """Finish creating the App from the code GitHub redirected back with."""
     with _github_errors():
         try:
-            return service.complete_manifest(code=payload.code, state=payload.state, actor=_actor(current))
+            app = service.complete_manifest(code=payload.code, state=payload.state, actor=_actor(current))
         except (GitHubNotFound, GitHubUnprocessable) as error:
             raise _error(400, "GitHub did not accept that code. Create the App again.", CODE_REJECTED) from error
+    audit.record(
+        audit.GITHUB_APP_CREATED,
+        request=request,
+        claims=current,
+        target=_app_target(app),
+        payload={"app_slug": app.get("slug")},
+    )
+    return app
 
 
-@router.post("/app/webhook", response_model=WebhookConfig, dependencies=[Depends(recent_auth)])
-def configure_webhook() -> dict[str, Any]:
+@router.post("/app/webhook", response_model=WebhookConfig)
+def configure_webhook(request: Request, current: AuthorizerClaims = Depends(recent_auth)) -> dict[str, Any]:
     """Point the App's webhook at this API and set its secret from the `app` secret."""
     with _github_errors():
-        return service.sync_webhook()
+        config = service.sync_webhook()
+    audit.record(audit.GITHUB_WEBHOOK_SYNCED, request=request, claims=current, target=_app_target())
+    return config
 
 
 @router.post("/install-state", response_model=InstallStart)
@@ -151,17 +174,29 @@ def start_install(current: AuthorizerClaims = Depends(recent_auth)) -> dict[str,
 
 
 @router.post("/installations", response_model=Installation, status_code=status.HTTP_201_CREATED)
-def record_installation(payload: InstallationCallback) -> dict[str, Any]:
+def record_installation(
+    payload: InstallationCallback,
+    request: Request,
+    current: AuthorizerClaims = Depends(claims),
+) -> dict[str, Any]:
     """Store the installation the setup callback named, once GitHub confirms it."""
     with _github_errors():
         try:
-            return service.record_installation(
+            installation = service.record_installation(
                 installation_id=payload.installation_id,
                 setup_action=payload.setup_action,
                 state=payload.state,
             )
         except GitHubNotFound as error:
             raise _error(400, "That installation does not belong to this GitHub App.", NOT_THIS_APP) from error
+    audit.record(
+        audit.GITHUB_INSTALLATION_RECORDED,
+        request=request,
+        claims=current,
+        target=_app_target(),
+        payload={"installation_id": payload.installation_id},
+    )
+    return installation
 
 
 @router.get("/installations", response_model=InstallationList)
@@ -177,15 +212,22 @@ def refresh_installation(installation_id: int = InstallationId) -> dict[str, Any
         return service.refresh_installation(installation_id)
 
 
-@router.delete(
-    "/installations/{installation_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(recent_auth)],
-)
-def remove_installation(installation_id: int = InstallationId) -> Response:
+@router.delete("/installations/{installation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_installation(
+    request: Request,
+    installation_id: int = InstallationId,
+    current: AuthorizerClaims = Depends(recent_auth),
+) -> Response:
     """Forget one installation here. It stays installed on GitHub until removed there."""
     with _github_errors():
         service.remove_installation(installation_id)
+    audit.record(
+        audit.GITHUB_INSTALLATION_REMOVED,
+        request=request,
+        claims=current,
+        target=_app_target(),
+        payload={"installation_id": installation_id},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -51,6 +51,8 @@ TFE_PREFIX: Final = "/api/v2"
 
 WORKSPACE: Final = "workspace"
 API_KEY: Final = "api_key"
+DEVICE_GRANT: Final = "device_grant"
+GITHUB_APP: Final = "github_app"
 
 WORKSPACE_CREATED: Final = "workspace.created"
 WORKSPACE_UPDATED: Final = "workspace.updated"
@@ -66,6 +68,12 @@ VARIABLE_DELETED: Final = "variable.deleted"
 STATE_DOWNLOADED: Final = "state_version.downloaded"
 RUN_CONFIRMED: Final = "run.confirmed"
 RUN_DISCARDED: Final = "run.discarded"
+DEVICE_GRANT_OPENED: Final = "device_grant.opened"
+AWS_CONNECTED: Final = "workspace.aws_connected"
+GITHUB_APP_CREATED: Final = "github.app_created"
+GITHUB_WEBHOOK_SYNCED: Final = "github.webhook_synced"
+GITHUB_INSTALLATION_RECORDED: Final = "github.installation_recorded"
+GITHUB_INSTALLATION_REMOVED: Final = "github.installation_removed"
 
 AUTO_APPLY_FIELDS: Final = frozenset({"auto_apply"})
 PLAN_ACCESS_FIELDS: Final = frozenset({"plan_role_arn", "plan_assume_role_arns", "plan_secret_arns"})
@@ -118,6 +126,12 @@ CATALOGUE: Final = AuditCatalogue(
         STATE_DOWNLOADED: AuditAction("State downloaded", frozenset({"state_version_id"})),
         RUN_CONFIRMED: AuditAction("Run confirmed", frozenset({"run_id"})),
         RUN_DISCARDED: AuditAction("Run discarded", frozenset({"run_id"})),
+        DEVICE_GRANT_OPENED: AuditAction("Device grant opened", frozenset({"client_id", "scopes"})),
+        AWS_CONNECTED: AuditAction("AWS credentials connected", frozenset({"account_id", "role_arn", "pending"})),
+        GITHUB_APP_CREATED: AuditAction("GitHub App created", frozenset({"app_slug"})),
+        GITHUB_WEBHOOK_SYNCED: AuditAction("GitHub App webhook synced", frozenset()),
+        GITHUB_INSTALLATION_RECORDED: AuditAction("GitHub App installation recorded", frozenset({"installation_id"})),
+        GITHUB_INSTALLATION_REMOVED: AuditAction("GitHub App installation removed", frozenset({"installation_id"})),
     }
 )
 """Every action the plane records, its label, and the payload fields each may carry."""
@@ -183,13 +197,18 @@ def record(
     payload: Optional[Mapping[str, Any]] = None,
     before: Optional[Mapping[str, Any]] = None,
     after: Optional[Mapping[str, Any]] = None,
+    actor: Optional[AuditActor] = None,
 ) -> Optional[AuditEvent]:
-    """Record one event after its change landed, answering `None` when it could not be built or written."""
+    """Record one event after its change landed, answering `None` when it could not be built or written.
+
+    `actor` names who acted when there is no signed-in request to read it from, such
+    as a CLI's token exchange or a queue consumer.
+    """
     try:
         return recorder().record(
             AUDIT_TENANT,
             action,
-            actor=actor_from(request, claims),
+            actor=actor or actor_from(request, claims),
             target=target,
             payload=payload,
             before=before,
@@ -259,7 +278,15 @@ __all__ = [
     "API_KEY_REVOKED",
     "AUDIT_TENANT",
     "AUTO_APPLY_CHANGED",
+    "AWS_CONNECTED",
     "CATALOGUE",
+    "DEVICE_GRANT",
+    "DEVICE_GRANT_OPENED",
+    "GITHUB_APP",
+    "GITHUB_APP_CREATED",
+    "GITHUB_INSTALLATION_RECORDED",
+    "GITHUB_INSTALLATION_REMOVED",
+    "GITHUB_WEBHOOK_SYNCED",
     "PLAN_ACCESS_CHANGED",
     "REMOTE_STATE_CHANGED",
     "RETENTION",
