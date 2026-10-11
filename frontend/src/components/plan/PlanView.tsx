@@ -23,9 +23,15 @@ export interface PlanViewProps {
   applyChanges?: PlanChanges | null | undefined;
   /** Whether the run destroyed everything, which the apply summary names as such. */
   isDestroy?: boolean | undefined;
-  /** What the reader has to act on, placed between the counts and the resource list. */
-  beforeResources?: React.ReactNode;
+  /** Whether the counts lead the view, or are rendered apart with {@link PlanSummary}. */
+  showSummary?: boolean | undefined;
 }
+
+/** Props for {@link PlanSummary}. */
+export type PlanSummaryProps = Pick<
+  PlanViewProps,
+  'plan' | 'applyChanges' | 'isDestroy'
+>;
 
 /**
  * The parsed plan.
@@ -35,40 +41,25 @@ export interface PlanViewProps {
  * what comes out the other side. Once the run applied, the apply's own summary
  * sits under the plan's and the outputs show their applied values. The
  * resources open on only those that change, with every resource a click away.
- * Anything the reader must decide on goes straight under the counts, so a long
- * resource list never pushes it out of sight.
+ * A page that puts something between the counts and the resources renders
+ * {@link PlanSummary} itself and turns `showSummary` off.
  */
 export function PlanView({
   plan,
   applyChanges,
   isDestroy = false,
-  beforeResources = null,
+  showSummary = true,
 }: PlanViewProps): React.ReactElement {
   const outputChanges = plan.output_changes ?? [];
   return (
     <div data-testid="plan-view" className="space-y-5">
-      <div className="space-y-2">
-        <PlanSummaryLine plan={plan} />
-        {plan.terraform_version === undefined ||
-        plan.terraform_version === '' ? null : (
-          <p className="text-xs text-text-faint">
-            Planned with{' '}
-            <span className="font-mono">{plan.terraform_version}</span>
-          </p>
-        )}
-        {applyChanges === undefined || applyChanges === null ? null : (
-          <p
-            data-testid="apply-summary-line"
-            className="font-mono text-sm text-text tabular-nums"
-          >
-            {isDestroy ? 'Destroy' : 'Apply'} complete! Resources:{' '}
-            {applyChanges.add ?? 0} added, {applyChanges.change ?? 0} changed,{' '}
-            {applyChanges.destroy ?? 0} destroyed.
-          </p>
-        )}
-      </div>
-
-      {beforeResources}
+      {showSummary ? (
+        <PlanSummary
+          plan={plan}
+          applyChanges={applyChanges}
+          isDestroy={isDestroy}
+        />
+      ) : null}
 
       <ResourceSection plan={plan} />
 
@@ -85,6 +76,39 @@ export function PlanView({
             applied={plan.applied_outputs}
           />
         </section>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The plan's counts, the engine that planned it and, once the run applied, the
+ * apply's own summary: how much is changing, before what is changing.
+ */
+export function PlanSummary({
+  plan,
+  applyChanges,
+  isDestroy = false,
+}: PlanSummaryProps): React.ReactElement {
+  return (
+    <div className="space-y-2">
+      <PlanSummaryLine plan={plan} />
+      {plan.terraform_version === undefined ||
+      plan.terraform_version === '' ? null : (
+        <p className="text-xs text-text-faint">
+          Planned with{' '}
+          <span className="font-mono">{plan.terraform_version}</span>
+        </p>
+      )}
+      {applyChanges === undefined || applyChanges === null ? null : (
+        <p
+          data-testid="apply-summary-line"
+          className="font-mono text-sm text-text tabular-nums"
+        >
+          {isDestroy ? 'Destroy' : 'Apply'} complete! Resources:{' '}
+          {applyChanges.add ?? 0} added, {applyChanges.change ?? 0} changed,{' '}
+          {applyChanges.destroy ?? 0} destroyed.
+        </p>
       )}
     </div>
   );

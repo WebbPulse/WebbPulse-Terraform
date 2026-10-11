@@ -21,6 +21,7 @@ import {
   Field,
   INPUT_CLASS,
   PageHeader,
+  PlanSummary,
   PlanView,
   RelativeTime,
   RunLogs,
@@ -281,8 +282,10 @@ function RunFacts({ run }: { run: Run }): React.ReactElement {
 /**
  * The plan, once the run has one to show.
  *
- * `decision` is placed under the plan's counts and above its resources, or
- * above whatever stands in for the plan while it loads or cannot be read.
+ * `decision` sits under the plan's counts and above its resources, or above
+ * whatever stands in for the plan while it loads or cannot be read. It keeps
+ * one place in the tree through all of those, so the plan arriving never
+ * remounts it and a dialog it opened stays open.
  */
 function PlanPanel({
   run,
@@ -326,67 +329,60 @@ function PlanPanel({
     };
   }, [runId, ready, applied]);
 
+  const shown = ready ? plan : null;
+  let body: React.ReactNode;
   if (!ready) {
-    return (
-      <PlanFallback decision={decision}>
-        <p
-          data-testid="plan-pending"
-          className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-text-faint"
-        >
-          {planStatus === 'queued'
-            ? 'The run is waiting for the workspace to be free.'
-            : planStatus === 'running'
-              ? 'The plan is running. Its resource changes appear here once it finishes.'
-              : 'This run has no finished plan to show. The raw log has what the engine printed.'}
+    body = (
+      <p
+        data-testid="plan-pending"
+        className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-text-faint"
+      >
+        {planStatus === 'queued'
+          ? 'The run is waiting for the workspace to be free.'
+          : planStatus === 'running'
+            ? 'The plan is running. Its resource changes appear here once it finishes.'
+            : 'This run has no finished plan to show. The raw log has what the engine printed.'}
+      </p>
+    );
+  } else if (shown === null && loading) {
+    body = (
+      <div className="flex items-center gap-2 text-sm text-text-faint">
+        <Spinner label="Loading the plan" className="size-4" />
+        Loading the plan
+      </div>
+    );
+  } else if (shown === null) {
+    body = (
+      <div className="space-y-2">
+        <ErrorNotice error={error} />
+        <p className="text-sm text-text-faint">
+          The structured plan could not be read. The raw log has what the engine
+          printed.
         </p>
-      </PlanFallback>
+      </div>
+    );
+  } else {
+    body = (
+      <PlanView
+        plan={shown}
+        applyChanges={run.apply_changes}
+        isDestroy={run.is_destroy}
+        showSummary={false}
+      />
     );
   }
-  if (loading && plan === null) {
-    return (
-      <PlanFallback decision={decision}>
-        <div className="flex items-center gap-2 text-sm text-text-faint">
-          <Spinner label="Loading the plan" className="size-4" />
-          Loading the plan
-        </div>
-      </PlanFallback>
-    );
-  }
-  if (plan === null) {
-    return (
-      <PlanFallback decision={decision}>
-        <div className="space-y-2">
-          <ErrorNotice error={error} />
-          <p className="text-sm text-text-faint">
-            The structured plan could not be read. The raw log has what the
-            engine printed.
-          </p>
-        </div>
-      </PlanFallback>
-    );
-  }
-  return (
-    <PlanView
-      plan={plan}
-      applyChanges={run.apply_changes}
-      isDestroy={run.is_destroy}
-      beforeResources={decision}
-    />
-  );
-}
 
-/** What stands in for the plan, with any pending decision above it. */
-function PlanFallback({
-  decision,
-  children,
-}: {
-  decision: React.ReactNode;
-  children: React.ReactNode;
-}): React.ReactElement {
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      {shown === null ? null : (
+        <PlanSummary
+          plan={shown}
+          applyChanges={run.apply_changes}
+          isDestroy={run.is_destroy}
+        />
+      )}
       {decision}
-      {children}
+      {body}
     </div>
   );
 }
