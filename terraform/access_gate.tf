@@ -9,6 +9,8 @@ module "access_gate" {
   site_host     = local.host
   session_hours = 168
 
+  mfa_configuration = "ON"
+
   allowed_emails = local.access_gate_users
 
   http_api_id       = module.api.api_id
