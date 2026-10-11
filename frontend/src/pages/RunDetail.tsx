@@ -330,14 +330,14 @@ function PlanPanel({
     return (
       <PlanFallback decision={decision}>
         <p
-        data-testid="plan-pending"
-        className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-text-faint"
-      >
-        {planStatus === 'queued'
-          ? 'The run is waiting for the workspace to be free.'
-          : planStatus === 'running'
-            ? 'The plan is running. Its resource changes appear here once it finishes.'
-            : 'This run has no finished plan to show. The raw log has what the engine printed.'}
+          data-testid="plan-pending"
+          className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-text-faint"
+        >
+          {planStatus === 'queued'
+            ? 'The run is waiting for the workspace to be free.'
+            : planStatus === 'running'
+              ? 'The plan is running. Its resource changes appear here once it finishes.'
+              : 'This run has no finished plan to show. The raw log has what the engine printed.'}
         </p>
       </PlanFallback>
     );

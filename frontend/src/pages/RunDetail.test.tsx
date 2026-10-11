@@ -457,9 +457,7 @@ describe('RunDetail', () => {
 
     renderRun();
 
-    const notice = await screen.findByText(
-      /structured plan could not be read/
-    );
+    const notice = await screen.findByText(/structured plan could not be read/);
     const panel = screen.getByTestId('confirmation-panel');
     expect(precedes(panel, notice)).toBe(true);
   });
