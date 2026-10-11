@@ -132,6 +132,7 @@ locals {
       global_secondary_indexes = [
         { name = "target_key-event_id-index", hash_key = "target_key", range_key = "event_id", projection_type = "ALL" },
       ]
+      stream_view_type = local.security_alerts_enabled ? "NEW_IMAGE" : null
     }
   }
 }

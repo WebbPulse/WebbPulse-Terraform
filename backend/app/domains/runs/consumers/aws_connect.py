@@ -28,8 +28,10 @@ from typing import Any, Final, Mapping
 from urllib.parse import urlsplit
 
 from boto3.dynamodb.conditions import Key
+from webbpulse.audit import AuditActor
 from webbpulse.dynamodb import ConditionFailed, new_ulid, now_iso
 
+from ....common import audit
 from ....common.composition.settings import Settings, get_settings
 from ....common.db import repositories
 from ....common.db.tables import CONFIG_VERSIONS_BY_WORKSPACE_INDEX
@@ -47,6 +49,9 @@ RESPONSE_HOST_PREFIX: Final = "cloudformation-custom-resource-response-"
 
 ACTOR: Final = {"kind": "system", "id": "aws-connect", "display_name": "AWS Quick setup"}
 """Who the verification run is recorded as started by."""
+
+AUDIT_ACTOR: Final = AuditActor(id="aws-connect", kind="system", source="aws_connect")
+"""Who a connection is recorded as made by in the audit trail: the Quick setup stack, not a person."""
 
 SOURCE: Final = "aws_connect"
 """The run source the verification run carries."""
@@ -295,6 +300,14 @@ def _create(request: Mapping[str, Any], *, settings: Settings, physical_id: str 
         _log.info(
             "Connected a workspace to an AWS account.",
             extra={"event": "runs.aws_connect.connected", "workspace_id": workspace_id, "account_id": account_id},
+        )
+        audit.record(
+            audit.AWS_CONNECTED,
+            request=None,
+            claims=None,
+            actor=AUDIT_ACTOR,
+            target=audit.workspace_target(workspace_id),
+            payload={"account_id": account_id, "role_arn": role_arn, "pending": result.pending},
         )
         _verify(workspace_id, account_id, result.pending, str(request["RequestId"]), settings=settings)
     _answer(

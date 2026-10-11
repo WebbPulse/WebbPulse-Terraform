@@ -16,8 +16,11 @@ from urllib.parse import parse_qsl
 from anyio import to_thread
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from webbpulse.audit import AuditActor, AuditTarget
+from webbpulse.http import client_ip
 from webbpulse.identity.scopes import is_api_key_actor
 
+from ...common import audit
 from ...common.core.auth import recent_auth
 from . import api_keys_service
 from . import terraform_login as service
@@ -119,6 +122,19 @@ async def token(request: Request) -> JSONResponse:
         )
     except service.LoginRefused as error:
         return _oauth_error(error)
+    if issued.record is not None:
+        audit.record(
+            audit.API_KEY_CREATED,
+            request=request,
+            claims=None,
+            actor=AuditActor(id=issued.record.user_id, kind="user", source="cli", ip=client_ip(request)),
+            target=AuditTarget(type=audit.API_KEY, id=issued.record.key_hash, label=issued.record.name),
+            payload={
+                "scopes": list(issued.record.scopes),
+                "expires_at": issued.record.expires_at or None,
+                "no_expiry": False,
+            },
+        )
     return JSONResponse(
         {"access_token": issued.access_token, "token_type": "Bearer"},
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},

@@ -110,10 +110,14 @@ class LoginRefused(Exception):
 
 @dataclass(frozen=True)
 class Issued:
-    """A token exchange's result: the key's plaintext and when it stops working."""
+    """A token exchange's result: the key's plaintext, when it stops working, and its stored record.
+
+    The record holds only the key's hash, so the route can audit the mint without the plaintext.
+    """
 
     access_token: str
     expires_at: datetime
+    record: "api_keys_service.ApiKeyRecord | None" = None
 
 
 def code_store(settings: "Settings | None" = None) -> AuthorizationCodeStore:
@@ -271,7 +275,7 @@ def exchange(
         )
     except api_keys_service.TooManyKeys as error:
         raise LoginRefused("invalid_grant", str(error)) from error
-    return Issued(access_token=minted.plaintext, expires_at=expires_at)
+    return Issued(access_token=minted.plaintext, expires_at=expires_at, record=minted.record)
 
 
 __all__ = [
