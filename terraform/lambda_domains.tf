@@ -171,8 +171,13 @@ locals {
 
   bucket_statements = {
     for label, statements in {
-      State     = module.state.read_write_policy_statements
-      Artifacts = module.artifacts.read_write_policy_statements
+      State = module.state.read_write_policy_statements
+      Artifacts = concat(module.artifacts.read_write_policy_statements, [{
+        Sid      = "KMSDecryptRetiredKey"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource = [aws_kms_key.artifacts_retired.arn]
+      }])
       } : label => [
       for statement in statements : merge(statement, { Sid = "${label}Bucket${statement.Sid}" })
     ]
