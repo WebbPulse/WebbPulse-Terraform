@@ -131,6 +131,13 @@ sets the workspace variable true and applies again to adopt the group and hold i
 at 7 day retention. The `import` block stays in this root module, because
 Terraform allows `import` only there, and it targets the module's log group. Neither account has written a span yet, so both start false.
 
+`/aws/application-signals/data` already exists in both accounts, so
+`adopt_application_signals_log_group` defaults true and a second root `import`
+adopts it at 30 day retention. The module's `span_sample_ratio` is 0.1 in every
+environment, and its `otel_environment_variables` merge last into each domain
+function's environment as `WEBBPULSE_OTEL_SAMPLE_RATIO`. A null ratio would drop
+the variable and the functions would fall back to sampling everything.
+
 ## Staging profile
 
 `var.staging_profile` is `none`, `reduced` or `full`. With `none` the staging

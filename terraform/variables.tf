@@ -215,6 +215,12 @@ variable "adopt_spans_log_group" {
   default     = false
 }
 
+variable "adopt_application_signals_log_group" {
+  description = "Adopt the /aws/application-signals/data log group X-Ray writes Application Signals data into, and hold it at 30 day retention. AWS creates that group with no retention, and an import block whose target does not exist is a plan time error, so set this false in an account that has not written Application Signals data yet. Both accounts have the group."
+  type        = bool
+  default     = true
+}
+
 variable "oidc_issuer_enabled" {
   description = "Serve the control plane's OIDC issuer on oidc.<host> and let the runs function sign workload identity tokens for Google and Azure. Needs the custom domains and a Platform Route 53 writer that lists the oidc host"
   type        = bool
