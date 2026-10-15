@@ -79,7 +79,7 @@ output "artifacts_bucket" {
 }
 
 output "artifacts_bucket_kms_key_arn" {
-  description = "KMS key encrypting the artifacts bucket"
+  description = "KMS key encrypting the artifacts bucket, the state bucket's key"
   value       = module.artifacts.kms_key_arn
 }
 
