@@ -75,6 +75,7 @@ resource "aws_kms_key" "artifacts_retired" {
   customer_master_key_spec = "SYMMETRIC_DEFAULT"
   enable_key_rotation      = true
   deletion_window_in_days  = 30
+  is_enabled               = false
 
   policy = jsonencode({
     Version = "2012-10-17"
