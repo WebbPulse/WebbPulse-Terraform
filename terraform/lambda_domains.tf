@@ -427,7 +427,6 @@ locals {
 
       APP_SECRETS_ARN = module.app_secrets.arns["app"]
 
-      WEBBPULSE_OTEL_SAMPLE_RATIO        = var.environment == "production" ? "0.1" : "1.0"
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "https://xray.${var.aws_region}.amazonaws.com/v1/traces"
     },
 
@@ -454,6 +453,8 @@ locals {
     name == "runs" && local.access_gate_enabled ? {
       ORIGIN_VERIFY_PARAMETER = one(module.access_gate[*].origin_verify_ssm_parameter_name)
     } : {},
+
+    module.transaction_search.otel_environment_variables,
   ) }
 
   lambda_environment_budget_bytes = 3584
