@@ -58,38 +58,3 @@ module "artifacts" {
     },
   ]
 }
-
-moved {
-  from = module.artifacts.aws_kms_key.this[0]
-  to   = aws_kms_key.artifacts_retired
-}
-
-moved {
-  from = module.artifacts.aws_kms_alias.this[0]
-  to   = aws_kms_alias.artifacts_retired
-}
-
-resource "aws_kms_key" "artifacts_retired" {
-  description              = "Encrypts config tarballs, plan artifacts and phase logs in ${local.prefix}-artifacts"
-  key_usage                = "ENCRYPT_DECRYPT"
-  customer_master_key_spec = "SYMMETRIC_DEFAULT"
-  enable_key_rotation      = true
-  deletion_window_in_days  = 30
-  is_enabled               = false
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid       = "EnableIAMPoliciesInThisAccount"
-      Effect    = "Allow"
-      Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
-      Action    = "kms:*"
-      Resource  = "*"
-    }]
-  })
-}
-
-resource "aws_kms_alias" "artifacts_retired" {
-  name          = "alias/${local.prefix}-artifacts"
-  target_key_id = aws_kms_key.artifacts_retired.key_id
-}
