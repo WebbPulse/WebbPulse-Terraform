@@ -212,6 +212,19 @@ locals {
         integration          = "workspaces"
         require_identity_jwt = true
       }
+      "GET /api/auth/sessions" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
+      "DELETE /api/auth/sessions/{family_id}" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
+      "POST /api/auth/email/change" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
+      "POST /api/auth/email/change/confirm" = { integration = "workspaces" }
       "POST /api/auth/step-up" = {
         integration          = "workspaces"
         require_identity_jwt = true
