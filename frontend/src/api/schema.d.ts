@@ -1333,9 +1333,9 @@ export interface paths {
          *     `PROJECT_NOT_FOUND`.
          *
          *     Creating a workspace with `auto_apply` on lets anyone who can start a run apply
-         *     it, so it takes `admin` and the step-up, as turning it on later does. Naming a
-         *     plan role, reader roles or plan secrets takes the same, as setting them later does,
-         *     and naming a run role takes the step-up.
+         *     it, so it takes `admin`, or a run token holding the factory grant, and the step-up,
+         *     as turning it on later does. Naming a plan role, reader roles or plan secrets takes
+         *     the same, as setting them later does, and naming a run role takes the step-up.
          */
         post: operations["create_workspace_api_v1_workspaces_post"];
         delete?: never;
@@ -1400,7 +1400,8 @@ export interface paths {
          *     this API, so it takes `admin` as well as the step-up.
          *
          *     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
-         *     `admin` and is recorded as the `workspace.auto_apply_changed` audit event. Turning it on also
+         *     `admin`, or a run token holding the factory grant, and is recorded as the
+         *     `workspace.auto_apply_changed` audit event. Turning it on also
          *     takes the step-up, since it hands every later run's confirmation to the system.
          *
          *     `global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'

@@ -208,6 +208,60 @@ def test_a_run_token_without_the_factory_grant_cannot_set_plan_access(
             assert response.status_code == 403, response.text
 
 
+def test_the_factory_creates_a_workspace_with_auto_apply_on(app, api_origin, auth_client, created_run, runner_client):
+    """The factory's token creates a staging workspace that auto-applies, recorded like an admin's create."""
+    from webbpulse.audit import AuditQuery
+
+    from app.common import audit
+
+    token = _token(auth_client, runner_client, created_run, FACTORY_GRANT)
+
+    with _as(app, token) as client:
+        response = client.post(
+            "/api/v1/workspaces", json={**WORKSPACE_PAYLOAD, "name": "factory-staging", "auto_apply": True}
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["auto_apply"] is True
+    page = audit.store().list_events(audit.AUDIT_TENANT, AuditQuery(action=audit.WORKSPACE_CREATED))
+    assert any(event.target.id == response.json()["workspace_id"] for event in page.events)
+
+
+def test_the_factory_turns_auto_apply_on(app, api_origin, auth_client, created_run, runner_client, other_workspace):
+    """The factory's token turns another workspace's auto-apply on, recorded as the auto-apply change."""
+    from webbpulse.audit import AuditQuery
+
+    from app.common import audit
+
+    token = _token(auth_client, runner_client, created_run, FACTORY_GRANT)
+
+    with _as(app, token) as client:
+        response = client.patch(_path(other_workspace["workspace_id"]), json={"auto_apply": True})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["auto_apply"] is True
+    page = audit.store().list_events(audit.AUDIT_TENANT, AuditQuery(action=audit.AUTO_APPLY_CHANGED))
+    assert len(page.events) == 1
+    assert page.events[0].target.id == other_workspace["workspace_id"]
+    assert page.events[0].after == {"auto_apply": True}
+
+
+def test_a_run_token_without_the_factory_grant_cannot_turn_auto_apply_on(
+    app, api_origin, auth_client, created_run, runner_client
+):
+    """Auto-apply takes admin or the factory grant, on create and on edit alike."""
+    token = _token(auth_client, runner_client, created_run, WRITE_GRANT)
+
+    with _as(app, token) as client:
+        edited = client.patch(_path(created_run["workspace_id"]), json={"auto_apply": True})
+        created = client.post(
+            "/api/v1/workspaces", json={**WORKSPACE_PAYLOAD, "name": "not-factory", "auto_apply": True}
+        )
+
+    assert edited.status_code == 403, edited.text
+    assert created.status_code == 403, created.text
+
+
 def test_a_revoked_factory_grant_binds_a_live_token(
     app, api_origin, auth_client, created_run, runner_client, other_workspace
 ):

@@ -19,7 +19,9 @@ from app.common.core.auth import ALL_SCOPES, RUNNER_SCOPE
 from app.common.db.users import User, UserRepository
 from app.common.identity.identity_hooks import (
     ADMIN_ROLE,
+    EPHEMERAL_ATTRIBUTES,
     READ_SCOPES,
+    REGISTRATION_ATTRIBUTES,
     ControlPlaneIdentityHooks,
 )
 from app.domains.runs.actor import actor_from_claims
@@ -243,3 +245,54 @@ def test_the_ephemeral_sweep_finds_only_old_marked_users(hooks: ControlPlaneIden
     found = [row["id"] for row in ephemeral_candidates(hooks, created_before=now - timedelta(hours=3))]
 
     assert found == ["user-old"]
+
+
+def test_registration_ignores_privileged_attributes(hooks: ControlPlaneIdentityHooks) -> None:
+    """`is_admin`, `disabled` and an `id` in the register attributes take server defaults."""
+    created = hooks.create_user(
+        email="new@example.com",
+        attributes={"is_admin": True, "disabled": True, "id": "chosen-id", "email_verified": False},
+    )
+
+    stored = hooks.load_user_by_id(str(created["id"]))
+    assert stored is not None
+    assert created["id"] != "chosen-id"
+    assert stored["is_admin"] is False
+    assert stored["disabled"] is False
+    assert hooks.claims_for(stored)["roles"] == []
+
+
+def test_registration_keeps_the_allowlisted_attributes(hooks: ControlPlaneIdentityHooks) -> None:
+    """The display name and verification flag the package supplies pass through."""
+    created = hooks.create_user(
+        email="new@example.com",
+        attributes={"display_name": "New Person", "email_verified": True, "name": "Ignored"},
+    )
+
+    assert created["display_name"] == "New Person"
+    assert created["email_verified"] is True
+    assert created["email"] == "new@example.com"
+    assert set(REGISTRATION_ATTRIBUTES) == {"display_name", "email_verified"}
+
+
+def test_registration_falls_back_to_the_local_part_for_a_display_name(hooks: ControlPlaneIdentityHooks) -> None:
+    """With no display name supplied, the address's local part stands in."""
+    created = hooks.create_user(email="someone.new@example.com", attributes={})
+
+    assert created["display_name"] == "someone.new"
+    assert created["email_verified"] is False
+
+
+def test_an_ephemeral_user_may_be_created_as_an_admin(hooks: ControlPlaneIdentityHooks) -> None:
+    """The admin-gated ephemeral route's `is_admin` survives for an `e2e.invalid` address."""
+    created = hooks.create_user(
+        email="e2e-run-3@e2e.invalid",
+        attributes={"is_admin": True, "email_verified": True, "disabled": True},
+    )
+
+    stored = hooks.load_user_by_id(str(created["id"]))
+    assert stored is not None
+    assert stored["is_admin"] is True
+    assert stored["disabled"] is False
+    assert hooks.claims_for(stored)["roles"] == ["admin"]
+    assert set(EPHEMERAL_ATTRIBUTES) == {"display_name", "email_verified", "is_admin"}

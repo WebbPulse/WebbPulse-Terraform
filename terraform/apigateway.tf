@@ -220,6 +220,10 @@ locals {
         integration          = "workspaces"
         require_identity_jwt = true
       }
+      "POST /api/auth/sessions/revoke-others" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
       "POST /api/auth/email/change" = {
         integration          = "workspaces"
         require_identity_jwt = true
@@ -303,7 +307,7 @@ locals {
 
 module "api" {
   source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/http-api"
-  version = "~> 2.33"
+  version = "~> 2.43"
 
   name = "${local.prefix}-api"
 

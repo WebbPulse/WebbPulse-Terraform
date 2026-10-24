@@ -2,7 +2,7 @@ module "access_gate" {
   count = local.access_gate_count
 
   source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/staging-access-gate"
-  version = "~> 2.33"
+  version = "~> 2.43"
 
   name          = local.access_gate_name
   cookie_domain = local.host

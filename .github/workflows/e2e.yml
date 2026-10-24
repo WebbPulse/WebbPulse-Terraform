@@ -28,6 +28,7 @@ jobs:
       install-command: uv lock --upgrade-package webbpulse && uv sync --locked --group e2e
       pytest-args: "--no-cov -n auto --dist loadgroup"
       codeartifact-domain: webbpulse
+      terraform-workspaces: WebbPulse-Terraform-staging
     secrets:
       E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
 
@@ -46,5 +47,7 @@ jobs:
       install-command: uv lock --upgrade-package webbpulse && uv sync --locked --group e2e
       pytest-args: "--no-cov"
       codeartifact-domain: webbpulse
+      terraform-workspaces: WebbPulse-Terraform
+      terraform-timeout-minutes: 45
     secrets:
       E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
