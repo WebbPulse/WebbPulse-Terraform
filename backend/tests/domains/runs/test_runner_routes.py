@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.common.composition import settings as settings_module
 from app.common.core.auth import RUNNER_SCOPE
+from app.common.db import repositories
 from app.domains.runs import phase_tasks, run_options, vending
 from app.domains.runs import service as runs_service
 from tests.conftest import STATE_KMS_KEY_ARN, mint_key, runner_token
@@ -743,6 +744,46 @@ def test_a_named_runner_failure_fails_the_task_with_that_name(runner_client, cre
     (failure,) = stepfunctions.failures
     assert failure == {"taskToken": TASK_TOKEN, "error": "AssumeRoleFailed", "cause": "role refused"}
     assert stepfunctions.successes == []
+
+
+def test_an_unpack_failure_writes_its_cause_onto_the_run(runner_client, created_run, stepfunctions):
+    """`ConfigUnpackFailed` keeps its name for the run role check and says why after it."""
+    cause = "config archive (85.0 MB) carries a link member, which a run refuses: backend/.venv/bin/python"
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "plan", "exit_code": 1, "changes": {}, "error": cause, "error_name": "ConfigUnpackFailed"},
+    )
+    assert response.status_code == 200, response.text
+    (failure,) = stepfunctions.failures
+    assert failure["error"] == "ConfigUnpackFailed"
+    error = runs_service.get_run(created_run["run_id"])["error"]
+    assert error == f"The run failed with ConfigUnpackFailed: {cause}"
+
+
+def test_an_explained_cause_replaces_the_bare_error_the_state_machine_wrote(created_run):
+    """A cause landing after the state machine's bare error still replaces it, and a different error stays."""
+    run_id = created_run["run_id"]
+    repositories.runs(settings_module.get_settings()).update(
+        {"run_id": run_id},
+        update_expression="SET #error = :error",
+        expression_names={"#error": "error"},
+        expression_values={":error": runs_service.bare_failure_error("ConfigUnpackFailed")},
+    )
+    assert runs_service.explain_runner_failure(run_id, "ConfigUnpackFailed", "too big")
+    assert runs_service.get_run(run_id)["error"] == "The run failed with ConfigUnpackFailed: too big"
+    assert not runs_service.explain_runner_failure(run_id, "ConfigUnpackFailed", "again")
+    assert not runs_service.explain_runner_failure(run_id, "AssumeRoleFailed", "role refused")
+    assert runs_service.get_run(run_id)["error"] == "The run failed with ConfigUnpackFailed: too big"
+
+
+def test_other_named_failures_leave_the_run_error_to_the_state_machine(runner_client, created_run, stepfunctions):
+    """A name outside the explained set records nothing on the run."""
+    response = runner_client.post(
+        f"{BASE}/{created_run['run_id']}/phase-result",
+        json={"phase": "plan", "exit_code": 1, "changes": {}, "error": "boom", "error_name": "BundleFetchFailed"},
+    )
+    assert response.status_code == 200, response.text
+    assert not runs_service.get_run(created_run["run_id"]).get("error")
 
 
 def test_an_error_name_is_a_bare_identifier(runner_client, created_run, stepfunctions):

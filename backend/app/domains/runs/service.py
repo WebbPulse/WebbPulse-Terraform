@@ -1471,6 +1471,47 @@ def fail_phase_task(
     return True
 
 
+EXPLAINED_FAILURES: Final = frozenset({"ConfigUnpackFailed"})
+"""Runner failures whose cause is written onto the run's error, since the name alone
+does not say what to fix and the cause carries no secret or file content."""
+
+EXPLAINED_CAUSE_MAX_LENGTH: Final = 1024
+"""How much of an explained cause the run's error keeps."""
+
+
+def bare_failure_error(error_name: str) -> str:
+    """The run error the state machine's error path writes for a runner failure."""
+    return f"The run failed with {error_name}."
+
+
+def explain_runner_failure(run_id: str, error_name: str, cause: str, *, settings: Settings | None = None) -> bool:
+    """Write a runner failure's cause onto the run's error, returning whether it was written.
+
+    Only names in `EXPLAINED_FAILURES` with a non-empty cause are explained. The
+    error still starts `The run failed with <name>`, so the run role check reads it
+    the same way. The write lands only while the run carries no error or the bare
+    one the state machine writes, and the state machine's own write keeps an error
+    already there, so neither order loses the cause.
+    """
+    detail = " ".join(cause.split())[:EXPLAINED_CAUSE_MAX_LENGTH]
+    if error_name not in EXPLAINED_FAILURES or not detail:
+        return False
+    resolved = settings or get_settings()
+    try:
+        _runs(resolved).update(
+            {"run_id": run_id},
+            update_expression="SET #error = :error",
+            expression_names={"#error": "error"},
+            expression_values={":error": f"The run failed with {error_name}: {detail}"},
+            condition=(
+                Attr("error").not_exists() | Attr("error").eq("") | Attr("error").eq(bare_failure_error(error_name))
+            ),
+        )
+    except ConditionFailed:
+        return False
+    return True
+
+
 def run_logs(
     run_id: str,
     phase: Phase,
@@ -2150,6 +2191,8 @@ __all__ = [
     "DEFAULT_RUN_PAGE_SIZE",
     "DISCARDABLE_STATUSES",
     "ERROR_MAX_LENGTH",
+    "EXPLAINED_CAUSE_MAX_LENGTH",
+    "EXPLAINED_FAILURES",
     "MAX_RUN_PAGE_SIZE",
     "NON_TERMINAL_STATUSES",
     "ArtifactTooLarge",
@@ -2186,7 +2229,9 @@ __all__ = [
     "record_commit_message",
     "record_pull_request",
     "create_run",
+    "bare_failure_error",
     "discard_run",
+    "explain_runner_failure",
     "fail_phase_task",
     "finish_run",
     "get_run",

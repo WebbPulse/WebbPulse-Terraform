@@ -327,6 +327,7 @@ def _run_phase(
     try:
         engine_directory = workspace.prepare(config_directory, bundle, archive, allow_links=restoring)
     except workspace.ConfigError as error:
+        sink.write(f"the configuration could not be unpacked: {error}")
         raise PhaseFailure("ConfigUnpackFailed", str(error)) from error
     isolation.hand_over(config_directory, user)
 

@@ -28,8 +28,30 @@ _VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 unquoted. HCL writes use the same restriction in the API."""
 
 
+MAX_CONFIG_BYTES = 250_000_000
+"""The largest config tarball a run unpacks, the ceiling the API signs a config upload for."""
+
+IGNORE_HINT = "list what the plan does not need in .terraformignore"
+"""What a refused config archive suggests, since most refusals are files the plan never reads."""
+
+
 class ConfigError(RuntimeError):
     """The config tarball is absent, unreadable or tries to escape the directory."""
+
+
+def describe_size(size_bytes: int) -> str:
+    """A byte count as people read it, in MB above one megabyte."""
+    if size_bytes >= 1_000_000:
+        return f"{size_bytes / 1_000_000:.1f} MB"
+    return f"{size_bytes} bytes"
+
+
+def _archive_size(archive: Path) -> int:
+    """The tarball's size on disk, or a config error naming why it cannot be read."""
+    try:
+        return archive.stat().st_size
+    except OSError as error:
+        raise ConfigError(f"config archive could not be opened: {type(error).__name__}") from error
 
 
 def unpack_config(archive: Path, directory: Path, *, allow_links: bool = False) -> Path:
@@ -37,20 +59,30 @@ def unpack_config(archive: Path, directory: Path, *, allow_links: bool = False) 
 
     A config upload never carries links. A restored plan working directory may, as
     installed modules can, so `allow_links` admits them and the `data` filter still
-    refuses any whose target leaves the directory.
+    refuses any whose target leaves the directory. Every refusal names the archive's
+    size and, for one over `MAX_CONFIG_BYTES`, the limit. It names member paths and
+    the tar error, never a file's contents.
     """
+    size = _archive_size(archive)
+    label = f"config archive ({describe_size(size)})"
+    if size > MAX_CONFIG_BYTES:
+        raise ConfigError(f"{label} is over the {describe_size(MAX_CONFIG_BYTES)} limit; {IGNORE_HINT}")
     directory.mkdir(parents=True, exist_ok=True)
     try:
         with tarfile.open(archive, "r:*") as handle:
             for member in handle.getmembers():
                 target = (directory / member.name).resolve()
                 if not str(target).startswith(str(directory.resolve())):
-                    raise ConfigError(f"config archive member escapes the working directory: {member.name}")
+                    raise ConfigError(f"{label} has a member that escapes the working directory: {member.name}")
                 if (member.issym() or member.islnk()) and not allow_links:
-                    raise ConfigError(f"config archive carries a link member: {member.name}")
+                    raise ConfigError(
+                        f"{label} carries a link member, which a run refuses: {member.name}; {IGNORE_HINT}"
+                    )
             handle.extractall(directory, filter="data")
     except tarfile.TarError as error:
-        raise ConfigError("config archive could not be read") from error
+        raise ConfigError(f"{label} could not be unpacked: {type(error).__name__}: {error}") from error
+    except OSError as error:
+        raise ConfigError(f"{label} could not be unpacked: {type(error).__name__}: {error.strerror}") from error
     return directory
 
 
