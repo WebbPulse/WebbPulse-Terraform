@@ -65,6 +65,24 @@ locals {
     },
   ]
 
+  github_actions_ecr_public_statements = [
+    {
+      sid       = "EcrPublicToken"
+      actions   = ["ecr-public:GetAuthorizationToken"]
+      resources = ["*"]
+    },
+    {
+      sid       = "EcrPublicBearerToken"
+      actions   = ["sts:GetServiceBearerToken"]
+      resources = ["*"]
+      condition = {
+        StringEquals = {
+          "sts:AWSServiceName" = ["ecr-public.amazonaws.com"]
+        }
+      }
+    },
+  ]
+
   github_actions_gate_statements = [for statement in [
     {
       sid     = "ReadGateParameters"
@@ -131,7 +149,7 @@ module "github_actions_role" {
     distribution_arns = [module.frontend.distribution_arn]
   }
 
-  policy_statements = concat(local.github_actions_codeartifact_statements, local.github_actions_gate_statements, local.github_actions_e2e_statements)
+  policy_statements = concat(local.github_actions_codeartifact_statements, local.github_actions_ecr_public_statements, local.github_actions_gate_statements, local.github_actions_e2e_statements)
 }
 
 module "github_actions_ci_role" {
