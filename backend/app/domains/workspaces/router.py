@@ -283,13 +283,11 @@ def create_workspace(
     `PROJECT_NOT_FOUND`.
 
     Creating a workspace with `auto_apply` on lets anyone who can start a run apply
-    it, so it takes `admin` and the step-up, as turning it on later does. Naming a
-    plan role, reader roles or plan secrets takes the same, as setting them later does,
-    and naming a run role takes the step-up.
+    it, so it takes `admin`, or a run token holding the factory grant, and the step-up,
+    as turning it on later does. Naming a plan role, reader roles or plan secrets takes
+    the same, as setting them later does, and naming a run role takes the step-up.
     """
-    if payload.auto_apply:
-        _require_admin(current)
-    if any(getattr(payload, field, None) for field in PLAN_ACCESS_FIELDS):
+    if payload.auto_apply or any(getattr(payload, field, None) for field in PLAN_ACCESS_FIELDS):
         _require_admin_or_factory(current)
     if payload.auto_apply or any(getattr(payload, field, None) for field in (*RUN_ROLE_FIELDS, *PLAN_ACCESS_FIELDS)):
         ensure_recent_auth(current)
@@ -365,7 +363,8 @@ def update_workspace(
     this API, so it takes `admin` as well as the step-up.
 
     Changing `auto_apply` turns `runs:write` into the power to apply, so it takes
-    `admin` and is recorded as the `workspace.auto_apply_changed` audit event. Turning it on also
+    `admin`, or a run token holding the factory grant, and is recorded as the
+    `workspace.auto_apply_changed` audit event. Turning it on also
     takes the step-up, since it hands every later run's confirmation to the system.
 
     `global_remote_state` and `remote_state_consumer_ids` decide which other workspaces'
@@ -389,7 +388,7 @@ def update_workspace(
             if any(_changes(changes, existing, field) for field in RUN_ROLE_FIELDS):
                 ensure_recent_auth(current)
             if AUTO_APPLY_FIELD in changes and bool(changes[AUTO_APPLY_FIELD]) != bool(existing.get(AUTO_APPLY_FIELD)):
-                _require_admin(current)
+                _require_admin_or_factory(current)
                 if changes[AUTO_APPLY_FIELD]:
                     ensure_recent_auth(current)
         with _connect_errors():
@@ -431,7 +430,7 @@ def _require_admin_or_factory(current: AuthorizerClaims) -> None:
     """Refuse a caller holding neither `admin` nor the factory grant on its run's API token.
 
     The factory already sets any workspace's run role, which reaches further than a
-    plan role, so it may set what plans reach too.
+    plan role or auto-apply, so it may set what plans reach and turn auto-apply on too.
     """
     if not holds_factory_grant(current):
         _require_admin(current)
