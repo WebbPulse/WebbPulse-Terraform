@@ -34,14 +34,18 @@ PLAN_ASSUME_ROLE_ARN_PATTERN: Final = re.compile(r"^arn:aws:iam::[0-9]{12}:role/
 PLAN_ASSUME_ROLE_ARNS_MAX: Final = 10
 """How many reader roles one workspace may name."""
 
-PLAN_ASSUME_ROLE_ARN_MAX_LENGTH: Final = 140
+PLAN_ASSUME_ROLE_ARN_MAX_LENGTH: Final = 120
 """The longest reader role ARN accepted.
 
 With the count cap this keeps the plan's inline session policy, its secret read
-statements and reader roles together, plus the `ReadOnlyAccess` ARN beside it,
-inside the 2,048 plaintext characters STS allows for session policies in total.
-It still leaves a 64 character role name a 45 character path.
+statements, the reads `ReadOnlyAccess` omits and reader roles together, plus the
+`ReadOnlyAccess` ARN beside it, inside the 2,048 plaintext characters STS allows
+for session policies in total. It still leaves a 64 character role name a 25
+character path.
 """
+
+PLAN_ROLE_ARN_MAX_LENGTH: Final = 140
+"""The longest plan role ARN accepted. It is assumed directly, so it costs the session policy nothing."""
 
 
 PLAN_SECRET_ARN_PATTERN: Final = re.compile(
@@ -111,7 +115,7 @@ def validate_trigger_patterns(values: list[str]) -> list[str]:
 def validate_plan_role_arn(value: str) -> str:
     """A trimmed exact role ARN for the plan role, refusing wildcards and oversized values."""
     arn = value.strip()
-    if len(arn) > PLAN_ASSUME_ROLE_ARN_MAX_LENGTH or not PLAN_ASSUME_ROLE_ARN_PATTERN.match(arn):
+    if len(arn) > PLAN_ROLE_ARN_MAX_LENGTH or not PLAN_ASSUME_ROLE_ARN_PATTERN.match(arn):
         raise ValueError(
             "plan_role_arn must be an exact IAM role ARN of the form "
             "arn:aws:iam::<12 digit account id>:role/<name>, with no wildcards"

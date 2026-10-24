@@ -23,8 +23,12 @@ or a SecureString parameter, and any ephemeral secret read, needs both, so a pla
 session carries an inline grant for them. `kms:Decrypt` is limited by
 `kms:ViaService` to Secrets Manager and SSM, so the plan cannot decrypt arbitrary
 ciphertext directly. SSM reads need no statement: `ReadOnlyAccess` already holds
-`ssm:Get*`. The secret statements and the reader role statement share one inline
-document.
+`ssm:Get*`.
+
+`ReadOnlyAccess` also omits some plain reads a refresh needs, such as every
+CodeArtifact package group action, so a plan session always carries a statement
+allowing exactly those reads. The secret statements, the omitted reads and the
+reader role statement share one inline document.
 
 Which secrets the grant reaches depends on the run. A workspace may name secret
 ARN patterns in `plan_secret_arns`; when it does, every plan of it reads those
@@ -101,6 +105,27 @@ def plan_secret_statements(secret_arns: Sequence[str] | None) -> tuple[dict[str,
     )
 
 
+PLAN_EXTRA_READ_ACTIONS: Final = (
+    "codeartifact:DescribePackageGroup",
+    "codeartifact:GetAssociatedPackageGroup",
+    "codeartifact:ListAllowedRepositoriesForGroup",
+    "codeartifact:ListAssociatedPackages",
+    "codeartifact:ListPackageGroups",
+    "codeartifact:ListSubPackageGroups",
+)
+"""Read actions a refresh needs that `ReadOnlyAccess` omits, granted to every plan."""
+
+
+def plan_extra_read_statement() -> dict[str, Any]:
+    """The statement letting a plan make the reads `ReadOnlyAccess` omits, `PLAN_EXTRA_READ_ACTIONS`."""
+    return {
+        "Sid": "PlanReadsReadOnlyAccessOmits",
+        "Effect": "Allow",
+        "Action": list(PLAN_EXTRA_READ_ACTIONS),
+        "Resource": "*",
+    }
+
+
 def plan_secret_arns_for(secret_arns: Sequence[str], *, speculative: bool) -> list[str] | None:
     """The secrets one plan may read: the workspace's list, else none when speculative and any otherwise."""
     named = [arn for arn in secret_arns if arn]
@@ -122,18 +147,17 @@ def plan_assume_statement(role_arns: Sequence[str]) -> dict[str, Any] | None:
     }
 
 
-def plan_document(role_arns: Sequence[str] = (), secret_arns: Sequence[str] | None = None) -> dict[str, Any] | None:
-    """The inline document of a plan session, or None when it grants nothing.
+def plan_document(role_arns: Sequence[str] = (), secret_arns: Sequence[str] | None = None) -> dict[str, Any]:
+    """The inline document of a plan session.
 
-    It holds the secret reads `plan_secret_statements` gives `secret_arns`, plus
-    `sts:AssumeRole` on `role_arns` when any.
+    It holds the secret reads `plan_secret_statements` gives `secret_arns`, the
+    reads `ReadOnlyAccess` omits, plus `sts:AssumeRole` on `role_arns` when any.
     """
     statements = [dict(statement) for statement in plan_secret_statements(secret_arns)]
+    statements.append(plan_extra_read_statement())
     assume = plan_assume_statement(role_arns)
     if assume is not None:
         statements.append(assume)
-    if not statements:
-        return None
     return {"Version": "2012-10-17", "Statement": statements}
 
 
@@ -154,7 +178,8 @@ def for_phase(
     """The workspace session policy for one phase.
 
     A plan is `ReadOnlyAccess` plus an inline document allowing reads of the
-    secrets `plan_secret_arns` names (any for None, none when empty) and, when
+    secrets `plan_secret_arns` names (any for None, none when empty), the reads
+    `ReadOnlyAccess` omits and, when
     the workspace names any, `sts:AssumeRole` on its reader roles. An apply is
     the role itself, and neither list applies to it.
     """
@@ -251,6 +276,7 @@ def state_policy(state_bucket: str, workspace_id: str, kms_key_arn: str, phase: 
 __all__ = [
     "ANY_SECRET_ARN",
     "LOCK_FILE_SUFFIX",
+    "PLAN_EXTRA_READ_ACTIONS",
     "PLAN_SESSION_POLICY_ARNS",
     "SESSION_POLICY_PLAINTEXT_LIMIT",
     "SessionPolicy",
@@ -259,6 +285,7 @@ __all__ = [
     "plaintext_size",
     "plan_assume_statement",
     "plan_document",
+    "plan_extra_read_statement",
     "plan_policy_fits",
     "plan_secret_arns_for",
     "plan_secret_statements",
