@@ -243,7 +243,10 @@ SecureString parameters work, on the secret ARN patterns in the workspace's
 region and name, null or `[]` clears). With none named, a confirmable plan reads any
 secret and a speculative plan (`plan_only` or `vcs_pr`, a run role check excepted)
 reads none, so every prod workspace with PR or plan only plans lists its secrets
-through the factory. Readers and secrets together must
+through the factory. Every plan's inline document also grants the CodeArtifact
+package group reads `ReadOnlyAccess` omits (`PLAN_EXTRA_READ_ACTIONS`); add a
+read there when a refresh fails with "no session policy allows". Readers and
+secrets together must
 fit STS's limit, or the edit is a 422 `PLAN_SESSION_POLICY_TOO_LARGE`. Setting
 `plan_role_arn`, `plan_assume_role_arns` or `plan_secret_arns`, on create or
 PATCH, takes `admin` (or a factory run token) plus step-up, since it decides what
@@ -251,7 +254,7 @@ every plan reaches.
 
 `ReadOnlyAccess` holds no `sts:AssumeRole`, so a plan whose providers assume
 roles elsewhere (Route 53 writers in a zone account, say) is denied. A workspace
-lists exact reader role ARNs in `plan_assume_role_arns` (at most 10, 140
+lists exact reader role ARNs in `plan_assume_role_arns` (at most 10, 120
 characters each so the inline document fits STS's 2,048 characters, no wildcards,
 null clears), and a plan's inline document then also carries an `sts:AssumeRole`
 statement on exactly those ARNs; an apply

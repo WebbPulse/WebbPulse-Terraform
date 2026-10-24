@@ -78,7 +78,7 @@ def test_anything_but_account_pinned_secret_patterns_is_refused(auth_client, wor
 def test_readers_and_secrets_that_overflow_the_session_policy_are_refused(auth_client, workspace):
     """Each list may be within its own cap and the two together still too long for STS."""
     head = "arn:aws:iam::123456789012:role/"
-    readers = [f"{head}{index:02d}{'r' * (140 - len(head) - 2)}" for index in range(10)]
+    readers = [f"{head}{index:02d}{'r' * (120 - len(head) - 2)}" for index in range(10)]
     assert auth_client.patch(_path(workspace), json={"plan_assume_role_arns": readers}).status_code == 200
 
     secrets = [f"arn:aws:secretsmanager:us-west-2:870550636948:secret:{index}{'s' * 130}" for index in range(3)]

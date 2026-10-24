@@ -43,17 +43,56 @@ def plan_document(*args: Any) -> dict[str, Any]:
 
 
 SECRET_SIDS = ["PlanReadSecretValues", "PlanDecryptViaSecretsAndSsm"]
+EXTRA_READS_SID = "PlanReadsReadOnlyAccessOmits"
+PLAN_SIDS = [*SECRET_SIDS, EXTRA_READS_SID]
 
-READ_ONLY_ACTION = re.compile(r"^(secretsmanager:GetSecretValue|kms:Decrypt|sts:AssumeRole)$")
+PACKAGE_GROUP_READS = [
+    "codeartifact:DescribePackageGroup",
+    "codeartifact:GetAssociatedPackageGroup",
+    "codeartifact:ListAllowedRepositoriesForGroup",
+    "codeartifact:ListAssociatedPackages",
+    "codeartifact:ListPackageGroups",
+    "codeartifact:ListSubPackageGroups",
+]
+
+READ_ONLY_ACTION = re.compile(
+    r"^(secretsmanager:GetSecretValue|kms:Decrypt|sts:AssumeRole"
+    r"|codeartifact:(Describe|Get|List)[A-Za-z]+)$"
+)
 """The only actions a plan's inline document may name: reads, plus assuming a listed reader."""
 
 
-def test_the_plan_phase_is_read_only_access_plus_secret_reads() -> None:
-    """A plan's workspace session is ReadOnlyAccess and an inline document holding the secret reads alone."""
+def test_the_plan_phase_is_read_only_access_plus_secret_and_omitted_reads() -> None:
+    """A plan's workspace session is ReadOnlyAccess and an inline document holding the secret and omitted reads."""
     policy = session_policy.for_phase("plan")
     assert policy.policy_arns == ("arn:aws:iam::aws:policy/ReadOnlyAccess",)
     assert policy.document is not None
-    assert list(statements(policy.document)) == SECRET_SIDS
+    assert list(statements(policy.document)) == PLAN_SIDS
+
+
+def test_every_plan_may_read_codeartifact_package_groups() -> None:
+    """The package group reads ReadOnlyAccess omits are granted on any resource, and nothing else is."""
+    assert statements(plan_document())[EXTRA_READS_SID] == {
+        "Sid": EXTRA_READS_SID,
+        "Effect": "Allow",
+        "Action": PACKAGE_GROUP_READS,
+        "Resource": "*",
+    }
+
+
+@pytest.mark.parametrize("secret_arns", [None, [], ["arn:aws:secretsmanager:*:870550636948:secret:example-*"]])
+def test_the_omitted_reads_ride_every_plan_shape(secret_arns: list[str] | None) -> None:
+    """A speculative plan reading no secret, a listed plan and an unlisted plan all carry the package group reads."""
+    document = session_policy.for_phase("plan", plan_secret_arns=secret_arns).document
+    assert document is not None
+    assert statements(document)[EXTRA_READS_SID]["Action"] == PACKAGE_GROUP_READS
+
+
+def test_the_omitted_reads_are_not_shared_mutable_state() -> None:
+    """Editing one returned document's omitted reads leaves the next plan's untouched."""
+    first = plan_document()
+    statements(first)[EXTRA_READS_SID]["Action"].append("codeartifact:DeletePackageGroup")
+    assert statements(plan_document())[EXTRA_READS_SID]["Action"] == PACKAGE_GROUP_READS
 
 
 def test_the_plan_may_read_any_secret_value() -> None:
@@ -164,7 +203,7 @@ def test_a_plan_with_reader_roles_may_assume_exactly_those() -> None:
     assert policy.policy_arns == ("arn:aws:iam::aws:policy/ReadOnlyAccess",)
     assert policy.document is not None
     by_sid = statements(policy.document)
-    assert list(by_sid) == [*SECRET_SIDS, "PlanAssumeReaderRoles"]
+    assert list(by_sid) == [*PLAN_SIDS, "PlanAssumeReaderRoles"]
     assert by_sid["PlanAssumeReaderRoles"] == {
         "Sid": "PlanAssumeReaderRoles",
         "Effect": "Allow",
@@ -174,11 +213,11 @@ def test_a_plan_with_reader_roles_may_assume_exactly_those() -> None:
 
 
 def test_an_empty_reader_list_adds_no_assume_statement() -> None:
-    """No reader roles means the secret reads alone."""
+    """No reader roles means the secret and omitted reads alone."""
     for arns in ([], [""]):
         document = session_policy.for_phase("plan", arns).document
         assert document is not None
-        assert list(statements(document)) == SECRET_SIDS
+        assert list(statements(document)) == PLAN_SIDS
 
 
 def test_the_apply_phase_ignores_reader_roles() -> None:
@@ -189,7 +228,7 @@ def test_the_apply_phase_ignores_reader_roles() -> None:
 
 
 def test_the_largest_allowed_reader_list_fits_the_session_policy_limit() -> None:
-    """Ten ARNs of the longest accepted length, the secret reads and ReadOnlyAccess stay inside the STS limit."""
+    """Ten ARNs of the longest accepted length, the inline reads and ReadOnlyAccess stay inside the STS limit."""
     from app.domains.workspaces.schemas.workspace import (
         PLAN_ASSUME_ROLE_ARN_MAX_LENGTH,
         PLAN_ASSUME_ROLE_ARNS_MAX,
@@ -208,7 +247,7 @@ def test_the_largest_allowed_reader_list_fits_the_session_policy_limit() -> None
 
 
 def test_ten_realistic_reader_roles_fit_the_session_policy_limit() -> None:
-    """Ten pathed reader roles with 64 character names, the IAM name maximum, fit beside the secret reads."""
+    """Ten pathed reader roles with 64 character names, the IAM name maximum, fit beside the inline reads."""
     from app.domains.workspaces.schemas.workspace import PLAN_ASSUME_ROLE_ARNS_MAX, validate_plan_assume_role_arns
 
     arns = [
@@ -240,15 +279,17 @@ def test_a_named_list_is_all_a_plan_reads() -> None:
     policy = session_policy.for_phase("plan", plan_secret_arns=[SECRET, SECRET])
     assert policy.document is not None
     assert statements(policy.document)["PlanReadSecretValues"]["Resource"] == [SECRET]
-    assert list(statements(policy.document)) == SECRET_SIDS
+    assert list(statements(policy.document)) == PLAN_SIDS
 
 
 def test_an_empty_list_reads_no_secret() -> None:
-    """No secrets means neither the read nor the decrypt, and no document at all without readers."""
-    assert session_policy.for_phase("plan", plan_secret_arns=[]).document is None
+    """No secrets means neither the read nor the decrypt, leaving the omitted reads and any readers."""
+    document = session_policy.for_phase("plan", plan_secret_arns=[]).document
+    assert document is not None
+    assert list(statements(document)) == [EXTRA_READS_SID]
     document = session_policy.for_phase("plan", [READER], plan_secret_arns=[]).document
     assert document is not None
-    assert list(statements(document)) == ["PlanAssumeReaderRoles"]
+    assert list(statements(document)) == [EXTRA_READS_SID, "PlanAssumeReaderRoles"]
 
 
 @pytest.mark.parametrize(
@@ -267,8 +308,10 @@ def test_which_secrets_a_plan_reads(listed: list[str], speculative: bool, expect
 
 def test_the_budget_check_covers_both_unlisted_shapes() -> None:
     """The largest reader list fits beside the wildcard, and long secret patterns tip it over."""
+    from app.domains.workspaces.schemas.workspace import PLAN_ASSUME_ROLE_ARN_MAX_LENGTH
+
     head = "arn:aws:iam::123456789012:role/"
-    readers = [f"{head}{index:02d}{'r' * (140 - len(head) - 2)}" for index in range(10)]
+    readers = [f"{head}{index:02d}{'r' * (PLAN_ASSUME_ROLE_ARN_MAX_LENGTH - len(head) - 2)}" for index in range(10)]
     secrets = [f"arn:aws:secretsmanager:us-west-2:870550636948:secret:{index}{'s' * 130}" for index in range(3)]
     assert session_policy.plan_policy_fits(readers, [])
     assert session_policy.plan_policy_fits([], secrets)

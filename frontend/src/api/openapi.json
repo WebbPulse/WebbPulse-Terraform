@@ -6869,7 +6869,7 @@
     },
     "/api/auth/register": {
       "post": {
-        "description": "Register an account, returning tokens unless the address already has one.",
+        "description": "Register an account, returning tokens unless the address already has one.\n\nThe body's `attributes` is client supplied: a non-object value is dropped, and the\nflow keeps only the keys named in `settings.registration_attributes`.",
         "operationId": "register_api_auth_register_post",
         "requestBody": {
           "content": {
@@ -6916,6 +6916,89 @@
           }
         },
         "summary": "Register",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/sessions": {
+      "get": {
+        "description": "List the caller's live sign-in sessions, marking the one this request came from.",
+        "operationId": "list_sessions_api_auth_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "List Sessions",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/auth/sessions/{family_id}": {
+      "delete": {
+        "description": "Sign one of the caller's other sessions out.\n\nAnother user's session answers 404 like an unknown one. The session the request came\nfrom is refused with 400, since ending it is what `logout` does and clears the cookie.",
+        "operationId": "revoke_session_api_auth_sessions__family_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "family_id",
+            "required": true,
+            "schema": {
+              "title": "Family Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The session is the one the request came from"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "404": {
+            "description": "No live session of that id belongs to the caller"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Revoke Session",
         "tags": [
           "identity"
         ]

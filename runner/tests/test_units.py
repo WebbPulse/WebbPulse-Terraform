@@ -116,6 +116,39 @@ def test_unreadable_archive_is_rejected(tmp_path: Path) -> None:
         workspace.unpack_config(archive, tmp_path / "work")
 
 
+def test_link_member_refusal_names_the_size_and_the_member(tmp_path: Path) -> None:
+    """A config upload carrying a symlink is refused with its size and path, never its contents."""
+    archive = tmp_path / "links.tar.gz"
+    with tarfile.open(archive, "w:gz") as handle:
+        info = tarfile.TarInfo("backend/.venv/bin/python")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "/usr/bin/python3"
+        handle.addfile(info)
+    with pytest.raises(workspace.ConfigError) as caught:
+        workspace.unpack_config(archive, tmp_path / "work")
+    message = str(caught.value)
+    assert "backend/.venv/bin/python" in message
+    assert "bytes)" in message
+    assert ".terraformignore" in message
+
+
+def test_oversized_archive_names_the_size_and_the_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An archive over the limit is refused before it is opened, naming both numbers."""
+    archive = tmp_path / "big.tar.gz"
+    archive.write_bytes(b"x" * 2_500_000)
+    monkeypatch.setattr(workspace, "MAX_CONFIG_BYTES", 2_000_000)
+    with pytest.raises(workspace.ConfigError, match=r"\(2\.5 MB\) is over the 2\.0 MB limit"):
+        workspace.unpack_config(archive, tmp_path / "work")
+
+
+def test_unreadable_archive_names_the_tar_error(tmp_path: Path) -> None:
+    """A corrupt archive's refusal carries the tar error's name rather than a bare failure."""
+    archive = tmp_path / "bad.tar.gz"
+    archive.write_bytes(b"not a tarball")
+    with pytest.raises(workspace.ConfigError, match=r"could not be unpacked: ReadError"):
+        workspace.unpack_config(archive, tmp_path / "work")
+
+
 def test_working_directory_defaults_to_the_configuration_root(tmp_path: Path) -> None:
     """An empty working directory runs the engine from the tarball root."""
     root = tmp_path / "config"

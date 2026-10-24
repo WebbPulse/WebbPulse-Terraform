@@ -103,14 +103,18 @@ def build_identity_settings(settings: "Settings") -> Any:
 
     Device login's client, scopes and sign-in page are product facts rather than
     deployment config, so they are set here instead of in the function environment,
-    which Lambda caps at 4KB, and so is the session's sliding window. The WebAuthn
-    origin defaults to the SPA's origin. Raises `ValidationError` on a bad environment.
+    which Lambda caps at 4KB, and so are the session's sliding window and the register
+    attributes allowlist. The WebAuthn origin defaults to the SPA's origin. Raises
+    `ValidationError` on a bad environment.
     """
     from webbpulse.identity import IdentitySettings
+
+    from app.common.identity.identity_hooks import REGISTRATION_ATTRIBUTES
 
     overrides: dict[str, Any] = {
         "refresh_token_ttl": SESSION_IDLE_TTL,
         "refresh_absolute_ttl": SESSION_ABSOLUTE_TTL,
+        "registration_attributes": list(REGISTRATION_ATTRIBUTES),
     }
     frontend = settings.IDENTITY_FRONTEND_BASE_URL.strip().rstrip("/")
     if frontend and not os.environ.get(WEBAUTHN_ORIGINS_ENV, "").strip():

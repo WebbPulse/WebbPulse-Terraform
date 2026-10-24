@@ -96,7 +96,8 @@ def report(run_id: str, result: dict[str, Any], *, settings: Settings | None = N
 
     A result naming an `error_name` is a runner failure: only the token is failed,
     and the state machine's own error path marks the run, so the run's error reads
-    `The run failed with <error_name>.` exactly as the run role check expects. Any
+    `The run failed with <error_name>.` exactly as the run role check expects. A name
+    in `service.EXPLAINED_FAILURES` also gets its cause written after the name. Any
     other result is recorded as before and then sent as the task's success, or as
     `PhaseFailed` when its exit code says the phase failed.
 
@@ -118,7 +119,9 @@ def report(run_id: str, result: dict[str, Any], *, settings: Settings | None = N
 
     error_name = str(result.get("error_name") or "")
     if error_name:
-        fail(run_id, token, error_name, str(result.get("error") or ""), settings=resolved)
+        cause = str(result.get("error") or "")
+        if fail(run_id, token, error_name, cause, settings=resolved):
+            service.explain_runner_failure(run_id, error_name, cause, settings=resolved)
         return run
 
     updated = service.record_phase_result(run_id, result, settings=resolved)

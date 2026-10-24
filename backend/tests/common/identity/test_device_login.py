@@ -165,6 +165,16 @@ def test_browser_sessions_slide_for_12_hours_up_to_7_days(identity_environment: 
     assert identity.cookie_kwargs()["max_age"] == 12 * 3600
 
 
+def test_registration_allowlists_only_the_display_name_and_verification_flag(identity_environment: None) -> None:
+    """The package's register route may pass on these keys and nothing else, `is_admin` included."""
+    del identity_environment
+    settings_module.reset_settings_cache()
+    identity = build_identity_settings(settings_module.get_settings())
+    settings_module.reset_settings_cache()
+    assert identity.registration_attributes == ["display_name", "email_verified"]
+    assert "is_admin" not in identity.registration_attributes
+
+
 def test_an_explicit_webauthn_origin_wins(monkeypatch: pytest.MonkeyPatch, identity_environment: None) -> None:
     del identity_environment
     monkeypatch.setenv("IDENTITY_FRONTEND_BASE_URL", "https://terraform.example.test")
