@@ -75,11 +75,6 @@ locals {
       sid       = "EcrPublicBearerToken"
       actions   = ["sts:GetServiceBearerToken"]
       resources = ["*"]
-      condition = {
-        StringEquals = {
-          "sts:AWSServiceName" = ["ecr-public.amazonaws.com"]
-        }
-      }
     },
   ]
 
