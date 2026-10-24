@@ -124,6 +124,7 @@ def test_a_working_directory_the_config_lacks_fails_the_task(
 
     assert run(make_env("plan"), clients, tmp_path) == 1
     assert recorder.failure_names() == ["ConfigUnpackFailed"]
+    assert "working directory is not in the configuration: infra" in recorder.phase_results[0]["error"]
 
 
 def test_plan_with_no_changes_reports_zero(
