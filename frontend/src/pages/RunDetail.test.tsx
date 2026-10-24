@@ -462,17 +462,124 @@ describe('RunDetail', () => {
     expect(precedes(panel, notice)).toBe(true);
   });
 
-  it('leaves the decision under the plan when the run is not awaiting confirmation', async () => {
+  it('keeps the discard of a planned run in the same panel above the resources', async () => {
     apiMock.getRun.mockResolvedValue(aRun('planned'));
 
     renderRun();
 
     const view = await screen.findByTestId('plan-view');
     const panel = screen.getByTestId('confirmation-panel');
-    expect(panel).toHaveAttribute('data-placement', 'bottom');
-    expect(panel).not.toHaveAttribute('data-tone');
-    expect(precedes(view, panel)).toBe(true);
-    expect(view).not.toContainElement(panel);
+    expect(panel).toHaveAttribute('data-placement', 'top');
+    expect(panel).toHaveAttribute('data-tone', 'running');
+    expect(precedes(panel, view)).toBe(true);
+    expect(
+      within(panel).getByRole('button', { name: 'Discard run' })
+    ).toBeInTheDocument();
+  });
+
+  it('puts cancel in the action panel above the plan notice while the run plans', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('planning'));
+
+    renderRun();
+
+    const panel = await screen.findByTestId('confirmation-panel');
+    const notice = screen.getByTestId('plan-pending');
+    expect(panel).toHaveAttribute('data-placement', 'top');
+    expect(precedes(panel, notice)).toBe(true);
+    expect(
+      within(panel).getByRole('heading', { name: 'The plan is running' })
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByRole('button', { name: 'Cancel run' })
+    ).toBeInTheDocument();
+  });
+
+  it('swaps confirm and discard for cancel in the same panel once the apply starts', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('awaiting_confirmation'));
+    apiMock.confirmRun.mockResolvedValue(aRun('applying'));
+
+    renderRun();
+
+    const panel = await screen.findByTestId('confirmation-panel');
+    await screen.findByTestId('plan-summary-line');
+    const row = panel.firstElementChild?.className;
+    const actions = within(panel).getByTestId('run-actions').className;
+    expect(
+      within(panel).getByRole('button', { name: 'Confirm & apply' })
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByRole('button', { name: 'Discard run' })
+    ).toBeInTheDocument();
+    expect(
+      within(panel).queryByRole('button', { name: 'Cancel run' })
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      within(panel).getByRole('button', { name: 'Confirm & apply' })
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Confirm & apply' });
+    apiMock.getRun.mockResolvedValue(aRun('applying'));
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Confirm plan' })
+    );
+
+    expect(
+      await within(panel).findByRole('button', { name: 'Cancel run' })
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('confirmation-panel')).toBe(panel);
+    expect(panel).toHaveAttribute('data-placement', 'top');
+    expect(panel).toHaveAttribute('data-tone', 'running');
+    expect(panel.firstElementChild?.className).toBe(row);
+    expect(within(panel).getByTestId('run-actions').className).toBe(actions);
+    expect(
+      within(panel).getByRole('heading', { name: 'The apply is running' })
+    ).toBeInTheDocument();
+    expect(
+      within(panel).queryByRole('button', { name: 'Confirm & apply' })
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).queryByRole('button', { name: 'Discard run' })
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Cancel run' })).toHaveLength(
+      1
+    );
+    const summary = screen.getByTestId('plan-summary-line');
+    const resources = screen.getByTestId('resource-section');
+    expect(precedes(summary, panel)).toBe(true);
+    expect(precedes(panel, resources)).toBe(true);
+  });
+
+  it('cancels an apply from the panel and drops the panel once the run settles', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('applying'));
+    apiMock.cancelRun.mockResolvedValue(aRun('cancelled'));
+
+    renderRun();
+
+    const panel = await screen.findByTestId('confirmation-panel');
+    apiMock.getRun.mockResolvedValue(aRun('cancelled'));
+    await userEvent.click(
+      within(panel).getByRole('button', { name: 'Cancel run' })
+    );
+
+    await waitFor(() => {
+      expect(apiMock.cancelRun).toHaveBeenCalledWith(
+        'run-01J000000000000000000000'
+      );
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId('confirmation-panel')
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows no action panel once the run applied', async () => {
+    apiMock.getRun.mockResolvedValue(aRun('applied'));
+
+    renderRun();
+
+    await screen.findByTestId('plan-summary-line');
+    expect(screen.queryByTestId('confirmation-panel')).not.toBeInTheDocument();
   });
 
   it('asks for an optional comment before confirming, in an in-app dialog', async () => {
