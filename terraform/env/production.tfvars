@@ -17,6 +17,8 @@ external_run_role_arns = [
   "arn:aws:iam::870550636948:role/WebbPulse-Terraform-staging-Terraform",
   "arn:aws:iam::147741822161:role/Standupless-Terraform",
   "arn:aws:iam::212598081999:role/Standupless-staging-Terraform",
+  "arn:aws:iam::036807648992:role/WebbPulse-Site-Terraform",
+  "arn:aws:iam::621554169154:role/WebbPulse-Site-staging-Terraform",
   "arn:aws:iam::488386929690:role/WebbPulse-Platform-Terraform-Plan",
   "arn:aws:iam::488386929690:role/WebbPulse-Organization-Terraform-Plan",
   "arn:aws:iam::734702670403:role/CarModPicker-Terraform-Plan",
@@ -28,4 +30,6 @@ external_run_role_arns = [
   "arn:aws:iam::870550636948:role/WebbPulse-Terraform-staging-Terraform-Plan",
   "arn:aws:iam::147741822161:role/Standupless-Terraform-Plan",
   "arn:aws:iam::212598081999:role/Standupless-staging-Terraform-Plan",
+  "arn:aws:iam::036807648992:role/WebbPulse-Site-Terraform-Plan",
+  "arn:aws:iam::621554169154:role/WebbPulse-Site-staging-Terraform-Plan",
 ]
