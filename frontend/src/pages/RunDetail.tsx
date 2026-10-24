@@ -150,11 +150,7 @@ function RunBody({
             ]}
           />
           {tab === 'plan' ? (
-            <PlanPanel
-              run={run}
-              planStatus={plan}
-              decision={decision}
-            />
+            <PlanPanel run={run} planStatus={plan} decision={decision} />
           ) : (
             <>
               {decision}
@@ -581,9 +577,7 @@ function ConfirmationPanel({
             >
               {words.title}
             </h3>
-            <p className="max-w-prose text-sm text-text-muted">
-              {words.body}
-            </p>
+            <p className="max-w-prose text-sm text-text-muted">{words.body}</p>
           </div>
         </div>
         <div

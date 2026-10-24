@@ -540,9 +540,9 @@ describe('RunDetail', () => {
     expect(
       within(panel).queryByRole('button', { name: 'Discard run' })
     ).not.toBeInTheDocument();
-    expect(
-      screen.getAllByRole('button', { name: 'Cancel run' })
-    ).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Cancel run' })).toHaveLength(
+      1
+    );
     const summary = screen.getByTestId('plan-summary-line');
     const resources = screen.getByTestId('resource-section');
     expect(precedes(summary, panel)).toBe(true);
