@@ -19,6 +19,7 @@ from app.common.core.auth import ALL_SCOPES, RUNNER_SCOPE
 from app.common.db.users import User, UserRepository
 from app.common.identity.identity_hooks import (
     ADMIN_ROLE,
+    EPHEMERAL_ATTRIBUTES,
     READ_SCOPES,
     REGISTRATION_ATTRIBUTES,
     ControlPlaneIdentityHooks,
@@ -280,3 +281,18 @@ def test_registration_falls_back_to_the_local_part_for_a_display_name(hooks: Con
 
     assert created["display_name"] == "someone.new"
     assert created["email_verified"] is False
+
+
+def test_an_ephemeral_user_may_be_created_as_an_admin(hooks: ControlPlaneIdentityHooks) -> None:
+    """The admin-gated ephemeral route's `is_admin` survives for an `e2e.invalid` address."""
+    created = hooks.create_user(
+        email="e2e-run-3@e2e.invalid",
+        attributes={"is_admin": True, "email_verified": True, "disabled": True},
+    )
+
+    stored = hooks.load_user_by_id(str(created["id"]))
+    assert stored is not None
+    assert stored["is_admin"] is True
+    assert stored["disabled"] is False
+    assert hooks.claims_for(stored)["roles"] == ["admin"]
+    assert set(EPHEMERAL_ATTRIBUTES) == {"display_name", "email_verified", "is_admin"}
