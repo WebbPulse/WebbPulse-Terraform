@@ -28,9 +28,10 @@ READ_SCOPES: Final = tuple(scope for scope in ALL_SCOPES if scope.endswith(":rea
 `ALL_SCOPES` rather than listed again, so a new scope cannot be forgotten here."""
 
 REGISTRATION_ATTRIBUTES: Final = ("display_name", "email_verified")
-"""The only register `attributes` keys `create_user` copies onto a new row. The
-package sets `email_verified` itself, so every other field, `is_admin` and
-`disabled` included, always takes the model default."""
+"""The register `attributes` keys a sign-up may set. `build_identity_settings` hands
+them to the package as `registration_attributes`, so the register route drops every
+other key, and `create_user` copies only these as a backstop. The package sets
+`email_verified` itself, so `is_admin` and `disabled` always take the model default."""
 
 EPHEMERAL_ATTRIBUTES: Final = (*REGISTRATION_ATTRIBUTES, "is_admin")
 """What an `e2e-<run>@e2e.invalid` row may also carry. Only the admin-gated ephemeral
@@ -102,10 +103,10 @@ class ControlPlaneIdentityHooks:
         the protocol requires it and `scripts/create_user.py` writes through the same
         repository this returns.
 
-        Only the fields in `REGISTRATION_ATTRIBUTES` are taken from `attributes`,
-        because the register route passes the client's own `attributes` object
-        through: copying it whole would let anyone registering set `is_admin` or
-        `disabled`. An ephemeral e2e address may also carry `is_admin`, per
+        The package's register route already keeps only `REGISTRATION_ATTRIBUTES`, and
+        this copies only those too, so no other create path can set `is_admin` or
+        `disabled` either. The admin-gated ephemeral route passes its attributes through
+        unfiltered, so an ephemeral e2e address may also carry `is_admin`, per
         `EPHEMERAL_ATTRIBUTES`. The display name falls back to the address's local part.
         """
         allowed = EPHEMERAL_ATTRIBUTES if is_ephemeral_email(email) else REGISTRATION_ATTRIBUTES
