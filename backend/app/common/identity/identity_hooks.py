@@ -26,6 +26,11 @@ READ_SCOPES: Final = tuple(scope for scope in ALL_SCOPES if scope.endswith(":rea
 """What a non-admin holds: every read scope and no write or apply one. Derived from
 `ALL_SCOPES` rather than listed again, so a new scope cannot be forgotten here."""
 
+REGISTRATION_ATTRIBUTES: Final = ("display_name", "email_verified")
+"""The only register `attributes` keys `create_user` copies onto a new row. The
+package sets `email_verified` itself, so every other field, `is_admin` and
+`disabled` included, always takes the model default."""
+
 
 class ControlPlaneIdentityHooks:
     """The control plane's `IdentityHooks`, satisfying the protocol structurally.
@@ -90,10 +95,13 @@ class ControlPlaneIdentityHooks:
         through an HTTP route today. It is implemented rather than raising because
         the protocol requires it and `scripts/create_user.py` writes through the same
         repository this returns.
+
+        Only the fields in `REGISTRATION_ATTRIBUTES` are taken from `attributes`,
+        because the register route passes the client's own `attributes` object
+        through: copying it whole would let anyone registering set `is_admin` or
+        `disabled`. The display name falls back to the address's local part.
         """
-        record = dict(attributes)
-        record.pop("id", None)
-        record.pop("hashed_password", None)
+        record = {key: attributes[key] for key in REGISTRATION_ATTRIBUTES if key in attributes}
         record["email"] = email
         record["display_name"] = str(record.get("display_name") or _display_name_from(email))
         return _as_mapping(self._users.create(User(**record)))
