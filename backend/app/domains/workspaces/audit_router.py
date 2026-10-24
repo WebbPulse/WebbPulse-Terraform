@@ -57,20 +57,19 @@ def _query(
 
 
 def _actor_names(events: Iterable[StoredEvent]) -> dict[str, str]:
-    """Each person's display name or email, for a session or a key they minted, looked up once per subject."""
-    users = UserRepository()
-    names: dict[str, str] = {}
-    for event in events:
-        subject = event.actor.id
-        if event.actor.kind == "run_token" or subject in names:
-            continue
-        try:
-            user = users.get(subject)
-        except Exception:
-            user = None
-        if user is not None:
-            names[subject] = user.display_name or user.email
-    return names
+    """Each person's display name or email, for a session or a key they minted, read in one batch.
+
+    A failed read leaves every actor unnamed rather than failing the page, the way a
+    missing user does.
+    """
+    subjects = list(dict.fromkeys(event.actor.id for event in events if event.actor.kind != "run_token"))
+    if not subjects:
+        return {}
+    try:
+        users = UserRepository().get_many(subjects)
+    except Exception:
+        return {}
+    return {subject: user.display_name or user.email for subject, user in users.items()}
 
 
 def _render(event: StoredEvent, names: dict[str, str]) -> dict[str, Any]:
