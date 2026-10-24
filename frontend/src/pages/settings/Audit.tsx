@@ -104,18 +104,18 @@ export function changedFields(event: AuditEvent): FieldChange[] {
   if (before !== null || after !== null) {
     return Object.keys({ ...before, ...after })
       .filter((field) => !sameValue(before?.[field], after?.[field]))
-      .map(
-        (field): FieldChange => ({
-          kind: 'edit',
-          field,
-          before: before?.[field],
-          after: after?.[field],
-        })
-      );
+      .map((field): FieldChange => ({
+        kind: 'edit',
+        field,
+        before: before?.[field],
+        after: after?.[field],
+      }));
   }
-  return Object.entries(event.payload).map(
-    ([field, value]): FieldChange => ({ kind: 'value', field, value })
-  );
+  return Object.entries(event.payload).map(([field, value]): FieldChange => ({
+    kind: 'value',
+    field,
+    value,
+  }));
 }
 
 /** A change as one short line: `field: before -> after`, or `field: value`. */
