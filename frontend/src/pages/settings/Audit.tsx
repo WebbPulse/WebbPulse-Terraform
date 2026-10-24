@@ -1,6 +1,6 @@
 /** Organization settings for the audit log: who changed what, filtered, paged and exported as CSV. */
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { usePolledQuery } from '@webbpulse/api-client/react';
 import { useQueryAuth } from '@webbpulse/auth/react';
 
@@ -15,13 +15,10 @@ import {
   Button,
   EmptyState,
   ErrorNotice,
+  formatDateTime,
   INPUT_CLASS,
   PageHeader,
   RelativeTime,
-  Table,
-  Td,
-  Th,
-  Tr,
 } from '../../components';
 import { RowsSkeleton } from './Skeleton';
 
@@ -46,6 +43,7 @@ export const DEFAULT_RANGE_DAYS = 30;
 /** The filters the page holds. Empty strings mean unfiltered. */
 export interface AuditFilters {
   action: string;
+  actorId: string;
   workspaceId: string;
   days: number;
 }
@@ -60,6 +58,9 @@ export function auditQuery(
   };
   if (filters.action !== '') {
     query.action = filters.action;
+  }
+  if (filters.actorId !== '') {
+    query.actor_id = filters.actorId;
   }
   if (filters.workspaceId !== '') {
     query.target_type = 'workspace';
@@ -86,28 +87,104 @@ export function formatValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** What an event changed, one line per field: `before -> after` for an edit, the payload otherwise. */
-export function describeChange(event: AuditEvent): string[] {
+/** One field an event recorded: an edit's before and after, or a payload value. */
+export type FieldChange =
+  | { kind: 'edit'; field: string; before: unknown; after: unknown }
+  | { kind: 'value'; field: string; value: unknown };
+
+/** Whether two recorded values are the same. */
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+/** What an event changed: an edit's fields whose value moved, the payload otherwise. */
+export function changedFields(event: AuditEvent): FieldChange[] {
   const before = event.before ?? null;
   const after = event.after ?? null;
   if (before !== null || after !== null) {
-    const fields = Object.keys({ ...before, ...after });
-    return fields.map(
-      (field) =>
-        `${field}: ${formatValue(before?.[field])} -> ${formatValue(after?.[field])}`
-    );
+    return Object.keys({ ...before, ...after })
+      .filter((field) => !sameValue(before?.[field], after?.[field]))
+      .map(
+        (field): FieldChange => ({
+          kind: 'edit',
+          field,
+          before: before?.[field],
+          after: after?.[field],
+        })
+      );
   }
   return Object.entries(event.payload).map(
-    ([field, value]) => `${field}: ${formatValue(value)}`
+    ([field, value]): FieldChange => ({ kind: 'value', field, value })
   );
 }
 
-/** Who made a change, as the table names them. */
+/** A change as one short line: `field: before -> after`, or `field: value`. */
+export function describeChange(change: FieldChange): string {
+  return change.kind === 'edit'
+    ? `${change.field}: ${formatValue(change.before)} -> ${formatValue(change.after)}`
+    : `${change.field}: ${formatValue(change.value)}`;
+}
+
+/** A recorded value in full, objects pretty printed, for the detail view. */
+export function formatDetail(value: unknown): string {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    !(Array.isArray(value) && value.every((item) => typeof item !== 'object'))
+  ) {
+    return JSON.stringify(value, null, 2);
+  }
+  return formatValue(value);
+}
+
+/** Who made a change, as a row names them. */
 export function actorLabel(event: AuditEvent): string {
   if (event.actor_kind === 'run_token') {
-    return `Run ${event.actor_id}`;
+    return 'A run';
   }
   return event.actor_name ?? event.actor_id;
+}
+
+/** An action label lowered to sit mid sentence, an acronym such as API kept. */
+export function verbPhrase(label: string): string {
+  if (/^[A-Z]{2}/.test(label)) {
+    return label;
+  }
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+
+/** What an event acted on, by name where one is known. */
+export function targetLabel(
+  event: AuditEvent,
+  workspaceNames: Map<string, string>
+): string {
+  if (event.target_label !== '') {
+    return event.target_label;
+  }
+  return workspaceNames.get(event.target_id) ?? event.target_id;
+}
+
+/** One person or key the actor filter offers. */
+export interface ActorOption {
+  id: string;
+  label: string;
+}
+
+/** The actors held so far merged with those on the shown events, runs left out, sorted by name. */
+export function mergeActors(
+  held: readonly ActorOption[],
+  events: readonly AuditEvent[]
+): ActorOption[] {
+  const byId = new Map(held.map((actor) => [actor.id, actor]));
+  for (const event of events) {
+    if (event.actor_kind !== 'run_token' && !byId.has(event.actor_id)) {
+      byId.set(event.actor_id, {
+        id: event.actor_id,
+        label: actorLabel(event),
+      });
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
 /** How the actor reached the plane, in words. */
@@ -152,6 +229,7 @@ export function Audit(): React.ReactElement {
   const auth = useQueryAuth();
   const [filters, setFilters] = useState<AuditFilters>({
     action: '',
+    actorId: '',
     workspaceId: '',
     days: DEFAULT_RANGE_DAYS,
   });
@@ -159,6 +237,7 @@ export function Audit(): React.ReactElement {
     items: AuditEvent[];
     cursor: string | null;
   } | null>(null);
+  const [heldActors, setHeldActors] = useState<ActorOption[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
@@ -174,6 +253,7 @@ export function Audit(): React.ReactElement {
       queryKey: [
         'audit-events',
         filters.action,
+        filters.actorId,
         filters.workspaceId,
         filters.days,
       ],
@@ -190,6 +270,7 @@ export function Audit(): React.ReactElement {
   const cursor =
     older === null ? (events.data?.next_cursor ?? null) : older.cursor;
   const eventTypes = events.data?.event_types ?? [];
+  const actors = mergeActors(heldActors, items);
   const workspaceNames = new Map(
     (workspaces.data?.items ?? []).map((workspace) => [
       workspace.workspace_id,
@@ -198,6 +279,7 @@ export function Audit(): React.ReactElement {
   );
 
   const change = (next: Partial<AuditFilters>): void => {
+    setHeldActors(actors);
     setFilters((current) => ({ ...current, ...next }));
     setOlder(null);
     setActionError(null);
@@ -260,64 +342,61 @@ export function Audit(): React.ReactElement {
       />
       <form
         aria-label="Filter the audit log"
-        className="flex flex-wrap items-end gap-3"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-end"
         onSubmit={(event) => {
           event.preventDefault();
         }}
       >
-        <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-text-muted sm:flex-none">
-          Action
-          <select
-            value={filters.action}
-            onChange={(event) => {
-              change({ action: event.target.value });
-            }}
-            className={INPUT_CLASS}
-          >
-            <option value="">All actions</option>
-            {eventTypes.map((type) => (
-              <option key={type.action} value={type.action}>
-                {type.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-text-muted sm:flex-none">
-          Workspace
-          <select
-            value={filters.workspaceId}
-            onChange={(event) => {
-              change({ workspaceId: event.target.value });
-            }}
-            className={INPUT_CLASS}
-          >
-            <option value="">All workspaces</option>
-            {(workspaces.data?.items ?? []).map((workspace) => (
-              <option
-                key={workspace.workspace_id}
-                value={workspace.workspace_id}
-              >
-                {workspace.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex min-w-40 flex-1 flex-col gap-1 text-xs text-text-muted sm:flex-none">
-          Time range
-          <select
-            value={filters.days}
-            onChange={(event) => {
-              change({ days: Number(event.target.value) });
-            }}
-            className={INPUT_CLASS}
-          >
-            {RANGES.map((range) => (
-              <option key={range.days} value={range.days}>
-                {range.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <FilterSelect
+          label="Action"
+          value={filters.action}
+          onChange={(action) => {
+            change({ action });
+          }}
+          options={[
+            { value: '', label: 'All actions' },
+            ...eventTypes.map((type) => ({
+              value: type.action,
+              label: type.label,
+            })),
+          ]}
+        />
+        <FilterSelect
+          label="Actor"
+          value={filters.actorId}
+          onChange={(actorId) => {
+            change({ actorId });
+          }}
+          options={[
+            { value: '', label: 'All actors' },
+            ...actors.map((actor) => ({ value: actor.id, label: actor.label })),
+          ]}
+        />
+        <FilterSelect
+          label="Workspace"
+          value={filters.workspaceId}
+          onChange={(workspaceId) => {
+            change({ workspaceId });
+          }}
+          options={[
+            { value: '', label: 'All workspaces' },
+            ...(workspaces.data?.items ?? []).map((workspace) => ({
+              value: workspace.workspace_id,
+              label: workspace.name,
+            })),
+          ]}
+        />
+        <FilterSelect
+          label="Time range"
+          value={String(filters.days)}
+          onChange={(days) => {
+            change({ days: Number(days) });
+          }}
+          options={RANGES.map((range) => ({
+            value: String(range.days),
+            label: range.label,
+          }))}
+        />
       </form>
       <ErrorNotice error={events.error ?? actionError} />
       {events.isLoading ? (
@@ -329,7 +408,7 @@ export function Audit(): React.ReactElement {
         />
       ) : (
         <div className="space-y-3">
-          <EventTable events={items} workspaceNames={workspaceNames} />
+          <EventList events={items} workspaceNames={workspaceNames} />
           {cursor === null ? null : (
             <div className="flex justify-center">
               <Button
@@ -351,73 +430,243 @@ export function Audit(): React.ReactElement {
   );
 }
 
-/** The events, newest first. */
-function EventTable({
+/** One labelled filter dropdown. */
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: readonly { value: string; label: string }[];
+}): React.ReactElement {
+  return (
+    <label className="flex min-w-0 flex-col gap-1 text-xs text-text-muted lg:w-48">
+      {label}
+      <select
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+        className={`${INPUT_CLASS} w-full min-w-0`}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** The events newest first, one line each, a click away from their detail. */
+function EventList({
   events,
   workspaceNames,
 }: {
   events: AuditEvent[];
   workspaceNames: Map<string, string>;
 }): React.ReactElement {
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (eventId: string): void => {
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(eventId)) {
+        next.delete(eventId);
+      } else {
+        next.add(eventId);
+      }
+      return next;
+    });
+  };
   return (
-    <Table label="Audit events">
-      <thead>
-        <tr>
-          <Th>Time</Th>
-          <Th>Actor</Th>
-          <Th>Action</Th>
-          <Th>Target</Th>
-          <Th>Details</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {events.map((event) => {
-          const target =
-            event.target_label !== ''
-              ? event.target_label
-              : (workspaceNames.get(event.target_id) ?? event.target_id);
-          const lines = describeChange(event);
-          return (
-            <Tr key={event.event_id}>
-              <Td className="whitespace-nowrap text-text-muted">
-                <RelativeTime iso={event.occurred_at} />
-              </Td>
-              <Td>
-                <div className="font-medium text-text-strong">
-                  {actorLabel(event)}
+    <ul
+      aria-label="Audit events"
+      className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-panel"
+    >
+      {events.map((event) => (
+        <EventRow
+          key={event.event_id}
+          event={event}
+          target={targetLabel(event, workspaceNames)}
+          open={open.has(event.event_id)}
+          onToggle={() => {
+            toggle(event.event_id);
+          }}
+        />
+      ))}
+    </ul>
+  );
+}
+
+/** One event as a sentence, actor, action, target and when, with its detail below while open. */
+function EventRow({
+  event,
+  target,
+  open,
+  onToggle,
+}: {
+  event: AuditEvent;
+  target: string;
+  open: boolean;
+  onToggle: () => void;
+}): React.ReactElement {
+  const detailId = useId();
+  const changes = changedFields(event);
+  const summary = changes.map(describeChange).join(' · ');
+  return (
+    <li>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={detailId}
+        onClick={onToggle}
+        className="flex w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-raised/60 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none focus-visible:ring-inset sm:px-4"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          aria-hidden="true"
+          className={`size-3.5 shrink-0 text-text-faint transition-transform ${open ? 'rotate-90' : ''}`}
+          fill="none"
+        >
+          <path
+            d="m6 3 5 5-5 5"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="min-w-0 flex-1 truncate">
+          <span className="font-medium text-text-strong">
+            {actorLabel(event)}
+          </span>{' '}
+          <span className="text-text-muted">{verbPhrase(event.label)}</span>{' '}
+          <span className="text-text">{target}</span>
+          {summary === '' ? null : (
+            <span className="hidden text-xs text-text-faint md:inline">
+              {' '}
+              · {summary}
+            </span>
+          )}
+        </span>
+        <RelativeTime
+          iso={event.occurred_at}
+          className="shrink-0 text-xs whitespace-nowrap text-text-muted"
+        />
+      </button>
+      {open ? (
+        <EventDetail
+          id={detailId}
+          event={event}
+          target={target}
+          changes={changes}
+        />
+      ) : null}
+    </li>
+  );
+}
+
+/** Everything an event recorded: what changed, in full, then who, from where and the ids. */
+function EventDetail({
+  id,
+  event,
+  target,
+  changes,
+}: {
+  id: string;
+  event: AuditEvent;
+  target: string;
+  changes: FieldChange[];
+}): React.ReactElement {
+  const facts: [string, string, boolean][] = [
+    ['When', formatDateTime(event.occurred_at), false],
+    ['Actor', actorLabel(event), false],
+    [
+      'Signed in with',
+      [
+        KIND_LABELS[event.actor_kind] ?? event.actor_kind,
+        SOURCE_LABELS[event.source] ?? event.source,
+        event.amr.join(', '),
+      ]
+        .filter((part) => part !== '')
+        .join(' · '),
+      false,
+    ],
+    ['IP address', event.ip === '' ? 'Not recorded' : event.ip, true],
+    ['Actor ID', event.actor_id, true],
+    ['Target', `${target} (${event.target_type})`, false],
+    ['Target ID', event.target_id, true],
+    ['Event ID', event.event_id, true],
+  ];
+  return (
+    <div
+      id={id}
+      className="space-y-4 border-t border-line bg-bg/40 px-3 py-4 sm:px-4 sm:pl-10"
+    >
+      <section aria-label="Changes" className="space-y-2">
+        <h3 className="text-xs font-medium text-text-muted">
+          {changes.length === 0
+            ? 'No fields changed'
+            : changes[0]?.kind === 'edit'
+              ? 'Changed fields'
+              : 'Details'}
+        </h3>
+        {changes.length === 0 ? null : (
+          <ul className="space-y-3">
+            {changes.map((change) => (
+              <li key={change.field} className="min-w-0 space-y-1">
+                <div className="font-mono text-xs text-text-strong break-words">
+                  {change.field}
                 </div>
-                <div className="text-xs text-text-faint">
-                  {[
-                    KIND_LABELS[event.actor_kind] ?? event.actor_kind,
-                    SOURCE_LABELS[event.source] ?? event.source,
-                    event.ip,
-                  ]
-                    .filter((part) => part !== '')
-                    .join(' · ')}
-                </div>
-              </Td>
-              <Td className="whitespace-nowrap text-text">{event.label}</Td>
-              <Td>
-                <div className="text-text">{target}</div>
-                <div className="font-mono text-xs text-text-faint">
-                  {event.target_id}
-                </div>
-              </Td>
-              <Td className="max-w-md">
-                {lines.length === 0 ? (
-                  <span className="text-text-faint">No details</span>
+                {change.kind === 'edit' ? (
+                  <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+                    <DetailValue label="Before" value={change.before} />
+                    <DetailValue label="After" value={change.after} />
+                  </div>
                 ) : (
-                  <ul className="space-y-0.5 font-mono text-xs break-all text-text-muted">
-                    {lines.map((line) => (
-                      <li key={line}>{line}</li>
-                    ))}
-                  </ul>
+                  <DetailValue value={change.value} />
                 )}
-              </Td>
-            </Tr>
-          );
-        })}
-      </tbody>
-    </Table>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <dl className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[max-content_minmax(0,1fr)]">
+        {facts.map(([term, value, mono]) => (
+          <div key={term} className="contents">
+            <dt className="text-xs text-text-muted sm:pt-0.5">{term}</dt>
+            <dd
+              className={`mb-1 min-w-0 break-words text-text sm:mb-0 ${mono ? 'font-mono text-xs sm:pt-0.5' : ''}`}
+            >
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+/** One recorded value in a box that wraps at word boundaries. */
+function DetailValue({
+  label,
+  value,
+}: {
+  label?: string;
+  value: unknown;
+}): React.ReactElement {
+  return (
+    <div className="min-w-0 rounded-md border border-line bg-panel px-2.5 py-1.5">
+      {label === undefined ? null : (
+        <div className="text-[11px] text-text-faint">{label}</div>
+      )}
+      <pre className="font-mono text-xs whitespace-pre-wrap break-words text-text">
+        {formatDetail(value)}
+      </pre>
+    </div>
   );
 }
