@@ -86,6 +86,27 @@ def test_deleting_reports_whether_a_row_was_there(users: UserRepository) -> None
     assert users.get("user-1") is None
 
 
+def test_many_users_are_read_in_one_batch(users: UserRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A long id list resolves through `get_many`, never a `GetItem` per id."""
+    ids = [f"user-{index}" for index in range(150)]
+    for user_id in ids:
+        users.create(User(id=user_id, email=f"{user_id}@example.test", display_name=user_id))
+    monkeypatch.setattr(users._repository, "get", lambda *_args, **_kwargs: pytest.fail("GetItem per id"))
+
+    found = users.get_many([*ids, *ids[:10]])
+
+    assert sorted(found) == sorted(ids)
+    assert all(found[user_id].display_name == user_id for user_id in ids)
+
+
+def test_missing_users_are_left_out_of_a_batch(users: UserRepository) -> None:
+    """An id with no row is absent from the result, and blank or empty lists cost nothing."""
+    _create(users)
+    assert set(users.get_many(["user-1", "user-gone", ""])) == {"user-1"}
+    assert users.get_many([]) == {}
+    assert users.get_many(["user-gone"]) == {}
+
+
 RESERVED_DOMAIN_EMAIL = "e2e-local@e2e.invalid"
 
 

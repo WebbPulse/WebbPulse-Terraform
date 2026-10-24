@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Final, Mapping
+from typing import Any, Final, Mapping, Sequence
 
 from boto3.dynamodb.conditions import Key
 from pydantic import BaseModel, Field, field_validator
@@ -99,6 +99,16 @@ class UserRepository:
             return None
         item = self._repository.get({"id": user_id})
         return _as_user(item) if item is not None else None
+
+    def get_many(self, user_ids: Sequence[str]) -> dict[str, User]:
+        """The named users keyed by id, skipping any that are gone.
+
+        One `BatchGetItem` per hundred ids rather than a `GetItem` each, so naming
+        every actor on a page or an export costs a handful of calls however many
+        people it covers. Duplicate and blank ids are dropped before the read.
+        """
+        items = self._repository.get_many(list(user_ids))
+        return {user_id: _as_user(item) for user_id, item in items.items()}
 
     def get_by_email(self, email: str) -> User | None:
         """The user holding this address, or `None`.

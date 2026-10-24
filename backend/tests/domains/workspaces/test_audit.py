@@ -6,12 +6,15 @@ import csv
 import io
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
-from webbpulse.audit import AuditQuery
+from webbpulse.audit import AuditActor, AuditEvent, AuditQuery
 from webbpulse.testing import assert_audit_log_contract
 
 from app.common import audit
 from app.common.core.auth import ADMIN, ALL_SCOPES, WORKSPACES_READ, WORKSPACES_WRITE
+from app.common.db.users import User, UserRepository
+from app.domains.workspaces import audit_router
 from tests.conftest import WORKSPACE_PAYLOAD, person_headers, seed_user
 
 BASE = "/api/v1/audit-events"
@@ -205,3 +208,53 @@ def test_the_admin_scope_is_what_opens_the_trail(app):
     """A person holding `admin` reads the trail."""
     with _person(app, scopes=(ADMIN,)) as client:
         assert client.get(BASE).status_code == 200
+
+
+def _event(actor_id: str, kind: str = "user") -> AuditEvent:
+    """An unstored event by one actor, for naming."""
+    return AuditEvent(
+        tenant_id=audit.AUDIT_TENANT, action=audit.WORKSPACE_CREATED, actor=AuditActor(id=actor_id, kind=kind)
+    )
+
+
+def test_actor_names_resolve_every_subject_in_one_batch(monkeypatch):
+    """Thousands of events by hundreds of people cost one `get_many`, never a `GetItem` each."""
+    users = UserRepository()
+    people = [f"user-actor-{index}" for index in range(250)]
+    for index, person in enumerate(people):
+        display = person if index % 2 else ""
+        users.create(User(id=person, email=f"{person}@example.test", display_name=display))
+    batches: list[list[str]] = []
+    real_get_many = UserRepository.get_many
+
+    def counting_get_many(self, user_ids):
+        """Record each batch before reading it."""
+        batches.append(list(user_ids))
+        return real_get_many(self, user_ids)
+
+    monkeypatch.setattr(UserRepository, "get_many", counting_get_many)
+    monkeypatch.setattr(UserRepository, "get", lambda *_args, **_kwargs: pytest.fail("GetItem per subject"))
+    events = [_event(person) for _ in range(8) for person in people]
+    events.append(_event("run-token-1", kind="run_token"))
+
+    names = audit_router._actor_names(events)
+
+    assert len(batches) == 1
+    assert sorted(batches[0]) == sorted(people)
+    assert len(names) == len(people)
+    assert names["user-actor-1"] == "user-actor-1"
+    assert names["user-actor-0"] == "user-actor-0@example.test"
+
+
+def test_actor_names_skip_missing_users_and_failed_reads(monkeypatch):
+    """A subject with no row stays unnamed, and a failed batch names nobody rather than failing."""
+    seed_user("user-present")
+    assert set(audit_router._actor_names([_event("user-present"), _event("user-gone")])) == {"user-present"}
+    assert audit_router._actor_names([_event("run-token-1", kind="run_token")]) == {}
+
+    def broken(self, user_ids):
+        """A batch read that fails."""
+        raise RuntimeError("throttled")
+
+    monkeypatch.setattr(UserRepository, "get_many", broken)
+    assert audit_router._actor_names([_event("user-present")]) == {}
