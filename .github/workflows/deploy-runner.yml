@@ -88,6 +88,7 @@ jobs:
       context: runner
       dockerfile: runner/Dockerfile
       platform: linux/arm64
+      ecr-public-login: true
       build-args: |
         DEPENDENCY_RESOLUTION=${{ needs.resolve-env.outputs.dependency-stamp }}
       image-tag-suffix: ${{ inputs.fresh-dependencies == true && format('deps-{0}', github.run_id) || '' }}
