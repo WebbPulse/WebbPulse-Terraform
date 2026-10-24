@@ -272,6 +272,8 @@ jobs:
           push: false
           load: false
           provenance: false
+          build-args: |
+            PYTHON_IMAGE=mirror.gcr.io/library/python:3.13-slim-trixie
           cache-from: type=gha,scope=runner-arm64
           cache-to: type=gha,scope=runner-arm64,mode=max
 
