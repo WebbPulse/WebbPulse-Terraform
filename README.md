@@ -363,5 +363,7 @@ workflow. The staging GitHub App is installed there and not on this repository, 
 `webbpulse` and `@webbpulse/*` float to the newest release at build time rather
 than being pinned. The backend's floor is `webbpulse>=0.42.0`; the frontend takes
 `>=0.13.0 <1` for each `@webbpulse/*` package. Platform modules are `~> 2.33` from
-the HCP registry, rewritten at cutover. Terraform is `>= 1.11`, and the runner
+the plane's registry, with a higher floor on a module that needs a later release
+(`http-api` and `staging-access-gate` take `~> 2.43` for the access log identity
+fields). Terraform is `>= 1.11`, and the runner
 image pins its own engine versions in `runner/versions.env`.

@@ -186,7 +186,7 @@ module "oidc_api" {
   count = local.oidc_issuer_count
 
   source  = "terraform.webbpulse.com/WebbPulse/platform-modules/aws//modules/http-api"
-  version = "~> 2.33"
+  version = "~> 2.43"
 
   name        = "${local.prefix}-oidc"
   description = "The control plane's OIDC issuer. Anonymous by design and never behind the access gate: Google and Azure fetch it unauthenticated"
