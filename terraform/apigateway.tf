@@ -220,6 +220,10 @@ locals {
         integration          = "workspaces"
         require_identity_jwt = true
       }
+      "POST /api/auth/sessions/revoke-others" = {
+        integration          = "workspaces"
+        require_identity_jwt = true
+      }
       "POST /api/auth/email/change" = {
         integration          = "workspaces"
         require_identity_jwt = true
