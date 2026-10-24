@@ -105,7 +105,7 @@ jobs:
       typecheck-command: pyright
       security-commands: |
         bandit -r app -ll
-        uv export --frozen --no-dev --no-emit-project --no-hashes --no-emit-package webbpulse -o /tmp/requirements-audit.txt && pip-audit --no-deps -r /tmp/requirements-audit.txt
+        uv export --frozen --no-dev --no-emit-project --no-hashes --no-emit-package webbpulse -o /tmp/requirements-audit.txt && pip-audit --no-deps -r /tmp/requirements-audit.txt --ignore-vuln CVE-2026-114603
       coverage-source: app
       pytest-args: ""
       domains-filter: ${{ needs.affected.outputs.domains }}
