@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from webbpulse.identity import AuthenticationRefused
+from webbpulse.identity.ephemeral_sweep import is_ephemeral_email
 
 from app.common.core.auth import ALL_SCOPES
 from app.common.db.users import User, UserRepository
@@ -30,6 +31,11 @@ REGISTRATION_ATTRIBUTES: Final = ("display_name", "email_verified")
 """The only register `attributes` keys `create_user` copies onto a new row. The
 package sets `email_verified` itself, so every other field, `is_admin` and
 `disabled` included, always takes the model default."""
+
+EPHEMERAL_ATTRIBUTES: Final = (*REGISTRATION_ATTRIBUTES, "is_admin")
+"""What an `e2e-<run>@e2e.invalid` row may also carry. Only the admin-gated ephemeral
+route can create such an address while registration is off, and the e2e suite needs its
+login user to be an admin to exercise the write routes."""
 
 
 class ControlPlaneIdentityHooks:
@@ -99,9 +105,11 @@ class ControlPlaneIdentityHooks:
         Only the fields in `REGISTRATION_ATTRIBUTES` are taken from `attributes`,
         because the register route passes the client's own `attributes` object
         through: copying it whole would let anyone registering set `is_admin` or
-        `disabled`. The display name falls back to the address's local part.
+        `disabled`. An ephemeral e2e address may also carry `is_admin`, per
+        `EPHEMERAL_ATTRIBUTES`. The display name falls back to the address's local part.
         """
-        record = {key: attributes[key] for key in REGISTRATION_ATTRIBUTES if key in attributes}
+        allowed = EPHEMERAL_ATTRIBUTES if is_ephemeral_email(email) else REGISTRATION_ATTRIBUTES
+        record = {key: attributes[key] for key in allowed if key in attributes}
         record["email"] = email
         record["display_name"] = str(record.get("display_name") or _display_name_from(email))
         return _as_mapping(self._users.create(User(**record)))
