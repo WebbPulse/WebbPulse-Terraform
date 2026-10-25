@@ -58,7 +58,7 @@ def test_patch_sets_and_null_clears_the_list(auth_client, workspace):
         [""],
         [READER, READER],
         [f"arn:aws:iam::488386929690:role/{'r' * 140}"],
-        [f"arn:aws:iam::123456789012:role/R{index}" for index in range(11)],
+        [f"arn:aws:iam::123456789012:role/R{index}" for index in range(26)],
     ],
 )
 def test_anything_but_a_short_list_of_exact_role_arns_is_refused(auth_client, workspace, value):
