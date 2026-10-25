@@ -254,9 +254,9 @@ every plan reaches.
 
 `ReadOnlyAccess` holds no `sts:AssumeRole`, so a plan whose providers assume
 roles elsewhere (Route 53 writers in a zone account, say) is denied. A workspace
-lists exact reader role ARNs in `plan_assume_role_arns` (at most 10, 120
-characters each so the inline document fits STS's 2,048 characters, no wildcards,
-null clears), and a plan's inline document then also carries an `sts:AssumeRole`
+lists exact reader role ARNs in `plan_assume_role_arns` (at most 25, 120
+characters each, no wildcards, null clears; the real limit is the inline document
+fitting STS's 2,048 characters, checked as above), and a plan's inline document then also carries an `sts:AssumeRole`
 statement on exactly those ARNs; an apply
 is unchanged. The runner exports `TF_VAR_webbpulse_run_phase` (`plan` or `apply`,
 set after workspace variables so they cannot override it). A config that assumes

@@ -5220,7 +5220,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 10,
+            "maxItems": 25,
             "title": "Plan Assume Role Arns",
             "type": "array"
           },
@@ -5444,7 +5444,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 10,
+            "maxItems": 25,
             "title": "Plan Assume Role Arns",
             "type": "array"
           },
@@ -5649,7 +5649,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 10,
+            "maxItems": 25,
             "title": "Plan Assume Role Arns",
             "type": "array"
           },
@@ -5989,7 +5989,7 @@
                 "items": {
                   "type": "string"
                 },
-                "maxItems": 10,
+                "maxItems": 25,
                 "type": "array"
               },
               {

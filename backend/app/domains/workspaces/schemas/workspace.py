@@ -31,17 +31,17 @@ _BRANCH_FORBIDDEN: Final = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]|\.\.|@\{|//")
 PLAN_ASSUME_ROLE_ARN_PATTERN: Final = re.compile(r"^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$")
 """An exact IAM role ARN, the same shape `external_run_role_arns` accepts in Terraform. No wildcards."""
 
-PLAN_ASSUME_ROLE_ARNS_MAX: Final = 10
-"""How many reader roles one workspace may name."""
+PLAN_ASSUME_ROLE_ARNS_MAX: Final = 25
+"""How many reader roles one workspace may name. The session policy size check is the real limit."""
 
 PLAN_ASSUME_ROLE_ARN_MAX_LENGTH: Final = 120
 """The longest reader role ARN accepted.
 
-With the count cap this keeps the plan's inline session policy, its secret read
-statements, the reads `ReadOnlyAccess` omits and reader roles together, plus the
-`ReadOnlyAccess` ARN beside it, inside the 2,048 plaintext characters STS allows
-for session policies in total. It still leaves a 64 character role name a 25
-character path.
+It leaves a 64 character role name a 25 character path. The count and length caps
+alone do not keep the plan's session policy inside the 2,048 plaintext characters
+STS allows; `session_policy.plan_policy_fits` does, and a workspace edit whose
+reader roles and plan secrets would overflow it is a 422
+`PLAN_SESSION_POLICY_TOO_LARGE`.
 """
 
 PLAN_ROLE_ARN_MAX_LENGTH: Final = 140
