@@ -90,6 +90,29 @@ def test_readers_and_secrets_that_overflow_the_session_policy_are_refused(auth_c
     assert auth_client.get(_path(workspace)).json()["plan_secret_arns"] == []
 
 
+def test_a_realistic_organization_reader_list_is_accepted(auth_client, workspace):
+    """Twelve readers, more than the old cap of ten, fit the session policy and are stored."""
+    readers = [f"arn:aws:iam::{index:012d}:role/OrganizationAccountReadOnlyRole" for index in range(1, 12)]
+    readers.append("arn:aws:iam::870550636948:role/webbpulse-terraform-factory-secrets-reader")
+
+    response = auth_client.patch(_path(workspace), json={"plan_assume_role_arns": readers})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["plan_assume_role_arns"] == readers
+
+
+def test_a_reader_list_within_the_caps_that_overflows_the_session_policy_is_refused(auth_client, workspace):
+    """Twenty five readers of the longest accepted length pass the caps and fail the size check."""
+    head = "arn:aws:iam::123456789012:role/"
+    readers = [f"{head}{index:02d}{'r' * (120 - len(head) - 2)}" for index in range(25)]
+
+    response = auth_client.patch(_path(workspace), json={"plan_assume_role_arns": readers})
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error_code"] == PLAN_SESSION_POLICY_TOO_LARGE_CODE
+    assert auth_client.get(_path(workspace)).json()["plan_assume_role_arns"] == []
+
+
 @pytest.mark.parametrize(
     "body",
     [{"plan_secret_arns": [SECRET]}, {"plan_assume_role_arns": [READER]}, {"plan_role_arn": PLAN_ROLE}],

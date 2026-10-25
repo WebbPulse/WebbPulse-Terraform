@@ -227,8 +227,18 @@ def test_the_apply_phase_ignores_reader_roles() -> None:
     assert policy.document is None
 
 
-def test_the_largest_allowed_reader_list_fits_the_session_policy_limit() -> None:
-    """Ten ARNs of the longest accepted length, the inline reads and ReadOnlyAccess stay inside the STS limit."""
+def test_a_realistic_organization_reader_list_fits_the_session_policy_limit() -> None:
+    """Twelve readers, one per workload account plus the factory secrets reader, pass validation and fit."""
+    from app.domains.workspaces.schemas.workspace import validate_plan_assume_role_arns
+
+    arns = [f"arn:aws:iam::{index:012d}:role/OrganizationAccountReadOnlyRole" for index in range(1, 12)]
+    arns.append("arn:aws:iam::870550636948:role/webbpulse-terraform-factory-secrets-reader")
+    assert validate_plan_assume_role_arns(arns) == arns
+    assert session_policy.plan_policy_fits(arns, [])
+
+
+def test_the_largest_allowed_reader_list_passes_validation_but_not_the_size_check() -> None:
+    """The count and length caps admit a list too long for STS, so the size check is what refuses it."""
     from app.domains.workspaces.schemas.workspace import (
         PLAN_ASSUME_ROLE_ARN_MAX_LENGTH,
         PLAN_ASSUME_ROLE_ARNS_MAX,
@@ -240,27 +250,14 @@ def test_the_largest_allowed_reader_list_fits_the_session_policy_limit() -> None
         f"{head}{index:02d}{'r' * (PLAN_ASSUME_ROLE_ARN_MAX_LENGTH - len(head) - 2)}"
         for index in range(PLAN_ASSUME_ROLE_ARNS_MAX)
     ]
+    assert PLAN_ASSUME_ROLE_ARNS_MAX == 25
     assert all(len(arn) == PLAN_ASSUME_ROLE_ARN_MAX_LENGTH for arn in arns)
     assert validate_plan_assume_role_arns(arns) == arns
-    size = session_policy.plaintext_size(session_policy.for_phase("plan", arns))
-    assert size <= session_policy.SESSION_POLICY_PLAINTEXT_LIMIT, size
-
-
-def test_ten_realistic_reader_roles_fit_the_session_policy_limit() -> None:
-    """Ten pathed reader roles with 64 character names, the IAM name maximum, fit beside the inline reads."""
-    from app.domains.workspaces.schemas.workspace import PLAN_ASSUME_ROLE_ARNS_MAX, validate_plan_assume_role_arns
-
-    arns = [
-        f"arn:aws:iam::{index:012d}:role/terraform/readers/{f'WebbPulse-Platform-Route53-Reader-{index:02d}':R<64}"
-        for index in range(PLAN_ASSUME_ROLE_ARNS_MAX)
-    ]
-    assert validate_plan_assume_role_arns(arns) == arns
-    size = session_policy.plaintext_size(session_policy.for_phase("plan", arns))
-    assert size <= session_policy.SESSION_POLICY_PLAINTEXT_LIMIT, size
+    assert not session_policy.plan_policy_fits(arns, [])
 
 
 def test_a_reader_arn_past_the_cap_is_refused() -> None:
-    """One character over the cap fails validation, so no stored list can overflow the STS limit."""
+    """One character over the length cap fails validation."""
     from app.domains.workspaces.schemas.workspace import (
         PLAN_ASSUME_ROLE_ARN_MAX_LENGTH,
         validate_plan_assume_role_arns,
