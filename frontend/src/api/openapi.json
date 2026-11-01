@@ -6954,6 +6954,39 @@
         ]
       }
     },
+    "/api/auth/sessions/revoke-others": {
+      "post": {
+        "description": "Sign every one of the caller's sessions out except the one this request came from.\n\nAnswers with how many sessions ended, 0 when the caller had no other. The current\nsession is the access token's `sid`, so the refresh cookie stays valid.",
+        "operationId": "revoke_other_sessions_api_auth_sessions_revoke_others_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No bearer token was presented"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "summary": "Revoke Other Sessions",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
     "/api/auth/sessions/{family_id}": {
       "delete": {
         "description": "Sign one of the caller's other sessions out.\n\nAnother user's session answers 404 like an unknown one. The session the request came\nfrom is refused with 400, since ending it is what `logout` does and clears the cookie.",
