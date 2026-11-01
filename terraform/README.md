@@ -110,9 +110,9 @@ Each environment has one operator owned GitHub App, created from the GitHub
 settings page through the App manifest flow. The `github` function writes the
 App's `GITHUB_*` keys into the `app` secret with a read, merge and compare and
 swap, which is why that secret sets `json_preserve_unmanaged` and why the `github`
-role alone holds `secretsmanager:PutSecretValue` and
-`secretsmanager:UpdateSecretVersionStage` on it. Terraform declares none of those
-keys, so an apply never removes them. The App slug and id are stored in the
+role alone holds `secretsmanager:PutSecretValue`,
+`secretsmanager:UpdateSecretVersionStage` and `secretsmanager:DescribeSecret` on
+it. Terraform declares none of those keys, so an apply never removes them. The App slug and id are stored in the
 `github` table; `var.github_app_slug` is only the fallback passed as
 `GITHUB_APP_SLUG`.
 
