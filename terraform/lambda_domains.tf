@@ -254,6 +254,12 @@ locals {
         Resource = [module.app_secrets.arns["app"]]
       },
       {
+        Sid      = "DescribeTheAppSecretForSecretStoreWrites"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:DescribeSecret"]
+        Resource = [module.app_secrets.arns["app"]]
+      },
+      {
         Sid      = "QueueVerifiedWebhookDeliveries"
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
