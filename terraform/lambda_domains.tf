@@ -250,7 +250,7 @@ locals {
       {
         Sid      = "WriteTheGitHubAppCredentialsFromTheManifestFlow"
         Effect   = "Allow"
-        Action   = ["secretsmanager:PutSecretValue"]
+        Action   = ["secretsmanager:PutSecretValue", "secretsmanager:UpdateSecretVersionStage"]
         Resource = [module.app_secrets.arns["app"]]
       },
       {
